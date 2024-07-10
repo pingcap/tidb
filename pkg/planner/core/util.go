@@ -98,8 +98,8 @@ type physicalSchemaProducer struct {
 	basePhysicalPlan
 }
 
-func (s *physicalSchemaProducer) cloneWithSelf(newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
-	base, err := s.basePhysicalPlan.cloneWithSelf(newSelf)
+func (s *physicalSchemaProducer) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
+	base, err := s.basePhysicalPlan.cloneWithSelf(newCtx, newSelf)
 	if err != nil {
 		return nil, err
 	}
@@ -186,13 +186,6 @@ func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
 		sum += name.MemoryUsage()
 	}
 	return
-}
-
-// Schema implements the Plan.Schema interface.
-func (p *LogicalMaxOneRow) Schema() *expression.Schema {
-	s := p.Children()[0].Schema().Clone()
-	resetNotNullFlag(s, 0, s.Len())
-	return s
 }
 
 func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expression.Schema {
@@ -345,10 +338,10 @@ func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool
 	return false
 }
 
-func clonePhysicalPlan(plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
+func clonePhysicalPlan(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
 	cloned := make([]base.PhysicalPlan, 0, len(plans))
 	for _, p := range plans {
-		c, err := p.Clone()
+		c, err := p.Clone(sctx)
 		if err != nil {
 			return nil, err
 		}

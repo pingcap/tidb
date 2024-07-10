@@ -213,9 +213,6 @@ func TestForeignKey(t *testing.T) {
 }
 
 func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
-	// TODO(lance6716): enable this test case after introduce exclusive and shared objects on runningJobs.
-	t.Skip("this test implicitly depends on DDL job dependency on FK and " +
-		"TestTruncateOrDropTableWithForeignKeyReferred. Will enable it soon.")
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := dom.DDL()
 	tk := testkit.NewTestKit(t, store)
@@ -312,9 +309,6 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 }
 
 func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
-	// TODO(lance6716): enable this test case after introduce exclusive and shared objects on runningJobs.
-	t.Skip("this test implicitly depends on DDL job dependency on FK and " +
-		"TestDropDatabaseWithForeignKeyReferred. Will enable it soon.")
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := dom.DDL()
 	tk := testkit.NewTestKit(t, store)

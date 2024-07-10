@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -164,7 +165,7 @@ func TestPartitionPruningForEQ(t *testing.T) {
 	tk.MustExec("create table t(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(10), partition p1 values less than (100))")
 
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pt := tbl.(table.PartitionedTable)
 	query, err := expression.ParseSimpleExpr(tk.Session().GetExprCtx(), "a = '2020-01-01 00:00:00'", expression.WithTableInfo("", tbl.Meta()))
@@ -932,6 +933,32 @@ func TestConflictReadFromStorage(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
 }
 
+func TestHypoIndexHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, b int, c int)`)
+	tk.MustExec(`create table t2 (a int, b int, c int)`)
+	tk.MustHavePlan(`select a from t1 where a=1`, "TableFullScan")
+	tk.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a, a) */ a from t1 where a=1`, "IndexRangeScan")
+	tk.MustHavePlan(`select a from t1 where a=1 and b=1`, "TableFullScan")
+	tk.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a, a, b) */ a from t1 where a=1 and b=1`, "IndexRangeScan")
+	tk.MustHavePlan(`select a from t1 where a=1 and b=1 and c<1`, "TableFullScan")
+	tk.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a, a, b, c) */ a from t1 where a=1 and b=1 and c<1`, "IndexRangeScan")
+	tk.MustHavePlan(`select 1 from t1, t2 where t1.a=1 and t1.b=t2.b`, "─HashJoin")
+	tk.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_ab, a, b), HYPO_INDEX(t2, idx_b, b) */ 1 from t1, t2 where t1.a=1 and t1.b=t2.b`, "IndexHashJoin")
+
+	// invalid cases
+	tk.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a) */ a from t1 where a=1`, "TableFullScan")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 Invalid HYPO_INDEX hint, valid usage: HYPO_INDEX(tableName, indexName, cols...)"))
+	tk.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a, a, d) */ a from t1 where a=1`, "TableFullScan")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 invalid HYPO_INDEX hint: can't find column d in table test.t1"))
+	tk.MustHavePlan(`select /*+ HYPO_INDEX(tttt, idx_a, a) */ a from t1 where a=1`, "TableFullScan")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 invalid HYPO_INDEX hint: table 'test.tttt' doesn't exist"))
+	tk.MustHavePlan(`select /*+ HYPO_INDEX(test1.t1, idx_a, a) */ a from t1 where a=1`, "TableFullScan")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 invalid HYPO_INDEX hint: table 'test1.t1' doesn't exist"))
+}
+
 func TestIssue29503(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -956,7 +983,7 @@ func TestIssue31202(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t31202(a int primary key, b int);")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31202", L: "t31202"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31202", L: "t31202"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1013,7 +1040,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	tk.MustExec("set @@tidb_enforce_mpp = on")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int)")
-	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1271,7 +1298,7 @@ func TestGetFormatPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1380,7 +1407,7 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1413,7 +1440,7 @@ func TestBinPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1613,7 +1640,7 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1646,7 +1673,7 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1691,12 +1718,12 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
 	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t2", L: "t2"})
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t2", L: "t2"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1752,11 +1779,11 @@ func TestPointGetWithSelectLock(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, primary key(a, b));")
 	tk.MustExec("create table t1(c int unique, d int);")
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}

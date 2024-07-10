@@ -542,7 +542,11 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
 	e.initRuntimeStats()
-	e.memTracker = memory.NewTracker(e.ID(), -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	e.finished = make(chan struct{})
@@ -745,20 +749,20 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 
 // calculateBatchSize calculates a suitable initial batch size.
 func (e *IndexLookUpExecutor) calculateBatchSize(initBatchSize, maxBatchSize int) int {
+	if e.indexPaging {
+		// If indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
+		return min(initBatchSize, maxBatchSize)
+	}
 	var estRows int
 	if len(e.idxPlans) > 0 {
 		estRows = int(e.idxPlans[0].StatsCount())
 	}
-	return CalculateBatchSize(e.indexPaging, estRows, initBatchSize, maxBatchSize)
+	return CalculateBatchSize(estRows, initBatchSize, maxBatchSize)
 }
 
 // CalculateBatchSize calculates a suitable initial batch size. It exports for testing.
-func CalculateBatchSize(indexPaging bool, estRows, initBatchSize, maxBatchSize int) int {
+func CalculateBatchSize(estRows, initBatchSize, maxBatchSize int) int {
 	batchSize := min(initBatchSize, maxBatchSize)
-	if indexPaging {
-		// If indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
-		return batchSize
-	}
 	if estRows >= maxBatchSize {
 		return maxBatchSize
 	}
@@ -859,7 +863,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.tblWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
-	e.memTracker = nil
 	e.resultCurr = nil
 	return nil
 }

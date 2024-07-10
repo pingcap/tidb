@@ -127,8 +127,8 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model
 		return
 	}
 
-	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
-	tableInfo2, _ := d.tracker.TableByName(dbName, tableName)
+	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(context.Background(), dbName, tableName)
+	tableInfo2, _ := d.tracker.TableByName(context.Background(), dbName, tableName)
 
 	if tableInfo == nil || tableInfo2 == nil {
 		if tableInfo == nil && tableInfo2 == nil {
@@ -463,7 +463,7 @@ func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInf
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }

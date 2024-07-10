@@ -51,6 +51,7 @@ func TestPlanStatsLoad(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("set tidb_opt_projection_push_down = 0")
 	tk.MustExec("create table t(a int, b int, c int, d int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3)")
 	tk.MustExec("create table pt(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
@@ -197,7 +198,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 				require.True(t, ok)
-				require.True(t, pis.StatsInfo().HistColl.Indices[1].IsEssentialStatsLoaded())
+				require.True(t, pis.StatsInfo().HistColl.GetIdx(1).IsEssentialStatsLoaded())
 			},
 		},
 	}
@@ -214,7 +215,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		require.NoError(t, err)
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		testCase.check(p, tableInfo)
@@ -222,12 +223,15 @@ func TestPlanStatsLoad(t *testing.T) {
 }
 
 func countFullStats(stats *statistics.HistColl, colID int64) int {
-	for _, col := range stats.Columns {
+	cnt := -1
+	stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if col.Info.ID == colID {
-			return col.Histogram.Len() + col.TopN.Num()
+			cnt = col.Histogram.Len() + col.TopN.Num()
+			return true
 		}
-	}
-	return -1
+		return false
+	})
+	return cnt
 }
 
 func TestPlanStatsLoadTimeout(t *testing.T) {
@@ -263,7 +267,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
 	require.NoError(t, dom.StatsHandle().Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
@@ -358,7 +362,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	tblName2TblID := make(map[string]int64)
 	tblID2Tbl := make(map[int64]table.Table)
 	for _, tblName := range tableNames {
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblName2TblID[tblName] = tbl.Meta().ID
 		tblID2Tbl[tbl.Meta().ID] = tbl

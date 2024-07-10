@@ -83,7 +83,7 @@ func TestCopClientSend(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("copclient"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -161,7 +161,7 @@ func TestInconsistentIndex(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	idx := tbl.Meta().FindIndexByName("idx_a")
 	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
@@ -361,6 +361,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	// the avg row size is more accurate in check_rpc mode when unistre is used.
 	// See: https://github.com/pingcap/tidb/issues/31744#issuecomment-1016309883
 	tk.MustExec("set @@tidb_enable_chunk_rpc = '1'")
+	tk.MustExec("set @@tidb_opt_projection_push_down = '0'")
 
 	readCounter := func(counter prometheus.Counter) float64 {
 		var metric dto.Metric

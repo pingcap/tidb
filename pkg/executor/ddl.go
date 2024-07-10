@@ -74,7 +74,7 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
-	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(schema, table)
+	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), schema, table)
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil, false
 	}
@@ -680,7 +680,13 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 					OldTableName:  tblInfo.Name.L,
 				})
 			}
-			recoverSchemaInfo = &ddl.RecoverSchemaInfo{DBInfo: schemaInfo, RecoverTabsInfo: recoverTabsInfo, DropJobID: job.ID, SnapshotTS: job.StartTS, OldSchemaName: schemaName}
+			recoverSchemaInfo = &ddl.RecoverSchemaInfo{
+				DBInfo:          schemaInfo,
+				RecoverTabsInfo: recoverTabsInfo,
+				DropJobID:       job.ID,
+				SnapshotTS:      job.StartTS,
+				OldSchemaName:   schemaName,
+			}
 			return true, nil
 		}
 		return false, nil

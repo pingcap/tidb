@@ -399,7 +399,7 @@ func TestStmtHints(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ 1;")
-	val = int64(0)
+	val = int64(-1)
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "Setting the MEMORY_QUOTA to 0 means no memory limit")

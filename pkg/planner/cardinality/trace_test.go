@@ -188,7 +188,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
 	statsTbl := statsHandle.GetTableStats(tblInfo)
@@ -214,7 +214,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)
-		tblInfos = append(tblInfos, ds.TableInfo())
+		tblInfos = append(tblInfos, ds.TableInfo)
 	}
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)

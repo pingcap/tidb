@@ -304,7 +304,7 @@ func TestCheckIndex(t *testing.T) {
 	require.True(t, ok)
 
 	tblName := model.NewCIStr("t")
-	tbl, err := is.TableByName(db, tblName)
+	tbl, err := is.TableByName(context.Background(), db, tblName)
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
@@ -393,7 +393,7 @@ func setColValue(t *testing.T, txn kv.Transaction, key kv.Key, v types.Datum) {
 	colIDs := []int64{2, 3}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	rd := rowcodec.Encoder{Enable: true}
-	value, err := tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, &rd)
+	value, err := tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	err = txn.Set(key, value)
 	require.NoError(t, err)
@@ -419,7 +419,7 @@ func TestTimestampDefaultValueTimeZone(t *testing.T) {
 	// Test the column's version is greater than ColumnInfoVersion1.
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	require.NotNil(t, is)
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
 	tk.MustExec("insert into t set a=3")
@@ -680,7 +680,7 @@ func TestIssue19148(t *testing.T) {
 	tk.MustExec("create table t(a decimal(16, 2));")
 	tk.MustExec("select * from t where a > any_value(a);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Zero(t, tblInfo.Meta().Columns[0].GetFlag())
 }
@@ -2515,7 +2515,7 @@ func TestAdmin(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	require.NotNil(t, is)
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
+	tb, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	require.NoError(t, err)
 	require.Len(t, tb.Indices(), 1)
 	_, err = tb.Indices()[0].Create(mock.NewContext().GetTableCtx(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1), nil)
@@ -2927,4 +2927,23 @@ func TestDecimalDivPrecisionIncrement(t *testing.T) {
 
 	tk.MustExec("set div_precision_increment = 10")
 	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571428571428550"))
+}
+
+func TestIssue48756(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT, a VARBINARY(20), b BIGINT)")
+	tk.MustExec(`INSERT INTO t VALUES(1, _binary '2012-05-19 09:06:07', 20120519090607),
+(1, _binary '2012-05-19 09:06:07', 20120519090607),
+(2, _binary '12012-05-19 09:06:07', 120120519090607),
+(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
+	tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").Sort().Check(testkit.Rows(
+		"2012-05-18 08:05:05.999998",
+		"<nil>",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1292 Incorrect time value: '120120519090607'",
+		"Warning 1105 ",
+	))
 }

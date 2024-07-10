@@ -15,6 +15,7 @@
 package refresher_test
 
 import (
+	"context"
 	"math"
 	"sort"
 	"testing"
@@ -144,12 +145,12 @@ func TestIgnoreTinyTable(t *testing.T) {
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(dom.InfoSchema()))
 	// Make sure table stats are not pseudo.
-	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
 	require.False(t, tblStats1.Pseudo)
-	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -201,14 +202,14 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(dom.InfoSchema()))
 	// The table is analyzed.
-	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
 	require.Equal(t, int64(0), tblStats1.ModifyCount)
 	require.Equal(t, int64(12), tblStats1.RealtimeCount)
 	// t2 is not analyzed.
-	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -240,7 +241,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
@@ -257,7 +258,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 		},
 	}
 	r.Jobs.Push(job1)
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	job2 := &priorityqueue.NonPartitionedTableAnalysisJob{
 		TableID:     tbl2.Meta().ID,
@@ -398,12 +399,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Test Table not analyzed",
 			tblStats: &statistics.Table{
-				HistColl: statistics.HistColl{
-					Pseudo:        false,
-					RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-					Columns:       unanalyzedColumns,
-					Indices:       unanalyzedIndices,
-				},
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, unanalyzedColumns, unanalyzedIndices),
 				ColAndIdxExistenceMap: bothUnanalyzedMap,
 			},
 			autoAnalyzeRatio: 0.5,
@@ -412,13 +408,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Based on change percentage",
 			tblStats: &statistics.Table{
-				HistColl: statistics.HistColl{
-					Pseudo:        false,
-					RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-					Columns:       analyzedColumns,
-					Indices:       analyzedIndices,
-					ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
-				},
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, (exec.AutoAnalyzeMinCnt+1)*2, analyzedColumns, analyzedIndices),
 				ColAndIdxExistenceMap: bothAnalyzedMap,
 				LastAnalyzeVersion:    1,
 			},
@@ -440,17 +430,14 @@ func TestGetTableLastAnalyzeDuration(t *testing.T) {
 	lastUpdateTime := time.Date(2023, 12, 31, 10, 0, 0, 0, time.UTC)
 	lastUpdateTs := oracle.GoTimeToTS(lastUpdateTime)
 	tblStats := &statistics.Table{
-		HistColl: statistics.HistColl{
-			Pseudo: false,
-			Columns: map[int64]*statistics.Column{
-				1: {
-					StatsVer: 2,
-					Histogram: statistics.Histogram{
-						LastUpdateVersion: lastUpdateTs,
-					},
+		HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 0, 0, map[int64]*statistics.Column{
+			1: {
+				StatsVer: 2,
+				Histogram: statistics.Histogram{
+					LastUpdateVersion: lastUpdateTs,
 				},
 			},
-		},
+		}, nil),
 		LastAnalyzeVersion: lastUpdateTs,
 	}
 	// 2024-01-01 10:00:00
@@ -511,15 +498,11 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 				},
 			},
 			tblStats: &statistics.Table{
-				HistColl: statistics.HistColl{
-					Pseudo:  false,
-					Indices: map[int64]*statistics.Index{},
-					Columns: map[int64]*statistics.Column{
-						1: {
-							StatsVer: 2,
-						},
+				HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 0, 0, map[int64]*statistics.Column{
+					1: {
+						StatsVer: 2,
 					},
-				},
+				}, map[int64]*statistics.Index{}),
 				ColAndIdxExistenceMap: analyzedMap,
 				LastAnalyzeVersion:    1,
 			},
@@ -641,25 +624,20 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   1,
 					Name: "p0",
 				}: {
-					HistColl: statistics.HistColl{
-						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-						ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
-						Columns: map[int64]*statistics.Column{
-							1: {
-								StatsVer: 2,
-								Histogram: statistics.Histogram{
-									LastUpdateVersion: lastUpdateTs,
-								},
-							},
-							2: {
-								StatsVer: 2,
-								Histogram: statistics.Histogram{
-									LastUpdateVersion: lastUpdateTs,
-								},
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, (exec.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
+						1: {
+							StatsVer: 2,
+							Histogram: statistics.Histogram{
+								LastUpdateVersion: lastUpdateTs,
 							},
 						},
-					},
+						2: {
+							StatsVer: 2,
+							Histogram: statistics.Histogram{
+								LastUpdateVersion: lastUpdateTs,
+							},
+						},
+					}, nil),
 					Version:               currentTs,
 					ColAndIdxExistenceMap: analyzedMap,
 					LastAnalyzeVersion:    lastUpdateTs,
@@ -668,25 +646,20 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   2,
 					Name: "p1",
 				}: {
-					HistColl: statistics.HistColl{
-						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-						ModifyCount:   0,
-						Columns: map[int64]*statistics.Column{
-							1: {
-								StatsVer: 2,
-								Histogram: statistics.Histogram{
-									LastUpdateVersion: lastUpdateTs,
-								},
-							},
-							2: {
-								StatsVer: 2,
-								Histogram: statistics.Histogram{
-									LastUpdateVersion: lastUpdateTs,
-								},
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+						1: {
+							StatsVer: 2,
+							Histogram: statistics.Histogram{
+								LastUpdateVersion: lastUpdateTs,
 							},
 						},
-					},
+						2: {
+							StatsVer: 2,
+							Histogram: statistics.Histogram{
+								LastUpdateVersion: lastUpdateTs,
+							},
+						},
+					}, nil),
 					Version:               currentTs,
 					ColAndIdxExistenceMap: analyzedMap,
 					LastAnalyzeVersion:    lastUpdateTs,
@@ -733,25 +706,20 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   1,
 					Name: "p0",
 				}: {
-					HistColl: statistics.HistColl{
-						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-						ModifyCount:   0,
-						Columns: map[int64]*statistics.Column{
-							1: {
-								StatsVer: 2,
-								Histogram: statistics.Histogram{
-									LastUpdateVersion: lastUpdateTs,
-								},
-							},
-							2: {
-								StatsVer: 2,
-								Histogram: statistics.Histogram{
-									LastUpdateVersion: lastUpdateTs,
-								},
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+						1: {
+							StatsVer: 2,
+							Histogram: statistics.Histogram{
+								LastUpdateVersion: lastUpdateTs,
 							},
 						},
-					},
+						2: {
+							StatsVer: 2,
+							Histogram: statistics.Histogram{
+								LastUpdateVersion: lastUpdateTs,
+							},
+						},
+					}, nil),
 					Version:               currentTs,
 					ColAndIdxExistenceMap: analyzedMap,
 					LastAnalyzeVersion:    lastUpdateTs,
@@ -760,25 +728,20 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   2,
 					Name: "p1",
 				}: {
-					HistColl: statistics.HistColl{
-						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-						ModifyCount:   0,
-						Columns: map[int64]*statistics.Column{
-							1: {
-								StatsVer: 2,
-								Histogram: statistics.Histogram{
-									LastUpdateVersion: lastUpdateTs,
-								},
-							},
-							2: {
-								StatsVer: 2,
-								Histogram: statistics.Histogram{
-									LastUpdateVersion: lastUpdateTs,
-								},
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+						1: {
+							StatsVer: 2,
+							Histogram: statistics.Histogram{
+								LastUpdateVersion: lastUpdateTs,
 							},
 						},
-					},
+						2: {
+							StatsVer: 2,
+							Histogram: statistics.Histogram{
+								LastUpdateVersion: lastUpdateTs,
+							},
+						},
+					}, nil),
 					Version:               currentTs,
 					ColAndIdxExistenceMap: analyzedMap,
 					LastAnalyzeVersion:    lastUpdateTs,
@@ -854,28 +817,18 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 			ID:   1,
 			Name: "p0",
 		}: {
-			HistColl: statistics.HistColl{
-				Pseudo:        false,
-				RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-				ModifyCount:   0,
-				Indices:       map[int64]*statistics.Index{},
-			},
+			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 		},
 		{
 			ID:   2,
 			Name: "p1",
 		}: {
-			HistColl: statistics.HistColl{
-				Pseudo:        false,
-				RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-				ModifyCount:   0,
-				Indices: map[int64]*statistics.Index{
-					2: {
-						StatsVer: 2,
-					},
+			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
+				2: {
+					StatsVer: 2,
 				},
-			},
+			}),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 1),
 		},
 	}

@@ -15,6 +15,7 @@
 package updatetest
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -58,7 +59,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	}
 
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 	h := dom.StatsHandle()
@@ -73,7 +74,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	stats1 := h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
 	stats2 := h.GetTableStats(tableInfo2)
@@ -176,7 +177,7 @@ func TestRollback(t *testing.T) {
 	testKit.MustExec("rollback")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -210,7 +211,7 @@ func TestMultiSession(t *testing.T) {
 		testKit2.MustExec("delete from test.t1 limit 1")
 	}
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 	h := dom.StatsHandle()
@@ -254,7 +255,7 @@ func TestTxnWithFailure(t *testing.T) {
 	testKit.MustExec("create table t1 (c1 int primary key, c2 int)")
 
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 	h := dom.StatsHandle()
@@ -308,7 +309,7 @@ func TestUpdatePartition(t *testing.T) {
 		testKit.MustExec(createTable)
 		do := dom
 		is := do.InfoSchema()
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		h := do.StatsHandle()
@@ -325,7 +326,7 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(1), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
-			require.Equal(t, int64(2), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(2), statsTbl.GetCol(bColID).TotColSize)
 		}
 
 		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
@@ -335,7 +336,7 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(2), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
-			require.Equal(t, int64(3), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(3), statsTbl.GetCol(bColID).TotColSize)
 		}
 
 		testKit.MustExec("delete from t")
@@ -345,14 +346,14 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
-			require.Equal(t, int64(0), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 		// assert WithGetTableStatsByQuery get the same result
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
-			require.Equal(t, int64(0), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 	})
 }
@@ -373,7 +374,7 @@ func TestAutoUpdate(t *testing.T) {
 
 		do := dom
 		is := do.InfoSchema()
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		h := do.StatsHandle()
@@ -393,11 +394,11 @@ func TestAutoUpdate(t *testing.T) {
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(5), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
-		for _, item := range stats.Columns {
+		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
 			// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
 			require.Equal(t, int64(15), item.TotColSize)
-			break
-		}
+			return true
+		})
 
 		// Test that even if the table is recently modified, we can still analyze the table.
 		h.SetLease(time.Second)
@@ -432,17 +433,17 @@ func TestAutoUpdate(t *testing.T) {
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		// Modify count is non-zero means that we do not analyze the table.
 		require.Equal(t, int64(1), stats.ModifyCount)
-		for _, item := range stats.Columns {
+		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
 			// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
 			require.Equal(t, int64(27), item.TotColSize)
-			break
-		}
+			return true
+		})
 
 		testKit.MustExec("analyze table t")
 		_, err = testKit.Exec("create index idx on t(a)")
 		require.NoError(t, err)
 		is = do.InfoSchema()
-		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
 		h.HandleAutoAnalyze()
@@ -452,8 +453,8 @@ func TestAutoUpdate(t *testing.T) {
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
-		hg, ok := stats.Indices[tableInfo.Indices[0].ID]
-		require.True(t, ok)
+		hg := stats.GetIdx(tableInfo.Indices[0].ID)
+		require.True(t, hg != nil)
 		require.Equal(t, int64(3), hg.NDV)
 		require.Equal(t, 0, hg.Len())
 		require.Equal(t, 3, hg.TopN.Num())
@@ -478,7 +479,7 @@ func TestAutoUpdatePartition(t *testing.T) {
 
 		do := dom
 		is := do.InfoSchema()
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		pi := tableInfo.GetPartitionInfo()
@@ -593,7 +594,7 @@ func TestOutOfOrderUpdate(t *testing.T) {
 
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
@@ -810,7 +811,7 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		}()
 
 		require.NoError(t, h.Update(is))
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		pi := tableInfo.GetPartitionInfo()
@@ -905,7 +906,6 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 	}()
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
@@ -987,7 +987,6 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 			defer func() {
 				tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal2))
 			}()
-			tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 			h := dom.StatsHandle()
 			tk.MustExec("use test")
@@ -1026,7 +1025,7 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 	}
 }
 
-func TestEnableAndDisableColumnTracking(t *testing.T) {
+func TestColumnTracking(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
@@ -1034,40 +1033,18 @@ func TestEnableAndDisableColumnTracking(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 
-	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
-	}()
-
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where b > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "b", rows[0][3])
 
-	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	// After tidb_enable_column_tracking is set to 0, the predicate columns collected before are invalidated.
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
-
-	// Sleep for 1.5s to let `last_used_at` be larger than `tidb_disable_tracking_time`.
-	time.Sleep(1500 * time.Millisecond)
-	tk.MustExec("select * from t where a > 1")
-	require.NoError(t, h.DumpColStatsUsageToKV())
-	// We don't collect predicate columns when tidb_enable_column_tracking = 0
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
-
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where b < 1 and c > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Sort().Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "b", rows[0][3])
 	require.Equal(t, "c", rows[1][3])
-
-	// Test invalidating predicate columns again in order to check that tidb_disable_tracking_time can be updated.
-	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
 }
 
 func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
@@ -1103,13 +1080,14 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	require.True(t, h.HandleAutoAnalyze())
 
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 
 	tblStats := h.GetTableStats(tbl.Meta())
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t")
 
@@ -1144,7 +1122,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 	h := dom.StatsHandle()
@@ -1170,7 +1148,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	stats1 := h.GetTableStats(tableInfo1)
 	require.Equal(t, stats1.RealtimeCount, int64(0))
 
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
 	stats2 := h.GetTableStats(tableInfo2)
@@ -1210,10 +1188,10 @@ func TestFillMissingStatsMeta(t *testing.T) {
 	tk.MustQuery("select * from mysql.stats_meta").Check(testkit.Rows())
 
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbl1ID := tbl1.Meta().ID
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	tbl2ID := tbl2Info.ID
@@ -1267,7 +1245,7 @@ func TestNotDumpSysTable(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_meta")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("stats_meta"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("mysql"), model.NewCIStr("stats_meta"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 	tk.MustQuery(fmt.Sprintf("select * from mysql.stats_meta where table_id = %v", tblID)).Check(testkit.Rows())
@@ -1299,11 +1277,11 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	tk.MustExec("analyze table t")
 	require.False(t, h.HandleAutoAnalyze())
 	tk.MustExec("alter table t add index idx(a)")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
-	require.Nil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+	require.Nil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
 	require.True(t, h.HandleAutoAnalyze())
-	require.NotNil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+	require.NotNil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
 }
