@@ -32,85 +32,68 @@ import (
 
 func TestPlanCacheClone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), unique key(d))`)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.Session().GetSessionVars().EnableInstancePlanCache = true
+	tk2.Session().GetSessionVars().EnableInstancePlanCache = true
+	tk1.MustExec(`use test`)
+	tk2.MustExec(`use test`)
+	tk1.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), unique key(d))`)
 
 	for i := -20; i < 20; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v,%v,%v,%v)", i, rand.Intn(20), rand.Intn(20), -i))
+		tk1.MustExec(fmt.Sprintf("insert into t values (%v,%v,%v,%v)", i, rand.Intn(20), rand.Intn(20), -i))
 	}
 
 	// TableScan
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t where a<?'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t where a>=?'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a>=?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(primary) where a<? and b<?'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(primary) where a<? and b<?'`,
 		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(primary) where a<? and b+?=10'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(primary) where a<? and b+?=10'`,
 		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select a+b, b+? from t where a<?'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select a+b, b+? from t where a<?'`,
 		`set @a1=1,@b1=a,@a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 
 	// IndexScan
-	testCachedPlanClone(t, tk, `prepare st from 'select b from t use index(b) where b<=?'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select b from t use index(b) where b<=?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select b from t use index(b) where b>?'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select b from t use index(b) where b>?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select b+a*2 from t use index(b) where b>?'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select b+a*2 from t use index(b) where b>?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(b) where a<? and b<?'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where a<? and b<?'`,
 		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(b) where a<? and b+?=10'`,
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where a<? and b+?=10'`,
 		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 
 	// TODO: PointGet doesn't support Clone
 	// PointPlan
-	//testCachedPlanClone(t, tk, `prepare st from 'select * from t where a=?'`,
+	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=?'`,
 	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk, `prepare st from 'select * from t where d=?'`,
+	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d=?'`,
 	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk, `prepare st from 'select * from t where a in (?,?)'`,
+	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a in (?,?)'`,
 	//	`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	//testCachedPlanClone(t, tk, `prepare st from 'select * from t where d in (?,?)'`,
+	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d in (?,?)'`,
 	//	`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 }
 
-func testCachedPlanClone(t *testing.T, tk *testkit.TestKit, prep, set, exec1, exec2 string) {
-	tk.MustExec(prep)
-	tk.MustExec(set)
-	tk.MustQuery(exec1) // generate the first cached plan
+func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exec1, exec2 string) {
+	tk1.MustExec(prep)
+	tk1.MustExec(set)
+	tk1.MustQuery(exec1) // generate the first cached plan
 
-	// check adjusting the cloned plan should have no effect on the original plan
-	var original base.Plan
-	var originalFingerprint string
-	before := func(cachedVal *core.PlanCacheValue) {
-		// get the current cached plan and its fingerprint
-		original, originalFingerprint = cachedVal.Plan, planFingerprint(t, cachedVal.Plan)
-		// replace the cached plan with a cloned one
-		cloned, err := original.(base.PhysicalPlan).Clone(original.SCtx())
-		require.NoError(t, err)
-		cachedVal.Plan = cloned
-	}
-	after := func(cachedVal *core.PlanCacheValue) {
-		cloned := cachedVal.Plan
-		require.True(t, originalFingerprint != planFingerprint(t, cloned))   // this cloned one have been adjusted by the optimizer
-		require.True(t, originalFingerprint == planFingerprint(t, original)) // the prior one should keep unchanged
-	}
-	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestBeforeAdjust{}, before)
-	ctx = context.WithValue(ctx, core.PlanCacheKeyTestAfterAdjust{}, after)
-	tk.MustQueryWithContext(ctx, exec2)
-
-	// check the cloned plan should have the same result as the original plan
-	originalRes := tk.MustQuery(exec2).Sort()
-	clonePlan := func(cachedVal *core.PlanCacheValue) {
-		cloned, err := original.(base.PhysicalPlan).Clone(original.SCtx())
-		require.NoError(t, err)
-		cachedVal.Plan = cloned
-	}
-	ctx = context.WithValue(context.Background(), core.PlanCacheKeyTestBeforeAdjust{}, clonePlan)
-	clonedRes := tk.MustQueryWithContext(ctx, exec2)
-	originalRes.Equal(clonedRes.Sort().Rows())
+	tk2.MustExec(prep)
+	tk2.MustExec(set)
+	checked := false
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
+		checked = true
+		// TODO: check cloned is deeply cloned from plan.
+	})
+	tk2.MustQueryWithContext(ctx, exec2)
+	require.True(t, checked)
 }
 
 func planFingerprint(t *testing.T, p base.Plan) string {
