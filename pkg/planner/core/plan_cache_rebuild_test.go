@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -81,18 +82,56 @@ func testCachedPlanClone(t *testing.T, tk *testkit.TestKit, prep, set, exec1, ex
 	tk.MustQuery(exec1) // generate the first cached plan
 
 	// check adjusting the cloned plan should have no effect on the original plan
-	var original, adjusted base.Plan
+	var original base.Plan
+	var originalFingerprint string
 	before := func(cachedVal *core.PlanCacheValue) {
-		original = cachedVal.Plan
+		// get the current cached plan and its fingerprint
+		original, originalFingerprint = cachedVal.Plan, planFingerprint(t, cachedVal.Plan)
+		// replace the cached plan with a cloned one
+		cloned, err := original.(base.PhysicalPlan).Clone(original.SCtx())
+		require.NoError(t, err)
+		cachedVal.Plan = cloned
 	}
 	after := func(cachedVal *core.PlanCacheValue) {
-		adjusted = cachedVal.Plan
+		cloned := cachedVal.Plan
+		require.True(t, originalFingerprint != planFingerprint(t, cloned))   // this cloned one have been adjusted by the optimizer
+		require.True(t, originalFingerprint == planFingerprint(t, original)) // the prior one should keep unchanged
 	}
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestBeforeAdjust{}, before)
 	ctx = context.WithValue(ctx, core.PlanCacheKeyTestAfterAdjust{}, after)
 	tk.MustQueryWithContext(ctx, exec2)
 
-	require.NoError(t, core.CheckPlanDeepClone(original, adjusted))
+	// check the cloned plan should have the same result as the original plan
+	originalRes := tk.MustQuery(exec2).Sort()
+	clonePlan := func(cachedVal *core.PlanCacheValue) {
+		cloned, err := original.(base.PhysicalPlan).Clone(original.SCtx())
+		require.NoError(t, err)
+		cachedVal.Plan = cloned
+	}
+	ctx = context.WithValue(context.Background(), core.PlanCacheKeyTestBeforeAdjust{}, clonePlan)
+	clonedRes := tk.MustQueryWithContext(ctx, exec2)
+	originalRes.Equal(clonedRes.Sort().Rows())
+}
+
+func planFingerprint(t *testing.T, p base.Plan) string {
+	switch x := p.(type) {
+	case base.PhysicalPlan:
+		return physicalPlanFingerprint(t, x)
+	default:
+		// TODO: support Update/Insert/Delete plan
+		t.Fatalf("unexpected plan type %T", x)
+		return ""
+	}
+}
+
+func physicalPlanFingerprint(t *testing.T, p base.PhysicalPlan) string {
+	v, err := json.Marshal(p)
+	require.NoError(t, err)
+	childPrints := make([]string, len(p.Children()))
+	for i, child := range p.Children() {
+		childPrints[i] = physicalPlanFingerprint(t, child)
+	}
+	return fmt.Sprintf("%s(%s)", string(v), childPrints)
 }
 
 func TestCheckPlanDeepClone(t *testing.T) {
