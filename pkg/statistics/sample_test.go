@@ -186,11 +186,9 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "TopN{length: 4, [(2, 10), (4, 7), (7, 5), (11, 3)]}", topNStr)
 	require.Equal(t, "column:1 ndv:1000 totColSize:8168\n"+
-		"num: 200 lower_bound: 1 upper_bound: 204 repeats: 1 ndv: 0\n"+
-		"num: 200 lower_bound: 205 upper_bound: 404 repeats: 1 ndv: 0\n"+
-		"num: 200 lower_bound: 405 upper_bound: 604 repeats: 1 ndv: 0\n"+
-		"num: 200 lower_bound: 605 upper_bound: 804 repeats: 1 ndv: 0\n"+
-		"num: 196 lower_bound: 805 upper_bound: 1000 repeats: 1 ndv: 0", hist.ToString(0))
+		"num: 402 lower_bound: 1 upper_bound: 406 repeats: 1 ndv: 0\n"+
+		"num: 402 lower_bound: 407 upper_bound: 808 repeats: 1 ndv: 0\n"+
+		"num: 192 lower_bound: 809 upper_bound: 1000 repeats: 1 ndv: 0", hist.ToString(0))
 }
 
 type testSampleSuite struct {
