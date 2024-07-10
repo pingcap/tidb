@@ -62,6 +62,12 @@ func (d *Dry) Effects() []Effect {
 	return d.effects
 }
 
+func (d *Dry) CleanEffects() {
+	d.effectsMu.Lock()
+	defer d.effectsMu.Unlock()
+	d.effects = nil
+}
+
 func (d *Dry) DeleteFiles(ctx context.Context, names []string) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
