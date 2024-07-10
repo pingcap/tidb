@@ -390,6 +390,7 @@ func closeConn(cc *clientConn) error {
 				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 			}
 		}
+
 		// Close statements and session
 		// At first, it'll decrese the count of connections in the resource group, update the corresponding gauge.
 		// Then it'll close the statements and session, which release advisory locks, row locks, etc.
@@ -398,6 +399,8 @@ func closeConn(cc *clientConn) error {
 			metrics.ConnGauge.WithLabelValues(resourceGroupName).Dec()
 
 			err = ctx.Close()
+		} else {
+			metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Dec()
 		}
 	})
 	return err
