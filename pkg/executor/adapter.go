@@ -538,10 +538,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	// must set plan according to the `Execute` plan before getting planDigest
 	a.inheritContextFromExecuteStmt()
 	if rm := domain.GetDomain(sctx).RunawayManager(); variable.EnableResourceControl.Load() && rm != nil {
-		stmtCtx := sctx.GetSessionVars().StmtCtx
+		sessionVars := sctx.GetSessionVars()
+		stmtCtx := sessionVars.StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, sqlDigest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = rm.DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String())
+		stmtCtx.RunawayChecker = rm.DeriveChecker(stmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String(), sessionVars.StartTime)
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
@@ -1404,7 +1405,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.updatePrevStmt()
 	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
-	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
+	executeDuration := sessVars.GetExecuteDuration()
 	if sessVars.InRestrictedSQL {
 		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
@@ -1543,7 +1544,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	stmtCtx := sessVars.StmtCtx
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
+	costTime := sessVars.GetTotalCostDuration()
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
 	enable := cfg.Instance.EnableSlowLog.Load()
 	// if the level is Debug, or trace is enabled, print slow logs anyway
@@ -1875,7 +1876,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
-	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
+	costTime := sessVars.GetTotalCostDuration()
 	charset, collation := sessVars.GetCharsetInfo()
 
 	var prevSQL, prevSQLDigest string
@@ -2116,7 +2117,7 @@ func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	}
 	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		execDuration := time.Since(vars.StartTime) + vars.DurationParse
+		execDuration := vars.GetTotalCostDuration()
 		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
 	}
 }

@@ -1118,7 +1118,7 @@ type SessionVars struct {
 	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
 	NoopFuncsMode int
 
-	// StartTime is the start time of the last query.
+	// StartTime is the start time of the last query. It's set after the query is parsed and before the query is compiled.
 	StartTime time.Time
 
 	// DurationParse is the duration of parsing SQL string to AST of the last query.
@@ -1831,6 +1831,16 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
+}
+
+// GetTotalCostDuration returns the total cost duration of the last statement in the current session.
+func (s *SessionVars) GetTotalCostDuration() time.Duration {
+	return time.Since(s.StartTime) + s.DurationParse
+}
+
+// GetExecuteDuration returns the execute duration of the last statement in the current session.
+func (s *SessionVars) GetExecuteDuration() time.Duration {
+	return time.Since(s.StartTime) - s.DurationCompile
 }
 
 const (

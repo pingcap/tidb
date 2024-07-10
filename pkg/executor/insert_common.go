@@ -1437,6 +1437,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 			}
 		}
 	}
+
+	if e.Table.Meta().TTLInfo != nil {
+		// update the TTL metrics if the table is a TTL table
+		vars.TxnCtx.InsertTTLRowsCount++
+	}
+
 	return nil
 }
 

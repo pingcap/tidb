@@ -26,7 +26,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -154,39 +153,6 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 		equivUniqueIDs = append(equivUniqueIDs, []intset.FastIntSet{intset.NewFastIntSet(lhsUniqueID), intset.NewFastIntSet(rhsUniqueID)})
 	}
 	return equivUniqueIDs
-}
-
-// LogicalMemTable represents a memory table or virtual table
-// Some memory tables wants to take the ownership of some predications
-// e.g
-// SELECT * FROM cluster_log WHERE type='tikv' AND address='192.16.5.32'
-// Assume that the table `cluster_log` is a memory table, which is used
-// to retrieve logs from remote components. In the above situation we should
-// send log search request to the target TiKV (192.16.5.32) directly instead of
-// requesting all cluster components log search gRPC interface to retrieve
-// log message and filtering them in TiDB node.
-type LogicalMemTable struct {
-	logicalop.LogicalSchemaProducer
-
-	Extractor base.MemTablePredicateExtractor
-	DBName    model.CIStr
-	TableInfo *model.TableInfo
-	Columns   []*model.ColumnInfo
-	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
-	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
-	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
-	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_summary;
-	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_result;
-	QueryTimeRange util.QueryTimeRange
-}
-
-// LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
-type LogicalUnionScan struct {
-	logicalop.BaseLogicalPlan
-
-	conditions []expression.Expression
-
-	handleCols util.HandleCols
 }
 
 // WindowFrame represents a window function frame.
@@ -328,21 +294,6 @@ func (s *ShowContents) MemoryUsage() (sum int64) {
 	return
 }
 
-// LogicalShow represents a show plan.
-type LogicalShow struct {
-	logicalop.LogicalSchemaProducer
-	ShowContents
-
-	Extractor base.ShowPredicateExtractor
-}
-
-// LogicalShowDDLJobs is for showing DDL job list.
-type LogicalShowDDLJobs struct {
-	logicalop.LogicalSchemaProducer
-
-	JobNumber int64
-}
-
 // CTEClass holds the information and plan for a CTE. Most of the fields in this struct are the same as cteInfo.
 // But the cteInfo is used when building the plan, and CTEClass is used also for building the executor.
 type CTEClass struct {
@@ -393,18 +344,6 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 	return
 }
 
-// LogicalCTE is for CTE.
-type LogicalCTE struct {
-	logicalop.LogicalSchemaProducer
-
-	cte       *CTEClass
-	cteAsName model.CIStr
-	cteName   model.CIStr
-	seedStat  *property.StatsInfo
-
-	onlyUsedAsStorage bool
-}
-
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
 	logicalop.LogicalSchemaProducer
@@ -415,15 +354,6 @@ type LogicalCTETable struct {
 
 	// seedSchema is only used in columnStatsUsageCollector to get column mapping
 	seedSchema *expression.Schema
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
-	if p.cte.recursivePartLogicalPlan != nil {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
-	}
-	return corCols
 }
 
 // LogicalSequence is used to mark the CTE producer in the main query tree.

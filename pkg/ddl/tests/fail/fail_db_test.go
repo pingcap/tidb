@@ -209,7 +209,7 @@ func TestAddIndexFailed(t *testing.T) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -365,7 +365,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 	is := s.dom.InfoSchema()
 	schemaName := model.NewCIStr("test_db")
 	tableName := model.NewCIStr("test_add_index")
-	tbl, err := is.TableByName(schemaName, tableName)
+	tbl, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 
 	splitCount := 100
@@ -465,7 +465,7 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("alter table t change column b bb mediumint first")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	cols := tbl.Meta().Columns
 	colsStr := ""

@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -241,7 +242,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 		" PARTITION `p3` VALUES LESS THAN (8000000),\n" +
 		" PARTITION `p4` VALUES LESS THAN (10000000),\n" +
 		" PARTITION `p5` VALUES LESS THAN (MAXVALUE))"))
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	require.Nil(t, tbl.Meta().Partition.AddingDefinitions)

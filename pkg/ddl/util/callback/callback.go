@@ -145,24 +145,6 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	tc.BaseCallback.OnWatched(ctx)
 }
 
-// OnGetJobBefore implements Callback.OnGetJobBefore interface.
-func (tc *TestDDLCallback) OnGetJobBefore() {
-	if tc.OnGetJobBeforeExported != nil {
-		tc.OnGetJobBeforeExported()
-		return
-	}
-	tc.BaseCallback.OnGetJobBefore()
-}
-
-// OnGetJobAfter implements Callback.OnGetJobAfter interface.
-func (tc *TestDDLCallback) OnGetJobAfter(job *model.Job) {
-	if tc.OnGetJobAfterExported != nil {
-		tc.OnGetJobAfterExported(job)
-		return
-	}
-	tc.BaseCallback.OnGetJobAfter(job)
-}
-
 // Clone copies the callback and take its reference
 func (tc *TestDDLCallback) Clone() *TestDDLCallback {
 	return &*tc

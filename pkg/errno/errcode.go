@@ -1149,6 +1149,7 @@ const (
 	ErrResourceGroupQueryRunawayInterrupted   = 8253
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
+	ErrResourceGroupInvalidForRole            = 8257
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
