@@ -196,11 +196,15 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?")
 		} else {
+			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
-			if p.UnsignedHandle {
-				buffer.WriteString(strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
+			if redactOn {
+				buffer.WriteString("?")
+			} else if p.UnsignedHandle {
+				writeRedactMarker(&buffer, strconv.FormatUint(uint64(p.Handle.IntValue()), 10), redactMode)
 			} else {
-				buffer.WriteString(p.Handle.String())
+				writeRedactMarker(&buffer, p.Handle.String(), redactMode)
 			}
 		}
 	}

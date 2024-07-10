@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -50,7 +51,7 @@ func (ts *LogicalTableScan) ExplainInfo() string {
 	ectx := ts.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString(ts.Source.ExplainInfo())
 	if ts.Source.HandleCols != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", ts.Source.HandleCols.StringWithCtx(ectx))
+		fmt.Fprintf(buffer, ", pk col:%s", ts.Source.HandleCols.StringWithCtx(ectx, errors.RedactLogDisable))
 	}
 	if len(ts.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", ts.AccessConds)

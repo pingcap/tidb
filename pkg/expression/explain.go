@@ -30,10 +30,10 @@ import (
 
 // ExplainInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainInfo(ctx EvalContext) string {
-	return expr.explainInfo(ctx, false)
+	return expr.explainInfo(ctx, false, ctx.GetTiDBRedactLog() == errors.RedactLogMarker)
 }
 
-func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string {
+func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool, marker bool) string {
 	// we only need ctx for non-normalized explain info.
 	intest.Assert(normalized || ctx != nil)
 	var buffer bytes.Buffer
@@ -77,7 +77,7 @@ func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainNormalizedInfo() string {
-	return expr.explainInfo(nil, true)
+	return expr.explainInfo(nil, true, false)
 }
 
 // ExplainNormalizedInfo4InList implements the Expression interface.
@@ -110,7 +110,7 @@ func (col *Column) ColumnExplainInfo(ctx ParamValues, normalized bool) string {
 	if normalized {
 		return col.ColumnExplainInfoNormalized()
 	}
-	return col.StringWithCtx(ctx)
+	return col.StringWithCtx(ctx, errors.RedactLogDisable)
 }
 
 // ColumnExplainInfoNormalized returns the normalized explained info for column.
@@ -138,9 +138,20 @@ func (col *Column) ExplainNormalizedInfo4InList() string {
 
 // ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo(ctx EvalContext) string {
+	redact := ctx.GetTiDBRedactLog()
+	if redact == errors.RedactLogEnable {
+		return "?"
+	}
 	dt, err := expr.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return "not recognized const value"
+	}
+	if redact == errors.RedactLogMarker {
+		builder := new(strings.Builder)
+		builder.WriteString("‹")
+		builder.WriteString(expr.format(dt))
+		builder.WriteString("›")
+		return builder.String()
 	}
 	return expr.format(dt)
 }
@@ -167,27 +178,29 @@ func (expr *Constant) format(dt types.Datum) string {
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
-func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, RedactMode string) string {
+func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, redactMode string) string {
 	builder := &strings.Builder{}
 	for i, expr := range exprs {
 		switch expr.(type) {
 		case *Column, *CorrelatedColumn:
-			builder.WriteString(expr.StringWithCtx(ctx))
-			if expr.StringWithCtx(ctx) != schema.Columns[i].StringWithCtx(ctx) {
+			builder.WriteString(expr.StringWithCtx(ctx, redactMode))
+			if expr.StringWithCtx(ctx, redactMode) != schema.Columns[i].StringWithCtx(ctx, redactMode) {
 				// simple col projected again with another uniqueID without origin name.
 				builder.WriteString("->")
-				builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
+				builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 			}
 		case *Constant:
-			redactOn := RedactMode == errors.RedactLogEnable
-			RedactMarker := RedactMode == errors.RedactLogMarker
-			v := expr.StringWithCtx(ctx)
+			redactOn := redactMode == errors.RedactLogEnable
+			RedactMarker := redactMode == errors.RedactLogMarker
+			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
 			length := 64
 			if len(v) < length {
 				if redactOn {
 					builder.WriteString("?")
 				} else if RedactMarker {
+					builder.WriteString("‹")
 					builder.WriteString(v)
+					builder.WriteString("›")
 				} else {
 					builder.WriteString(v)
 				}
@@ -204,11 +217,11 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 				fmt.Fprintf(builder, "(len:%d)", len(v))
 			}
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
+			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 		default:
-			builder.WriteString(expr.StringWithCtx(ctx))
+			builder.WriteString(expr.StringWithCtx(ctx, redactMode))
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
+			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 		}
 		if i+1 < len(exprs) {
 			builder.WriteString(", ")

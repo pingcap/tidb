@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -277,7 +278,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *opti
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(expr.StringWithCtx(ectx))
+			buffer.WriteString(expr.StringWithCtx(ectx, perrors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
