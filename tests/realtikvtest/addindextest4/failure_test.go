@@ -28,17 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestAddIndexIngestRecoverPartition(t *testing.T) {
 	partCnt := 0
 	block := make(chan struct{})
 	ExecuteBlocks(t, func() {
-		logutil.BgLogger().Info("Execute Blocks", zap.Int("block", 1))
 		store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("drop database if exists addindexlit;")
@@ -61,7 +58,6 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 		})
 		tk.MustExec("alter table t add index idx(b);")
 	}, func() {
-		logutil.BgLogger().Info("Execute Blocks", zap.Int("block", 2))
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Port += 1
 		})
@@ -87,7 +83,6 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 		tk.MustQuery("select 1;").Check(testkit.Rows("1"))
 		<-block // block forever until os.Exit(0).
 	}, func() {
-		logutil.BgLogger().Info("Execute Blocks", zap.Int("block", 3))
 		failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterFinishDDLJob", func(job *model.Job) {
 			if job.Type != model.ActionAddIndex {
 				return
@@ -124,5 +119,6 @@ func ExecuteBlocks(t *testing.T, fns ...func()) {
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 	require.NoError(t, err)
+	t.Logf("Execute block %d", len(fns)-1-curStep)
 	fns[len(fns)-1-curStep]()
 }
