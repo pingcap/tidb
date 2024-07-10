@@ -2140,7 +2140,7 @@ func estimateTableRowSize(
 func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.Table) (int, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
-		return 0, errors.New("not a helper.Storage")
+		return 0, fmt.Errorf("not a helper.Storage")
 	}
 	h := &helper.Helper{
 		Store:       hStore,
@@ -2175,11 +2175,11 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, err
 	}
 	if len(regionInfos.Regions) != regionLimit {
-		return 0, errors.New("less than 3 regions")
+		return 0, fmt.Errorf("less than 3 regions")
 	}
 	sample := regionInfos.Regions[1]
 	if sample.ApproximateKeys == 0 || sample.ApproximateSize == 0 {
-		return 0, errors.New("zero approximate size")
+		return 0, fmt.Errorf("zero approximate size")
 	}
 	return int(uint64(sample.ApproximateSize)*size.MB) / int(sample.ApproximateKeys), nil
 }

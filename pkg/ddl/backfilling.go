@@ -668,7 +668,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	cpMgr, err := ingest.NewCheckpointManager(
 		ctx,
-		bcCtx,
 		sessPool,
 		job.ID,
 		indexIDs,

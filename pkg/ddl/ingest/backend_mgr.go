@@ -233,9 +233,6 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	}
 	_ = bc.FinishAndUnregisterEngines()
 	bc.backend.Close()
-	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.Close()
-	}
 	m.memRoot.Release(structSizeBackendCtx)
 	m.memRoot.ReleaseWithTag(encodeBackendTag(jobID))
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),

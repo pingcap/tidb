@@ -55,6 +55,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 			partCnt++
 			if partCnt == 2 {
 				dom.DDL().OwnerManager().ResignOwner(context.Background())
+				dom.InfoSyncer().RemoveServerInfo()
 				os.Exit(0) // Mock TiDB exit abnormally. We use zero because the requirement of `ExecuteBlocks()`.
 			}
 		})
@@ -75,6 +76,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 			partCnt++
 			if partCnt == 2 {
 				dom.DDL().OwnerManager().ResignOwner(context.Background())
+				dom.InfoSyncer().RemoveServerInfo()
 				os.Exit(0)
 			}
 		})
@@ -93,7 +95,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 			block <- struct{}{}
 		})
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Port += 1
+			conf.Port += 2
 		})
 		realtikvtest.RetainOldData = true
 		store := realtikvtest.CreateMockStoreAndSetup(t)
