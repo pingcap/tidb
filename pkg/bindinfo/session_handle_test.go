@@ -445,7 +445,7 @@ func TestIssue53834(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set global tidb_mem_oom_action='%v'`, oomAction))
 	}()
 	tk.MustExec(`set global tidb_mem_oom_action='cancel'`)
-	tk.MustExec(`create binding using replace into t select /*+ memory_quota(1 mb) */ * from t`)
+	tk.MustExec(`create binding for replace into t select * from t using replace into t select /*+ memory_quota(1 mb) */ * from t`)
 	err := tk.ExecToErr(`replace into t select * from t`)
 	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
 }
