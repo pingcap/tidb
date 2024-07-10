@@ -43,7 +43,7 @@ func TestParallelLockNewTask(t *testing.T) {
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
-	testTable, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	testTable, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	sessionFactory := sessionFactory(t, store)
@@ -120,7 +120,7 @@ func TestParallelSchedule(t *testing.T) {
 	sessionFactory := sessionFactory(t, store)
 
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	// 16 tasks and 16 scan workers (in 4 task manager) should be able to be scheduled in a single "reschedule"
 	for i := 0; i < 16; i++ {
@@ -179,7 +179,7 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 
 	// create table and scan task
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, 1)
 	tk.MustExec(sql)
@@ -227,7 +227,7 @@ func TestTaskMetrics(t *testing.T) {
 
 	// create table and scan task
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, 1)
 	tk.MustExec(sql)
@@ -297,7 +297,7 @@ func TestTTLRunningTasksLimitation(t *testing.T) {
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	// 64 tasks and 128 scan workers (in 16 task manager) should only schedule 32 tasks
 	for i := 0; i < 128; i++ {

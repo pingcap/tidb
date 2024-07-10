@@ -53,18 +53,6 @@ func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.Lo
 	return p
 }
 
-// PushDownTopN implements the LogicalPlan interface.
-func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	if topN != nil {
-		return topN.AttachChild(p, opt)
-	}
-	return p
-}
-
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
 func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	if topN == nil {

@@ -17,6 +17,7 @@ package context
 import (
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -97,6 +98,7 @@ func TestEncodeRow(t *testing.T) {
 			oldFormat: true,
 		},
 	} {
+		// test encode and write to mem buffer
 		cfg := RowEncodingConfig{
 			RowEncoder:                &rowcodec.Encoder{Enable: !c.oldFormat},
 			IsRowLevelChecksumEnabled: c.rowLevelChecksum,
@@ -115,9 +117,11 @@ func TestEncodeRow(t *testing.T) {
 
 		memBuffer := &mockMemBuffer{}
 		if len(c.flags) == 0 {
-			memBuffer.On("Set", kv.Key("key1"), expectedVal).Return(nil).Once()
+			memBuffer.On("Set", kv.Key("key1"), expectedVal).
+				Return(nil).Once()
 		} else {
-			memBuffer.On("SetWithFlags", kv.Key("key1"), expectedVal, c.flags).Return(nil).Once()
+			memBuffer.On("SetWithFlags", kv.Key("key1"), expectedVal, c.flags).
+				Return(nil).Once()
 		}
 		err = buffer.WriteMemBufferEncoded(
 			cfg, c.loc, errctx.StrictNoWarningContext,
@@ -125,9 +129,19 @@ func TestEncodeRow(t *testing.T) {
 		)
 		require.NoError(t, err)
 		memBuffer.AssertExpectations(t)
-
 		// the encoding result should be cached as a buffer
 		require.Equal(t, expectedVal, buffer.writeStmtBufs.RowValBuf)
+
+		// test encode val for binlog
+		expectedVal, err =
+			tablecodec.EncodeOldRow(c.loc, []types.Datum{d1, d2, d3}, []int64{1, 2, 3}, nil, nil)
+		require.NoError(t, err)
+		encoded, err := buffer.EncodeBinlogRowData(c.loc, errctx.StrictNoWarningContext)
+		require.NoError(t, err)
+		require.Equal(t, expectedVal, encoded)
+		// the encoded should not be referenced by any inner buffer
+		require.True(t, unsafe.SliceData(encoded) != unsafe.SliceData(buffer.writeStmtBufs.RowValBuf))
+		require.True(t, unsafe.SliceData(encoded) != unsafe.SliceData(buffer.writeStmtBufs.IndexKeyBuf))
 	}
 }
 
@@ -157,11 +171,6 @@ func TestEncodeBufferReserve(t *testing.T) {
 	require.Greater(t, encodedCap, 0)
 	require.Equal(t, 4, len(buffer.writeStmtBufs.AddRowValues))
 	addRowValuesCap := cap(buffer.writeStmtBufs.AddRowValues)
-
-	// GetColDataBuffer should return the underlying buffer
-	colIDs, row := buffer.GetColDataBuffer()
-	require.Equal(t, buffer.colIDs, colIDs)
-	require.Equal(t, buffer.row, row)
 
 	// reset should not shrink the capacity
 	buffer.Reset(2)

@@ -200,7 +200,7 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		err      error
 	)
 	if s.ReferTable != nil {
-		referTbl, err = d.TableByName(s.ReferTable.Schema, s.ReferTable.Name)
+		referTbl, err = d.TableByName(context.Background(), s.ReferTable.Schema, s.ReferTable.Name)
 		if err != nil {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(s.ReferTable.Schema, s.ReferTable.Name)
 		}
@@ -248,7 +248,7 @@ func (d SchemaTracker) CreateTableWithInfo(
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
-	oldTable, _ := d.TableByName(dbName, info.Name)
+	oldTable, _ := d.TableByName(context.Background(), dbName, info.Name)
 	if oldTable != nil {
 		switch c.OnExist {
 		case ddl.OnExistIgnore:
@@ -298,7 +298,7 @@ func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt)
 func (d SchemaTracker) DropTable(_ sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
 	for _, name := range stmt.Tables {
-		tb, err := d.TableByName(name.Schema, name.Name)
+		tb, err := d.TableByName(context.Background(), name.Schema, name.Name)
 		if err != nil || !tb.IsBaseTable() {
 			if stmt.IfExists {
 				continue
@@ -341,7 +341,7 @@ func (SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInf
 func (d SchemaTracker) DropView(_ sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
 	for _, name := range stmt.Tables {
-		tb, err := d.TableByName(name.Schema, name.Name)
+		tb, err := d.TableByName(context.Background(), name.Schema, name.Name)
 		if err != nil {
 			if stmt.IfExists {
 				continue
@@ -908,7 +908,7 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 	// https://github.com/mysql/mysql-server/blob/8d8c986e5716e38cb776b627a8eee9e92241b4ce/sql/sql_table.cc#L16698-L16714
 
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	tblInfo, err := d.TableByName(context.Background(), ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1102,7 +1102,7 @@ func (d SchemaTracker) renameTable(_ sessionctx.Context, oldIdents, newIdents []
 	}
 
 	for i := range oldIdents {
-		tableInfo, err := d.TableByName(oldIdents[i].Schema, oldIdents[i].Name)
+		tableInfo, err := d.TableByName(context.Background(), oldIdents[i].Schema, oldIdents[i].Name)
 		if err != nil {
 			return err
 		}

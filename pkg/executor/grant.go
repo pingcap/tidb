@@ -94,7 +94,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 		dbNameStr := model.NewCIStr(dbName)
 		schema := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
+		tbl, err := schema.TableByName(ctx, dbNameStr, model.NewCIStr(e.Level.TableName))
 		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
 			allowed := false
@@ -230,12 +230,12 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			if len(priv.Cols) > 0 {
 				// Check column scope privilege entry.
 				// TODO: Check validity before insert new entry.
-				err := e.checkAndInitColumnPriv(user.User.Username, user.User.Hostname, priv.Cols, internalSession)
+				err := e.checkAndInitColumnPriv(ctx, user.User.Username, user.User.Hostname, priv.Cols, internalSession)
 				if err != nil {
 					return err
 				}
 			}
-			err := e.grantLevelPriv(priv, user, internalSession)
+			err := e.grantLevelPriv(ctx, priv, user, internalSession)
 			if err != nil {
 				return err
 			}
@@ -303,8 +303,8 @@ func checkAndInitTablePriv(ctx sessionctx.Context, dbName, tblName string, _ inf
 
 // checkAndInitColumnPriv checks if column scope privilege entry exists in mysql.Columns_priv.
 // If unexists, insert a new one.
-func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast.ColumnName, internalSession sessionctx.Context) error {
-	dbName, tbl, err := getTargetSchemaAndTable(e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
+func (e *GrantExec) checkAndInitColumnPriv(ctx context.Context, user string, host string, cols []*ast.ColumnName, internalSession sessionctx.Context) error {
+	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
 	}
@@ -453,7 +453,7 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 }
 
 // grantLevelPriv grants priv to user in s.Level scope.
-func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+func (e *GrantExec) grantLevelPriv(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	if priv.Priv == mysql.ExtendedPriv {
 		return e.grantDynamicPriv(priv.Name, user, internalSession)
 	}
@@ -469,7 +469,7 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 		if len(priv.Cols) == 0 {
 			return e.grantTableLevel(priv, user, internalSession)
 		}
-		return e.grantColumnLevel(priv, user, internalSession)
+		return e.grantColumnLevel(ctx, priv, user, internalSession)
 	default:
 		return errors.Errorf("Unknown grant level: %#v", e.Level)
 	}
@@ -559,8 +559,8 @@ func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, inte
 }
 
 // grantColumnLevel manipulates mysql.tables_priv table.
-func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	dbName, tbl, err := getTargetSchemaAndTable(e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
+func (e *GrantExec) grantColumnLevel(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
 	}
@@ -760,15 +760,15 @@ func getColumnPriv(sctx sessionctx.Context, name string, host string, db string,
 }
 
 // getTargetSchemaAndTable finds the schema and table by dbName and tableName.
-func getTargetSchemaAndTable(ctx sessionctx.Context, dbName, tableName string, is infoschema.InfoSchema) (string, table.Table, error) {
+func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbName, tableName string, is infoschema.InfoSchema) (string, table.Table, error) {
 	if len(dbName) == 0 {
-		dbName = ctx.GetSessionVars().CurrentDB
+		dbName = sctx.GetSessionVars().CurrentDB
 		if len(dbName) == 0 {
 			return "", nil, errors.New("miss DB name for grant privilege")
 		}
 	}
 	name := model.NewCIStr(tableName)
-	tbl, err := is.TableByName(model.NewCIStr(dbName), name)
+	tbl, err := is.TableByName(ctx, model.NewCIStr(dbName), name)
 	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return dbName, nil, err
 	}

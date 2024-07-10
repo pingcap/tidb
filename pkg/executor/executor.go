@@ -281,13 +281,13 @@ type ShowNextRowIDExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
+func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
 	}
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
-	tbl, err := is.TableByName(e.tblName.Schema, e.tblName.Name)
+	tbl, err := is.TableByName(ctx, e.tblName.Schema, e.tblName.Name)
 	if err != nil {
 		return err
 	}

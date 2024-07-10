@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -54,7 +55,7 @@ PARTITION BY RANGE (c) (
 
 	is := dom.InfoSchema()
 
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	partDefs := tb.Meta().GetPartitionInfo().Definitions
 
@@ -579,7 +580,7 @@ func TestPlacementMode(t *testing.T) {
 }
 
 func checkTiflashReplicaSet(t *testing.T, do *domain.Domain, db, tb string, cnt uint64) {
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tb))
 	require.NoError(t, err)
 
 	tiflashReplica := tbl.Meta().TiFlashReplica
@@ -726,7 +727,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 }
 
 func getClonedTableFromDomain(dbName string, tableName string, dom *domain.Domain) (*model.TableInfo, error) {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return nil, err
 	}

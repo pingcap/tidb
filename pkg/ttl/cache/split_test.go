@@ -243,7 +243,7 @@ func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql s
 	tk.MustExec(sql)
 	is, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
 	require.True(t, ok)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(name))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(name))
 	require.NoError(t, err)
 	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tbl.Meta(), model.NewCIStr(""))
 	require.NoError(t, err)
