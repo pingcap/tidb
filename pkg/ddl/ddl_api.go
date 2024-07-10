@@ -2853,9 +2853,9 @@ func (d *ddl) createTableWithInfoJob(
 	}
 
 	if !retainID {
-		if err := d.assignTableID(tbInfo); err != nil {
-			return nil, errors.Trace(err)
-		}
+		//if err := d.assignTableID(tbInfo); err != nil {
+		//	return nil, errors.Trace(err)
+		//}
 
 		if tbInfo.Partition != nil {
 			if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
@@ -2895,8 +2895,8 @@ func (d *ddl) createTableWithInfoJob(
 	}
 
 	job = &model.Job{
-		SchemaID:            schema.ID,
-		TableID:             tbInfo.ID,
+		SchemaID: schema.ID,
+		//TableID:             tbInfo.ID,
 		SchemaName:          schema.Name.L,
 		TableName:           tbInfo.Name.L,
 		Type:                actionType,
