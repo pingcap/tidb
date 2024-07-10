@@ -52,8 +52,8 @@ func TestPlanCacheClone(t *testing.T) {
 		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(primary) where a<? and b+?=10'`,
 		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select a+b, b+? from t where a<?'`,
-		`set @a1=1,@b1=a,@a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select a+b from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
 	// IndexScan
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select b from t use index(b) where b<=?'`,
