@@ -289,10 +289,10 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
-	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore)"+
-		" if set to true, the incremental restore will not perform rewrite on the incremental data)"+
+	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
+		" default is true, the incremental restore will not perform rewrite on the incremental data"+
 		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
-		" these restricted ddl jobs are add index, modify column and reorganize partition")
+		" these ddl jobs are Add index, Modify column and Reorganize partition")
 
 	DefineRestoreCommonFlags(flags)
 }
