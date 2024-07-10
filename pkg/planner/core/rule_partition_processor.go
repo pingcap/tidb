@@ -1612,8 +1612,7 @@ func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.C
 			args[0] = con
 			return partFn
 		}
-	}
-	if partFn.FuncName.L == ast.Extract {
+	} else if partFn.FuncName.L == ast.Extract {
 		if expr, ok := args[1].(*expression.ScalarFunction); ok && expr.Function.PbCode() == tipb.ScalarFuncSig_CastTimeAsDuration {
 			// Special handing if Cast is added
 			funcArgs := expr.GetArgs()
