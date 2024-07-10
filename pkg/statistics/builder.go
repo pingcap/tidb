@@ -156,15 +156,19 @@ func buildHist(
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
 	ndvFactor := float64(count) / float64(ndv)
+	// origNdvFactor represents an upper bound (Ceil) of the orignal ndvFactor - such that "repeat" values greater
+	// than this value are considered to be skewed (well) above the average.
+	origNdvFactor := int64(math.Ceil(ndvFactor + 1))
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
 	// Since bucket count is increased by sampleFactor, so the actual max values per bucket are
-	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
+	// ceil(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
-	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
+	valuesPerBucket := math.Ceil(float64(count)/float64(numBuckets) + sampleFactor)
 
 	bucketIdx := 0
+	maxRepeat := int64(ndvFactor)
 	var lastCount int64
 	corrXYSum = float64(0)
 	// The underlying idea is that when a value is sampled,
@@ -198,6 +202,7 @@ func buildHist(
 			return 0, errors.Trace(err)
 		}
 		totalCount := float64(i+1) * sampleFactor
+		currentCount := totalCount - float64(lastCount)
 		if cmp == 0 {
 			// The new item has the same value as the current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
@@ -216,15 +221,20 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if totalCount-float64(lastCount) <= valuesPerBucket {
+			// Allow non-skewed values (repeat == 1) to have a larger bucket. Anything greater than the original
+			// average NDV should be the last value in this bucket since the repeat is used similar to a topN
+		} else if (maxRepeat == 1 && hg.Buckets[bucketIdx].Repeat == 1 && currentCount <= valuesPerBucket*2) ||
+			(currentCount <= valuesPerBucket && hg.Buckets[bucketIdx].Repeat < origNdvFactor) {
 			// The bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
+			maxRepeat = max(maxRepeat, hg.Buckets[bucketIdx].Repeat)
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
 			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+			maxRepeat = int64(ndvFactor)
 		}
 	}
 	return corrXYSum, nil
