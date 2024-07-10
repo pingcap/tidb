@@ -2712,13 +2712,16 @@ func (s *SessionVars) GetDivPrecisionIncrement() int {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	if s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) != errctx.LevelError {
+	// In pessimistic txn, it should always use lazy check because each statement will try to lock the key and the
+	// dup-key constraint will be checked at that time.
+	if txnCtx := s.TxnCtx; txnCtx != nil && txnCtx.IsPessimistic {
 		// This branch means we are in `insert/update ignore`.
 		// The executor will handle the dup-key error and ignore it in executor,
 		// so we must check the dup-key error in place to make sure the executor can get the error.
-		return false
+		return s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) != errctx.LevelError
+
 	}
-	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic)
+	return s.PresumeKeyNotExists
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.
