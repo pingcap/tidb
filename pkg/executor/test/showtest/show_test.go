@@ -524,7 +524,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery(`describe t`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`show columns from v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1,PAD SPACE"))
 	tk.MustExec(`drop sequence if exists seq`)
 	tk.MustExec(`create sequence seq`)
 	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
@@ -1195,7 +1195,7 @@ func TestShowLimitReturnRow(t *testing.T) {
 	require.Equal(t, rows[0][0], "server_id")
 
 	tk.MustQuery("Show Collation where collation='utf8_bin'").Check(testkit.RowsWithSep("|", ""+
-		"utf8_bin utf8 83 Yes Yes 1"))
+		"utf8_bin utf8 83 Yes Yes 1 PAD SPACE"))
 
 	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
 	rows = result.Rows()
