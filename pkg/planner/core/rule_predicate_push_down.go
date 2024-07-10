@@ -674,12 +674,3 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 
 	return []expression.Expression{expression.ComposeDNFCondition(exprCtx, newAccessItems...)}, nil
 }
-
-// PredicatePushDown implements the base.LogicalPlan interface.
-// Currently, we only maintain the main query tree.
-func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	lastIdx := p.ChildLen() - 1
-	remained, newLastChild := p.Children()[lastIdx].PredicatePushDown(predicates, op)
-	p.SetChild(lastIdx, newLastChild)
-	return remained, p
-}

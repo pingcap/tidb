@@ -309,13 +309,3 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	}
 	return resultColumn, resultColumnInfo
 }
-
-// PruneColumns implements the interface of base.LogicalPlan.
-func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	var err error
-	p.Children()[p.ChildLen()-1], err = p.Children()[p.ChildLen()-1].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
