@@ -219,7 +219,7 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 	s.mu.Unlock()
 }
 
-// AdvanceWatermark advances the watermark according flushed or imported status.
+// AdvanceWatermark advances the watermark according to flushed or imported status.
 func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
 	if !flushed {
 		return
