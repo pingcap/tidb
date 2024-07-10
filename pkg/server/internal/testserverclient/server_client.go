@@ -36,12 +36,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/config"
-=======
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
->>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183))
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -2666,68 +2663,6 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 	})
 }
 
-<<<<<<< HEAD
-=======
-func (cli *TestServerClient) RunTestTypeAndCharsetOfSendLongData(t *testing.T) {
-	cli.RunTests(t, func(config *mysql.Config) {
-		config.MaxAllowedPacket = 1024
-	}, func(dbt *testkit.DBTestKit) {
-		ctx := context.Background()
-
-		conn, err := dbt.GetDB().Conn(ctx)
-		require.NoError(t, err)
-		_, err = conn.ExecContext(ctx, "CREATE TABLE t (j JSON);")
-		require.NoError(t, err)
-
-		str := `"` + strings.Repeat("a", 1024) + `"`
-		stmt, err := conn.PrepareContext(ctx, "INSERT INTO t VALUES (cast(? as JSON));")
-		require.NoError(t, err)
-		_, err = stmt.ExecContext(ctx, str)
-		require.NoError(t, err)
-		result, err := conn.QueryContext(ctx, "SELECT j FROM t;")
-		require.NoError(t, err)
-
-		for result.Next() {
-			var j string
-			require.NoError(t, result.Scan(&j))
-			require.Equal(t, str, j)
-		}
-	})
-
-	str := strings.Repeat("你好", 1024)
-	enc := simplifiedchinese.GBK.NewEncoder()
-	gbkStr, err := enc.String(str)
-	require.NoError(t, err)
-
-	cli.RunTests(t, func(config *mysql.Config) {
-		config.MaxAllowedPacket = 1024
-		config.Params["charset"] = "gbk"
-	}, func(dbt *testkit.DBTestKit) {
-		ctx := context.Background()
-
-		conn, err := dbt.GetDB().Conn(ctx)
-		require.NoError(t, err)
-		_, err = conn.ExecContext(ctx, "drop table t")
-		require.NoError(t, err)
-		_, err = conn.ExecContext(ctx, "CREATE TABLE t (t TEXT);")
-		require.NoError(t, err)
-
-		stmt, err := conn.PrepareContext(ctx, "INSERT INTO t VALUES (?);")
-		require.NoError(t, err)
-		_, err = stmt.ExecContext(ctx, gbkStr)
-		require.NoError(t, err)
-
-		result, err := conn.QueryContext(ctx, "SELECT * FROM t;")
-		require.NoError(t, err)
-
-		for result.Next() {
-			var txt string
-			require.NoError(t, result.Scan(&txt))
-			require.Equal(t, gbkStr, txt)
-		}
-	})
-}
-
 func (cli *TestServerClient) getNewDB(t *testing.T, overrider configOverrider) *testkit.DBTestKit {
 	db, err := sql.Open("mysql", cli.GetDSN(overrider))
 	require.NoError(t, err)
@@ -2906,5 +2841,4 @@ func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
 	return job.SchemaState
 }
 
->>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183))
 //revive:enable:exported
