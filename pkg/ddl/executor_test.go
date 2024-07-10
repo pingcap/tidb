@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -70,7 +71,13 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	require.Len(t, jobs, 10000)
 }
 
+var (
+	threadVar             = flag.Int("threads", 1000, "number of threads")
+	iterationPerThreadVar = flag.Int("iterations", 30000, "number of iterations per thread")
+)
+
 func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
+	thread, iterationPerThread := *threadVar, *iterationPerThreadVar
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	// disable DDL to avoid it interfere the test
 	tk := testkit.NewTestKit(t, store)
@@ -85,8 +92,6 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 			TableName:  "t1",
 		},
 	}
-	thread := 1000
-	iterationPerThread := 30000
 	counters := make([]atomic.Int64, thread+1)
 	var wg util.WaitGroupWrapper
 	for i := 0; i < thread; i++ {
@@ -117,8 +122,11 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 			currCnt := getCounts()
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("QPS - total:%.0f", float64(currCnt[0]-lastCnt[0])/5))
-			for i := 1; i < min(len(counters), 100); i++ {
+			for i := 1; i < min(len(counters), 10); i++ {
 				sb.WriteString(fmt.Sprintf(", thread-%d: %.0f", i, float64(currCnt[i]-lastCnt[i])/5))
+			}
+			if len(counters) > 10 {
+				sb.WriteString("...")
 			}
 			lastCnt = currCnt
 			fmt.Println(sb.String())
