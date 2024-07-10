@@ -3145,19 +3145,11 @@ func TestConnectionCount(t *testing.T) {
 	ts.RunTestConnectionCount(t)
 }
 
-<<<<<<< HEAD:pkg/server/tests/tidb_test.go
-=======
-func TestTypeAndCharsetOfSendLongData(t *testing.T) {
-	ts := servertestkit.CreateTidbTestSuite(t)
-	ts.RunTestTypeAndCharsetOfSendLongData(t)
-}
-
 func TestIssue53634(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
 	ts.RunTestIssue53634(t, ts.Domain)
 }
 
->>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183)):pkg/server/tests/commontest/tidb_test.go
 func TestAuthSocket(t *testing.T) {
 	defer server2.ClearOSUserForAuthSocket()
 
