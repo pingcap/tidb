@@ -44,6 +44,35 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error)
 	return sqLogger, prop, nil
 }
 
+func newSlowQueryLoggerV2(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
+	// create the slow query logger
+	sqLogger, prop, err := log.InitLogger(newSlowQueryLogConfigV2(cfg))
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	// replace 2018-12-19-unified-log-format text encoder with slow log encoder
+	newCore := log.NewTextCore(&slowLogEncoder{}, prop.Syncer, prop.Level)
+	sqLogger = sqLogger.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
+		return newCore
+	}))
+	prop.Core = newCore
+
+	return sqLogger, prop, nil
+}
+
+func newSlowQueryLogConfigV2(cfg *LogConfig) *log.Config {
+	// copy the global log config to slow log config
+	// if the filename of slow log config is empty, slow log will behave the same as global log.
+	sqConfig := cfg.Config
+	// level of the global log config doesn't affect the slow query logger which determines whether to
+	// log by execution duration.
+	sqConfig.Level = LogConfig{}.Level
+	sqConfig.File = cfg.File
+	sqConfig.File.Filename = "slow_log_protobuf"
+	return &sqConfig
+}
+
 func newSlowQueryLogConfig(cfg *LogConfig) *log.Config {
 	// copy the global log config to slow log config
 	// if the filename of slow log config is empty, slow log will behave the same as global log.

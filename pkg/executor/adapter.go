@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -1679,11 +1680,19 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
+	slowLogProto := &tipb.SlowLogItem{}
+	sessVars.SlowLogToPb(slowItems, slowLogProto)
 	slowLog := sessVars.SlowLogFormat(slowItems)
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
 	logutil.SlowQueryLogger.Warn(slowLog)
+	proto_string, err := proto.Marshal(slowLogProto)
+	if err != nil {
+		logutil.BgLogger().Error(err.Error())
+		return
+	}
+	logutil.SlowQueryLoggerV2.Warn(string(proto_string[:]))
 	if costTime >= threshold {
 		if sessVars.InRestrictedSQL {
 			executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())

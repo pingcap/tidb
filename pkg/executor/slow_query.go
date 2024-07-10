@@ -466,6 +466,9 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		if len(logs) == 0 || len(logs[0]) == 0 {
 			break
 		}
+		if len(logs) > 1 {
+			logutil.BgLogger().Info("LogSizeCheck", zap.Int("LogSize", len(logs)), zap.Bool("isDesc", e.extractor.Desc))
+		}
 		if e.stats != nil {
 			e.stats.readFile += time.Since(startTime)
 		}

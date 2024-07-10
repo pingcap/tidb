@@ -118,6 +118,8 @@ const (
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.L()
 
+var SlowQueryLoggerV2 = log.L()
+
 // GeneralLogger is used to log general log, InitLogger will modify it according to config file.
 var GeneralLogger = log.L()
 
@@ -132,6 +134,12 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 
 	// init dedicated logger for slow query log
 	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// init dedicated logger for slow query log
+	SlowQueryLoggerV2, _, err = newSlowQueryLoggerV2(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}

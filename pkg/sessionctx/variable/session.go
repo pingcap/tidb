@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
@@ -3248,6 +3249,225 @@ type SlowQueryLogItems struct {
 	WaitRUDuration    time.Duration
 }
 
+func (s *SessionVars) SlowLogToPb(logItems *SlowQueryLogItems, slowLogPb *tipb.SlowLogItem) {
+	slowLogPb.TxnTs = &logItems.TxnTS
+	if logItems.KeyspaceName != "" {
+		slowLogPb.KeyspaceName = &logItems.KeyspaceName
+	}
+
+	if s.User != nil {
+		hostAddress := s.User.Hostname
+		if s.ConnectionInfo != nil {
+			hostAddress = s.ConnectionInfo.ClientIP
+		}
+		userAndHost := fmt.Sprintf("%s[%s] @ %s [%s]", s.User.Username, s.User.Username, s.User.Hostname, hostAddress)
+		slowLogPb.UserAndHost = &userAndHost
+	}
+	if s.ConnectionID != 0 {
+		slowLogPb.ConnectionId = &s.ConnectionID
+	}
+	if s.SessionAlias != "" {
+		slowLogPb.SessionAlias = &s.SessionAlias
+	}
+	if logItems.ExecRetryCount > 0 {
+		retrySeconds := logItems.ExecRetryTime.Seconds()
+		slowLogPb.ExecRetrytimeSecs = &retrySeconds
+		var retryCount uint32 = uint32(logItems.ExecRetryCount)
+		slowLogPb.ExecRetryCount = &retryCount
+	}
+	totalSeconds := logItems.TimeTotal.Seconds()
+	parseSeconds := logItems.TimeParse.Seconds()
+	compileSeconds := logItems.TimeCompile.Seconds()
+	var subQueries float64 = float64(logItems.RewriteInfo.PreprocessSubQueries)
+	preprocessSeconds := logItems.RewriteInfo.DurationPreprocessSubQuery.Seconds()
+	rewriteSeconds := logItems.RewriteInfo.DurationRewrite.Seconds()
+	slowLogPb.TotalTimeSeconds = &totalSeconds
+	slowLogPb.ParseTimeSeconds = &parseSeconds
+	slowLogPb.CompileTimeSeconds = &compileSeconds
+	slowLogPb.RewritePreprocessSubqueries = &subQueries
+	slowLogPb.RewritePreprocessSubqueriesSeconds = &preprocessSeconds
+	slowLogPb.RewriteSeconds = &rewriteSeconds
+
+	optimizeSeconds := logItems.TimeOptimize.Seconds()
+	waitTsSeconds := logItems.TimeWaitTS.Seconds()
+	slowLogPb.OptimizeTimeSeconds = &optimizeSeconds
+	slowLogPb.WaitTsTimeSeconds = &waitTsSeconds
+	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
+		slowLogPb.ExecDetailStr = &execDetailStr
+	}
+
+	if len(s.CurrentDB) > 0 {
+		slowLogPb.CurrentDb = &s.CurrentDB
+	}
+	if len(logItems.IndexNames) > 0 {
+		slowLogPb.IndexNames = &logItems.IndexNames
+	}
+
+	slowLogPb.InRestrictedSql = &s.InRestrictedSQL
+	if len(logItems.Digest) > 0 {
+		slowLogPb.Digest = &logItems.Digest
+	}
+	// used stats
+	keys := logItems.UsedStats.Keys()
+	if len(keys) > 0 {
+		slowLogPb.UsedStats = &tipb.UsedStats{}
+		slowLogPb.UsedStats.TableUsedStatsMap = make(map[int64]*tipb.TableUsedStats)
+		for _, id := range keys {
+			usedStatsForTbl := logItems.UsedStats.GetUsedInfo(id)
+			if usedStatsForTbl == nil {
+				continue
+			}
+			tblUsedStats := tipb.TableUsedStats{}
+			tblUsedStats.Name = &usedStatsForTbl.Name
+			tblUsedStats.Version = &usedStatsForTbl.Version
+			tblUsedStats.RealtimeCount = &usedStatsForTbl.RealtimeCount
+			tblUsedStats.ModifyCount = &usedStatsForTbl.ModifyCount
+
+			tblUsedStats.ColumnStatsLoadStatus = make(map[int64]string)
+			tblUsedStats.ColumnNames = make(map[int64]string)
+			keys := maps.Keys(usedStatsForTbl.ColumnStatsLoadStatus)
+			for _, key := range keys {
+				var columnName string
+				if usedStatsForTbl.TblInfo != nil {
+					columnName = usedStatsForTbl.TblInfo.FindColumnNameByID(key)
+				}
+				tblUsedStats.ColumnStatsLoadStatus[key] = usedStatsForTbl.ColumnStatsLoadStatus[key]
+				tblUsedStats.ColumnNames[key] = columnName
+			}
+
+			tblUsedStats.IndexStatsLoadStatus = make(map[int64]string)
+			tblUsedStats.IndexNames = make(map[int64]string)
+			keys = maps.Keys(usedStatsForTbl.IndexStatsLoadStatus)
+			for _, key := range keys {
+				var indexName string
+				if usedStatsForTbl.TblInfo != nil {
+					indexName = usedStatsForTbl.TblInfo.FindIndexNameByID(key)
+				}
+				tblUsedStats.IndexStatsLoadStatus[key] = usedStatsForTbl.IndexStatsLoadStatus[key]
+				tblUsedStats.IndexNames[key] = indexName
+			}
+
+			slowLogPb.UsedStats.TableUsedStatsMap[id] = &tblUsedStats
+		}
+	}
+
+	// cop tasks
+	if logItems.CopTasks != nil {
+		copTasksDetails := tipb.CopTasksDetails{}
+		var numCopTasks int32 = int32(logItems.CopTasks.NumCopTasks)
+		copTasksDetails.NumCopTasks = &numCopTasks
+		if logItems.CopTasks.NumCopTasks > 0 {
+			avgProcessSeconds := logItems.CopTasks.AvgProcessTime.Seconds()
+			p90ProcessSeconds := logItems.CopTasks.P90ProcessTime.Seconds()
+			maxProcessSeconds := logItems.CopTasks.MaxProcessTime.Seconds()
+			maxProcessAddress := logItems.CopTasks.MaxProcessAddress
+			avgWaitSeconds := logItems.CopTasks.AvgWaitTime.Seconds()
+			p90WaitSeconds := logItems.CopTasks.P90WaitTime.Seconds()
+			maxWaitSeconds := logItems.CopTasks.MaxWaitTime.Seconds()
+			maxWaitAddress := logItems.CopTasks.MaxWaitAddress
+			copTasksDetails.AvgProcessSeconds = &avgProcessSeconds
+			copTasksDetails.P90ProcessSeconds = &p90ProcessSeconds
+			copTasksDetails.MaxProcessSeconds = &maxProcessSeconds
+			copTasksDetails.MaxProcessAddress = &maxProcessAddress
+			copTasksDetails.AvgWaitSeconds = &avgWaitSeconds
+			copTasksDetails.P90WaitSeconds = &p90WaitSeconds
+			copTasksDetails.MaxWaitSeconds = &maxWaitSeconds
+			copTasksDetails.MaxWaitAddress = &maxWaitAddress
+
+			for backoff := range logItems.CopTasks.TotBackoffTimes {
+				copTasksDetails.TotalBackoffTimes = make(map[string]int32)
+				copTasksDetails.TotalBackoffTimes[backoff] = int32(logItems.CopTasks.TotBackoffTimes[backoff])
+
+				copTasksDetails.TotalBackoffTime = make(map[string]float64)
+				totalBackOffSeconds := logItems.CopTasks.TotBackoffTime[backoff].Seconds()
+				copTasksDetails.TotalBackoffTime[backoff] = totalBackOffSeconds
+
+				copTasksDetails.MaxBackoffTime = make(map[string]float64)
+				copTasksDetails.MaxBackoffTime[backoff] = logItems.CopTasks.MaxBackoffTime[backoff].Seconds()
+
+				copTasksDetails.MaxBackoffAddress = make(map[string]string)
+				copTasksDetails.MaxBackoffAddress[backoff] = logItems.CopTasks.MaxBackoffAddress[backoff]
+
+				copTasksDetails.AvgBackoffTime = make(map[string]float64)
+				copTasksDetails.AvgBackoffTime[backoff] = logItems.CopTasks.AvgBackoffTime[backoff].Seconds()
+
+				copTasksDetails.P90BackoffTime = make(map[string]float64)
+				copTasksDetails.P90BackoffTime[backoff] = logItems.CopTasks.P90BackoffTime[backoff].Seconds()
+			}
+		}
+	}
+
+	if logItems.MemMax > 0 {
+		slowLogPb.MaxMemory = &logItems.MemMax
+	}
+	if logItems.DiskMax > 0 {
+		slowLogPb.MaxDisk = &logItems.DiskMax
+	}
+
+	slowLogPb.Prepared = &logItems.Prepared
+	slowLogPb.PlanFromCache = &logItems.PlanFromCache
+	slowLogPb.PlanFromBinding = &logItems.PlanFromBinding
+	slowLogPb.HasMoreResults = &logItems.HasMoreResults
+	kvTotal := logItems.KVTotal.Seconds()
+	pdTotal := logItems.PDTotal.Seconds()
+	backOffTotal := logItems.BackoffTotal.Seconds()
+	writeRspTotal := logItems.WriteSQLRespTotal.Seconds()
+	resultRows := logItems.ResultRows
+	slowLogPb.KvTotalSeconds = &kvTotal
+	slowLogPb.PdTotalSeconds = &pdTotal
+	slowLogPb.BackoffTotalSeconds = &backOffTotal
+	slowLogPb.WriteSqlResponseTotalSeconds = &writeRspTotal
+	slowLogPb.ResultRows = &resultRows
+
+	if len(logItems.Warnings) > 0 {
+		for _, warning := range logItems.Warnings {
+			warnSlowLog := tipb.JSONSQLWarnForSlowLog{
+				Level:   &warning.Level,
+				Message: &warning.Message,
+				IsExtra: &warning.IsExtra,
+			}
+			slowLogPb.Warnings = append(slowLogPb.Warnings, &warnSlowLog)
+		}
+	}
+
+	slowLogPb.Succ = &logItems.Succ
+	slowLogPb.IsExplicitTxn = &logItems.IsExplicitTxn
+	slowLogPb.IsSyncStatsFailed = &logItems.IsSyncStatsFailed
+	if s.StmtCtx.WaitLockLeaseTime > 0 {
+		slowLogPb.IsWriteCacheTable = &logItems.IsWriteCacheTable
+	}
+	/*if len(logItems.Plan) != 0 {
+		slowLogPb.Plan = &logItems.Plan
+	}
+	if len(logItems.PlanDigest) != 0 {
+		slowLogPb.PlanDigest = &logItems.PlanDigest
+	}
+	if len(logItems.BinaryPlan) != 0 {
+		slowLogPb.BinaryPlan = &logItems.BinaryPlan
+	}*/
+
+	if logItems.ResourceGroupName != "" {
+		slowLogPb.ResourceGroupName = &logItems.ResourceGroupName
+	}
+	if logItems.RRU > 0.0 {
+		slowLogPb.Rru = &logItems.RRU
+	}
+	if logItems.WRU > 0.0 {
+		slowLogPb.Wru = &logItems.WRU
+	}
+	if logItems.WaitRUDuration > time.Duration(0) {
+		waitRUSeconds := logItems.WaitRUDuration.Seconds()
+		slowLogPb.WaitRuDurationSeconds = &waitRUSeconds
+	}
+
+	//if logItems.PrevStmt != "" {
+	//	slowLogPb.PrevStmt = &logItems.PrevStmt
+	//}
+
+	slowLogPb.CurrentDbChanged = &s.CurrentDBChanged
+	//slowLogPb.Sql = &logItems.SQL
+}
+
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
@@ -3434,15 +3654,15 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if s.StmtCtx.WaitLockLeaseTime > 0 {
 		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
 	}
-	if len(logItems.Plan) != 0 {
-		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
-	}
-	if len(logItems.PlanDigest) != 0 {
-		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
-	}
-	if len(logItems.BinaryPlan) != 0 {
-		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
-	}
+	//if len(logItems.Plan) != 0 {
+	//	writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	//}
+	//if len(logItems.PlanDigest) != 0 {
+	//	writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
+	//}
+	//if len(logItems.BinaryPlan) != 0 {
+	//	writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
+	//}
 
 	if logItems.ResourceGroupName != "" {
 		writeSlowLogItem(&buf, SlowLogResourceGroup, logItems.ResourceGroupName)
@@ -3457,19 +3677,19 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
 	}
 
-	if logItems.PrevStmt != "" {
-		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
-	}
+	//if logItems.PrevStmt != "" {
+	//	writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
+	//}
 
 	if s.CurrentDBChanged {
 		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
 		s.CurrentDBChanged = false
 	}
 
-	buf.WriteString(logItems.SQL)
-	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
-		buf.WriteString(";")
-	}
+	//buf.WriteString(logItems.SQL)
+	//if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
+	buf.WriteString(";")
+	//}
 
 	return buf.String()
 }
