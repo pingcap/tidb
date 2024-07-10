@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -69,10 +70,22 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	jobs, err := ddl.GetAllDDLJobs(tk.Session())
 	require.NoError(t, err)
 	require.Len(t, jobs, 10000)
+	var maxID, currUsedGID int64
+	for _, j := range jobs {
+		maxID = max(maxID, j.ID)
+	}
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		currUsedGID, err = m.GetGlobalID()
+		require.NoError(t, err)
+		return nil
+	}))
+	require.Greater(t, currUsedGID, int64(10000))
+	require.Equal(t, currUsedGID, maxID)
 }
 
 var (
-	threadVar             = flag.Int("threads", 1000, "number of threads")
+	threadVar             = flag.Int("threads", 100, "number of threads")
 	iterationPerThreadVar = flag.Int("iterations", 30000, "number of iterations per thread")
 )
 
