@@ -80,10 +80,15 @@ func (b *EncodeRowBuffer) WriteMemBufferEncoded(
 	return memBuffer.SetWithFlags(key, encoded, flags...)
 }
 
-// GetColDataBuffer returns the buffer for column data.
-// TODO: make sure the inner buffer is not used outside directly.
-func (b *EncodeRowBuffer) GetColDataBuffer() ([]int64, []types.Datum) {
-	return b.colIDs, b.row
+// EncodeBinlogRowData encodes the row data for binlog and returns the encoded row value.
+// The returned slice is not referenced in the buffer, so you can cache and modify them freely.
+func (b *EncodeRowBuffer) EncodeBinlogRowData(loc *time.Location, ec errctx.Context) ([]byte, error) {
+	value, err := tablecodec.EncodeOldRow(loc, b.row, b.colIDs, nil, nil)
+	err = ec.HandleError(err)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 // CheckRowBuffer is used to check row constraints
