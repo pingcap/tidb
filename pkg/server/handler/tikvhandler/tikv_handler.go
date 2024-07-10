@@ -1803,6 +1803,8 @@ func (h DBTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			tbl, err := getDBTableInfo(schema, int64(tid))
 			if err == nil {
 				data[tid] = tbl
+			} else {
+				handler.WriteError(w, errors.Errorf("error for tableID: %v, err: %s", tableID, err.Error()))
 			}
 		}
 		handler.WriteData(w, data)
