@@ -229,6 +229,7 @@ go_test(
         "ddl_test.go",
         "ddl_worker_test.go",
         "ddl_workerpool_test.go",
+        "executor_test.go",
         "export_test.go",
         "fail_test.go",
         "foreign_key_test.go",
