@@ -142,7 +142,7 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
 		return 0, nil, errors.Trace(err)
 	}
 
-	if len(key) == prefixLen {
+	if len(k) == prefixLen {
 		return tableID, nil, nil
 	}
 
