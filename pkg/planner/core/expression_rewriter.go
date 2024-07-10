@@ -2650,14 +2650,7 @@ func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchem
 	} else if _, _, err := tablecodec.DecodeRecordKey(key); err == nil {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {
-			sc.AppendWarning(err)
-			return s
-		}
-		return ret
-	} else if _, _, err := tablecodec.DecodeRecordKey(key); err == nil {
-		ret, err := decodeRecordKey(key, tableID, tbl, loc)
-		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
@@ -2691,7 +2684,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		return string(retStr), nil
 	}
 	if tbl != nil {
-		ret := make(map[string]interface{})
+		ret := make(map[string]any)
 		if tbl.Meta().Partition != nil {
 			ret["partition_id"] = tableID
 			tableID = tbl.Meta().ID
@@ -2719,7 +2712,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 			if err != nil {
 				return "", errors.Trace(err)
 			}
-			handleRet := make(map[string]interface{})
+			handleRet := make(map[string]any)
 			for colID := range datumMap {
 				dt := datumMap[colID]
 				dtStr, err := datumToJSONObject(&dt)
