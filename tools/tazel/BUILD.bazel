@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "tazel_lib",
+    srcs = [
+        "ast.go",
+        "main.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/tazel",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/util/mathutil",
+        "//pkg/util/set",
+        "@com_github_bazelbuild_buildtools//build:go_default_library",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "tazel",
+    embed = [":tazel_lib"],
+    visibility = ["//visibility:public"],
+)

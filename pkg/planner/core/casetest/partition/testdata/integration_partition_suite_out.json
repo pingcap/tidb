@@ -1,0 +1,1855 @@
+[
+  {
+    "Name": "TestListPartitionPruning",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (2)",
+        "DynamicPlan": [
+          "TableReader 10.00 root partition:p0 data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (7)",
+        "DynamicPlan": [
+          "TableReader 10.00 root partition:p2 data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (0,5)",
+        "DynamicPlan": [
+          "TableReader 20.00 root partition:p0,p1 data:Selection",
+          "└─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 40.00 root  ",
+          "├─TableReader 20.00 root  data:Selection",
+          "│ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader 20.00 root  data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a in (2)",
+        "DynamicPlan": [
+          "TableReader 10.00 root partition:p0 data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a in (7)",
+        "DynamicPlan": [
+          "TableReader 10.00 root partition:p2 data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a in (0,5)",
+        "DynamicPlan": [
+          "TableReader 20.00 root partition:p0,p1 data:Selection",
+          "└─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 40.00 root  ",
+          "├─TableReader 20.00 root  data:Selection",
+          "│ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader 20.00 root  data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a not in (0, 1, 2, 3, 4, 5, 6, 7, 8)",
+        "DynamicPlan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 14333.33 root  ",
+          "├─TableReader 3583.33 root  data:Selection",
+          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 3583.33 root  data:Selection",
+          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
+          "├─TableReader 3583.33 root  data:Selection",
+          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 3583.33 root  data:Selection",
+          "  └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a not in (0, 1, 2, 3, 4, 5, 6, 7, 8)",
+        "DynamicPlan": [
+          "TableReader 3583.33 root partition:p3 data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tcollist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 3583.33 root  data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tcollist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a >= 7",
+        "DynamicPlan": [
+          "TableReader 3333.33 root partition:all data:Selection",
+          "└─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 13333.33 root  ",
+          "├─TableReader 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
+          "├─TableReader 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a >= 7",
+        "DynamicPlan": [
+          "TableReader 3333.33 root partition:p2,p3 data:Selection",
+          "└─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 6666.67 root  ",
+          "├─TableReader 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tcollist.a, 7)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a <= 7",
+        "DynamicPlan": [
+          "TableReader 3323.33 root partition:all data:Selection",
+          "└─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 13293.33 root  ",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 3323.33 root  data:Selection",
+          "  └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a <= 7",
+        "DynamicPlan": [
+          "TableReader 3323.33 root partition:p0,p1,p2 data:Selection",
+          "└─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 9970.00 root  ",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader 3323.33 root  data:Selection",
+          "  └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tcollist.a, 7)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a=0 or a=7",
+        "DynamicPlan": [
+          "TableReader 20.00 root partition:p0,p2 data:Selection",
+          "└─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 40.00 root  ",
+          "├─TableReader 20.00 root  data:Selection",
+          "│ └─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader 20.00 root  data:Selection",
+          "  └─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a=0 or a=1 or a=6 or a=11",
+        "DynamicPlan": [
+          "TableReader 40.00 root partition:p0,p2,p3 data:Selection",
+          "└─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 120.00 root  ",
+          "├─TableReader 40.00 root  data:Selection",
+          "│ └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 40.00 root  data:Selection",
+          "│ └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 40.00 root  data:Selection",
+          "  └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a=0 or a=7",
+        "DynamicPlan": [
+          "TableReader 20.00 root partition:p0,p2 data:Selection",
+          "└─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 40.00 root  ",
+          "├─TableReader 20.00 root  data:Selection",
+          "│ └─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader 20.00 root  data:Selection",
+          "  └─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a=0 or a=1 or a=6 or a=11",
+        "DynamicPlan": [
+          "TableReader 40.00 root partition:p0,p2,p3 data:Selection",
+          "└─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 120.00 root  ",
+          "├─TableReader 40.00 root  data:Selection",
+          "│ └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 40.00 root  data:Selection",
+          "│ └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 40.00 root  data:Selection",
+          "  └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (0, 1, 2) and mod(a, 2)=0",
+        "DynamicPlan": [
+          "TableReader 24.00 root partition:p0 data:Selection",
+          "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tlist.a, 2), 0), in(list_partition_pruning.tlist.a, 0, 1, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 24.00 root  data:Selection",
+          "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tlist.a, 2), 0), in(list_partition_pruning.tlist.a, 0, 1, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (0, 3, 6) and a+1>3",
+        "DynamicPlan": [
+          "TableReader 24.00 root partition:p0,p1,p2 data:Selection",
+          "└─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tlist.a, 1), 3), in(list_partition_pruning.tlist.a, 0, 3, 6)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 72.00 root  ",
+          "├─TableReader 24.00 root  data:Selection",
+          "│ └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tlist.a, 1), 3), in(list_partition_pruning.tlist.a, 0, 3, 6)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 24.00 root  data:Selection",
+          "│ └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tlist.a, 1), 3), in(list_partition_pruning.tlist.a, 0, 3, 6)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader 24.00 root  data:Selection",
+          "  └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tlist.a, 1), 3), in(list_partition_pruning.tlist.a, 0, 3, 6)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a in (0, 1, 2) and mod(a, 2)=0",
+        "DynamicPlan": [
+          "TableReader 24.00 root partition:p0 data:Selection",
+          "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tcollist.a, 2), 0), in(list_partition_pruning.tcollist.a, 0, 1, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 24.00 root  data:Selection",
+          "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tcollist.a, 2), 0), in(list_partition_pruning.tcollist.a, 0, 1, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tcollist where a in (0, 3, 6) and a+1>3",
+        "DynamicPlan": [
+          "TableReader 24.00 root partition:p0,p1,p2 data:Selection",
+          "└─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tcollist.a, 1), 3), in(list_partition_pruning.tcollist.a, 0, 3, 6)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 72.00 root  ",
+          "├─TableReader 24.00 root  data:Selection",
+          "│ └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tcollist.a, 1), 3), in(list_partition_pruning.tcollist.a, 0, 3, 6)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 24.00 root  data:Selection",
+          "│ └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tcollist.a, 1), 3), in(list_partition_pruning.tcollist.a, 0, 3, 6)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader 24.00 root  data:Selection",
+          "  └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tcollist.a, 1), 3), in(list_partition_pruning.tcollist.a, 0, 3, 6)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' delete from tlist where a in (2)",
+        "DynamicPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' delete from tlist where a in (0, 5)",
+        "DynamicPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Delete N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' delete from tcollist where a in (2)",
+        "DynamicPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' delete from tcollist where a in (0, 5)",
+        "DynamicPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Delete N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' update tlist set a=3 where a in (2)",
+        "DynamicPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' update tlist set a=3 where a in (0, 5)",
+        "DynamicPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Update N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' update tcollist set a=3 where a in (2)",
+        "DynamicPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' update tcollist set a=3 where a in (0, 5)",
+        "DynamicPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Update N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' insert into tlist select * from tlist where a in (2)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' insert into tlist select * from tlist where a in (0, 5)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' insert into tcollist select * from tcollist where a in (2)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' insert into tcollist select * from tcollist where a in (0, 5)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' replace tlist select * from tlist where a in (2)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' replace tlist select * from tlist where a in (0, 5)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' replace tcollist select * from tcollist where a in (2)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' replace tcollist select * from tcollist where a in (0, 5)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPartitionTableExplain",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t",
+        "DynamicPlan": [
+          "TableReader 3.00 root partition:all data:TableFullScan",
+          "└─TableFullScan 3.00 cop[tikv] table:t keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 3.00 root  ",
+          "├─TableReader 1.00 root  data:TableFullScan",
+          "│ └─TableFullScan 1.00 cop[tikv] table:t, partition:P0 keep order:false",
+          "├─TableReader 1.00 root  data:TableFullScan",
+          "│ └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false",
+          "└─TableReader 1.00 root  data:TableFullScan",
+          "  └─TableFullScan 1.00 cop[tikv] table:t, partition:P2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t partition(P0,p1)",
+        "DynamicPlan": [
+          "TableReader 3.00 root partition:P0,p1 data:TableFullScan",
+          "└─TableFullScan 3.00 cop[tikv] table:t keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 2.00 root  ",
+          "├─TableReader 1.00 root  data:TableFullScan",
+          "│ └─TableFullScan 1.00 cop[tikv] table:t, partition:P0 keep order:false",
+          "└─TableReader 1.00 root  data:TableFullScan",
+          "  └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 1",
+        "DynamicPlan": [
+          "Point_Get 1.00 root table:t, partition:p1 handle:1"
+        ],
+        "StaticPlan": [
+          "Point_Get 1.00 root table:t, partition:p1 handle:1"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 2",
+        "DynamicPlan": [
+          "Point_Get 1.00 root table:t, partition:P2 handle:2"
+        ],
+        "StaticPlan": [
+          "Point_Get 1.00 root table:t, partition:P2 handle:2"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 1 OR a = 2",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p1,P2 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 2.00 root  ",
+          "├─Batch_Point_Get 1.00 root table:t, partition:p1 handle:[1], keep order:false, desc:false",
+          "└─Batch_Point_Get 1.00 root table:t, partition:P2 handle:[2], keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a IN (2,3,4)",
+        "DynamicPlan": [
+          "Batch_Point_Get 3.00 root table:t, partition:P0,p1,P2 handle:[2 3 4], keep order:false, desc:false"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 3.00 root table:t, partition:P0,p1,P2 handle:[2 3 4], keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a IN (2,3)",
+        "DynamicPlan": [
+          "Batch_Point_Get 2.00 root table:t, partition:P0,P2 handle:[2 3], keep order:false, desc:false"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:t, partition:P0,P2 handle:[2 3], keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b = 1",
+        "DynamicPlan": [
+          "IndexReader 1.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 1.00 root  ",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[1,1], keep order:false",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[1,1], keep order:false",
+          "└─IndexReader 1.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[1,1], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b = 2",
+        "DynamicPlan": [
+          "IndexReader 1.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 1.00 root  ",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[2,2], keep order:false",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false",
+          "└─IndexReader 1.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[2,2], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b = 1 OR b = 2",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[1,2], keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 2.00 root  ",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[1,2], keep order:false",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[1,2], keep order:false",
+          "└─IndexReader 1.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[1,2], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b IN (2,3,4)",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[2,2], [3,3], [4,4], keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 2.00 root  ",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[2,2], [3,3], [4,4], keep order:false",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], [3,3], [4,4], keep order:false",
+          "└─IndexReader 1.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[2,2], [3,3], [4,4], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b IN (2,3)",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[2,2], [3,3], keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 2.00 root  ",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[2,2], [3,3], keep order:false",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], [3,3], keep order:false",
+          "└─IndexReader 1.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[2,2], [3,3], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b",
+        "DynamicPlan": [
+          "Projection 1.00 root  test.t.a, test.t.b, test.t2.a, test.t2.b",
+          "└─HashJoin 1.00 root  inner join, equal:[eq(test.t2.b, test.t.b)]",
+          "  ├─TableReader(Build) 1.00 root  data:Selection",
+          "  │ └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+          "  └─IndexReader(Probe) 3.00 root partition:all index:IndexFullScan",
+          "    └─IndexFullScan 3.00 cop[tikv] table:t, index:b(b) keep order:false"
+        ],
+        "StaticPlan": [
+          "Projection 1.00 root  test.t.a, test.t.b, test.t2.a, test.t2.b",
+          "└─HashJoin 1.00 root  inner join, equal:[eq(test.t2.b, test.t.b)]",
+          "  ├─TableReader(Build) 1.00 root  data:Selection",
+          "  │ └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+          "  └─PartitionUnion(Probe) 3.00 root  ",
+          "    ├─IndexReader 1.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) keep order:false",
+          "    ├─IndexReader 1.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false",
+          "    └─IndexReader 1.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t partition (p1),t2 where t2.a = 1 and t2.b = t.b",
+        "DynamicPlan": [
+          "Projection 1.00 root  test.t.a, test.t.b, test.t2.a, test.t2.b",
+          "└─HashJoin 1.00 root  inner join, equal:[eq(test.t2.b, test.t.b)]",
+          "  ├─TableReader(Build) 1.00 root  data:Selection",
+          "  │ └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+          "  └─IndexReader(Probe) 3.00 root partition:p1 index:IndexFullScan",
+          "    └─IndexFullScan 3.00 cop[tikv] table:t, index:b(b) keep order:false"
+        ],
+        "StaticPlan": [
+          "HashJoin 1.00 root  inner join, equal:[eq(test.t.b, test.t2.b)]",
+          "├─TableReader(Build) 1.00 root  data:Selection",
+          "│ └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+          "└─IndexReader(Probe) 1.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1",
+        "DynamicPlan": [
+          "HashJoin 1.00 root  inner join, equal:[eq(test.t.b, test.t2.b)]",
+          "├─Selection(Build) 1.00 root  not(isnull(test.t.b))",
+          "│ └─Point_Get 1.00 root table:t, partition:p1 handle:1",
+          "└─TableReader(Probe) 1.00 root  data:Selection",
+          "  └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "    └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false"
+        ],
+        "StaticPlan": [
+          "HashJoin 1.00 root  inner join, equal:[eq(test.t.b, test.t2.b)]",
+          "├─Selection(Build) 1.00 root  not(isnull(test.t.b))",
+          "│ └─Point_Get 1.00 root table:t, partition:p1 handle:1",
+          "└─TableReader(Probe) 1.00 root  data:Selection",
+          "  └─Selection 1.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.b))",
+          "    └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t partition (P0,p1) where b = 1",
+        "DynamicPlan": [
+          "IndexReader 1.00 root partition:P0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 1.00 root  ",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[1,1], keep order:false",
+          "└─IndexReader 1.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[1,1], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t partition (p1,P2) where b = 1 OR b = 2",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p1,P2 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[1,2], keep order:false"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 2.00 root  ",
+          "├─IndexReader 1.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[1,2], keep order:false",
+          "└─IndexReader 1.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[1,2], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestBatchPointGetTablePartition",
+    "Cases": [
+      {
+        "SQL": "select * from thash1 where a in (1,2) and b = 1",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from thash1 where a in (1,2) and b = 1 order by a",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:true, desc:false"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from thash1 where a in (1,2) and b = 1 order by a desc",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:true, desc:true"
+        ],
+        "Result": [
+          "2 1",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from thash1 where a = 1 and b in (1,2)",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 4.00 root  ",
+          "├─Batch_Point_Get 2.00 root table:thash1, partition:p0, index:PRIMARY(a, b) keep order:false, desc:false",
+          "└─Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from thash1 where a = 1 and b in (1,2) order by b",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 4.00 root  test.thash1.b",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─Batch_Point_Get 2.00 root table:thash1, partition:p0, index:PRIMARY(a, b) keep order:false, desc:false",
+          "  └─Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from thash1 where a = 1 and b in (1,2) order by b desc",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 4.00 root  test.thash1.b:desc",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─Batch_Point_Get 2.00 root table:thash1, partition:p0, index:PRIMARY(a, b) keep order:false, desc:false",
+          "  └─Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 2",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from trange1 where a in (1,2) and b = 1",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "IndexReader 2.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from trange1 where a in (1,2) and b = 1 order by a",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "IndexReader 2.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from trange1 where a in (1,2) and b = 1 order by a desc",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "IndexReader 2.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2 1",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from trange1 where a = 1 and b in (1,2)",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 4.00 root  ",
+          "├─IndexReader 2.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "└─IndexReader 2.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from trange1 where a = 1 and b in (1,2) order by b",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 4.00 root  test.trange1.b",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─IndexReader 2.00 root  index:IndexRangeScan",
+          "  │ └─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "  └─IndexReader 2.00 root  index:IndexRangeScan",
+          "    └─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from trange1 where a = 1 and b in (1,2) order by b desc",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:all index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 4.00 root  test.trange1.b:desc",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─IndexReader 2.00 root  index:IndexRangeScan",
+          "  │ └─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "  └─IndexReader 2.00 root  index:IndexRangeScan",
+          "    └─IndexRangeScan 2.00 cop[tikv] table:trange1, partition:p1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tlist1 where a in (1,2) and b = 1",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "IndexReader 2.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from tlist1 where a in (1,2) and b = 1 order by a",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "IndexReader 2.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from tlist1 where a in (1,2) and b = 1 order by a desc",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "IndexReader 2.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2 1",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tlist1 where a = 1 and b in (1,2)",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 4.00 root  ",
+          "├─IndexReader 2.00 root  index:IndexRangeScan",
+          "│ └─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "└─IndexReader 2.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from tlist1 where a = 1 and b in (1,2) order by b",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 4.00 root  test.tlist1.b",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─IndexReader 2.00 root  index:IndexRangeScan",
+          "  │ └─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "  └─IndexReader 2.00 root  index:IndexRangeScan",
+          "    └─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from tlist1 where a = 1 and b in (1,2) order by b desc",
+        "DynamicPlan": [
+          "IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 4.00 root  test.tlist1.b:desc",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─IndexReader 2.00 root  index:IndexRangeScan",
+          "  │ └─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p0, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "  └─IndexReader 2.00 root  index:IndexRangeScan",
+          "    └─IndexRangeScan 2.00 cop[tikv] table:tlist1, partition:p1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from thash2 where a in (1,2) and b = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from thash2 where a in (1,2) and b = 1 order by a",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from thash2 where a in (1,2) and b = 1 order by a desc",
+        "DynamicPlan": [
+          "Sort 0.02 root  test.thash2.a:desc",
+          "└─TableReader 2.00 root partition:p1 data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:true"
+        ],
+        "Result": [
+          "2 1",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from thash2 where a = 1 and b in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 0.04 root  ",
+          "├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+          "└─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from thash2 where a = 1 and b in (1,2) order by b",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 0.04 root  test.thash2.b",
+          "└─PartitionUnion 0.04 root  ",
+          "  ├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+          "  └─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from thash2 where a = 1 and b in (1,2) order by b desc",
+        "DynamicPlan": [
+          "Sort 0.02 root  test.thash2.b:desc",
+          "└─TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 0.04 root  test.thash2.b:desc",
+          "└─PartitionUnion 0.04 root  ",
+          "  ├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+          "  └─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 2",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from trange2 where a in (1,2) and b = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from trange2 where a in (1,2) and b = 1 order by a",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from trange2 where a in (1,2) and b = 1 order by a desc",
+        "DynamicPlan": [
+          "Sort 0.02 root  test.trange2.a:desc",
+          "└─TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 0.02 root  test.trange2.a:desc",
+          "└─TableReader 2.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 1",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from trange2 where a = 1 and b in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:all data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 0.04 root  ",
+          "├─TableReader 2.00 root  data:TableRangeScan",
+          "│ └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "└─TableReader 2.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p1 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from trange2 where a = 1 and b in (1,2) order by b",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:all data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 0.04 root  test.trange2.b",
+          "└─PartitionUnion 0.04 root  ",
+          "  ├─TableReader 2.00 root  data:TableRangeScan",
+          "  │ └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "  └─TableReader 2.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p1 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from trange2 where a = 1 and b in (1,2) order by b desc",
+        "DynamicPlan": [
+          "Sort 0.02 root  test.trange2.b:desc",
+          "└─TableReader 2.00 root partition:all data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:trange2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 0.04 root  test.trange2.b:desc",
+          "└─PartitionUnion 0.04 root  ",
+          "  ├─TableReader 2.00 root  data:TableRangeScan",
+          "  │ └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "  └─TableReader 2.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 2.00 cop[tikv] table:trange2, partition:p1 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tlist2 where a in (1,2) and b = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from tlist2 where a in (1,2) and b = 1 order by a",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1"
+        ]
+      },
+      {
+        "SQL": "select * from tlist2 where a in (1,2) and b = 1 order by a desc",
+        "DynamicPlan": [
+          "Sort 0.02 root  test.tlist2.a:desc",
+          "└─TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 0.02 root  test.tlist2.a:desc",
+          "└─TableReader 2.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 1",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tlist2 where a = 1 and b in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 0.04 root  ",
+          "├─TableReader 2.00 root  data:TableRangeScan",
+          "│ └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "└─TableReader 2.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p1 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from tlist2 where a = 1 and b in (1,2) order by b",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 0.04 root  test.tlist2.b",
+          "└─PartitionUnion 0.04 root  ",
+          "  ├─TableReader 2.00 root  data:TableRangeScan",
+          "  │ └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "  └─TableReader 2.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p1 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select * from tlist2 where a = 1 and b in (1,2) order by b desc",
+        "DynamicPlan": [
+          "Sort 0.02 root  test.tlist2.b:desc",
+          "└─TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 0.04 root  test.tlist2.b:desc",
+          "└─PartitionUnion 0.04 root  ",
+          "  ├─TableReader 2.00 root  data:TableRangeScan",
+          "  │ └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p0 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo",
+          "  └─TableReader 2.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 2.00 cop[tikv] table:tlist2, partition:p1 range:[1 1,1 1], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2",
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from thash3 where a in (1,2) and 1 = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 4.00 root  ",
+          "├─Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[2], keep order:false, desc:false",
+          "└─Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1], keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 0",
+          "2 0"
+        ]
+      },
+      {
+        "SQL": "select * from thash3 where a in (1,3) and 1 = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [3,3], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1 3], keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 0",
+          "3 0"
+        ]
+      },
+      {
+        "SQL": "select * from thash3 where a in (1,3) and 1 = 1 order by a",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [3,3], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1 3], keep order:true, desc:false"
+        ],
+        "Result": [
+          "1 0",
+          "3 0"
+        ]
+      },
+      {
+        "SQL": "select * from thash3 where a in (1,3) and 1 = 1 order by a desc",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [3,3], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1 3], keep order:true, desc:true"
+        ],
+        "Result": [
+          "3 0",
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from thash3 partition(p0) where a in (1,4)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [4,4], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[4], keep order:false, desc:false"
+        ],
+        "Result": [
+          "4 0"
+        ]
+      },
+      {
+        "SQL": "select * from thash3 partition(p1) where a in (2,4)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:dual data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[2,2], [4,4], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from thash3 partition(p0,p1) where a in (2,4)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[2,2], [4,4], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[2 4], keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 0",
+          "4 0"
+        ]
+      },
+      {
+        "SQL": "select * from trange3 where a in (1,2) and 1 = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0",
+          "2 0"
+        ]
+      },
+      {
+        "SQL": "select * from trange3 where a in (1,3) and 1 = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:all data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3 range:[1,1], [3,3], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 4.00 root  ",
+          "├─TableReader 2.00 root  data:TableRangeScan",
+          "│ └─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p0 range:[1,1], [3,3], keep order:false, stats:pseudo",
+          "└─TableReader 2.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p1 range:[1,1], [3,3], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0",
+          "3 0"
+        ]
+      },
+      {
+        "SQL": "select * from trange3 where a in (1,3) and 1 = 1 order by a",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:all data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3 range:[1,1], [3,3], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 4.00 root  test.trange3.a",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─TableReader 2.00 root  data:TableRangeScan",
+          "  │ └─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p0 range:[1,1], [3,3], keep order:false, stats:pseudo",
+          "  └─TableReader 2.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p1 range:[1,1], [3,3], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0",
+          "3 0"
+        ]
+      },
+      {
+        "SQL": "select * from trange3 where a in (1,3) and 1 = 1 order by a desc",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:all data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3 range:[1,1], [3,3], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Sort 4.00 root  test.trange3.a:desc",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─TableReader 2.00 root  data:TableRangeScan",
+          "  │ └─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p0 range:[1,1], [3,3], keep order:false, stats:pseudo",
+          "  └─TableReader 2.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p1 range:[1,1], [3,3], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3 0",
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from trange3 partition(p0) where a in (1,4)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3 range:[1,1], [4,4], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p0 range:[1,1], [4,4], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from trange3 partition(p1) where a in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:dual data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from trange3 partition(p0,p1) where a in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:trange3, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0",
+          "2 0"
+        ]
+      },
+      {
+        "SQL": "select * from tlist3 where a in (1,2) and 1 = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0",
+          "2 0"
+        ]
+      },
+      {
+        "SQL": "select * from tlist3 where a in (1,3) and 1 = 1",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3 range:[1,1], [3,3], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 4.00 root  ",
+          "├─TableReader 2.00 root  data:TableRangeScan",
+          "│ └─TableRangeScan 2.00 cop[tikv] table:tlist3, partition:p0 range:[1,1], [3,3], keep order:false, stats:pseudo",
+          "└─TableReader 2.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:tlist3, partition:p1 range:[1,1], [3,3], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0",
+          "3 0"
+        ]
+      },
+      {
+        "SQL": "select * from tlist3 where a in (1,2) and 1 = 1 order by a",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:true, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3, partition:p0 range:[1,1], [2,2], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 0",
+          "2 0"
+        ]
+      },
+      {
+        "SQL": "select * from tlist3 where a in (1,2) and 1 = 1 order by a desc",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:true, desc, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3, partition:p0 range:[1,1], [2,2], keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2 0",
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from tlist3 partition(p0) where a in (1,4)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3 range:[1,1], [4,4], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3, partition:p0 range:[1,1], [4,4], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0"
+        ]
+      },
+      {
+        "SQL": "select * from tlist3 partition(p1) where a in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:dual data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from tlist3 partition(p0,p1) where a in (1,2)",
+        "DynamicPlan": [
+          "TableReader 2.00 root partition:p0 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 2.00 root  data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:tlist3, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 0",
+          "2 0"
+        ]
+      },
+      {
+        "SQL": "select _tidb_rowid, a from issue45889 where _tidb_rowid in (7, 8)",
+        "DynamicPlan": [
+          "Projection 8000.00 root  test.issue45889._tidb_rowid, test.issue45889.a",
+          "└─TableReader 10000.00 root partition:all data:TableRangeScan",
+          "  └─TableRangeScan 10000.00 cop[tikv] table:issue45889 range:[7,7], [8,8], keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Projection 16000.00 root  test.issue45889._tidb_rowid, test.issue45889.a",
+          "└─PartitionUnion 16000.00 root  ",
+          "  ├─TableReader 10000.00 root  data:TableRangeScan",
+          "  │ └─TableRangeScan 10000.00 cop[tikv] table:issue45889, partition:p0 range:[7,7], [8,8], keep order:false, stats:pseudo",
+          "  └─TableReader 10000.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 10000.00 cop[tikv] table:issue45889, partition:p1 range:[7,7], [8,8], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "7 3",
+          "8 3"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestBatchPointGetPartitionForAccessObject",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select * from t1 where b in (1, 2)",
+        "Plan": [
+          "Batch_Point_Get 2.00 root table:t1, partition:p1,p2, index:b(b) keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where b in (1, 2, 1)",
+        "Plan": [
+          "Batch_Point_Get 3.00 root table:t1, partition:p1,p2, index:b(b) keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t2 where id in (1, 3)",
+        "Plan": [
+          "Batch_Point_Get 2.00 root table:t2, partition:p0,p1 handle:[1 3], keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t3 where id in (1, 3)",
+        "Plan": [
+          "TableReader 2.00 root partition:p0,p1 data:TableRangeScan",
+          "└─TableRangeScan 2.00 cop[tikv] table:t3 range:[1,1], [3,3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t4 where (id, name_id) in ((1, 1), (3, 3))",
+        "Plan": [
+          "IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:t4, index:id(id, name_id) range:[1 1,1 1], [3 3,3 3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t5 where (id, name) in ((1, 'a'), (3, 'c'))",
+        "Plan": [
+          "IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan",
+          "└─IndexRangeScan 2.00 cop[tikv] table:t5, index:id(id, name) range:[1 \"a\",1 \"a\"], [3 \"c\",3 \"c\"], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

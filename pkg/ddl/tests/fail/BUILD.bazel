@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "fail_test",
+    timeout = "short",
+    srcs = [
+        "fail_db_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 12,
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/ddl/schematracker",
+        "//pkg/ddl/testutil",
+        "//pkg/ddl/util",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/session",
+        "//pkg/sessionctx/variable",
+        "//pkg/store/mockstore",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

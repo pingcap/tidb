@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "lfu",
+    srcs = [
+        "key_set.go",
+        "key_set_shard.go",
+        "lfu_cache.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu",
+    visibility = ["//pkg/statistics/handle/cache:__subpackages__"],
+    deps = [
+        "//pkg/statistics",
+        "//pkg/statistics/handle/cache/internal",
+        "//pkg/statistics/handle/cache/internal/metrics",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "@com_github_dgraph_io_ristretto//:ristretto",
+        "@org_golang_x_exp//maps",
+        "@org_golang_x_exp//rand",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "lfu_test",
+    timeout = "short",
+    srcs = ["lfu_cache_test.go"],
+    embed = [":lfu"],
+    flaky = True,
+    race = "on",
+    shard_count = 10,
+    deps = [
+        "//pkg/statistics",
+        "//pkg/statistics/handle/cache/internal/testutil",
+        "@com_github_stretchr_testify//require",
+    ],
+)

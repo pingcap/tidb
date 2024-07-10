@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "syncload",
+    srcs = ["stats_syncload.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/syncload",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/kv",
+        "//pkg/metrics",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/types",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_golang_x_sync//singleflight",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "syncload_test",
+    timeout = "short",
+    srcs = ["stats_syncload_test.go"],
+    flaky = True,
+    race = "on",
+    shard_count = 5,
+    deps = [
+        ":syncload",
+        "//pkg/config",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics/handle/types",
+        "//pkg/testkit",
+        "//pkg/util/mathutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

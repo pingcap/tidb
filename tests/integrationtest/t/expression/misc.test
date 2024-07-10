@@ -1,0 +1,613 @@
+# TestLiterals
+SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;
+
+# TestTimestampLiteral
+select timestamp '2017-01-01 00:00:00';
+select timestamp '2017@01@01 00:00:00';
+select timestamp '2017@01@01 00~00~00';
+select timestamp '2017@01@0001 00~00~00.333';
+-- error 1292
+select timestamp '00:00:00';
+-- error 1292
+select timestamp '1992-01-03';
+-- error 1292
+select timestamp '20171231235959.999999';
+
+# TestTimeLiteral
+select time '117:01:12';
+select time '01:00:00.999999';
+select time '1 01:00:00';
+select time '110:00:00';
+select time'-1:1:1.123454656';
+select time '33:33';
+select time '1.1';
+select time '21';
+select time '20 20:20';
+-- error 1292
+select time '2017-01-01 00:00:00';
+-- error 1292
+select time '071231235959.999999';
+-- error 1292
+select time '20171231235959.999999';
+--enable_warnings
+select ADDDATE('2008-01-34', -1);
+--disable_warnings
+
+# TestTwoDecimalTruncate
+set sql_mode='';
+drop table if exists t;
+create table t1(a decimal(10,5), b decimal(10,1));
+insert into t1 values(123.12345, 123.12345);
+update t1 set b = a;
+select a, b from t1;
+select 2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002;
+set sql_mode=default;
+
+# TestDecimalMul
+drop table if exists t;
+create table t(a decimal(38, 17));
+insert into t select 0.5999991229316*0.918755041726043;
+select * from t;
+
+# TestDecimalDiv
+select cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30));
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30));
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30));
+
+# TestValuesFloat32
+drop table if exists t;
+create table t (i int key, j float);
+insert into t values (1, 0.01);
+select * from t;
+insert into t values (1, 0.02) on duplicate key update j = values (j);
+select * from t;
+
+# TestValuesEnum
+drop table if exists t;
+create table t (a bigint primary key, b enum('a','b','c'));
+insert into t values (1, "a");
+select * from t;
+insert into t values (1, "b") on duplicate key update b = values(b);
+select * from t;
+
+# TestRefineArgNullValues
+drop table if exists t;
+drop table if exists s;
+create table t(id int primary key, a int);
+create table s(a int);
+insert into s values(1),(2);
+select t.id = 1.234 from t right join s on t.a = s.a;
+
+# TestComplexShowVariables
+# This is an example SHOW VARIABLES from mysql-connector-java-5.1.34
+# It returns 19 rows in MySQL 5.7 (the language sysvar no longer exists in 5.6+)
+# and 16 rows in MySQL 8.0 (the aliases for tx_isolation is removed, along with query cache)
+# In the event that we hide noop sysvars in future, we must keep these variables.
+SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout'
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection'
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation'
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
+OR Variable_name = 'license' OR Variable_name = 'init_connect';
+
+# TestFloat64Inf
+select '1e800' + 1e100;
+select '-1e800' - 1e100;
+
+# TestIdentity
+drop table if exists identity;
+create table identity (id int not null primary key auto_increment);
+SELECT @@identity;
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+
+# TestLastInsertId
+drop table if exists lastinsertid;
+create table lastinsertid (id int not null primary key auto_increment);
+SELECT @@last_insert_id;
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+
+# TestVirtualGeneratedColumnAndLimit
+drop table if exists t;
+create table t (a int, b int as (a + 1));
+insert into t(a) values (1);
+select /*+ LIMIT_TO_COP() */ b from t limit 1;
+select /*+ LIMIT_TO_COP() */ b from t order by b limit 1;
+
+# TestNegativeZeroForHashJoin
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 float);
+CREATE TABLE t1(c0 float);
+INSERT INTO t1(c0) VALUES (0);
+INSERT INTO t0(c0) VALUES (0);
+SELECT t1.c0 FROM t1, t0 WHERE t0.c0=-t1.c0;
+
+# TestFuncCaseWithLeftJoin
+drop table if exists kankan1, kankan2;
+create table kankan1(id int, name text);
+insert into kankan1 values(1, 'a');
+insert into kankan1 values(2, 'a');
+create table kankan2(id int, h1 text);
+insert into kankan2 values(2, 'z');
+select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id;
+
+# TestConvertToBit
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a varchar(2));
+insert t1 value ('10');
+insert t select a from t1;
+select a+0 from t;
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a binary(2));
+insert t1 value ('10');
+insert t select a from t1;
+select a+0 from t;
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a datetime);
+insert t1 value ('09-01-01');
+insert t select a from t1;
+select a+0 from t;
+
+# TestUnknowHintIgnore
+drop table if exists t;
+create table t(a int);
+--enable_warnings
+select /*+ unknown_hint(c1)*/ 1;
+select 1 from /*+ test1() */ t;
+--disable_warnings
+
+# TestValuesInNonInsertStmt
+drop table if exists t;
+create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);
+insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");
+select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;
+
+# TestJiraSetInnoDBDefaultRowFormat
+set global innodb_default_row_format = dynamic;
+set global innodb_default_row_format = 'dynamic';
+SHOW VARIABLES LIKE 'innodb_default_row_format';
+SHOW VARIABLES LIKE 'character_set_server';
+SHOW VARIABLES LIKE 'innodb_file_format';
+SHOW VARIABLES LIKE 'innodb_large_prefix';
+
+# TestIfNullParamMarker
+drop table if exists t;
+create table t (c1 varchar(100), c2 varchar(128));
+prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
+set @a='1',@b=repeat('x', 80);
+execute pr1 using @a,@b;
+
+# TestNullValueRange
+drop table if exists t;
+create table t(a int, b int, index(a));
+insert into t values (null, 0), (null, 1), (10, 11), (10, 12);
+select * from t use index(a) where a is null order by b;
+select * from t use index(a) where a<=>null order by b;
+select * from t use index(a) where a<=>10 order by b;
+drop table if exists t1;
+create table t1(a int, b int, c int, unique key(a, b, c));
+insert into t1 values (1, null, 1), (1, null, 2), (1, null, 3), (1, null, 4);
+insert into t1 values (1, 1, 1), (1, 2, 2), (1, 3, 33), (1, 4, 44);
+select c from t1 where a=1 and b<=>null and c>2 order by c;
+select c from t1 where a=1 and b is null and c>2 order by c;
+select c from t1 where a=1 and b is not null and c>2 order by c;
+
+# TestPartitionPruningRelaxOP
+# Discovered while looking at issue 19941 (not completely related)
+# relaxOP relax the op > to >= and < to <=
+# Sometime we need to relax the condition, for example:
+# col < const => f(col) <= const
+# datetime < 2020-02-11 16:18:42 => to_days(datetime) <= to_days(2020-02-11)
+# We can't say:
+# datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (d date NOT NULL) PARTITION BY RANGE (YEAR(d))
+ (PARTITION p2016 VALUES LESS THAN (2017), PARTITION p2017 VALUES LESS THAN (2018), PARTITION p2018 VALUES LESS THAN (2019),
+ PARTITION p2019 VALUES LESS THAN (2020), PARTITION pmax VALUES LESS THAN MAXVALUE);
+INSERT INTO t1 VALUES ('2016-01-01'), ('2016-06-01'), ('2016-09-01'), ('2017-01-01'),
+('2017-06-01'), ('2017-09-01'), ('2018-01-01'), ('2018-06-01'), ('2018-09-01'), ('2018-10-01'),
+('2018-11-01'), ('2018-12-01'), ('2018-12-31'), ('2019-01-01'), ('2019-06-01'), ('2019-09-01'),
+('2020-01-01'), ('2020-06-01'), ('2020-09-01');
+SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01';
+SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01';
+
+# TestFoldIfNull
+drop table if exists t;
+create table t(a bigint, b bigint);
+insert into t values(1, 1);
+--enable_warnings
+desc format='brief' select ifnull("aaaa", a) from t;
+select ifnull("aaaa", a) from t;
+--disable_warnings
+
+# TestPrefixIndex
+drop table if exists t1;
+drop table if exists prefix;
+CREATE TABLE t1 (
+  			name varchar(12) DEFAULT NULL,
+  			KEY pname (name(12))
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+insert into t1 values('借款策略集_网页');
+select * from t1 where name = '借款策略集_网页';
+CREATE TABLE prefix (
+		a int(11) NOT NULL,
+		b varchar(55) DEFAULT NULL,
+		c int(11) DEFAULT NULL,
+		PRIMARY KEY (a),
+		KEY prefix_index (b(2)),
+		KEY prefix_complex (a,b(2))
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+INSERT INTO prefix VALUES(0, 'b', 2), (1, 'bbb', 3), (2, 'bbc', 4), (3, 'bbb', 5), (4, 'abc', 6), (5, 'abc', 7), (6, 'abc', 7), (7, 'ÿÿ', 8), (8, 'ÿÿ0', 9), (9, 'ÿÿÿ', 10);
+select c, b from prefix where b > 'ÿ' and b < 'ÿÿc';
+select a, b from prefix where b LIKE 'ÿÿ%';
+
+# TestUserVarMockWindFunc
+drop table if exists t;
+create table t (a int, b varchar (20), c varchar (20));
+insert into t values
+					(1,'key1-value1','insert_order1'),
+    				(1,'key1-value2','insert_order2'),
+    				(1,'key1-value3','insert_order3'),
+    				(1,'key1-value4','insert_order4'),
+    				(1,'key1-value5','insert_order5'),
+    				(1,'key1-value6','insert_order6'),
+    				(2,'key2-value1','insert_order1'),
+    				(2,'key2-value2','insert_order2'),
+    				(2,'key2-value3','insert_order3'),
+    				(2,'key2-value4','insert_order4'),
+    				(2,'key2-value5','insert_order5'),
+    				(2,'key2-value6','insert_order6'),
+    				(3,'key3-value1','insert_order1'),
+    				(3,'key3-value2','insert_order2'),
+    				(3,'key3-value3','insert_order3'),
+    				(3,'key3-value4','insert_order4'),
+    				(3,'key3-value5','insert_order5'),
+    				(3,'key3-value6','insert_order6');
+SET @LAST_VAL := NULL;
+SET @ROW_NUM := 0;
+select * from (
+    SELECT 
+        a,
+        @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+		@LAST_VAL := a AS LAST_VAL,
+		b,
+		c
+	FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+) t2 where t2.ROW_NUM < 2;
+select * from (
+	SELECT 
+        a,
+	    @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+	    @LAST_VAL := a AS LAST_VAL,
+	    b,
+	    c
+	FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+) t2;
+
+# TestCTEWithDML
+drop table if exists t1;
+create table t1(a int);
+insert into t1 values(2),(3);
+with t1 as (select 36 as col from t1 where a=3) select * from t1;
+insert into t1 with t1 as (select 36 as col from t1) select * from t1;
+select * from t1;
+with cte1(a) as (select 36) update t1 set a = 1 where a in (select a from cte1);
+select * from t1;
+with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte, t1 set t1.a=1;
+select * from t1;
+-- error 1288
+with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte set a=1;
+-- error 1288
+with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) delete from cte;
+-- error 1288
+with cte(a) as (select a from t1) delete from cte;
+-- error 1288
+with cte(a) as (select a from t1) update cte set a=1;
+drop table if exists t1;
+create table t1(a int, b int, primary key(a));
+insert into t1 values (1, 1),(2,1),(3,1);
+replace into t1 with recursive cte(a,b) as (select 1, 1 union select a + 1,b+1 from cte where a < 5) select * from cte;
+select * from t1;
+
+# TestIndexedVirtualGeneratedColumnTruncate
+drop table if exists t;
+create table t(a int, b tinyint as(a+100) unique key);
+insert ignore into t values(200, default);
+update t set a=1 where a=200;
+admin check table t;
+delete from t;
+insert ignore into t values(200, default);
+admin check table t;
+insert ignore into t values(200, default) on duplicate key update a=100;
+admin check table t;
+delete from t;
+admin check table t;
+begin;
+insert ignore into t values(200, default);
+update t set a=1 where a=200;
+admin check table t;
+delete from t;
+insert ignore into t values(200, default);
+admin check table t;
+insert ignore into t values(200, default) on duplicate key update a=100;
+admin check table t;
+delete from t;
+admin check table t;
+commit;
+admin check table t;
+
+# TestEnumPushDown
+drop table if exists t;
+create table t (c_enum enum('c', 'b', 'a'));
+insert into t values ('a'), ('b'), ('c'), ('a'), ('b'), ('a');
+select c_enum from t order by c_enum;
+select c_enum from t order by c_enum desc;
+select c_enum from t order by if(c_enum>1, c_enum, c_enum);
+select c_enum from t where c_enum order by c_enum;
+select c_enum from t where c_enum > 'a' order by c_enum;
+select c_enum from t where c_enum > 1 order by c_enum;
+select c_enum from t where c_enum = 1 order by c_enum;
+select c_enum from t where c_enum = 'a' order by c_enum;
+select c_enum from t where c_enum + 1 order by c_enum;
+select c_enum from t where c_enum - 1 order by c_enum;
+select c_enum+1 from t order by c_enum;
+select c_enum, c_enum=1 from t order by c_enum;
+select c_enum, c_enum>1 from t order by c_enum;
+select c_enum, c_enum>'a' from t order by c_enum;
+select max(c_enum) from t;
+select min(c_enum) from t;
+select max(c_enum+1) from t;
+select min(c_enum+1) from t;
+select avg(c_enum) from t;
+select avg(distinct c_enum) from t;
+select distinct c_enum from t order by c_enum;
+select c_enum from t group by c_enum order by c_enum;
+drop table if exists t1;
+CREATE TABLE t1 (
+		a char(3) NOT NULL default '',
+		e enum('a','b','c','d','e') NOT NULL default 'a'
+	);
+INSERT INTO t1 VALUES ('aaa','e');
+INSERT INTO t1 VALUES ('bbb','e');
+INSERT INTO t1 VALUES ('ccc','a');
+INSERT INTO t1 VALUES ('ddd','e');
+SELECT DISTINCT e AS c FROM t1 outr WHERE
+	a <> SOME ( SELECT a FROM t1 WHERE e = outr.e);
+drop table t;
+create table t(e enum('c','b','a'));
+insert into t values(1),(2),(3);
+select e from t where e > 'b';
+select e from t where e > 2;
+alter table t add index idx(e);
+select e from t where e > 'b';
+select e from t where e > 2;
+drop table if exists tdm;
+create table tdm(id int, `c12` enum('a','b','c'), PRIMARY KEY (`id`));
+insert into tdm values (1, 'a');
+update tdm set c12 = 2 where id = 1;
+select * from tdm;
+set @@sql_mode = '';
+update tdm set c12 = 0 where id = 1;
+select c12+0 from tdm;
+update tdm set c12 = '0' where id = 1;
+select c12+0 from tdm;
+
+# TestCTEInvalidUsage
+drop table if exists t;
+create table t(a int);
+-- error 1146
+with cte1 as (select * from cte2), cte2 as (select 1) select * from cte1;
+-- error 1146
+with cte1 as (select * from cte2)  select * from (with cte2 as (select 2) select * from cte1 ) q;
+-- error 3575
+with recursive cte(n) as (select 1 union select sum(n) from cte group by n) select * from cte;
+-- error 3575
+with recursive cte(n) as (select 1 union select row_number() over(partition by n) from cte ) select * from cte;
+-- error 1235
+with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
+-- error 1235
+with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
+-- error 1235
+with recursive cte(n) as (select 1 union select distinct  * from cte) select * from cte;
+-- error 1235
+with recursive cte(n) as (select 1 union (select * from cte limit 2)) select * from cte;
+-- error 3577
+with recursive cte(n) as (select 1 union select * from cte, cte c1) select * from cte;
+-- error 3577
+with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;
+-- error 3577
+with recursive cte(n) as (select 1 union select * from cte where 1 in (select * from cte)) select * from cte;
+-- error 3577
+with recursive cte(n) as (select 1 union select * from cte where exists (select * from cte)) select * from cte;
+-- error 3577
+with recursive cte(n) as (select 1 union select * from cte where 1 >  (select * from cte)) select * from cte;
+-- error 3577
+with recursive cte(n) as (select 1 union select (select * from cte) c1) select * from cte;
+-- error 3576
+with recursive cte(n) as (select 1 union select * from t left join cte on t.a=cte.n) select * from cte;
+-- error 3574
+with recursive cte(n) as (select  1 intersect select 2 union select * from cte union select 1) select * from cte;
+-- error 3574
+with recursive cte(n) as (select  * from cte union select * from cte) select * from cte;
+-- error 1235
+with recursive cte(n) as (select 1 intersect select * from cte) select * from cte;
+-- error 1235
+with recursive cte(n) as (select 1 union select 1 intersect select * from cte) select * from cte;
+-- error 1235
+with recursive cte(n) as (select 1 except select * from cte) select * from cte;
+-- error 1235
+with recursive cte(n) as (select 1 union select 1 except select * from cte) select * from cte;
+
+# TestRedundantColumnResolve
+drop table if exists t1, t2;
+create table t1(a int not null);
+create table t2(a int not null);
+insert into t1 values(1);
+insert into t2 values(1);
+select a, count(*) from t1 join t2 using (a) group by a;
+select a, count(*) from t1 natural join t2 group by a;
+-- error 1052
+select a, count(*) from t1 join t2 on t1.a=t2.a group by a;
+select t1.a, t2.a from t1 join t2 using (a) group by t1.a;
+-- error 1052
+select t1.a, t2.a from t1 join t2 using(a) group by a;
+select t2.a from t1 join t2 using (a) group by t1.a;
+select t1.a from t1 join t2 using (a) group by t1.a;
+select t2.a from t1 join t2 using (a) group by t2.a;
+# The test below cannot pass now since we do not infer functional dependencies from filters as MySQL, hence would fail in only_full_group_by check.
+# tk.MustQuery("select t1.a from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
+select count(*) from t1 join t2 using (a) group by t2.a;
+select t2.a from t1 join t2 using (a) group by a;
+select t1.a from t1 join t2 using (a) group by a;
+select * from t1 join t2 using(a);
+select t1.a, t2.a from t1 join t2 using(a);
+select * from t1 natural join t2;
+select t1.a, t2.a from t1 natural join t2;
+
+# TestControlFunctionWithEnumOrSet
+drop table if exists e;
+create table e(e enum('c', 'b', 'a'));
+insert into e values ('a'),('b'),('a'),('b');
+--sorted_result
+select e from e where if(e>1, e, e);
+--sorted_result
+select e from e where case e when 1 then e else e end;
+select e from e where case 1 when e then e end;
+--sorted_result
+select if(e>1,e,e)='a' from e;
+--sorted_result
+select if(e>1,e,e)=1 from e;
+--sorted_result
+select if(e>2,e,e) and if(e<=2,e,e) from e;
+--sorted_result
+select if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e)) from e;
+--sorted_result
+select * from e where if(e>2,e,e) and if(e<=2,e,e);
+--sorted_result
+select * from e where if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e));
+drop table if exists t;
+create table t(a int,b enum("b","y","1"));
+insert into t values(0,"y"),(1,"b"),(null,null),(2,"1");
+SELECT count(*) FROM t where if(a,b ,null);
+drop table if exists t;
+create table t(a int,b enum("b"),c enum("c"));
+insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);
+select a from t where if(a=1,b,c)="b";
+select a from t where if(a=1,b,c)="c";
+select a from t where if(a=1,b,c)=1;
+select a from t where if(a=1,b,c);
+drop table if exists e;
+create table e(e enum('c', 'b', 'a'));
+insert into e values(3);
+select elt(1,e) = 'a' from e;
+select elt(1,e) = 3 from e;
+select e from e where elt(1,e);
+drop table if exists s;
+create table s(s set('c', 'b', 'a'));
+insert into s values ('a'),('b'),('a'),('b');
+select s from s where if(s>1, s, s);
+select s from s where case s when 1 then s else s end;
+select s from s where case 1 when s then s end;
+select if(s>1,s,s)='a' from s;
+select if(s>1,s,s)=4 from s;
+drop table if exists s;
+create table s(s set('c', 'b', 'a'));
+insert into s values('a');
+select elt(1,s) = 'a' from s;
+select elt(1,s) = 4 from s;
+select s from s where elt(1,s);
+drop table if exists t;
+create table t(a int,b enum("b"),c enum("c"));
+insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);
+select if(A, null,b)=1 from t;
+select if(A, null,b)='a' from t;
+drop table if exists t;
+create table t(a int,b set("b"),c set("c"));
+insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);
+select if(A, null,b)=1 from t;
+select if(A, null,b)='a' from t;
+drop table if exists t;
+create table t(`a` enum('y','b','Abc','null','1','2','0')) CHARSET=binary;
+insert into t values("1");
+SELECT count(*) from t where (null like 'a') = (case when cast('2015' as real) <=> round("1200","1") then a end);
+SELECT (null like 'a') = (case when cast('2015' as real) <=> round("1200","1") then a end) from t;
+SELECT 5 = (case when 0 <=> 0 then a end) from t;
+SELECT '1' = (case when 0 <=> 0 then a end) from t;
+SELECT 5 = (case when 0 <=> 1 then a end) from t;
+SELECT '1' = (case when 0 <=> 1 then a end) from t;
+SELECT 5 = (case when 0 <=> 1 then a else a end) from t;
+SELECT '1' = (case when 0 <=> 1 then a else a end) from t;
+
+# TestConstPropNullFunctions
+drop table if exists t1, t2;
+create table t1 (a integer);
+insert into t1 values (0), (1), (2), (3);
+create table t2 (a integer, b integer);
+insert into t2 values (0,1), (1,1), (2,1), (3,1);
+select t1.* from t1 left join t2 on t2.a = t1.a where t1.a = ifnull(t2.b, 0);
+drop table if exists t1, t2;
+create table t1 (i1 integer, c1 char);
+insert into t1 values (2, 'a'), (1, 'b'), (3, 'c'), (0, null);
+create table t2 (i2 integer, c2 char, f2 float);
+insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null);
+select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2));
+
+# TestTiDBDecodePlanFunc
+select tidb_decode_plan('');
+select tidb_decode_plan('7APIMAk1XzEzCTAJMQlmdW5jczpjb3VudCgxKQoxCTE3XzE0CTAJMAlpbm5lciBqb2luLCBpAQyQOlRhYmxlUmVhZGVyXzIxLCBlcXVhbDpbZXEoQ29sdW1uIzEsIA0KCDkpIBkXADIVFywxMCldCjIJMzFfMTgFZXhkYXRhOlNlbGVjdGlvbl8xNwozCTFfMTcJMQkwCWx0HVlATlVMTCksIG5vdChpc251bGwVHAApUhcAUDIpKQo0CTEwXzE2CTEJMTAwMDAJdAHB2Dp0MSwgcmFuZ2U6Wy1pbmYsK2luZl0sIGtlZXAgb3JkZXI6ZmFsc2UsIHN0YXRzOnBzZXVkbwoFtgAyAZcEMAk6tgAEMjAFtgQyMDq2AAg5LCBmtgAAMFa3AAA5FbcAOT63AAAyzrcA');
+select tidb_decode_plan('rwPwcTAJNV8xNAkwCTEJZnVuY3M6bWF4KHRlc3QudC5hKS0+Q29sdW1uIzQJMQl0aW1lOjIyMy45MzXCtXMsIGxvb3BzOjIJMTI4IEJ5dGVzCU4vQQoxCTE2XzE4CTAJMQlvZmZzZXQ6MCwgY291bnQ6MQkxCQlHFDE4LjQyMjJHAAhOL0EBBCAKMgkzMl8yOAkBlEBpbmRleDpMaW1pdF8yNwkxCQ0+DDYuODUdPSwxLCBycGMgbnVtOiANDAUpGDE1MC44MjQFKjhwcm9jIGtleXM6MAkxOTgdsgAzAbIAMgFearIAFDU3LjM5NgVKAGwN+BGxIDQJMTNfMjYJMQGgHGFibGU6dCwgCbqwaWR4KGEpLCByYW5nZTooMCwraW5mXSwga2VlcCBvcmRlcjp0cnVlLCBkZXNjAT8kaW1lOjU2LjY2MR1rJDEJTi9BCU4vQQo=');
+--disable_result_log
+select tidb_decode_plan(query), time from information_schema.slow_query order by time desc limit 1;
+--enable_result_log
+select tidb_decode_plan('xxx');
+
+# TestDatetimeUserVariable
+set @p = now();
+set @@tidb_enable_vectorized_expression = false;
+select length(@p);
+set @@tidb_enable_vectorized_expression = true;
+select length(@p);
+
+# TestNotExistFunc
+connect (conn1, localhost, root,,);
+
+## current db is empty
+-- error 1046
+SELECT xxx(1);
+-- error 1046
+SELECT yyy();
+-- error 1305
+SELECT T.upper(1);
+
+## current db is not empty
+use test;
+-- error 1305
+SELECT xxx(1);
+-- error 1305
+SELECT yyy();
+-- error 1305
+SELECT t.upper(1);
+-- error 1305
+SELECT timestampliteral(rand());
+connection default;
+disconnect conn1;
+
+# TestColumnInfoModified
+drop table if exists tab0;
+CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER);
+SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0;
+show create table tab0;

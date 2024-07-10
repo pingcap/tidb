@@ -1,0 +1,132 @@
+# TestLongBlobReuse
+drop table if exists t1, t2, t3, t4;
+create table t1 (id1 int ,id2 char(10) ,id3 text,id4 blob,id5 json,id6 varchar(1000),id7 varchar(1001), PRIMARY KEY (`id1`) clustered,key id2(id2));
+insert into t1 (id1,id2)values(1,1);
+insert into t1 (id1,id2)values(2,2),(3,3);
+create table t2 (id1 int ,id2 char(10) ,id3 text,id4 blob,id5 json,id6 varchar(1000),PRIMARY KEY (`id1`) clustered,key id2(id2));
+insert into t2 (id1,id2)values(1,1);
+insert into t2 (id1,id2)values(2,2),(3,3);
+explain format='brief' select t1.id1 from t1,t2 where t1.id2 > '1' and t2.id2 > '1';
+--sorted_result
+select t1.id1 from t1,t2 where t1.id2 > '1' and t2.id2 > '1';
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id2 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id3 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id4 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id5 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id6 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id7 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+select @@last_sql_use_alloc;
+explain format='brief' select t1.id1 from t1,t2 where t1.id2 > '1'and t1.id1 = t2.id1;
+--sorted_result
+select t1.id1 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1 ,t1.id3 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1 ,t1.id4 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1 ,t1.id5 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1 ,t1.id6 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1 ,t1.id7 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+select @@last_sql_use_alloc;
+explain format='brief' select t1.id1 from t1,t2 where t1.id1 = 1 and t2.id1 = 1;
+--sorted_result
+select t1.id1 from t1,t2 where t1.id1 = 1 and t2.id1 = 1;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id2 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id3 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id4 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id5 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id6 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id7 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+select @@last_sql_use_alloc;
+explain format='brief' select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2' ;
+--sorted_result
+select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id3 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id4 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id5 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id7 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+select @@last_sql_use_alloc;
+--sorted_result
+select t1.id1,t1.id6 ,t2.id3  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+select @@last_sql_use_alloc;
+create table t3 (id1 int ,id2 char(10),id8 int ,id3 text,id4 blob,id5 json,id6 varchar(1000),id7 varchar(1001), PRIMARY KEY (`id1`) clustered,key id2(id2),key id8(id8));
+insert into t3 (id1,id2,id8)values(1,1,1),(2,2,2),(3,3,3);
+explain format='brief' select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id3 from t3 where id2 > '4' or id8 < 7);
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id4 from t3 where id2 > '4' or id8 < 7);
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id5 from t3 where id2 > '4' or id8 < 7);
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id6 from t3 where id2 > '4' or id8 < 7);
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id7 from t3 where id2 > '4' or id8 < 7);
+select @@last_sql_use_alloc;
+set tidb_enable_clustered_index = OFF;
+create table t4 (id1 int ,id2 char(10),id8 int ,id3 text,id4 blob,id5 json,id6 varchar(1000),id7 varchar(1001), PRIMARY KEY (`id1`),key id2(id2),key id8(id8,id2));
+insert into t4 (id1,id2,id8)values(1,1,1),(2,2,2),(3,3,3);
+explain format='brief' select id2 from t4 where id2 > '3' union (select id2 from t4 where id2 > '4');
+--sorted_result
+select id2 from t4 where id2 > '3' union (select id2 from t4 where id2 > '4');
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select CHAR_LENGTH(id3) from t3 where id2 > '4' or id8 < 7);
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select CHAR_LENGTH(id2) from t3 where id2 > '4' or id8 < 7);
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id2 from t3 where id2 > '4' or id8 < 7 and id3 is null);
+select @@last_sql_use_alloc;
+--sorted_result
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id2 from t3 where id2 > '4' or id8 < 7 and char_length(id3) > 0);
+select @@last_sql_use_alloc;
+set tidb_enable_clustered_index = default;
+

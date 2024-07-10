@@ -1,0 +1,122 @@
+set session tidb_opt_write_row_id = ON;
+drop table if exists t;
+create table t (a int, b int);
+insert t values (1, 7), (1, 8), (1, 9);
+select *, _tidb_rowid from t;
+a	b	_tidb_rowid
+1	7	1
+1	8	2
+1	9	3
+update t set a = 2 where _tidb_rowid = 2;
+select *, _tidb_rowid from t;
+a	b	_tidb_rowid
+1	7	1
+2	8	2
+1	9	3
+delete from t where _tidb_rowid = 2;
+select *, _tidb_rowid from t;
+a	b	_tidb_rowid
+1	7	1
+1	9	3
+insert t (a, b, _tidb_rowid) values (2, 2, 2), (5, 5, 5);
+select *, _tidb_rowid from t;
+a	b	_tidb_rowid
+1	7	1
+2	2	2
+1	9	3
+5	5	5
+create table s (a int primary key);
+insert s values (1);
+insert s (a, _tidb_rowid) values (1, 2);
+Error 1054 (42S22): Unknown column '_tidb_rowid' in 'field list'
+select _tidb_rowid from s;
+Error 1054 (42S22): Unknown column '_tidb_rowid' in 'field list'
+update s set a = 2 where _tidb_rowid = 1;
+Error 1054 (42S22): Unknown column '_tidb_rowid' in 'where clause'
+delete from s where _tidb_rowid = 1;
+Error 1054 (42S22): Unknown column '_tidb_rowid' in 'where clause'
+insert into t (a, _tidb_rowid) values(10, 1);
+Error 1105 (HY000): insert, update and replace statements for _tidb_rowid are not supported
+set session tidb_opt_write_row_id = default;
+set tidb_enable_clustered_index = INT_ONLY;
+drop table if exists tt;
+create table tt(id binary(10), c int, primary key(id));
+insert tt values (1, 10);
+select hex(id), c, _tidb_rowid from tt;
+hex(id)	c	_tidb_rowid
+31000000000000000000	10	1
+insert into tt (id, c, _tidb_rowid) values(30000,10,1);
+Error 1105 (HY000): insert, update and replace statements for _tidb_rowid are not supported
+replace into tt (id, c, _tidb_rowid) values(30000,10,1);
+Error 1105 (HY000): insert, update and replace statements for _tidb_rowid are not supported
+update tt set id = 2, _tidb_rowid = 1 where _tidb_rowid = 1;
+Error 1105 (HY000): insert, update and replace statements for _tidb_rowid are not supported
+update tt set id = 2 where _tidb_rowid = 1;
+admin check table tt;
+drop table tt;
+set tidb_enable_clustered_index = default;
+drop table if exists t;
+create table t (a int);
+set @@tidb_opt_write_row_id = true;
+insert into t (_tidb_rowid, a) values (1, 1), (2, 2);
+select *, _tidb_rowid from t;
+a	_tidb_rowid
+1	1
+2	2
+drop table if exists t;
+create table t(id varchar(10), c int);
+insert t values('one', 101), ('two', 102);
+select *, _tidb_rowid from t;
+id	c	_tidb_rowid
+one	101	1
+two	102	2
+insert t (id, c, _tidb_rowid) values ('three', 103, 9), ('four', 104, 16), ('five', 105, 5);
+select *, _tidb_rowid from t where c > 102;
+id	c	_tidb_rowid
+five	105	5
+four	104	16
+three	103	9
+insert t values ('six', 106), ('seven', 107);
+select *, _tidb_rowid from t where c > 105;
+id	c	_tidb_rowid
+seven	107	18
+six	106	17
+drop table if exists t;
+create table t (a int) shard_row_id_bits = 5;
+insert into t values (1);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+a	((1 << (64-5-1)) - 1) & _tidb_rowid
+1	1
+insert into t (a, _tidb_rowid) values (2, (1<<62)+5);
+insert into t values (3);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+a	((1 << (64-5-1)) - 1) & _tidb_rowid
+1	1
+2	5
+3	6
+insert into t (a, _tidb_rowid) values (4, null);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+a	((1 << (64-5-1)) - 1) & _tidb_rowid
+1	1
+2	5
+3	6
+4	7
+delete from t;
+SET sql_mode=(SELECT CONCAT(@@sql_mode,',NO_AUTO_VALUE_ON_ZERO'));
+insert into t (a, _tidb_rowid) values (5, 0);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+a	((1 << (64-5-1)) - 1) & _tidb_rowid
+5	0
+SET sql_mode=(SELECT REPLACE(@@sql_mode,'NO_AUTO_VALUE_ON_ZERO',''));
+insert into t (a, _tidb_rowid) values (6, 0);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+a	((1 << (64-5-1)) - 1) & _tidb_rowid
+5	0
+6	8
+insert into t (_tidb_rowid, a) values (0, 7);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+a	((1 << (64-5-1)) - 1) & _tidb_rowid
+5	0
+6	8
+7	9
+set @@tidb_opt_write_row_id = default;

@@ -1,0 +1,190 @@
+[
+  {
+    "name": "TestOptimizeHintOnPartitionTable",
+    "cases": [
+      "select /*+ use_index(t) */ * from t",
+      "select /*+ use_index(t partition(p0, p1) b, c) */ * from t partition(p1,p2)",
+      "select /*+ use_index(t partition(p_non_exist)) */ * from t partition(p1,p2)",
+      "select /*+ use_index(t partition(p0, p1) b, c) */ * from t",
+      "select /*+ ignore_index(t partition(p0, p1) b, c) */ * from t",
+      "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
+      "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
+      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)"
+    ]
+  },
+  {
+    "name": "TestReadFromStorageHint",
+    "cases": [
+      "desc format = 'brief' select avg(a) from t",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
+      "desc format = 'brief' select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+      "desc format = 'brief' select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+      "desc format = 'brief' select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+      "desc format = 'brief' select * from ttt order by ttt.a desc",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
+      "desc format = 'brief' select /*+ read_from_storage(tikv[t, ttt]) */ * from ttt",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt"
+    ]
+  },
+  {
+    "name": "TestAllViewHintType",
+    "cases": [
+      // leading hint
+      // join nodes in the same view
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), leading(@qb_v1 v, t2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), leading(v@qb_v1, t2@qb_v1) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), leading(@qb_v1 t3, t2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), leading(t3@qb_v1, t2@qb_v1) */ * from v1;",
+
+      // join node across view
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), qb_name(qb_v, v1.v), leading(t2@qb_v1, t@qb_v) */ * from v1;",
+
+      // hash_join hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join(@qb_v1 v, t2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join(t2@qb_v1, t3@qb_v1) */ * from v1;",
+
+      // hash join build hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join_build(@qb_v1 v) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join_build(t2@qb_v1) */ * from v1;",
+
+      // hash join probe hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join_build(@qb_v1 v) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join_build(t2@qb_v1) */ * from v1;",
+
+      // merge join hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), merge_join(@qb_v1 v) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), merge_join(t2@qb_v1) */ * from v1;",
+
+      // index join hint
+      "explain format = 'brief' select /*+ qb_name(qb_v, v), INL_JOIN(@qb_v t) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v, v), INL_JOIN(t@qb_v) */ * from v;",
+
+      // agg hint
+      "explain format = 'brief' select /*+ qb_name(qb_v2, v2.@sel_2), hash_agg(@qb_v2) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v2, v2.@sel_2), stream_agg(@qb_v2) */ * from v2;",
+
+      // index hint
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), use_index(t5@qb_v3, idx_a) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), use_index(@qb_v3 t5, idx_b) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), force_index(t5@qb_v3, idx_a) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), force_index(@qb_v3 t5, idx_b) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), ignore_index(t5@qb_v3, idx_a) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), ignore_index(@qb_v3 t5, idx_b) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v4, v4), use_index_merge(t5@qb_v4, idx_a, idx_b) */ * from v4;",
+      "explain format = 'brief' select /*+ qb_name(qb_v4, v4), use_index_merge(@qb_v4 t5, idx_b, idx_a) */ * from v4;",
+
+      // read from storage
+      "explain format = 'brief' select /*+ qb_name(qb_v, v), READ_FROM_STORAGE(TIFLASH[t@qb_v], TIKV[t1@qb_v]) */ * from v;",
+
+      // subquery hint
+      "explain format = 'brief' select /*+ qb_name(qb_v5, v5.@sel_2), SEMI_JOIN_REWRITE(@qb_v5) */ * from v5;",
+      "explain format = 'brief' select /*+ qb_name(qb_v6, v6.@sel_2), NO_DECORRELATE(@qb_v6) */ * from v6;",
+
+      // cte hint
+      "explain format = 'brief' select /*+ qb_name(qb_v7, v7), merge(@qb_v7) */ * from v7;",
+      "explain format = 'brief' select /*+ qb_name(qb_v8, v8), merge(@qb_v8) */ * from v8;",
+
+      // agg to cop hint
+      "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
+      "explain format = 'brief' select /*+ qb_name(qb_v10, v10), LIMIT_TO_COP(@qb_v10) */ * from v10;",
+
+      // MPP hint
+      "explain format = 'brief' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_1PHASE_AGG(@qb) */ * from v11;",
+      "explain format = 'brief' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_2PHASE_AGG(@qb) */ * from v11;",
+      "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), shuffle_join(t1@qb, t@qb) */ * from v12;",
+      "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), broadcast_join(t1@qb, t@qb) */ * from v12;"
+    ]
+  },
+  {
+    "name": "TestJoinHintCompatibility",
+    "cases": [
+      // different join method hints
+      "explain format = 'brief' select /*+ leading(t3), hash_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), merge_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), merge_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), inl_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), inl_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), hash_join_build(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join_build(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), hash_join_probe(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join_probe(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t6), shuffle_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ leading(t5), shuffle_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ leading(t6), broadcast_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ leading(t5), broadcast_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+
+      // different join type
+      "explain format = 'brief' select /*+ leading(t3), hash_join(t1) */ * from t1 join t2 on t1.a = t2.a left join t3 on t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join(t2) */ * from t1 join t2 on t1.a = t2.a left join t3 on t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), merge_join(t1) */ * from t1 right join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), merge_join(t2) */ * from t1 right join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), inl_join(t1) */ * from t1 join t2 on t1.a = t2.a straight_join t3 on t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), inl_join(t2) */ * from t1 join t2 on t1.a = t2.a straight_join t3 on t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), hash_join_build(t1) */ * from t1 cross join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join_probe(t2) */ * from t1 cross join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
+
+      // view
+      "explain format = 'brief' select * from v",
+      "explain format = 'brief' select * from v1",
+      "explain format = 'brief' select /*+ qb_name(qb, v2), leading(t2@qb), merge_join(t@qb) */ * from v2",
+      "explain format = 'brief' select /*+ qb_name(qb, v2), leading(t1@qb), inl_join(t1@qb) */ * from v2",
+
+      // CTE
+      "explain with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+      "explain with tt as (select /*+ leading(t2), inl_join(t2) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+      "explain with tt as (select /*+ merge(), leading(t3), inl_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+      "explain with tt as (select /*+ leading(t2), merge_join(t2), merge() */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
+
+      // Subquery
+      "explain format = 'brief' SELECT /*+ leading(t2@sel_2), merge_join(t) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.b = t1.b);",
+      "explain format = 'brief' SELECT /*+ leading(t1), inl_join(t1) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.b = t1.b);",
+      "explain format = 'brief' SELECT /*+ leading(t2@sel_2), merge_join(t) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.b = t1.b);",
+      "explain format = 'brief' SELECT /*+ leading(t1), inl_join(t1) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.b = t1.b);",
+
+      "explain format = 'brief' select /*+ leading(t2@sel_2) merge_join(t) */ * from t join t1 on t.a = t1.a where t1.a < (select sum(t2.a) from t2 where t2.b = t1.b);",
+      "explain format = 'brief' select /*+ leading(t1), inl_join(t1) */ * from t join t1 on t.a = t1.a where t1.a < (select sum(t2.a) from t2 where t2.b = t1.b);",
+      "explain format = 'brief' select /*+leading(t2@sel_2)  merge_join(t) */ * from t join t1 on t.a = t1.a where t1.a < (select /*+ NO_DECORRELATE() */ sum(t2.a) from t2 where t2.b = t1.b);",
+      "explain format = 'brief' select /*+ leading(t1), inl_join(t1) */ * from t join t1 on t.a = t1.a where t1.a < (select /*+ NO_DECORRELATE() */ sum(t2.a) from t2 where t2.b = t1.b);",
+
+      // Partition table
+      "explain format = 'brief' select /*+ leading(t9), hash_join(t7) */ * from t7 join t8 join t9 where t7.a = t8.a and t8.b = t9.b;",
+      "explain format = 'brief' select /*+ leading(t8), hash_join(t8) */ * from t7 join t8 join t9 where t7.a = t8.a and t8.b = t9.b;",
+
+      // other hints
+      "explain format = 'brief' select /*+ read_from_storage(tikv[t4, t6]), leading(t6), hash_join_build(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ read_from_storage(tikv[t5]), leading(t5), hash_join_probe(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ read_from_storage(tiflash[t4, t6]), leading(t6), hash_join_build(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ read_from_storage(tiflash[t5]), leading(t5), hash_join_probe(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;"
+    ]
+  },
+  {
+    "name": "TestReadFromStorageHintAndIsolationRead",
+    "cases": [
+      "desc format = 'brief' select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
+      "desc format = 'brief' select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
+      "desc format = 'brief' select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+    ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashUseIndexHint",
+    "cases": [
+      "explain format = 'brief' select * from t",
+      "explain format = 'brief' select * from t use index();",
+      "explain format = 'brief' select /*+ use_index(t, idx)*/ * from t",
+      "explain format = 'brief' select /*+ use_index(t)*/ * from t"
+    ]
+  },
+  {
+    "name": "TestHints",
+    "cases": [
+      "select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3"
+    ]
+  }
+]

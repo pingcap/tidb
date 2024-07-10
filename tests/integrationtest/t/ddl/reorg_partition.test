@@ -1,0 +1,393 @@
+# TestReorganizeRangePartition
+drop table if exists t;
+create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition pMax values less than (MAXVALUE));
+insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65);
+--sorted_result
+select * from t where c < 40;
+alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE));
+admin check table t;
+show create table t;
+--sorted_result
+select * from t;
+--sorted_result
+select * from t partition (p0);
+--sorted_result
+select * from t partition (p1);
+--sorted_result
+select * from t partition (p2);
+--sorted_result
+select * from t partition (pMax);
+--sorted_result
+select * from t where b > "1";
+--sorted_result
+select * from t where c < 40;
+alter table t reorganize partition p2,pMax into (partition p2 values less than (35),partition p3 values less than (47), partition pMax values less than (MAXVALUE));
+admin check table t;
+--sorted_result
+select * from t;
+show create table t;
+--sorted_result
+select * from t partition (p0);
+--sorted_result
+select * from t partition (p1);
+--sorted_result
+select * from t partition (p2);
+--sorted_result
+select * from t partition (p3);
+--sorted_result
+select * from t partition (pMax);
+alter table t reorganize partition p0,p1 into (partition p1 values less than (20));
+admin check table t;
+show create table t;
+--sorted_result
+select * from t;
+alter table t drop index b;
+alter table t drop index c;
+admin check table t;
+show create table t;
+create table t2 (a int unsigned not null, b varchar(255), c int, key (b), key (c,b)) partition by range (a) (PARTITION `p1` VALUES LESS THAN (20),
+ PARTITION `p2` VALUES LESS THAN (35),
+ PARTITION `p3` VALUES LESS THAN (47),
+ PARTITION `pMax` VALUES LESS THAN (MAXVALUE));
+insert into t2 select * from t;
+-- error 1493
+alter table t2 reorganize partition p2 into (partition p2a values less than (20), partition p2b values less than (36));
+-- error 1493
+alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (36));
+-- error 1493
+alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (34));
+-- error 1526
+alter table t2 reorganize partition pMax into (partition p2b values less than (50));
+show create table t2;
+alter table t2 reorganize partition pMax into (partition p4 values less than (90));
+admin check table t2;
+show create table t2;
+drop table t;
+create table t (a int PRIMARY KEY, b varchar(255), c int, key (b), key (c,b)) partition by range (abs(a)) (partition p0 values less than (10), partition p1 values less than (20), partition pMax values less than (MAXVALUE));
+insert into t values (0,"0",0),(1,"1",1),(2,"2",-2),(-12,"12",21),(23,"23",32),(-34,"34",43),(45,"45",54),(56,"56",65);
+alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE));
+admin check table t;
+show create table t;
+--sorted_result
+select * from t partition (p2);
+--sorted_result
+select * from t partition (pMax);
+alter table t drop index b;
+alter table t reorganize partition p0,p1,p2,pMax into (partition pAll values less than (maxvalue));
+admin check table t;
+show create table t;
+--sorted_result
+select * from t partition (pAll);
+
+# TestReorganizeRangeColumnsPartition
+drop table if exists t;
+CREATE TABLE t (
+	a INT,
+	b CHAR(3),
+	c INT,
+	KEY b(b),
+	KEY c(c,b)
+)
+PARTITION BY RANGE COLUMNS(a,b) (
+	PARTITION p0 VALUES LESS THAN (5,'ggg'),
+	PARTITION p1 VALUES LESS THAN (10,'mmm'),
+	PARTITION p2 VALUES LESS THAN (15,'sss'),
+	PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
+);
+INSERT INTO t VALUES (1,'abc',1), (3,'ggg',3),(5,'ggg',5), (9,'ggg',9),(10,'mmm',10),(19,'xxx',19);
+--sorted_result
+SELECT * FROM t PARTITION(p0);
+ALTER TABLE t DROP INDEX c;
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN (2,'ggg'), PARTITION p01 VALUES LESS THAN (5,'ggg'));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p00);
+--sorted_result
+SELECT * FROM t PARTITION(p01);
+DROP TABLE t;
+CREATE TABLE t (
+	a INT,
+	b CHAR(3),
+	c INT,
+	KEY b(b),
+	KEY c(c,b)
+)
+PARTITION BY RANGE COLUMNS(b,a) (
+	PARTITION p0 VALUES LESS THAN ('ggg',5),
+	PARTITION p1 VALUES LESS THAN ('mmm',10),
+	PARTITION p2 VALUES LESS THAN ('sss',15),
+	PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
+);
+INSERT INTO t VALUES (1,'abc',1), (3,'ccc',3),(5,'ggg',5), (9,'ggg',9),(10,'mmm',10),(19,'xxx',19);
+--sorted_result
+SELECT * FROM t PARTITION(p0);
+ALTER TABLE t DROP INDEX b;
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('ccc',2), PARTITION p01 VALUES LESS THAN ('ggg',5));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p00);
+--sorted_result
+SELECT * FROM t PARTITION(p01);
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1 into (PARTITION p1 VALUES LESS THAN ('mmm',10));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p1);
+DROP TABLE t;
+CREATE TABLE t (
+	a DATE,
+	b DATETIME,
+	c INT,
+	KEY b(b),
+	KEY c(c,b)
+)
+PARTITION BY RANGE COLUMNS(a,b) (
+	PARTITION p0 VALUES LESS THAN ('2020-05-05','2020-05-05 10:10:10'),
+	PARTITION p1 VALUES LESS THAN ('2021-05-05','2021-05-05 10:10:10'),
+	PARTITION p2 VALUES LESS THAN ('2022-05-05','2022-05-05 10:10:10'),
+	PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
+);
+INSERT INTO t VALUES('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2),('2020-05-05', '2020-05-05 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4),('2022-05-05', '2022-05-05 10:10:10', 5), ('2023-05-05', '2023-05-05 10:10:10', 6);
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('2020-04-10', '2020-04-10 10:10:10'), PARTITION p01 VALUES LESS THAN ('2020-05-05', '2020-05-05 10:10:10'));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p00);
+--sorted_result
+SELECT * FROM t PARTITION(p01);
+# TODO(bb7133): different err message with MySQL
+-- error 1493
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05', '2022-05-05 10:10:11'));
+ALTER TABLE t DROP INDEX c;
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05', '2022-05-05 10:10:10'));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+ADMIN CHECK TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p0);
+--sorted_result
+SELECT * FROM t PARTITION(pMax);
+DROP TABLE t;
+CREATE TABLE t (
+	a DATE,
+	b DATETIME,
+	c INT,
+	KEY b(b),
+	KEY c(c,b)
+)
+PARTITION BY RANGE COLUMNS(b,a) (
+	PARTITION p0 VALUES LESS THAN ('2020-05-05 10:10:10','2020-05-05'),
+	PARTITION p1 VALUES LESS THAN ('2021-05-05 10:10:10','2021-05-05'),
+	PARTITION p2 VALUES LESS THAN ('2022-05-05 10:10:10','2022-05-05'),
+	PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
+);
+INSERT INTO t VALUES('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2),('2020-05-05', '2020-05-05 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4),('2022-05-05', '2022-05-05 10:10:10', 5), ('2023-05-05', '2023-05-05 10:10:10', 6);
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('2020-04-10 10:10:10', '2020-04-10'), PARTITION p01 VALUES LESS THAN ('2020-05-05 10:10:10', '2020-05-05'));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p00);
+--sorted_result
+SELECT * FROM t PARTITION(p01);
+ALTER TABLE t DROP INDEX b;
+# TODO(bb7133): different err message with MySQL
+-- error 1493
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05 10:10:11', '2022-05-05'));
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05 10:10:10', '2022-05-05'));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+ADMIN CHECK TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p0);
+--sorted_result
+SELECT * FROM t PARTITION(pMax);
+
+# TestReorganizeListPartition
+drop table if exists t;
+create table t (a int, b varchar(55), c int) partition by list (a) (partition p1 values in (12,23,51,14), partition p2 values in (24,63), partition p3 values in (45));
+insert into t values (12,"12",21), (24,"24",42),(51,"51",15),(23,"23",32),(63,"63",36),(45,"45",54);
+alter table t reorganize partition p1 into (partition p0 values in (12,51,13), partition p1 values in (23));
+admin check table t;
+show create table t;
+alter table t add primary key (a), add key (b), add key (c,b);
+# Note: MySQL cannot reorganize two non-consecutive list partitions :)
+# ERROR 1519 (HY000): When reorganizing a set of partitions they must be in consecutive order
+# https://bugs.mysql.com/bug.php?id=106011
+# https://bugs.mysql.com/bug.php?id=109939
+alter table t reorganize partition p1, p3 into (partition pa values in (45,23,15));
+admin check table t;
+show create table t;
+-- error 8200
+alter table t modify a varchar(20);
+drop table t;
+create table t (a int, b varchar(55), c int) partition by list (abs(a))
+		(partition p0 values in (-1,0,1),
+		partition p1 values in (12,23,51,14),
+		partition p2 values in (24,63),
+		partition p3 values in (45));
+insert into t values
+	        (-1,"-1",11),(1,"1",11),(0,"0",0),(-12,"-12",21),
+			(-24,"-24",42),(51,"-51",15),(23,"23",32),(63,"63",36),(45,"45",54);
+alter table t reorganize partition p0, p1 into (partition p0 values in (0,1,2,12,51,13), partition p1 values in (23));
+admin check table t;
+--sorted_result
+select * from t partition (p0);
+show create table t;
+alter table t add primary key (a), add key (b), add key (c,b);
+alter table t reorganize partition p0,p1,p2,p3 into (partition paa values in (0,1,2,12,13,23,24,45,51,63,64));
+admin check table t;
+--sorted_result
+select * from t partition (paa);
+show create table t;
+
+# TestReorgPartitionData
+drop table if exists t;
+create table t (a int PRIMARY KEY AUTO_INCREMENT, b varchar(255), c int, d datetime, key (b), key (c,b)) partition by range (a) (partition p1 values less than (0), partition p1M values less than (1000000));
+-- error 1292
+insert into t values (0, "Zero value!", 0, '2022-02-30');
+SET @@session.sql_mode = 'ALLOW_INVALID_DATES,NO_AUTO_VALUE_ON_ZERO';
+insert into t values (0, "Zero value!", 0, '2022-02-30');
+show warnings;
+--sorted_result
+select * from t;
+SET @@session.sql_mode = default;
+alter table t reorganize partition p1M into (partition p0 values less than (1), partition p2M values less than (2000000));
+--sorted_result
+select * from t;
+admin check table t;
+
+# TestReorganizeListColumnsPartition
+drop table if exists t;
+CREATE TABLE t (
+	a INT,
+	b CHAR(3),
+	c INT,
+	KEY b(b),
+	KEY c(c,b)
+)
+PARTITION BY LIST COLUMNS(a,b) (
+	PARTITION p0 VALUES IN ((1,'aaa'),(2,'bbb'),(3,'ccc')),
+	PARTITION p1 VALUES IN ((4,'ddd'),(5,'eee'),(6,'fff')),
+	PARTITION p2 VALUES IN ((16,'lll'),(17,'mmm'),(18,'lll'))
+);
+INSERT INTO t VALUES (1,'aaa',1), (3,'ccc',3),(5,'eee',5), (16,'lll',16);
+--sorted_result
+SELECT * FROM t PARTITION(p0);
+# TODO(bb7133) MySQL 8 does not report an error if there's any row does not fit the new partitions, instead the row will be removed.
+-- error 1526
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN ((0,'uuu'),(1,'aaa')), PARTITION p01 VALUES IN ((2,'bbb')));
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN ((0,'uuu'),(1,'aaa')), PARTITION p01 VALUES IN ((2,'bbb'),(3,'ccc')));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p00);
+--sorted_result
+SELECT * FROM t PARTITION(p01);
+ALTER TABLE t DROP INDEX b;
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN
+		((0,'uuu'),(1,'aaa'),(2,'bbb'),(3,'ccc'),(4,'ddd'),(5,'eee'),(6,'fff'),(16,'lll'),(17,'mmm'),(18,'lll')));
+ADMIN CHECK TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(pAll);
+--sorted_result
+SELECT * FROM t;
+DROP TABLE t;
+CREATE TABLE t (
+	a INT,
+	b CHAR(3),
+	c INT,
+	KEY b(b),
+	KEY c(c,b)
+)
+PARTITION BY LIST COLUMNS(b,a) (
+	PARTITION p0 VALUES IN (('aaa',1),('bbb',2),('ccc',3)),
+	PARTITION p1 VALUES IN (('ddd',4),('eee',5),('fff',6)),
+	PARTITION p2 VALUES IN (('lll',16),('mmm',17),('lll',18))
+);
+INSERT INTO t VALUES (1,'aaa',1), (3,'ccc',3),(5,'eee',5), (16,'lll',16);
+--sorted_result
+SELECT * FROM t PARTITION(p0);
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN (('uuu',-1),('aaa',1)), PARTITION p01 VALUES IN (('bbb',2),('ccc',3),('ccc',4)));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p00);
+--sorted_result
+SELECT * FROM t PARTITION(p01);
+ALTER TABLE t DROP INDEX c;
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN
+		(('uuu',-1),('aaa',1),('bbb',2),('ccc',3),('ccc',4),('ddd',4),('eee',5),('fff',6),('lll',16),('mmm',17),('lll',18)));
+ADMIN CHECK TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(pAll);
+--sorted_result
+SELECT * FROM t;
+DROP TABLE t;
+CREATE TABLE t (
+	a DATE,
+	b DATETIME,
+	c INT,
+	KEY b(b),
+	KEY c(c,b)
+)
+PARTITION BY LIST COLUMNS(a,b) (
+	PARTITION p0 VALUES IN (('2020-04-10','2020-04-10 10:10:10'),('2020-05-04','2020-05-04 10:10:10')),
+	PARTITION p1 VALUES IN (('2021-05-04','2021-05-04 10:10:10'),('2021-05-05','2021-05-05 10:10:10')),
+	PARTITION p2 VALUES IN (('2022-05-04','2022-05-04 10:10:10'),('2022-05-05','2022-05-06 11:11:11'))
+);
+INSERT INTO t VALUES('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2),('2020-05-04', '2020-05-04 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4),('2022-05-04', '2022-05-04 10:10:10', 5), ('2022-05-05', '2022-05-06 11:11:11', 6);
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN (('2020-04-10', '2020-04-10 10:10:10')), PARTITION p01 VALUES IN (('2020-05-04', '2020-05-04 10:10:10')));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p00);
+--sorted_result
+SELECT * FROM t PARTITION(p01);
+ALTER TABLE t DROP INDEX b;
+# TODO(bb7133) MySQL 8 does not report an error if there's any row does not fit the new partitions, instead the row will be removed.
+-- error 1526
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN (('2020-04-10','2020-04-10 10:10:10'),('2020-05-04','2020-05-04 10:10:10'), ('2021-05-04','2021-05-04 10:10:10'),('2021-05-05','2021-05-05 10:10:10'), ('2022-05-04','2022-05-04 10:10:10'),('2022-05-05','2023-05-05 11:11:11')));
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN (('2020-04-10','2020-04-10 10:10:10'),('2020-05-04','2020-05-04 10:10:10'), ('2021-05-04','2021-05-04 10:10:10'),('2021-05-05','2021-05-05 10:10:10'), ('2022-05-04','2022-05-04 10:10:10'),('2022-05-05','2022-05-06 11:11:11')));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+ADMIN CHECK TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(pAll);
+--sorted_result
+SELECT * FROM t;
+DROP TABLE t;
+CREATE TABLE t (
+	a DATE,
+	b DATETIME,
+	c INT,
+	KEY b(b),
+	KEY c(c,b)
+)
+PARTITION BY LIST COLUMNS(b,a) (
+	PARTITION p0 VALUES IN (('2020-04-10 10:10:10','2020-04-10'),('2020-05-04 10:10:10','2020-05-04')),
+	PARTITION p1 VALUES IN (('2021-05-04 10:10:10','2021-05-04'),('2021-05-05 10:10:10','2021-05-05')),
+	PARTITION p2 VALUES IN (('2022-05-04 10:10:10','2022-05-04'),('2022-05-06 11:11:11','2022-05-05'))
+);
+INSERT INTO t VALUES('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2),('2020-05-04', '2020-05-04 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4),('2022-05-04', '2022-05-04 10:10:10', 5), ('2022-05-05', '2022-05-06 11:11:11', 6);
+ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN (('2020-04-10 10:10:10','2020-04-10')), PARTITION p01 VALUES IN (('2020-05-04 10:10:10','2020-05-04')));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(p00);
+--sorted_result
+SELECT * FROM t PARTITION(p01);
+ALTER TABLE t DROP INDEX b;
+# TODO(bb7133) MySQL 8 does not report an error if there's any row does not fit the new partitions, instead the row will be removed.
+-- error 1526
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN (('2020-04-10 10:10:10','2020-04-10'),('2020-05-04 10:10:10','2020-05-04'), ('2021-05-04 10:10:10','2021-05-04'),('2021-05-05 10:10:10','2021-05-05'), ('2022-05-04 10:10:10','2022-05-04'),('2022-05-06 11:11:11','2023-05-05')));
+ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN (('2020-04-10 10:10:10','2020-04-10'),('2020-05-04 10:10:10','2020-05-04'), ('2021-05-04 10:10:10','2021-05-04'),('2021-05-05 10:10:10','2021-05-05'), ('2022-05-04 10:10:10','2022-05-04'),('2022-05-06 11:11:11','2022-05-05')));
+ADMIN CHECK TABLE t;
+SHOW CREATE TABLE t;
+ADMIN CHECK TABLE t;
+--sorted_result
+SELECT * FROM t PARTITION(pAll);
+--sorted_result
+SELECT * FROM t;
+

@@ -1,0 +1,8 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+options:
+  no_parent_owners: true
+filters:
+  "(OWNERS|(sysvar|session|tidb_vars)\\.go)$":
+    approvers:
+      - sig-critical-approvers-tidb-server
+

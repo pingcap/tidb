@@ -20,6 +20,7 @@ set -eux
 DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 AZBLOB_ENDPOINT="http://127.0.0.1:10000/devstoreaccount1"
 # azurite default account
@@ -33,7 +34,7 @@ mkdir -p "$TEST_DIR/$DB"
 # Fill in the database
 for i in $(seq $DB_COUNT); do
     run_sql "CREATE DATABASE $DB${i};"
-    go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+    go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
 for i in $(seq $DB_COUNT); do

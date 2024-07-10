@@ -1,0 +1,18 @@
+# TestDropStatsFromKV
+drop table if exists t;
+create table t (c1 varchar(20), c2 varchar(20));
+insert into t values("1","1"),("2","2"),("3","3"),("4","4");
+insert into t select * from t;
+insert into t select * from t;
+analyze table t with 2 topn;
+set @a = (select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "executor__kv");
+select modify_count, count from mysql.stats_meta where table_id = @a;
+select hist_id from mysql.stats_histograms where table_id = @a;
+select count(*)>0 from mysql.stats_buckets where table_id = @a;
+select count(*)>0 from mysql.stats_top_n where table_id = @a;
+drop stats t;
+select modify_count, count from mysql.stats_meta where table_id = @a;
+select hist_id from mysql.stats_histograms where table_id = @a;
+select hist_id, bucket_id from mysql.stats_buckets where table_id = @a;
+select hist_id from mysql.stats_top_n where table_id = @a;
+

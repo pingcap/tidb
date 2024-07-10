@@ -1,0 +1,12 @@
+# TestCreateBindingWhenCloseStmtSummaryTable
+drop table if exists t;
+create table t(id int primary key, a int, key(a));
+set global tidb_enable_stmt_summary = 0;
+select /*+ ignore_index(t, a) */ * from t where a = 1;
+-- error 1105
+create session binding from history using plan digest '20cf414ff6bd6fff3de17a266966020e81099b9fd1a29c4fd4b8aaf212f5c2c0';
+set global tidb_enable_stmt_summary = default;
+select /*+ ignore_index(t, a) */ * from t where a = 1;
+create session binding from history using plan digest '20cf414ff6bd6fff3de17a266966020e81099b9fd1a29c4fd4b8aaf212f5c2c0';
+drop binding for sql digest '83de0854921816c038565229b8008f5d679d373d16bf6b2a5cacd5937e11ea21';
+

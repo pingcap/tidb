@@ -1,0 +1,81 @@
+drop table if exists t;
+create table t(a int, b int);
+explain update t t1, (select distinct b from t) t2 set t1.b = t2.b;
+id	estRows	task	access object	operator info
+Update_7	N/A	root		N/A
+└─HashJoin_10	80000000.00	root		CARTESIAN inner join
+  ├─HashAgg_18(Build)	8000.00	root		group by:planner__core__cbo.t.b, funcs:firstrow(planner__core__cbo.t.b)->planner__core__cbo.t.b
+  │ └─TableReader_19	8000.00	root		data:HashAgg_14
+  │   └─HashAgg_14	8000.00	cop[tikv]		group by:planner__core__cbo.t.b, 
+  │     └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
+    └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists tb1, tb2;
+create table tb1(a int, b int, primary key(a));
+create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));
+update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1);
+create table t25219(a int primary key, col3 int, col1 int, index idx(col3));
+insert into t25219 values(1, 1, 1);
+analyze table t25219;
+select * from t25219 WHERE (col3 IS NULL OR col1 IS NOT NULL AND col3 <= 6659) AND col3 = 1;
+a	col3	col1
+1	1	1
+drop table if exists t1, t2;
+create table t1 (
+id bigint primary key,
+a bigint not null,
+b varchar(100) not null,
+c varchar(10) not null,
+d bigint as (a % 30) not null,
+key (d, b, c)
+);
+create table t2 (
+id varchar(50) primary key,
+a varchar(100) unique,
+b datetime,
+c varchar(45),
+d int not null unique auto_increment
+);
+explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4;
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+set tidb_cost_model_version=2;
+explain format='cost_trace' select * from t;
+id	estRows	estCost	costFormula	task	access object	operator info
+TableReader_5	10000.00	177906.67	((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	2035000.00	scan(10000*logrowsize(32)*tikv_scan_factor(40.7))	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze format='cost_trace' select * from t;
+id	estRows	estCost	costFormula	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_5	10000.00	177906.67	((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	1	root		<execution_info>	<operator_info>	<memory>	<disk>
+└─TableFullScan_4	10000.00	2035000.00	scan(10000*logrowsize(32)*tikv_scan_factor(40.7))	1	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+set tidb_cost_model_version=1;
+explain format='cost_trace' select * from t;
+id	estRows	estCost	costFormula	task	access object	operator info
+TableReader_5	10000.00	34418.00	N/A	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	435000.00	N/A	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze format='cost_trace' select * from t;
+id	estRows	estCost	costFormula	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_5	10000.00	34418.00	N/A	1	root		<execution_info>	<operator_info>	<memory>	<disk>
+└─TableFullScan_4	10000.00	435000.00	N/A	1	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+set tidb_cost_model_version=default;
+drop table if exists t1, t2;
+set sql_mode='STRICT_TRANS_TABLES';
+create table t1(a int, b int, c int, key idx(a, b));
+create table t2(a int, b int);
+insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5);
+analyze table t1, t2;
+explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Projection_9	1.00	1	root	NULL	time:<num>, loops:<num>, RU:<num>, Concurrency:OFF	planner__core__cbo.t1.a, planner__core__cbo.t1.b, Column#8	<num>	N/A
+└─StreamAgg_11	1.00	1	root	NULL	time:<num>, loops:<num>	funcs:sum(Column#16)->Column#8, funcs:firstrow(Column#17)->planner__core__cbo.t1.a, funcs:firstrow(Column#18)->planner__core__cbo.t1.b	<num>	N/A
+  └─Projection_53	4.00	3	root	NULL	time:<num>, loops:<num>, Concurrency:OFF	cast(planner__core__cbo.t1.c, decimal(10,0) BINARY)->Column#16, planner__core__cbo.t1.a->Column#17, planner__core__cbo.t1.b->Column#18	<num>	N/A
+    └─HashJoin_51	4.00	3	root	NULL	time:<num>, loops:<num>, build_hash_table:{total:<num>, fetch:<num>, build:<num>}, probe:{concurrency:<num>, total:<num>, max:<num>, probe:<num>, fetch and wait:<num>}	inner join, equal:[eq(planner__core__cbo.t1.a, planner__core__cbo.t2.b)]	<num>	<num>
+      ├─TableReader_30(Build)	6.00	6	root	NULL	time.*loops.*cop_task.*	data:Selection_29	<num>	N/A
+      │ └─Selection_29	6.00	6	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	gt(planner__core__cbo.t2.b, 1), not(isnull(planner__core__cbo.t2.b))	N/A	N/A
+      │   └─TableFullScan_28	6.00	6	cop[tikv]	table:t2	tikv_task:{time:<num>, loops:<num>}	keep order:false	N/A	N/A
+      └─TableReader_33(Probe)	4.00	4	root	NULL	time.*loops.*cop_task.*	data:Selection_32	<num>	N/A
+        └─Selection_32	4.00	4	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	gt(planner__core__cbo.t1.a, 1), not(isnull(planner__core__cbo.t1.a))	N/A	N/A
+          └─TableFullScan_31	5.00	5	cop[tikv]	table:t1	tikv_task:{time:<num>, loops:<num>}	keep order:false	N/A	N/A
+set sql_mode=default;

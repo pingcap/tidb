@@ -1,0 +1,344 @@
+set tidb_enable_legacy_instance_scope = 1;
+set tidb_general_log = 1;
+Level	Code	Message
+Warning	8142	modifying tidb_general_log will require SET GLOBAL in a future version of TiDB
+set tidb_enable_legacy_instance_scope = 0;
+set tidb_general_log = 1;
+Error 1229 (HY000): Variable 'tidb_general_log' is a GLOBAL variable and should be set with SET GLOBAL
+set tidb_enable_legacy_instance_scope = default;
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+0
+set global tidb_tso_client_batch_max_wait_time = 0.5;
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+0.5
+set global tidb_tso_client_batch_max_wait_time = 1;
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+1
+set global tidb_tso_client_batch_max_wait_time = 1.5;
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+1.5
+set global tidb_tso_client_batch_max_wait_time = 10;
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+10
+set tidb_tso_client_batch_max_wait_time = 0;
+Error 1229 (HY000): Variable 'tidb_tso_client_batch_max_wait_time' is a GLOBAL variable and should be set with SET GLOBAL
+set global tidb_tso_client_batch_max_wait_time = -1;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+0
+set global tidb_tso_client_batch_max_wait_time = -0.1;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-0.1'
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+0
+set global tidb_tso_client_batch_max_wait_time = 10.1;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_tso_client_batch_max_wait_time value: '10.1'
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+10
+set global tidb_tso_client_batch_max_wait_time = 11;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'
+select @@tidb_tso_client_batch_max_wait_time;
+@@tidb_tso_client_batch_max_wait_time
+10
+select @@tidb_enable_tso_follower_proxy;
+@@tidb_enable_tso_follower_proxy
+0
+set global tidb_enable_tso_follower_proxy = on;
+select @@tidb_enable_tso_follower_proxy;
+@@tidb_enable_tso_follower_proxy
+1
+set global tidb_enable_tso_follower_proxy = off;
+select @@tidb_enable_tso_follower_proxy;
+@@tidb_enable_tso_follower_proxy
+0
+select @@pd_enable_follower_handle_region;
+@@pd_enable_follower_handle_region
+0
+set global pd_enable_follower_handle_region = on;
+select @@pd_enable_follower_handle_region;
+@@pd_enable_follower_handle_region
+1
+set global pd_enable_follower_handle_region = off;
+select @@pd_enable_follower_handle_region;
+@@pd_enable_follower_handle_region
+0
+set tidb_tso_client_batch_max_wait_time = 0;
+Error 1229 (HY000): Variable 'tidb_tso_client_batch_max_wait_time' is a GLOBAL variable and should be set with SET GLOBAL
+set global tidb_enable_tso_follower_proxy = default;
+set global tidb_tso_client_batch_max_wait_time = default;
+SELECT /*+ SET_VAR(sql_mode=ALLOW_INVALID_DATES) */ @@sql_mode;
+@@sql_mode
+ALLOW_INVALID_DATES
+SELECT @@sql_mode;
+@@sql_mode
+ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+SELECT /*+ SET_VAR(tmp_table_size=1024) */ @@tmp_table_size;
+@@tmp_table_size
+1024
+SELECT @@tmp_table_size;
+@@tmp_table_size
+16777216
+SELECT /*+ SET_VAR(range_alloc_block_size=4294967295) */ @@range_alloc_block_size;
+@@range_alloc_block_size
+4294967295
+SELECT @@range_alloc_block_size;
+@@range_alloc_block_size
+4096
+SELECT /*+ SET_VAR(max_execution_time=1) */ @@max_execution_time;
+@@max_execution_time
+1
+SELECT @@max_execution_time;
+@@max_execution_time
+0
+SELECT /*+ SET_VAR(tikv_client_read_timeout=10) */ @@tikv_client_read_timeout;
+@@tikv_client_read_timeout
+10
+SELECT @@tikv_client_read_timeout;
+@@tikv_client_read_timeout
+0
+set @@tikv_client_read_timeout = 5;
+SELECT /*+ set_var(tikv_client_read_timeout=1) */ @@tikv_client_read_timeout;
+@@tikv_client_read_timeout
+1
+SELECT @@tikv_client_read_timeout;
+@@tikv_client_read_timeout
+5
+SELECT /*+ set_var(tikv_client_read_timeout=xyz) */ @@tikv_client_read_timeout;
+@@tikv_client_read_timeout
+5
+SELECT /*+ set_var(tikv_client_read_timeout='-10') */ @@tikv_client_read_timeout;
+@@tikv_client_read_timeout
+0
+prepare stmt01 from 'select /*+ set_var(tikv_client_read_timeout=1) */ @@tikv_client_read_timeout';
+execute stmt01;
+@@tikv_client_read_timeout
+1
+SELECT @@tikv_client_read_timeout;
+@@tikv_client_read_timeout
+5
+SELECT /*+ SET_VAR(time_zone='+12:00') */ @@time_zone;
+@@time_zone
++12:00
+SELECT @@time_zone;
+@@time_zone
+Asia/Shanghai
+SELECT /*+ SET_VAR(join_buffer_size=128) */ @@join_buffer_size;
+@@join_buffer_size
+128
+SELECT @@join_buffer_size;
+@@join_buffer_size
+262144
+SELECT /*+ SET_VAR(max_length_for_sort_data=4) */ @@max_length_for_sort_data;
+@@max_length_for_sort_data
+4
+SELECT @@max_length_for_sort_data;
+@@max_length_for_sort_data
+1024
+SELECT /*+ SET_VAR(max_error_count=0) */ @@max_error_count;
+@@max_error_count
+0
+SELECT @@max_error_count;
+@@max_error_count
+64
+SELECT /*+ SET_VAR(sql_buffer_result=ON) */ @@sql_buffer_result;
+@@sql_buffer_result
+ON
+SELECT @@sql_buffer_result;
+@@sql_buffer_result
+OFF
+SELECT /*+ SET_VAR(max_heap_table_size=16384) */ @@max_heap_table_size;
+@@max_heap_table_size
+16384
+SELECT @@max_heap_table_size;
+@@max_heap_table_size
+16777216
+SELECT /*+ SET_VAR(tmp_table_size=16384) */ @@tmp_table_size;
+@@tmp_table_size
+16384
+SELECT @@tmp_table_size;
+@@tmp_table_size
+16777216
+SELECT /*+ SET_VAR(div_precision_increment=0) */ @@div_precision_increment;
+@@div_precision_increment
+0
+SELECT @@div_precision_increment;
+@@div_precision_increment
+4
+SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;
+@@sql_auto_is_null
+0
+SELECT @@sql_auto_is_null;
+@@sql_auto_is_null
+0
+SELECT /*+ SET_VAR(sort_buffer_size=32768) */ @@sort_buffer_size;
+@@sort_buffer_size
+32768
+SELECT @@sort_buffer_size;
+@@sort_buffer_size
+262144
+SELECT /*+ SET_VAR(max_join_size=1) */ @@max_join_size;
+@@max_join_size
+1
+SELECT @@max_join_size;
+@@max_join_size
+18446744073709551615
+SELECT /*+ SET_VAR(max_seeks_for_key=1) */ @@max_seeks_for_key;
+@@max_seeks_for_key
+1
+SELECT @@max_seeks_for_key;
+@@max_seeks_for_key
+18446744073709551615
+SELECT /*+ SET_VAR(max_sort_length=4) */ @@max_sort_length;
+@@max_sort_length
+4
+SELECT @@max_sort_length;
+@@max_sort_length
+1024
+SELECT /*+ SET_VAR(bulk_insert_buffer_size=0) */ @@bulk_insert_buffer_size;
+@@bulk_insert_buffer_size
+0
+SELECT @@bulk_insert_buffer_size;
+@@bulk_insert_buffer_size
+8388608
+SELECT /*+ SET_VAR(sql_big_selects=0) */ @@sql_big_selects;
+@@sql_big_selects
+0
+SELECT @@sql_big_selects;
+@@sql_big_selects
+1
+SELECT /*+ SET_VAR(read_rnd_buffer_size=1) */ @@read_rnd_buffer_size;
+@@read_rnd_buffer_size
+1
+SELECT @@read_rnd_buffer_size;
+@@read_rnd_buffer_size
+262144
+SELECT /*+ SET_VAR(unique_checks=0) */ @@unique_checks;
+@@unique_checks
+0
+SELECT @@unique_checks;
+@@unique_checks
+1
+SELECT /*+ SET_VAR(read_buffer_size=8192) */ @@read_buffer_size;
+@@read_buffer_size
+8192
+SELECT @@read_buffer_size;
+@@read_buffer_size
+131072
+SELECT /*+ SET_VAR(default_tmp_storage_engine='CSV') */ @@default_tmp_storage_engine;
+@@default_tmp_storage_engine
+CSV
+SELECT @@default_tmp_storage_engine;
+@@default_tmp_storage_engine
+InnoDB
+SELECT /*+ SET_VAR(optimizer_search_depth=1) */ @@optimizer_search_depth;
+@@optimizer_search_depth
+1
+SELECT @@optimizer_search_depth;
+@@optimizer_search_depth
+62
+SELECT /*+ SET_VAR(max_points_in_geometry=3) */ @@max_points_in_geometry;
+@@max_points_in_geometry
+3
+SELECT @@max_points_in_geometry;
+@@max_points_in_geometry
+65536
+SELECT /*+ SET_VAR(updatable_views_with_limit=0) */ @@updatable_views_with_limit;
+@@updatable_views_with_limit
+0
+SELECT @@updatable_views_with_limit;
+@@updatable_views_with_limit
+YES
+SELECT /*+ SET_VAR(optimizer_prune_level=0) */ @@optimizer_prune_level;
+@@optimizer_prune_level
+0
+SELECT @@optimizer_prune_level;
+@@optimizer_prune_level
+1
+SELECT /*+ SET_VAR(group_concat_max_len=4) */ @@group_concat_max_len;
+@@group_concat_max_len
+4
+SELECT @@group_concat_max_len;
+@@group_concat_max_len
+1024
+SELECT /*+ SET_VAR(eq_range_index_dive_limit=0) */ @@eq_range_index_dive_limit;
+@@eq_range_index_dive_limit
+0
+SELECT @@eq_range_index_dive_limit;
+@@eq_range_index_dive_limit
+200
+SELECT /*+ SET_VAR(sql_safe_updates=1) */ @@sql_safe_updates;
+@@sql_safe_updates
+1
+SELECT @@sql_safe_updates;
+@@sql_safe_updates
+0
+SELECT /*+ SET_VAR(end_markers_in_json=1) */ @@end_markers_in_json;
+@@end_markers_in_json
+1
+SELECT @@end_markers_in_json;
+@@end_markers_in_json
+0
+SELECT /*+ SET_VAR(windowing_use_high_precision=OFF) */ @@windowing_use_high_precision;
+@@windowing_use_high_precision
+0
+SELECT @@windowing_use_high_precision;
+@@windowing_use_high_precision
+1
+SELECT /*+ SET_VAR(sql_safe_updates = 1) SET_VAR(max_heap_table_size = 1G) */ 1;
+1
+1
+SELECT /*+ SET_VAR(collation_server = 'utf8') */ 1;
+1
+1
+SELECT /*+ SET_VAR(max_size = 1G) */ 1;
+1
+1
+SELECT /*+ SET_VAR(group_concat_max_len = 1024) SET_VAR(group_concat_max_len = 2048) */ 1;
+1
+1
+select @@warning_count;
+@@warning_count
+1
+select @@session.warning_count;
+@@session.warning_count
+0
+select @@local.warning_count;
+@@local.warning_count
+0
+select @@global.warning_count;
+Error 1238 (HY000): Variable 'warning_count' is a SESSION variable
+select @@max_connections;
+@@max_connections
+0
+select @@global.max_connections;
+@@global.max_connections
+0
+select @@session.max_connections;
+Error 1238 (HY000): Variable 'max_connections' is a GLOBAL variable
+select @@local.max_connections;
+Error 1238 (HY000): Variable 'max_connections' is a GLOBAL variable
+select @@performance_schema_max_mutex_classes;
+@@performance_schema_max_mutex_classes
+200
+select @@global.performance_schema_max_mutex_classes;
+@@global.performance_schema_max_mutex_classes
+200
+select @@session.performance_schema_max_mutex_classes;
+@@session.performance_schema_max_mutex_classes
+200
+select @@local.performance_schema_max_mutex_classes;
+@@local.performance_schema_max_mutex_classes
+200
+select @@global.last_insert_id;
+Error 1238 (HY000): Variable 'last_insert_id' is a SESSION variable

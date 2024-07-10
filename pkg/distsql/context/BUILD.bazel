@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "context",
+    srcs = ["context.go"],
+    importpath = "github.com/pingcap/tidb/pkg/distsql/context",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain/resourcegroup",
+        "//pkg/errctx",
+        "//pkg/kv",
+        "//pkg/parser/mysql",
+        "//pkg/util/context",
+        "//pkg/util/execdetails",
+        "//pkg/util/memory",
+        "//pkg/util/nocopy",
+        "//pkg/util/sqlkiller",
+        "//pkg/util/tiflash",
+        "//pkg/util/topsql/stmtstats",
+        "@com_github_tikv_client_go_v2//kv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+    ],
+)

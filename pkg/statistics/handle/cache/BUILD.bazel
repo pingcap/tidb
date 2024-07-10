@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cache",
+    srcs = [
+        "stats_table_row_cache.go",
+        "statscache.go",
+        "statscacheinner.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/infoschema",
+        "//pkg/metrics",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/cache/internal",
+        "//pkg/statistics/handle/cache/internal/lfu",
+        "//pkg/statistics/handle/cache/internal/mapcache",
+        "//pkg/statistics/handle/cache/internal/metrics",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/metrics",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "//pkg/util/syncutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "cache_test",
+    timeout = "short",
+    srcs = ["bench_test.go"],
+    embed = [":cache"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/cache/internal/testutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/util/benchdaily",
+    ],
+)

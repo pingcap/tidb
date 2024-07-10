@@ -28,19 +28,15 @@ import (
 const (
 	alphabet       = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	yearFormat     = "2006"
-	dateFormat     = "2006-01-02"
-	timeFormat     = "15:04:05"
-	dateTimeFormat = "2006-01-02 15:04:05"
+	dateFormat     = time.DateOnly
+	timeFormat     = time.TimeOnly
+	dateTimeFormat = time.DateTime
 
 	// Used by randString
 	letterIdxBits = 6                    // 6 bits to represent a letter index
 	letterIdxMask = 1<<letterIdxBits - 1 // All 1-bits, as many as letterIdxBits
 	letterIdxMax  = 63 / letterIdxBits   // # of letter indices fitting in 63 bits
 )
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
 
 func randInt(min int, max int) int {
 	return min + rand.Intn(max-min+1)

@@ -1,0 +1,68 @@
+set tidb_cost_model_version=2;
+drop table if exists t1, t2;
+create table t1(a int, b int);
+insert into t1 values(1,1),(2,null),(null,3),(4,4);
+analyze table t1;
+create table t2(a int, b int);
+insert into t2 values(1,1),(2,null),(null,3),(5,4);
+analyze table t2;
+set @@tidb_enable_chunk_rpc = on;
+explain format = 'brief' select * from t1 where (t1.a, t1.b) in (select a, b from t2);
+id	estRows	task	access object	operator info
+HashJoin	2.25	root		inner join, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(planner__core__casetest__expression_rewriter.t1.b, planner__core__casetest__expression_rewriter.t2.b)]
+├─HashAgg(Build)	1.69	root		group by:planner__core__casetest__expression_rewriter.t2.a, planner__core__casetest__expression_rewriter.t2.b, funcs:firstrow(planner__core__casetest__expression_rewriter.t2.a)->planner__core__casetest__expression_rewriter.t2.a, funcs:firstrow(planner__core__casetest__expression_rewriter.t2.b)->planner__core__casetest__expression_rewriter.t2.b
+│ └─TableReader	2.25	root		data:Selection
+│   └─Selection	2.25	cop[tikv]		not(isnull(planner__core__casetest__expression_rewriter.t2.a)), not(isnull(planner__core__casetest__expression_rewriter.t2.b))
+│     └─TableFullScan	4.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	2.25	root		data:Selection
+  └─Selection	2.25	cop[tikv]		not(isnull(planner__core__casetest__expression_rewriter.t1.a)), not(isnull(planner__core__casetest__expression_rewriter.t1.b))
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+select * from t1 where (t1.a, t1.b) in (select a, b from t2);
+a	b
+1	1
+explain format = 'brief' select * from t1 where (t1.a, t1.b) not in (select a, b from t2);
+id	estRows	task	access object	operator info
+HashJoin	3.20	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(planner__core__casetest__expression_rewriter.t1.b, planner__core__casetest__expression_rewriter.t2.b)]
+├─TableReader(Build)	4.00	root		data:TableFullScan
+│ └─TableFullScan	4.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	4.00	root		data:TableFullScan
+  └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+select * from t1 where (t1.a, t1.b) not in (select a, b from t2);
+a	b
+4	4
+explain format = 'brief' select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2);
+id	estRows	task	access object	operator info
+HashJoin	1.69	root		inner join, equal:[eq(planner__core__casetest__expression_rewriter.t2.a, planner__core__casetest__expression_rewriter.t1.a) eq(planner__core__casetest__expression_rewriter.t2.b, Column#7)]
+├─HashAgg(Build)	1.69	root		group by:planner__core__casetest__expression_rewriter.t2.a, planner__core__casetest__expression_rewriter.t2.b, funcs:firstrow(planner__core__casetest__expression_rewriter.t2.a)->planner__core__casetest__expression_rewriter.t2.a, funcs:firstrow(planner__core__casetest__expression_rewriter.t2.b)->planner__core__casetest__expression_rewriter.t2.b
+│ └─TableReader	2.25	root		data:Selection
+│   └─Selection	2.25	cop[tikv]		not(isnull(planner__core__casetest__expression_rewriter.t2.a)), not(isnull(planner__core__casetest__expression_rewriter.t2.b))
+│     └─TableFullScan	4.00	cop[tikv]	table:t2	keep order:false
+└─HashAgg(Probe)	2.25	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column#7, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
+  └─TableReader	3.00	root		data:Selection
+    └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__expression_rewriter.t1.a))
+      └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2);
+a
+1
+explain format = 'brief' select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2);
+id	estRows	task	access object	operator info
+HashJoin	2.40	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(Column#7, planner__core__casetest__expression_rewriter.t2.b)]
+├─TableReader(Build)	4.00	root		data:TableFullScan
+│ └─TableFullScan	4.00	cop[tikv]	table:t2	keep order:false
+└─HashAgg(Probe)	3.00	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column#7, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
+  └─TableReader	4.00	root		data:TableFullScan
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2);
+a
+4
+drop table if exists t;
+set tidb_cost_model_version=2;
+create table t (a timestamp, b varbinary(32));
+insert into t values ('2006-08-27 21:57:57', 0x373037343631313230);
+analyze table t;
+explain format = 'brief' select bit_or(a * b) from t;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:bit_or(Column#6)->Column#4
+└─TableReader	1.00	root		data:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:bit_or(cast(mul(cast(planner__core__casetest__expression_rewriter.t.a, double BINARY), cast(planner__core__casetest__expression_rewriter.t.b, double BINARY)), bigint(20) BINARY))->Column#6
+    └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false

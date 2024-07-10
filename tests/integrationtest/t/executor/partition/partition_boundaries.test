@@ -1,0 +1,1577 @@
+# TestRangePartitionBoundariesEq
+SET @@tidb_partition_prune_mode = 'dynamic';
+DROP TABLE IF EXISTS t;
+CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000));
+INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'), (1000000, '1000000 Filler ...'), (1000001, '1000001 Filler ...'), (1000002, '1000002 Filler ...');
+INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...');
+INSERT INTO t VALUES (2999998, '2999998 Filler ...'), (2999999, '2999999 Filler ...');
+INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
+ANALYZE TABLE t;
+explain format='brief' SELECT * FROM t WHERE a = -2147483648;
+--sorted_result
+SELECT * FROM t WHERE a = -2147483648;
+explain format='brief' SELECT * FROM t WHERE a IN (-2147483648);
+--sorted_result
+SELECT * FROM t WHERE a IN (-2147483648);
+explain format='brief' SELECT * FROM t WHERE a = 0;
+--sorted_result
+SELECT * FROM t WHERE a = 0;
+explain format='brief' SELECT * FROM t WHERE a IN (0);
+--sorted_result
+SELECT * FROM t WHERE a IN (0);
+explain format='brief' SELECT * FROM t WHERE a = 999998;
+--sorted_result
+SELECT * FROM t WHERE a = 999998;
+explain format='brief' SELECT * FROM t WHERE a IN (999998);
+--sorted_result
+SELECT * FROM t WHERE a IN (999998);
+explain format='brief' SELECT * FROM t WHERE a = 999999;
+--sorted_result
+SELECT * FROM t WHERE a = 999999;
+explain format='brief' SELECT * FROM t WHERE a IN (999999);
+--sorted_result
+SELECT * FROM t WHERE a IN (999999);
+explain format='brief' SELECT * FROM t WHERE a = 1000000;
+--sorted_result
+SELECT * FROM t WHERE a = 1000000;
+explain format='brief' SELECT * FROM t WHERE a IN (1000000);
+--sorted_result
+SELECT * FROM t WHERE a IN (1000000);
+explain format='brief' SELECT * FROM t WHERE a = 1000001;
+--sorted_result
+SELECT * FROM t WHERE a = 1000001;
+explain format='brief' SELECT * FROM t WHERE a IN (1000001);
+--sorted_result
+SELECT * FROM t WHERE a IN (1000001);
+explain format='brief' SELECT * FROM t WHERE a = 1000002;
+--sorted_result
+SELECT * FROM t WHERE a = 1000002;
+explain format='brief' SELECT * FROM t WHERE a IN (1000002);
+--sorted_result
+SELECT * FROM t WHERE a IN (1000002);
+explain format='brief' SELECT * FROM t WHERE a = 3000000;
+--sorted_result
+SELECT * FROM t WHERE a = 3000000;
+explain format='brief' SELECT * FROM t WHERE a IN (3000000);
+--sorted_result
+SELECT * FROM t WHERE a IN (3000000);
+explain format='brief' SELECT * FROM t WHERE a = 3000001;
+--sorted_result
+SELECT * FROM t WHERE a = 3000001;
+explain format='brief' SELECT * FROM t WHERE a IN (3000001);
+--sorted_result
+SELECT * FROM t WHERE a IN (3000001);
+explain format='brief' SELECT * FROM t WHERE a IN (-2147483648, -2147483647);
+--sorted_result
+SELECT * FROM t WHERE a IN (-2147483648, -2147483647);
+explain format='brief' SELECT * FROM t WHERE a IN (-2147483647, -2147483646);
+--sorted_result
+SELECT * FROM t WHERE a IN (-2147483647, -2147483646);
+explain format='brief' SELECT * FROM t WHERE a IN (999997, 999998, 999999);
+--sorted_result
+SELECT * FROM t WHERE a IN (999997, 999998, 999999);
+explain format='brief' SELECT * FROM t WHERE a IN (999998, 999999, 1000000);
+--sorted_result
+SELECT * FROM t WHERE a IN (999998, 999999, 1000000);
+explain format='brief' SELECT * FROM t WHERE a IN (999999, 1000000, 1000001);
+--sorted_result
+SELECT * FROM t WHERE a IN (999999, 1000000, 1000001);
+explain format='brief' SELECT * FROM t WHERE a IN (1000000, 1000001, 1000002);
+--sorted_result
+SELECT * FROM t WHERE a IN (1000000, 1000001, 1000002);
+explain format='brief' SELECT * FROM t WHERE a IN (1999997, 1999998, 1999999);
+--sorted_result
+SELECT * FROM t WHERE a IN (1999997, 1999998, 1999999);
+explain format='brief' SELECT * FROM t WHERE a IN (1999998, 1999999, 2000000);
+--sorted_result
+SELECT * FROM t WHERE a IN (1999998, 1999999, 2000000);
+explain format='brief' SELECT * FROM t WHERE a IN (1999999, 2000000, 2000001);
+--sorted_result
+SELECT * FROM t WHERE a IN (1999999, 2000000, 2000001);
+explain format='brief' SELECT * FROM t WHERE a IN (2000000, 2000001, 2000002);
+--sorted_result
+SELECT * FROM t WHERE a IN (2000000, 2000001, 2000002);
+explain format='brief' SELECT * FROM t WHERE a IN (2999997, 2999998, 2999999);
+--sorted_result
+SELECT * FROM t WHERE a IN (2999997, 2999998, 2999999);
+explain format='brief' SELECT * FROM t WHERE a IN (2999998, 2999999, 3000000);
+--sorted_result
+SELECT * FROM t WHERE a IN (2999998, 2999999, 3000000);
+explain format='brief' SELECT * FROM t WHERE a IN (2999999, 3000000, 3000001);
+--sorted_result
+SELECT * FROM t WHERE a IN (2999999, 3000000, 3000001);
+explain format='brief' SELECT * FROM t WHERE a IN (3000000, 3000001, 3000002);
+--sorted_result
+SELECT * FROM t WHERE a IN (3000000, 3000001, 3000002);
+SET @@tidb_partition_prune_mode = default;
+
+# TestRangePartitionBoundariesNe
+SET @@tidb_partition_prune_mode = 'dynamic';
+DROP TABLE IF EXISTS t;
+CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7));
+INSERT INTO t VALUES (0, '0 Filler...');
+INSERT INTO t VALUES (1, '1 Filler...');
+INSERT INTO t VALUES (2, '2 Filler...');
+INSERT INTO t VALUES (3, '3 Filler...');
+INSERT INTO t VALUES (4, '4 Filler...');
+INSERT INTO t VALUES (5, '5 Filler...');
+INSERT INTO t VALUES (6, '6 Filler...');
+ANALYZE TABLE t;
+explain format='brief' SELECT * FROM t WHERE a != -1;
+--sorted_result
+SELECT * FROM t WHERE a != -1;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1;
+explain format='brief' SELECT * FROM t WHERE a != 0;
+--sorted_result
+SELECT * FROM t WHERE a != 0;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1, 0);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0;
+explain format='brief' SELECT * FROM t WHERE a != 1;
+--sorted_result
+SELECT * FROM t WHERE a != 1;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1;
+explain format='brief' SELECT * FROM t WHERE a != 2;
+--sorted_result
+SELECT * FROM t WHERE a != 2;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2;
+explain format='brief' SELECT * FROM t WHERE a != 3;
+--sorted_result
+SELECT * FROM t WHERE a != 3;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3;
+explain format='brief' SELECT * FROM t WHERE a != 4;
+--sorted_result
+SELECT * FROM t WHERE a != 4;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4;
+explain format='brief' SELECT * FROM t WHERE a != 5;
+--sorted_result
+SELECT * FROM t WHERE a != 5;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5;
+explain format='brief' SELECT * FROM t WHERE a != 6;
+--sorted_result
+SELECT * FROM t WHERE a != 6;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6;
+explain format='brief' SELECT * FROM t WHERE a != 7;
+--sorted_result
+SELECT * FROM t WHERE a != 7;
+explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6 AND a != 7;
+--sorted_result
+SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6 AND a != 7;
+explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6, 7);
+--sorted_result
+SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6, 7);
+explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6 OR a = 7;
+--sorted_result
+SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6 OR a = 7;
+SET @@tidb_partition_prune_mode = default;
+
+# TestRangePartitionBoundariesBetweenM
+DROP TABLE IF EXISTS t;
+CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000));
+INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'), (1000000, '1000000 Filler ...'), (1000001, '1000001 Filler ...'), (1000002, '1000002 Filler ...');
+INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...');
+INSERT INTO t VALUES (2999998, '2999998 Filler ...'), (2999999, '2999999 Filler ...');
+INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
+ANALYZE TABLE t;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483649;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483649;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483648;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483648;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483647;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483647;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483646;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483646;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483638;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483638;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483650;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483650;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483649;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483649;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483648;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483648;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483647;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483647;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483646;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483646;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND -1;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND -1;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 0;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 0;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 1;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 1;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 2;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 2;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 10;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 10;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 999998;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 999998;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 1000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 1000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 1000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 1000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 1000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 1000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 999997;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 999997;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 999998;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 999998;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 1000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 1000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 1000008;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 1000008;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 1999996;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 1999996;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 1999997;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 1999997;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 1999998;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 1999998;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 1999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 1999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 2000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999998 AND 2000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 999998;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 999998;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 1000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 1000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 1000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 1000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 1000009;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 1000009;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 1999997;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 1999997;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 1999998;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 1999998;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 1999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 1999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 2000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 2000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 2000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 999999 AND 2000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000010;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000010;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 1999998;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 1999998;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 1999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 1999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000003;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000003;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000011;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000011;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 1999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000003;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000003;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000003;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000003;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000004;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000004;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000012;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000012;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000003;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000003;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000004;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000004;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 2999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 2999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000010;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000010;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999998;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999998;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000003;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000003;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000011;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000011;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3999999;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 3999999;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000000;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000000;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000001;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000001;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000002;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000002;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000003;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000003;
+
+# TestRangePartitionBoundariesBetweenS
+DROP TABLE IF EXISTS t;
+CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7));
+INSERT INTO t VALUES (0, '0 Filler...');
+INSERT INTO t VALUES (1, '1 Filler...');
+INSERT INTO t VALUES (2, '2 Filler...');
+INSERT INTO t VALUES (3, '3 Filler...');
+INSERT INTO t VALUES (4, '4 Filler...');
+INSERT INTO t VALUES (5, '5 Filler...');
+INSERT INTO t VALUES (6, '6 Filler...');
+ANALYZE TABLE t;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND -1;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND -1;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN -1 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN -1 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 0;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 0;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 0 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 1;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 1;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 1 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 1 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 2;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 2;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 3;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 3;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 3 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 3 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 4 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 4 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 5;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 5;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 5 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 5 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 6;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 6;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 6 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 6 AND 4;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 7;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 2 AND 7;
+explain format='brief' SELECT * FROM t WHERE a BETWEEN 7 AND 4;
+--sorted_result
+SELECT * FROM t WHERE a BETWEEN 7 AND 4;
+
+# TestRangePartitionBoundariesLtM
+set @@tidb_partition_prune_mode = 'dynamic';
+drop table if exists t;
+CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000));
+INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'), (1000000, '1000000 Filler ...'), (1000001, '1000001 Filler ...'), (1000002, '1000002 Filler ...');
+INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...');
+INSERT INTO t VALUES (2999998, '2999998 Filler ...'), (2999999, '2999999 Filler ...');
+INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
+ANALYZE TABLE t;
+explain format='brief' SELECT * FROM t WHERE a < -2147483648;
+--sorted_result
+SELECT * FROM t WHERE a < -2147483648;
+explain format='brief' SELECT * FROM t WHERE a > -2147483648;
+--sorted_result
+SELECT * FROM t WHERE a > -2147483648;
+explain format='brief' SELECT * FROM t WHERE a <= -2147483648;
+--sorted_result
+SELECT * FROM t WHERE a <= -2147483648;
+explain format='brief' SELECT * FROM t WHERE a >= -2147483648;
+--sorted_result
+SELECT * FROM t WHERE a >= -2147483648;
+explain format='brief' SELECT * FROM t WHERE a < 0;
+--sorted_result
+SELECT * FROM t WHERE a < 0;
+explain format='brief' SELECT * FROM t WHERE a > 0;
+--sorted_result
+SELECT * FROM t WHERE a > 0;
+explain format='brief' SELECT * FROM t WHERE a <= 0;
+--sorted_result
+SELECT * FROM t WHERE a <= 0;
+explain format='brief' SELECT * FROM t WHERE a >= 0;
+--sorted_result
+SELECT * FROM t WHERE a >= 0;
+explain format='brief' SELECT * FROM t WHERE a < 999998;
+--sorted_result
+SELECT * FROM t WHERE a < 999998;
+explain format='brief' SELECT * FROM t WHERE a > 999998;
+--sorted_result
+SELECT * FROM t WHERE a > 999998;
+explain format='brief' SELECT * FROM t WHERE a <= 999998;
+--sorted_result
+SELECT * FROM t WHERE a <= 999998;
+explain format='brief' SELECT * FROM t WHERE a >= 999998;
+--sorted_result
+SELECT * FROM t WHERE a >= 999998;
+explain format='brief' SELECT * FROM t WHERE a < 999999;
+--sorted_result
+SELECT * FROM t WHERE a < 999999;
+explain format='brief' SELECT * FROM t WHERE a > 999999;
+--sorted_result
+SELECT * FROM t WHERE a > 999999;
+explain format='brief' SELECT * FROM t WHERE a <= 999999;
+--sorted_result
+SELECT * FROM t WHERE a <= 999999;
+explain format='brief' SELECT * FROM t WHERE a >= 999999;
+--sorted_result
+SELECT * FROM t WHERE a >= 999999;
+explain format='brief' SELECT * FROM t WHERE a < 1000000;
+--sorted_result
+SELECT * FROM t WHERE a < 1000000;
+explain format='brief' SELECT * FROM t WHERE a > 1000000;
+--sorted_result
+SELECT * FROM t WHERE a > 1000000;
+explain format='brief' SELECT * FROM t WHERE a <= 1000000;
+--sorted_result
+SELECT * FROM t WHERE a <= 1000000;
+explain format='brief' SELECT * FROM t WHERE a >= 1000000;
+--sorted_result
+SELECT * FROM t WHERE a >= 1000000;
+explain format='brief' SELECT * FROM t WHERE a < 1000001;
+--sorted_result
+SELECT * FROM t WHERE a < 1000001;
+explain format='brief' SELECT * FROM t WHERE a > 1000001;
+--sorted_result
+SELECT * FROM t WHERE a > 1000001;
+explain format='brief' SELECT * FROM t WHERE a <= 1000001;
+--sorted_result
+SELECT * FROM t WHERE a <= 1000001;
+explain format='brief' SELECT * FROM t WHERE a >= 1000001;
+--sorted_result
+SELECT * FROM t WHERE a >= 1000001;
+explain format='brief' SELECT * FROM t WHERE a < 1000002;
+--sorted_result
+SELECT * FROM t WHERE a < 1000002;
+explain format='brief' SELECT * FROM t WHERE a > 1000002;
+--sorted_result
+SELECT * FROM t WHERE a > 1000002;
+explain format='brief' SELECT * FROM t WHERE a <= 1000002;
+--sorted_result
+SELECT * FROM t WHERE a <= 1000002;
+explain format='brief' SELECT * FROM t WHERE a >= 1000002;
+--sorted_result
+SELECT * FROM t WHERE a >= 1000002;
+explain format='brief' SELECT * FROM t WHERE a < 3000000;
+--sorted_result
+SELECT * FROM t WHERE a < 3000000;
+explain format='brief' SELECT * FROM t WHERE a > 3000000;
+--sorted_result
+SELECT * FROM t WHERE a > 3000000;
+explain format='brief' SELECT * FROM t WHERE a <= 3000000;
+--sorted_result
+SELECT * FROM t WHERE a <= 3000000;
+explain format='brief' SELECT * FROM t WHERE a >= 3000000;
+--sorted_result
+SELECT * FROM t WHERE a >= 3000000;
+explain format='brief' SELECT * FROM t WHERE a < 3000001;
+--sorted_result
+SELECT * FROM t WHERE a < 3000001;
+explain format='brief' SELECT * FROM t WHERE a > 3000001;
+--sorted_result
+SELECT * FROM t WHERE a > 3000001;
+explain format='brief' SELECT * FROM t WHERE a <= 3000001;
+--sorted_result
+SELECT * FROM t WHERE a <= 3000001;
+explain format='brief' SELECT * FROM t WHERE a >= 3000001;
+--sorted_result
+SELECT * FROM t WHERE a >= 3000001;
+explain format='brief' SELECT * FROM t WHERE a < 999997;
+--sorted_result
+SELECT * FROM t WHERE a < 999997;
+explain format='brief' SELECT * FROM t WHERE a > 999997;
+--sorted_result
+SELECT * FROM t WHERE a > 999997;
+explain format='brief' SELECT * FROM t WHERE a <= 999997;
+--sorted_result
+SELECT * FROM t WHERE a <= 999997;
+explain format='brief' SELECT * FROM t WHERE a >= 999997;
+--sorted_result
+SELECT * FROM t WHERE a >= 999997;
+explain format='brief' SELECT * FROM t WHERE a >= 999997 AND a <= 999999;
+--sorted_result
+SELECT * FROM t WHERE a >= 999997 AND a <= 999999;
+explain format='brief' SELECT * FROM t WHERE a > 999997 AND a <= 999999;
+--sorted_result
+SELECT * FROM t WHERE a > 999997 AND a <= 999999;
+explain format='brief' SELECT * FROM t WHERE a > 999997 AND a < 999999;
+--sorted_result
+SELECT * FROM t WHERE a > 999997 AND a < 999999;
+explain format='brief' SELECT * FROM t WHERE a > 999997 AND a <= 999999;
+--sorted_result
+SELECT * FROM t WHERE a > 999997 AND a <= 999999;
+explain format='brief' SELECT * FROM t WHERE a < 999998;
+--sorted_result
+SELECT * FROM t WHERE a < 999998;
+explain format='brief' SELECT * FROM t WHERE a > 999998;
+--sorted_result
+SELECT * FROM t WHERE a > 999998;
+explain format='brief' SELECT * FROM t WHERE a <= 999998;
+--sorted_result
+SELECT * FROM t WHERE a <= 999998;
+explain format='brief' SELECT * FROM t WHERE a >= 999998;
+--sorted_result
+SELECT * FROM t WHERE a >= 999998;
+explain format='brief' SELECT * FROM t WHERE a >= 999998 AND a <= 1000000;
+--sorted_result
+SELECT * FROM t WHERE a >= 999998 AND a <= 1000000;
+explain format='brief' SELECT * FROM t WHERE a > 999998 AND a <= 1000000;
+--sorted_result
+SELECT * FROM t WHERE a > 999998 AND a <= 1000000;
+explain format='brief' SELECT * FROM t WHERE a > 999998 AND a < 1000000;
+--sorted_result
+SELECT * FROM t WHERE a > 999998 AND a < 1000000;
+explain format='brief' SELECT * FROM t WHERE a > 999998 AND a <= 1000000;
+--sorted_result
+SELECT * FROM t WHERE a > 999998 AND a <= 1000000;
+explain format='brief' SELECT * FROM t WHERE a < 999999;
+--sorted_result
+SELECT * FROM t WHERE a < 999999;
+explain format='brief' SELECT * FROM t WHERE a > 999999;
+--sorted_result
+SELECT * FROM t WHERE a > 999999;
+explain format='brief' SELECT * FROM t WHERE a <= 999999;
+--sorted_result
+SELECT * FROM t WHERE a <= 999999;
+explain format='brief' SELECT * FROM t WHERE a >= 999999;
+--sorted_result
+SELECT * FROM t WHERE a >= 999999;
+explain format='brief' SELECT * FROM t WHERE a >= 999999 AND a <= 1000001;
+--sorted_result
+SELECT * FROM t WHERE a >= 999999 AND a <= 1000001;
+explain format='brief' SELECT * FROM t WHERE a > 999999 AND a <= 1000001;
+--sorted_result
+SELECT * FROM t WHERE a > 999999 AND a <= 1000001;
+explain format='brief' SELECT * FROM t WHERE a > 999999 AND a < 1000001;
+--sorted_result
+SELECT * FROM t WHERE a > 999999 AND a < 1000001;
+explain format='brief' SELECT * FROM t WHERE a > 999999 AND a <= 1000001;
+--sorted_result
+SELECT * FROM t WHERE a > 999999 AND a <= 1000001;
+explain format='brief' SELECT * FROM t WHERE a < 1000000;
+--sorted_result
+SELECT * FROM t WHERE a < 1000000;
+explain format='brief' SELECT * FROM t WHERE a > 1000000;
+--sorted_result
+SELECT * FROM t WHERE a > 1000000;
+explain format='brief' SELECT * FROM t WHERE a <= 1000000;
+--sorted_result
+SELECT * FROM t WHERE a <= 1000000;
+explain format='brief' SELECT * FROM t WHERE a >= 1000000;
+--sorted_result
+SELECT * FROM t WHERE a >= 1000000;
+explain format='brief' SELECT * FROM t WHERE a >= 1000000 AND a <= 1000002;
+--sorted_result
+SELECT * FROM t WHERE a >= 1000000 AND a <= 1000002;
+explain format='brief' SELECT * FROM t WHERE a > 1000000 AND a <= 1000002;
+--sorted_result
+SELECT * FROM t WHERE a > 1000000 AND a <= 1000002;
+explain format='brief' SELECT * FROM t WHERE a > 1000000 AND a < 1000002;
+--sorted_result
+SELECT * FROM t WHERE a > 1000000 AND a < 1000002;
+explain format='brief' SELECT * FROM t WHERE a > 1000000 AND a <= 1000002;
+--sorted_result
+SELECT * FROM t WHERE a > 1000000 AND a <= 1000002;
+explain format='brief' SELECT * FROM t WHERE a < 1999997;
+--sorted_result
+SELECT * FROM t WHERE a < 1999997;
+explain format='brief' SELECT * FROM t WHERE a > 1999997;
+--sorted_result
+SELECT * FROM t WHERE a > 1999997;
+explain format='brief' SELECT * FROM t WHERE a <= 1999997;
+--sorted_result
+SELECT * FROM t WHERE a <= 1999997;
+explain format='brief' SELECT * FROM t WHERE a >= 1999997;
+--sorted_result
+SELECT * FROM t WHERE a >= 1999997;
+explain format='brief' SELECT * FROM t WHERE a >= 1999997 AND a <= 1999999;
+--sorted_result
+SELECT * FROM t WHERE a >= 1999997 AND a <= 1999999;
+explain format='brief' SELECT * FROM t WHERE a > 1999997 AND a <= 1999999;
+--sorted_result
+SELECT * FROM t WHERE a > 1999997 AND a <= 1999999;
+explain format='brief' SELECT * FROM t WHERE a > 1999997 AND a < 1999999;
+--sorted_result
+SELECT * FROM t WHERE a > 1999997 AND a < 1999999;
+explain format='brief' SELECT * FROM t WHERE a > 1999997 AND a <= 1999999;
+--sorted_result
+SELECT * FROM t WHERE a > 1999997 AND a <= 1999999;
+explain format='brief' SELECT * FROM t WHERE a < 1999998;
+--sorted_result
+SELECT * FROM t WHERE a < 1999998;
+explain format='brief' SELECT * FROM t WHERE a > 1999998;
+--sorted_result
+SELECT * FROM t WHERE a > 1999998;
+explain format='brief' SELECT * FROM t WHERE a <= 1999998;
+--sorted_result
+SELECT * FROM t WHERE a <= 1999998;
+explain format='brief' SELECT * FROM t WHERE a >= 1999998;
+--sorted_result
+SELECT * FROM t WHERE a >= 1999998;
+explain format='brief' SELECT * FROM t WHERE a >= 1999998 AND a <= 2000000;
+--sorted_result
+SELECT * FROM t WHERE a >= 1999998 AND a <= 2000000;
+explain format='brief' SELECT * FROM t WHERE a > 1999998 AND a <= 2000000;
+--sorted_result
+SELECT * FROM t WHERE a > 1999998 AND a <= 2000000;
+explain format='brief' SELECT * FROM t WHERE a > 1999998 AND a < 2000000;
+--sorted_result
+SELECT * FROM t WHERE a > 1999998 AND a < 2000000;
+explain format='brief' SELECT * FROM t WHERE a > 1999998 AND a <= 2000000;
+--sorted_result
+SELECT * FROM t WHERE a > 1999998 AND a <= 2000000;
+explain format='brief' SELECT * FROM t WHERE a < 1999999;
+--sorted_result
+SELECT * FROM t WHERE a < 1999999;
+explain format='brief' SELECT * FROM t WHERE a > 1999999;
+--sorted_result
+SELECT * FROM t WHERE a > 1999999;
+explain format='brief' SELECT * FROM t WHERE a <= 1999999;
+--sorted_result
+SELECT * FROM t WHERE a <= 1999999;
+explain format='brief' SELECT * FROM t WHERE a >= 1999999;
+--sorted_result
+SELECT * FROM t WHERE a >= 1999999;
+explain format='brief' SELECT * FROM t WHERE a >= 1999999 AND a <= 2000001;
+--sorted_result
+SELECT * FROM t WHERE a >= 1999999 AND a <= 2000001;
+explain format='brief' SELECT * FROM t WHERE a > 1999999 AND a <= 2000001;
+--sorted_result
+SELECT * FROM t WHERE a > 1999999 AND a <= 2000001;
+explain format='brief' SELECT * FROM t WHERE a > 1999999 AND a < 2000001;
+--sorted_result
+SELECT * FROM t WHERE a > 1999999 AND a < 2000001;
+explain format='brief' SELECT * FROM t WHERE a > 1999999 AND a <= 2000001;
+--sorted_result
+SELECT * FROM t WHERE a > 1999999 AND a <= 2000001;
+explain format='brief' SELECT * FROM t WHERE a < 2000000;
+--sorted_result
+SELECT * FROM t WHERE a < 2000000;
+explain format='brief' SELECT * FROM t WHERE a > 2000000;
+--sorted_result
+SELECT * FROM t WHERE a > 2000000;
+explain format='brief' SELECT * FROM t WHERE a <= 2000000;
+--sorted_result
+SELECT * FROM t WHERE a <= 2000000;
+explain format='brief' SELECT * FROM t WHERE a >= 2000000;
+--sorted_result
+SELECT * FROM t WHERE a >= 2000000;
+explain format='brief' SELECT * FROM t WHERE a >= 2000000 AND a <= 2000002;
+--sorted_result
+SELECT * FROM t WHERE a >= 2000000 AND a <= 2000002;
+explain format='brief' SELECT * FROM t WHERE a > 2000000 AND a <= 2000002;
+--sorted_result
+SELECT * FROM t WHERE a > 2000000 AND a <= 2000002;
+explain format='brief' SELECT * FROM t WHERE a > 2000000 AND a < 2000002;
+--sorted_result
+SELECT * FROM t WHERE a > 2000000 AND a < 2000002;
+explain format='brief' SELECT * FROM t WHERE a > 2000000 AND a <= 2000002;
+--sorted_result
+SELECT * FROM t WHERE a > 2000000 AND a <= 2000002;
+explain format='brief' SELECT * FROM t WHERE a < 2999997;
+--sorted_result
+SELECT * FROM t WHERE a < 2999997;
+explain format='brief' SELECT * FROM t WHERE a > 2999997;
+--sorted_result
+SELECT * FROM t WHERE a > 2999997;
+explain format='brief' SELECT * FROM t WHERE a <= 2999997;
+--sorted_result
+SELECT * FROM t WHERE a <= 2999997;
+explain format='brief' SELECT * FROM t WHERE a >= 2999997;
+--sorted_result
+SELECT * FROM t WHERE a >= 2999997;
+explain format='brief' SELECT * FROM t WHERE a >= 2999997 AND a <= 2999999;
+--sorted_result
+SELECT * FROM t WHERE a >= 2999997 AND a <= 2999999;
+explain format='brief' SELECT * FROM t WHERE a > 2999997 AND a <= 2999999;
+--sorted_result
+SELECT * FROM t WHERE a > 2999997 AND a <= 2999999;
+explain format='brief' SELECT * FROM t WHERE a > 2999997 AND a < 2999999;
+--sorted_result
+SELECT * FROM t WHERE a > 2999997 AND a < 2999999;
+explain format='brief' SELECT * FROM t WHERE a > 2999997 AND a <= 2999999;
+--sorted_result
+SELECT * FROM t WHERE a > 2999997 AND a <= 2999999;
+explain format='brief' SELECT * FROM t WHERE a < 2999998;
+--sorted_result
+SELECT * FROM t WHERE a < 2999998;
+explain format='brief' SELECT * FROM t WHERE a > 2999998;
+--sorted_result
+SELECT * FROM t WHERE a > 2999998;
+explain format='brief' SELECT * FROM t WHERE a <= 2999998;
+--sorted_result
+SELECT * FROM t WHERE a <= 2999998;
+explain format='brief' SELECT * FROM t WHERE a >= 2999998;
+--sorted_result
+SELECT * FROM t WHERE a >= 2999998;
+explain format='brief' SELECT * FROM t WHERE a >= 2999998 AND a <= 3000000;
+--sorted_result
+SELECT * FROM t WHERE a >= 2999998 AND a <= 3000000;
+explain format='brief' SELECT * FROM t WHERE a > 2999998 AND a <= 3000000;
+--sorted_result
+SELECT * FROM t WHERE a > 2999998 AND a <= 3000000;
+explain format='brief' SELECT * FROM t WHERE a > 2999998 AND a < 3000000;
+--sorted_result
+SELECT * FROM t WHERE a > 2999998 AND a < 3000000;
+explain format='brief' SELECT * FROM t WHERE a > 2999998 AND a <= 3000000;
+--sorted_result
+SELECT * FROM t WHERE a > 2999998 AND a <= 3000000;
+explain format='brief' SELECT * FROM t WHERE a < 2999999;
+--sorted_result
+SELECT * FROM t WHERE a < 2999999;
+explain format='brief' SELECT * FROM t WHERE a > 2999999;
+--sorted_result
+SELECT * FROM t WHERE a > 2999999;
+explain format='brief' SELECT * FROM t WHERE a <= 2999999;
+--sorted_result
+SELECT * FROM t WHERE a <= 2999999;
+explain format='brief' SELECT * FROM t WHERE a >= 2999999;
+--sorted_result
+SELECT * FROM t WHERE a >= 2999999;
+explain format='brief' SELECT * FROM t WHERE a >= 2999999 AND a <= 3000001;
+--sorted_result
+SELECT * FROM t WHERE a >= 2999999 AND a <= 3000001;
+explain format='brief' SELECT * FROM t WHERE a > 2999999 AND a <= 3000001;
+--sorted_result
+SELECT * FROM t WHERE a > 2999999 AND a <= 3000001;
+explain format='brief' SELECT * FROM t WHERE a > 2999999 AND a < 3000001;
+--sorted_result
+SELECT * FROM t WHERE a > 2999999 AND a < 3000001;
+explain format='brief' SELECT * FROM t WHERE a > 2999999 AND a <= 3000001;
+--sorted_result
+SELECT * FROM t WHERE a > 2999999 AND a <= 3000001;
+explain format='brief' SELECT * FROM t WHERE a < 3000000;
+--sorted_result
+SELECT * FROM t WHERE a < 3000000;
+explain format='brief' SELECT * FROM t WHERE a > 3000000;
+--sorted_result
+SELECT * FROM t WHERE a > 3000000;
+explain format='brief' SELECT * FROM t WHERE a <= 3000000;
+--sorted_result
+SELECT * FROM t WHERE a <= 3000000;
+explain format='brief' SELECT * FROM t WHERE a >= 3000000;
+--sorted_result
+SELECT * FROM t WHERE a >= 3000000;
+explain format='brief' SELECT * FROM t WHERE a >= 3000000 AND a <= 3000002;
+--sorted_result
+SELECT * FROM t WHERE a >= 3000000 AND a <= 3000002;
+explain format='brief' SELECT * FROM t WHERE a > 3000000 AND a <= 3000002;
+--sorted_result
+SELECT * FROM t WHERE a > 3000000 AND a <= 3000002;
+explain format='brief' SELECT * FROM t WHERE a > 3000000 AND a < 3000002;
+--sorted_result
+SELECT * FROM t WHERE a > 3000000 AND a < 3000002;
+explain format='brief' SELECT * FROM t WHERE a > 3000000 AND a <= 3000002;
+--sorted_result
+SELECT * FROM t WHERE a > 3000000 AND a <= 3000002;
+set @@tidb_partition_prune_mode = default;
+
+# TestRangePartitionBoundariesLtS
+set @@tidb_partition_prune_mode = 'dynamic';
+drop table if exists t;
+CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7));
+INSERT INTO t VALUES (0, '0 Filler...');
+INSERT INTO t VALUES (1, '1 Filler...');
+INSERT INTO t VALUES (2, '2 Filler...');
+INSERT INTO t VALUES (3, '3 Filler...');
+INSERT INTO t VALUES (4, '4 Filler...');
+INSERT INTO t VALUES (5, '5 Filler...');
+INSERT INTO t VALUES (6, '6 Filler...');
+ANALYZE TABLE t;
+explain format='brief' SELECT * FROM t WHERE a < -1;
+--sorted_result
+SELECT * FROM t WHERE a < -1;
+explain format='brief' SELECT * FROM t WHERE a > -1;
+--sorted_result
+SELECT * FROM t WHERE a > -1;
+explain format='brief' SELECT * FROM t WHERE a <= -1;
+--sorted_result
+SELECT * FROM t WHERE a <= -1;
+explain format='brief' SELECT * FROM t WHERE a >= -1;
+--sorted_result
+SELECT * FROM t WHERE a >= -1;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > -1;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > -1;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < -1;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < -1;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > -1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > -1);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < -1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < -1);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= -1;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= -1;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < -1;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < -1;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= -1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= -1);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < -1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < -1);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > -1;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > -1;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= -1;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= -1;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > -1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > -1);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= -1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= -1);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= -1;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= -1;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= -1;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= -1;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= -1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= -1);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= -1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= -1);
+explain format='brief' SELECT * FROM t WHERE a < 0;
+--sorted_result
+SELECT * FROM t WHERE a < 0;
+explain format='brief' SELECT * FROM t WHERE a > 0;
+--sorted_result
+SELECT * FROM t WHERE a > 0;
+explain format='brief' SELECT * FROM t WHERE a <= 0;
+--sorted_result
+SELECT * FROM t WHERE a <= 0;
+explain format='brief' SELECT * FROM t WHERE a >= 0;
+--sorted_result
+SELECT * FROM t WHERE a >= 0;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 0;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > 0;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 0;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < 0;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 0);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > 0);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 0);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < 0);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 0;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= 0;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 0;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < 0;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 0);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= 0);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 0);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < 0);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 0;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > 0;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 0;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= 0;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 0);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > 0);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 0);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= 0);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 0;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= 0;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 0;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= 0;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 0);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= 0);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 0);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= 0);
+explain format='brief' SELECT * FROM t WHERE a < 1;
+--sorted_result
+SELECT * FROM t WHERE a < 1;
+explain format='brief' SELECT * FROM t WHERE a > 1;
+--sorted_result
+SELECT * FROM t WHERE a > 1;
+explain format='brief' SELECT * FROM t WHERE a <= 1;
+--sorted_result
+SELECT * FROM t WHERE a <= 1;
+explain format='brief' SELECT * FROM t WHERE a >= 1;
+--sorted_result
+SELECT * FROM t WHERE a >= 1;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 1;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > 1;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 1;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < 1;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > 1);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < 1);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 1;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= 1;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 1;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < 1;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= 1);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < 1);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 1;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > 1;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 1;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= 1;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > 1);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= 1);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 1;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= 1;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 1;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= 1;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= 1);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 1);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= 1);
+explain format='brief' SELECT * FROM t WHERE a < 2;
+--sorted_result
+SELECT * FROM t WHERE a < 2;
+explain format='brief' SELECT * FROM t WHERE a > 2;
+--sorted_result
+SELECT * FROM t WHERE a > 2;
+explain format='brief' SELECT * FROM t WHERE a <= 2;
+--sorted_result
+SELECT * FROM t WHERE a <= 2;
+explain format='brief' SELECT * FROM t WHERE a >= 2;
+--sorted_result
+SELECT * FROM t WHERE a >= 2;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 2;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > 2;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 2;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < 2;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 2);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > 2);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 2);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < 2);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 2;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= 2;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 2;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < 2;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 2);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= 2);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 2);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < 2);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 2;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > 2;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 2;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= 2;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 2);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > 2);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 2);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= 2);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 2;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= 2;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 2;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= 2;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 2);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= 2);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 2);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= 2);
+explain format='brief' SELECT * FROM t WHERE a < 3;
+--sorted_result
+SELECT * FROM t WHERE a < 3;
+explain format='brief' SELECT * FROM t WHERE a > 3;
+--sorted_result
+SELECT * FROM t WHERE a > 3;
+explain format='brief' SELECT * FROM t WHERE a <= 3;
+--sorted_result
+SELECT * FROM t WHERE a <= 3;
+explain format='brief' SELECT * FROM t WHERE a >= 3;
+--sorted_result
+SELECT * FROM t WHERE a >= 3;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 3;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > 3;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 3;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < 3;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 3);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > 3);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 3);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < 3);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 3;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= 3;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 3;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < 3;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 3);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= 3);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 3);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < 3);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 3;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > 3;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 3;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= 3;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 3);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > 3);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 3);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= 3);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 3;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= 3;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 3;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= 3;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 3);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= 3);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 3);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= 3);
+explain format='brief' SELECT * FROM t WHERE a < 4;
+--sorted_result
+SELECT * FROM t WHERE a < 4;
+explain format='brief' SELECT * FROM t WHERE a > 4;
+--sorted_result
+SELECT * FROM t WHERE a > 4;
+explain format='brief' SELECT * FROM t WHERE a <= 4;
+--sorted_result
+SELECT * FROM t WHERE a <= 4;
+explain format='brief' SELECT * FROM t WHERE a >= 4;
+--sorted_result
+SELECT * FROM t WHERE a >= 4;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 4;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > 4;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 4;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < 4;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 4);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > 4);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 4);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < 4);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 4;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= 4;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 4;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < 4;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 4);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= 4);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 4);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < 4);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 4;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > 4;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 4;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= 4;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 4);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > 4);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 4);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= 4);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 4;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= 4;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 4;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= 4;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 4);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= 4);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 4);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= 4);
+explain format='brief' SELECT * FROM t WHERE a < 5;
+--sorted_result
+SELECT * FROM t WHERE a < 5;
+explain format='brief' SELECT * FROM t WHERE a > 5;
+--sorted_result
+SELECT * FROM t WHERE a > 5;
+explain format='brief' SELECT * FROM t WHERE a <= 5;
+--sorted_result
+SELECT * FROM t WHERE a <= 5;
+explain format='brief' SELECT * FROM t WHERE a >= 5;
+--sorted_result
+SELECT * FROM t WHERE a >= 5;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 5;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > 5;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 5;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < 5;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 5);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > 5);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 5);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < 5);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 5;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= 5;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 5;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < 5;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 5);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= 5);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 5);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < 5);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 5;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > 5;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 5;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= 5;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 5);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > 5);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 5);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= 5);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 5;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= 5;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 5;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= 5;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 5);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= 5);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 5);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= 5);
+explain format='brief' SELECT * FROM t WHERE a < 6;
+--sorted_result
+SELECT * FROM t WHERE a < 6;
+explain format='brief' SELECT * FROM t WHERE a > 6;
+--sorted_result
+SELECT * FROM t WHERE a > 6;
+explain format='brief' SELECT * FROM t WHERE a <= 6;
+--sorted_result
+SELECT * FROM t WHERE a <= 6;
+explain format='brief' SELECT * FROM t WHERE a >= 6;
+--sorted_result
+SELECT * FROM t WHERE a >= 6;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 6;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > 6;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 6;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < 6;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 6);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > 6);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 6);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < 6);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 6;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= 6;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 6;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < 6;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 6);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= 6);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 6);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < 6);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 6;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > 6;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 6;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= 6;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 6);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > 6);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 6);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= 6);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 6;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= 6;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 6;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= 6;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 6);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= 6);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 6);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= 6);
+explain format='brief' SELECT * FROM t WHERE a < 7;
+--sorted_result
+SELECT * FROM t WHERE a < 7;
+explain format='brief' SELECT * FROM t WHERE a > 7;
+--sorted_result
+SELECT * FROM t WHERE a > 7;
+explain format='brief' SELECT * FROM t WHERE a <= 7;
+--sorted_result
+SELECT * FROM t WHERE a <= 7;
+explain format='brief' SELECT * FROM t WHERE a >= 7;
+--sorted_result
+SELECT * FROM t WHERE a >= 7;
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 7;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a > 7;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 7;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a < 7;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 7);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a > 7);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 7);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a < 7);
+explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 7;
+--sorted_result
+SELECT * FROM t WHERE a < 2 OR a >= 7;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 7;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a < 7;
+explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 7);
+--sorted_result
+SELECT * FROM t WHERE NOT (a < 2 OR a >= 7);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 7);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a < 7);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 7;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a > 7;
+explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 7;
+--sorted_result
+SELECT * FROM t WHERE a > 2 AND a <= 7;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 7);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a > 7);
+explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 7);
+--sorted_result
+SELECT * FROM t WHERE NOT (a > 2 AND a <= 7);
+explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 7;
+--sorted_result
+SELECT * FROM t WHERE a <= 2 OR a >= 7;
+explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 7;
+--sorted_result
+SELECT * FROM t WHERE a >= 2 AND a <= 7;
+explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 7);
+--sorted_result
+SELECT * FROM t WHERE NOT (a <= 2 OR a >= 7);
+explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 7);
+--sorted_result
+SELECT * FROM t WHERE NOT (a >= 2 AND a <= 7);
+set @@tidb_partition_prune_mode = default;
+

@@ -1,0 +1,198 @@
+set @@session.tidb_opt_advanced_join_hint=0;
+drop table if exists t1, t2;
+create table t1(
+pnbrn_cnaps varchar(5) not null,
+new_accno varchar(18) not null,
+primary key(pnbrn_cnaps,new_accno) nonclustered
+);
+create table t2(
+pnbrn_cnaps varchar(5) not null,
+txn_accno varchar(18) not null,
+txn_dt date not null,
+yn_frz varchar(1) default null
+);
+insert into t1(pnbrn_cnaps,new_accno) values ("40001","123");
+insert into t2(pnbrn_cnaps, txn_accno, txn_dt, yn_frz) values ("40001","123","20221201","0");
+set @@session.tidb_enable_inl_join_inner_multi_pattern='ON';
+explain format='brief' update
+/*+ inl_join(a) */
+t2 b,
+(
+select t1.pnbrn_cnaps,
+t1.new_accno
+from t1
+where t1.pnbrn_cnaps = '40001'
+) a
+set b.yn_frz = '1'
+where b.txn_dt = str_to_date('20221201', '%Y%m%d')
+and b.pnbrn_cnaps = a.pnbrn_cnaps
+and b.txn_accno = a.new_accno;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─IndexJoin	12.50	root		inner join, inner:IndexReader, outer key:executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t2.txn_accno, inner key:executor__index_advise.t1.pnbrn_cnaps, executor__index_advise.t1.new_accno, equal cond:eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps), eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)
+  ├─TableReader(Build)	10.00	root		data:Selection
+  │ └─Selection	10.00	cop[tikv]		eq(executor__index_advise.t2.txn_dt, 2022-12-01)
+  │   └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	10.00	root		index:Selection
+    └─Selection	10.00	cop[tikv]		eq(executor__index_advise.t1.pnbrn_cnaps, "40001")
+      └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:PRIMARY(pnbrn_cnaps, new_accno)	range: decided by [eq(executor__index_advise.t1.pnbrn_cnaps, executor__index_advise.t2.pnbrn_cnaps) eq(executor__index_advise.t1.new_accno, executor__index_advise.t2.txn_accno)], keep order:false, stats:pseudo
+set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF';
+explain format='brief' update
+/*+ inl_join(a) */
+t2 b,
+(
+select t1.pnbrn_cnaps,
+t1.new_accno
+from t1
+where t1.pnbrn_cnaps = '40001'
+) a
+set b.yn_frz = '1'
+where b.txn_dt = str_to_date('20221201', '%Y%m%d')
+and b.pnbrn_cnaps = a.pnbrn_cnaps
+and b.txn_accno = a.new_accno;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─HashJoin	12.50	root		inner join, equal:[eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps) eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)]
+  ├─IndexReader(Build)	10.00	root		index:IndexRangeScan
+  │ └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:PRIMARY(pnbrn_cnaps, new_accno)	range:["40001","40001"], keep order:false, stats:pseudo
+  └─TableReader(Probe)	10.00	root		data:Selection
+    └─Selection	10.00	cop[tikv]		eq(executor__index_advise.t2.txn_dt, 2022-12-01)
+      └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
+set @@session.tidb_enable_inl_join_inner_multi_pattern='ON';
+update
+/*+ inl_join(a) */
+t2 b,
+(
+select t1.pnbrn_cnaps,
+t1.new_accno
+from t1
+where t1.pnbrn_cnaps = '40001'
+) a
+set b.yn_frz = '1'
+where b.txn_dt = str_to_date('20221201', '%Y%m%d')
+and b.pnbrn_cnaps = a.pnbrn_cnaps
+and b.txn_accno = a.new_accno;
+select yn_frz from t2;
+yn_frz
+1
+set @@session.tidb_opt_advanced_join_hint=default;
+set @@session.tidb_enable_inl_join_inner_multi_pattern=default;
+set @@tidb_opt_advanced_join_hint=0;
+drop table if exists tbl_miss, tbl_src;
+create table tbl_miss(
+id bigint(20) unsigned not null,
+txn_dt date default null,
+perip_sys_uuid varchar(32) not null,
+rvrs_idr varchar(1) not null,
+primary key(id) clustered,
+key idx1 (txn_dt, perip_sys_uuid, rvrs_idr)
+);
+insert into tbl_miss (id,txn_dt,perip_sys_uuid,rvrs_idr) values (1,"20221201","123","1");
+create table tbl_src(
+txn_dt date default null,
+uuid varchar(32) not null,
+rvrs_idr char(1),
+expd_inf varchar(5000),
+primary key(uuid,rvrs_idr) nonclustered
+);
+insert into tbl_src (txn_dt,uuid,rvrs_idr) values ("20221201","123","1");
+set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF';
+explain format='brief' select /*+ use_index(mis,) inl_join(src) */
+*
+from tbl_miss mis
+,tbl_src src
+where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+and mis.id between 1 and 10000
+and mis.perip_sys_uuid = src.uuid
+and mis.rvrs_idr = src.rvrs_idr
+and mis.txn_dt = src.txn_dt
+and (
+case when isnull(src.expd_inf) = 1 then ''
+else
+substr(concat_ws('',src.expd_inf,'~~'),
+instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+instr(substr(concat_ws('',src.expd_inf,'~~'),
+instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+end
+) != '01';
+id	estRows	task	access object	operator info
+HashJoin	104.17	root		inner join, equal:[eq(executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_src.uuid) eq(executor__index_advise.tbl_miss.rvrs_idr, executor__index_advise.tbl_src.rvrs_idr) eq(executor__index_advise.tbl_miss.txn_dt, executor__index_advise.tbl_src.txn_dt)]
+├─TableReader(Build)	83.33	root		data:Selection
+│ └─Selection	83.33	cop[tikv]		ge(executor__index_advise.tbl_miss.txn_dt, 2022-12-01), not(isnull(executor__index_advise.tbl_miss.txn_dt))
+│   └─TableRangeScan	250.00	cop[tikv]	table:mis	range:[1,10000], keep order:false, stats:pseudo
+└─Selection(Probe)	2666.67	root		ne(case(eq(isnull(executor__index_advise.tbl_src.expd_inf), 1), "", substr(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"), plus(instr(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"), "~~a4"), 4), minus(instr(substr(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"), plus(instr(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"), "~~a4"), 4), length(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"))), "~~"), 1))), "01")
+  └─TableReader	3333.33	root		data:Selection
+    └─Selection	3333.33	cop[tikv]		ge(executor__index_advise.tbl_src.txn_dt, 2022-12-01), not(isnull(executor__index_advise.tbl_src.txn_dt))
+      └─TableFullScan	10000.00	cop[tikv]	table:src	keep order:false, stats:pseudo
+set @@session.tidb_enable_inl_join_inner_multi_pattern='ON';
+explain format='brief' select /*+ use_index(mis,) inl_join(src) */
+*
+from tbl_miss mis
+,tbl_src src
+where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+and mis.id between 1 and 10000
+and mis.perip_sys_uuid = src.uuid
+and mis.rvrs_idr = src.rvrs_idr
+and mis.txn_dt = src.txn_dt
+and (
+case when isnull(src.expd_inf) = 1 then ''
+else
+substr(concat_ws('',src.expd_inf,'~~'),
+instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+instr(substr(concat_ws('',src.expd_inf,'~~'),
+instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+end
+) != '01';
+id	estRows	task	access object	operator info
+IndexJoin	104.17	root		inner join, inner:Selection, outer key:executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_miss.rvrs_idr, inner key:executor__index_advise.tbl_src.uuid, executor__index_advise.tbl_src.rvrs_idr, equal cond:eq(executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_src.uuid), eq(executor__index_advise.tbl_miss.rvrs_idr, executor__index_advise.tbl_src.rvrs_idr), eq(executor__index_advise.tbl_miss.txn_dt, executor__index_advise.tbl_src.txn_dt)
+├─TableReader(Build)	83.33	root		data:Selection
+│ └─Selection	83.33	cop[tikv]		ge(executor__index_advise.tbl_miss.txn_dt, 2022-12-01), not(isnull(executor__index_advise.tbl_miss.txn_dt))
+│   └─TableRangeScan	250.00	cop[tikv]	table:mis	range:[1,10000], keep order:false, stats:pseudo
+└─Selection(Probe)	222222.22	root		ne(case(eq(isnull(executor__index_advise.tbl_src.expd_inf), 1), "", substr(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"), plus(instr(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"), "~~a4"), 4), minus(instr(substr(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"), plus(instr(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"), "~~a4"), 4), length(concat_ws("", executor__index_advise.tbl_src.expd_inf, "~~"))), "~~"), 1))), "01")
+  └─IndexLookUp	83.33	root		
+    ├─IndexRangeScan(Build)	83.33	cop[tikv]	table:src, index:PRIMARY(uuid, rvrs_idr)	range: decided by [eq(executor__index_advise.tbl_src.uuid, executor__index_advise.tbl_miss.perip_sys_uuid) eq(executor__index_advise.tbl_src.rvrs_idr, executor__index_advise.tbl_miss.rvrs_idr)], keep order:false, stats:pseudo
+    └─Selection(Probe)	83.33	cop[tikv]		ge(executor__index_advise.tbl_src.txn_dt, 2022-12-01), not(isnull(executor__index_advise.tbl_src.txn_dt))
+      └─TableRowIDScan	83.33	cop[tikv]	table:src	keep order:false, stats:pseudo
+select /*+ use_index(mis,) inl_join(src) */
+*
+from tbl_miss mis
+,tbl_src src
+where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+and mis.id between 1 and 10000
+and mis.perip_sys_uuid = src.uuid
+and mis.rvrs_idr = src.rvrs_idr
+and mis.txn_dt = src.txn_dt
+and (
+case when isnull(src.expd_inf) = 1 then ''
+else
+substr(concat_ws('',src.expd_inf,'~~'),
+instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+instr(substr(concat_ws('',src.expd_inf,'~~'),
+instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+end
+) != '01';
+id	txn_dt	perip_sys_uuid	rvrs_idr	txn_dt	uuid	rvrs_idr	expd_inf
+1	2022-12-01	123	1	2022-12-01	123	1	NULL
+set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF';
+select /*+ use_index(mis,) inl_join(src) */
+*
+from tbl_miss mis
+,tbl_src src
+where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+and mis.id between 1 and 10000
+and mis.perip_sys_uuid = src.uuid
+and mis.rvrs_idr = src.rvrs_idr
+and mis.txn_dt = src.txn_dt
+and (
+case when isnull(src.expd_inf) = 1 then ''
+else
+substr(concat_ws('',src.expd_inf,'~~'),
+instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+instr(substr(concat_ws('',src.expd_inf,'~~'),
+instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+end
+) != '01';
+id	txn_dt	perip_sys_uuid	rvrs_idr	txn_dt	uuid	rvrs_idr	expd_inf
+1	2022-12-01	123	1	2022-12-01	123	1	NULL
+set @@tidb_opt_advanced_join_hint=default;
+set @@session.tidb_enable_inl_join_inner_multi_pattern=default;

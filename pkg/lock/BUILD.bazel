@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "lock",
+    srcs = ["lock.go"],
+    importpath = "github.com/pingcap/tidb/pkg/lock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/lock/context",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/table",
+        "//pkg/util",
+    ],
+)

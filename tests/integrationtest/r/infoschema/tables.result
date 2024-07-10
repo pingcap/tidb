@@ -1,0 +1,290 @@
+drop table if EXISTS charset_collate_col_test;
+CREATE TABLE charset_collate_col_test(
+c_int int,
+c_float float,
+c_bit bit,
+c_bool bool,
+c_char char(1) charset ascii collate ascii_bin,
+c_nchar national char(1) charset ascii collate ascii_bin,
+c_binary binary,
+c_varchar varchar(1) charset ascii collate ascii_bin,
+c_nvarchar national varchar(1) charset ascii collate ascii_bin,
+c_varbinary varbinary(1),
+c_year year,
+c_date date,
+c_time time,
+c_datetime datetime,
+c_timestamp timestamp,
+c_blob blob,
+c_tinyblob tinyblob,
+c_mediumblob mediumblob,
+c_longblob longblob,
+c_text text charset ascii collate ascii_bin,
+c_tinytext tinytext charset ascii collate ascii_bin,
+c_mediumtext mediumtext charset ascii collate ascii_bin,
+c_longtext longtext charset ascii collate ascii_bin,
+c_json json,
+c_enum enum('1') charset ascii collate ascii_bin,
+c_set set('1') charset ascii collate ascii_bin
+);
+SELECT column_name, character_set_name, collation_name
+FROM information_schema.COLUMNS
+WHERE table_schema = "infoschema__tables" AND table_name = "charset_collate_col_test"
+ORDER BY column_name;
+column_name	character_set_name	collation_name
+c_binary	NULL	NULL
+c_bit	NULL	NULL
+c_blob	NULL	NULL
+c_bool	NULL	NULL
+c_char	ascii	ascii_bin
+c_date	NULL	NULL
+c_datetime	NULL	NULL
+c_enum	ascii	ascii_bin
+c_float	NULL	NULL
+c_int	NULL	NULL
+c_json	NULL	NULL
+c_longblob	NULL	NULL
+c_longtext	ascii	ascii_bin
+c_mediumblob	NULL	NULL
+c_mediumtext	ascii	ascii_bin
+c_nchar	ascii	ascii_bin
+c_nvarchar	ascii	ascii_bin
+c_set	ascii	ascii_bin
+c_text	ascii	ascii_bin
+c_time	NULL	NULL
+c_timestamp	NULL	NULL
+c_tinyblob	NULL	NULL
+c_tinytext	ascii	ascii_bin
+c_varbinary	NULL	NULL
+c_varchar	ascii	ascii_bin
+c_year	NULL	NULL
+drop table if EXISTS default_time_table;
+CREATE TABLE default_time_table(
+c_datetime datetime,
+c_datetime_default datetime default current_timestamp,
+c_datetime_default_2 datetime(2) default current_timestamp(2),
+c_timestamp timestamp,
+c_timestamp_default timestamp default current_timestamp,
+c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+c_date_default date default current_date,
+c_date_default_2 date default curdate(),
+c_varchar_default varchar(20) default "current_timestamp",
+c_varchar_default_3 varchar(20) default "current_timestamp(3)",
+c_varchar_default_on_update datetime default current_timestamp on update current_timestamp,
+c_varchar_default_on_update_fsp datetime(3) default current_timestamp(3) on update current_timestamp(3),
+c_varchar_default_with_case varchar(20) default "cUrrent_tImestamp"
+);
+SELECT column_name, column_default, extra
+FROM information_schema.COLUMNS
+WHERE table_schema = "infoschema__tables" AND table_name = "default_time_table"
+ORDER BY column_name;
+column_name	column_default	extra
+c_date_default	CURRENT_DATE	
+c_date_default_2	CURRENT_DATE	
+c_datetime	NULL	
+c_datetime_default	CURRENT_TIMESTAMP	
+c_datetime_default_2	CURRENT_TIMESTAMP(2)	
+c_timestamp	NULL	
+c_timestamp_default	CURRENT_TIMESTAMP	
+c_timestamp_default_3	CURRENT_TIMESTAMP(3)	
+c_varchar_default	current_timestamp	
+c_varchar_default_3	current_timestamp(3)	
+c_varchar_default_on_update	CURRENT_TIMESTAMP	DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+c_varchar_default_on_update_fsp	CURRENT_TIMESTAMP(3)	DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3)
+c_varchar_default_with_case	cUrrent_tImestamp	
+select * from information_schema.column_statistics;
+SCHEMA_NAME	TABLE_NAME	COLUMN_NAME	HISTOGRAM
+drop user if EXISTS 'user18845'@'localhost';
+CREATE USER 'user18845'@'localhost';
+select count(*) from information_schema.columns;
+count(*)
+1
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists stmt_summary_test;
+create table stmt_summary_test(id int primary key);
+insert into stmt_summary_test values(1);
+insert into stmt_summary_test values(1);
+Error 1062 (23000): Duplicate entry '1' for key 'stmt_summary_test.PRIMARY'
+select exec_count, sum_errors, sum_warnings from information_schema.statements_summary where digest_text like "insert into `stmt_summary_test`%";
+exec_count	sum_errors	sum_warnings
+2	1	0
+insert ignore into stmt_summary_test values(1);
+select exec_count, sum_errors, sum_warnings from information_schema.statements_summary where digest_text like "insert ignore into `stmt_summary_test`%";
+exec_count	sum_errors	sum_warnings
+1	0	1
+set global tidb_enable_stmt_summary = default;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+prepare stmt from 'select ?';
+set @number=1;
+execute stmt using @number;
+?
+1
+select exec_count
+from information_schema.statements_summary
+where digest_text like "prepare%";
+exec_count
+select exec_count
+from information_schema.statements_summary
+where digest_text like "select ?";
+exec_count
+1
+set global tidb_enable_stmt_summary = default;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop user if exists user_sensitive;
+create user user_sensitive identified by '123456789';
+alter user 'user_sensitive'@'%' identified by 'abcdefg';
+set password for 'user_sensitive'@'%' = 'xyzuvw';
+select query_sample_text from `information_schema`.`STATEMENTS_SUMMARY` where query_sample_text like '%user_sensitive%' and (query_sample_text like 'set password%' or query_sample_text like 'create user%' or query_sample_text like 'alter user%') order by query_sample_text;
+query_sample_text
+alter user {user_sensitive@% password = ***}
+create user {user_sensitive@% password = ***}
+set password for user user_sensitive@%
+set global tidb_enable_stmt_summary = default;
+set global tidb_stmt_summary_refresh_interval=1800;
+set global tidb_enable_stmt_summary=0;
+set global tidb_enable_stmt_summary=1;
+set global tidb_stmt_summary_max_stmt_count=1;
+begin;
+show tables;
+Tables_in_infoschema__tables
+charset_collate_col_test
+default_time_table
+stmt_summary_test
+SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;
+DIGEST_TEXT	DIGEST
+show tables	be021a0b3956334563aa6949abdacb23a012818b1d159432132f69c9e5a5f914
+	NULL
+SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;
+SCHEMA_NAME
+infoschema__tables
+NULL
+commit;
+set global tidb_stmt_summary_max_stmt_count=default;
+set global tidb_stmt_summary_refresh_interval=default;
+set global tidb_enable_stmt_summary = default;
+set global tidb_stmt_summary_max_stmt_count = 1;
+set global tidb_stmt_summary_refresh_interval = 9999;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+set global tidb_stmt_summary_max_stmt_count=1;
+begin;
+show tables;
+Tables_in_infoschema__tables
+charset_collate_col_test
+default_time_table
+stmt_summary_test
+SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;
+DIGEST_TEXT	DIGEST
+show tables	be021a0b3956334563aa6949abdacb23a012818b1d159432132f69c9e5a5f914
+	NULL
+SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;
+SCHEMA_NAME
+infoschema__tables
+NULL
+commit;
+set global tidb_stmt_summary_refresh_interval = default;
+set global tidb_stmt_summary_max_stmt_count = default;
+set global tidb_enable_stmt_summary = default;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t';
+execute stmt;
+a
+select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+plan_cache_hits	plan_in_cache
+0	0
+execute stmt;
+a
+execute stmt;
+a
+execute stmt;
+a
+select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+plan_cache_hits	plan_in_cache
+3	1
+set global tidb_enable_stmt_summary = default;
+drop user if exists 'testuser'@'localhost', 'testuser2'@'localhost';
+create user 'testuser'@'localhost';
+create user 'testuser2'@'localhost';
+grant process on *.* to 'testuser2'@'localhost';
+select * from information_schema.deadlocks;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+select * from information_schema.deadlocks;
+DEADLOCK_ID	OCCUR_TIME	RETRYABLE	TRY_LOCK_TRX_ID	CURRENT_SQL_DIGEST	CURRENT_SQL_DIGEST_TEXT	KEY	KEY_INFO	TRX_HOLDING_LOCK
+drop table if exists t1, t2;
+CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY);
+CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT DEFAULT NULL, INDEX (t1_id), CONSTRAINT `fk_to_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`));
+SELECT * FROM information_schema.referential_constraints WHERE table_name='t2' and CONSTRAINT_SCHEMA='infoschema__tables';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	UNIQUE_CONSTRAINT_CATALOG	UNIQUE_CONSTRAINT_SCHEMA	UNIQUE_CONSTRAINT_NAME	MATCH_OPTION	UPDATE_RULE	DELETE_RULE	TABLE_NAME	REFERENCED_TABLE_NAME
+def	infoschema__tables	fk_to_t1	def	infoschema__tables	PRIMARY	NONE	NO ACTION	NO ACTION	t2	t1
+use information_schema;
+SET GLOBAL innodb_compression_level = 8;
+SELECT * FROM variables_info WHERE variable_name = 'innodb_compression_level';
+VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
+innodb_compression_level	GLOBAL	6	8	NULL	NULL	NULL	YES
+SET GLOBAL innodb_compression_level = DEFAULT;
+SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode';
+VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
+tidb_txn_mode	SESSION,GLOBAL	pessimistic	pessimistic	NULL	NULL	pessimistic,optimistic	NO
+SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO';
+VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
+max_connections	INSTANCE	0	0	0	100000	NULL	NO
+SELECT * FROM variables_info WHERE variable_name = 'tidb_checksum_table_concurrency';
+VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
+tidb_checksum_table_concurrency	SESSION	4	4	1	256	NULL	NO
+SELECT * FROM variables_info WHERE variable_name = 'tidb_prepared_plan_cache_memory_guard_ratio';
+VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
+tidb_prepared_plan_cache_memory_guard_ratio	GLOBAL	0.1	0.1	0	1	NULL	NO
+SELECT * FROM variables_info WHERE variable_name = 'tidb_metric_query_step';
+VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
+tidb_metric_query_step	SESSION	60	60	10	216000	NULL	NO
+use infoschema__tables;
+drop table if exists t1, t2;
+CREATE TABLE `t1` (`id` int(11) NOT NULL AUTO_INCREMENT, `name` varchar(25) DEFAULT NULL, PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `t2` (`id` int(11) NOT NULL AUTO_INCREMENT, `t1_id` int(11) DEFAULT NULL,	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,	CONSTRAINT `fk_t2_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'infoschema__tables' AND table_name = 't2';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
+def	infoschema__tables	PRIMARY	infoschema__tables	t2	PRIMARY KEY
+def	infoschema__tables	fk_t2_t1	infoschema__tables	t2	FOREIGN KEY
+SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'infoschema__tables' AND table_name = 't1';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
+def	infoschema__tables	PRIMARY	infoschema__tables	t1	PRIMARY KEY
+drop table if exists t1, t2;
+SET GLOBAL tidb_enable_check_constraint = ON;
+CREATE TABLE t1 (id INT PRIMARY KEY, CHECK (id<10));
+SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't1_chk_1';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE
+def	infoschema__tables	t1_chk_1	(`id` < 10)
+ALTER TABLE t1 DROP CONSTRAINT t1_chk_1;
+SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't1_chk_1';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE
+CREATE TABLE t2 (id INT PRIMARY KEY, CHECK (id<20));
+SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE
+def	infoschema__tables	t2_chk_1	(`id` < 20)
+DROP TABLE t2;
+SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE
+SET GLOBAL tidb_enable_check_constraint = default;
+drop table if exists t1, t2;
+SET GLOBAL tidb_enable_check_constraint = ON;
+CREATE TABLE t1 (id INT PRIMARY KEY, CHECK (id<10));
+SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't1_chk_1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE	TABLE_NAME
+infoschema__tables	t1_chk_1	(`id` < 10)	t1
+ALTER TABLE t1 DROP CONSTRAINT t1_chk_1;
+SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't1_chk_1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE	TABLE_NAME
+CREATE TABLE t2 (id INT PRIMARY KEY, CHECK (id<20));
+SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE	TABLE_NAME
+infoschema__tables	t2_chk_1	(`id` < 20)	t2
+DROP TABLE t2;
+SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE	TABLE_NAME
+SET GLOBAL tidb_enable_check_constraint = default;

@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "memorycontrol_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "memory_control_test.go",
+    ],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//pkg/config",
+        "//pkg/executor",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/testkit",
+        "//pkg/util",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

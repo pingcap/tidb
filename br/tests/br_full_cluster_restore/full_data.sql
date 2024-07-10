@@ -37,3 +37,7 @@ grant ROLE_ADMIN on *.* to cloud_admin; -- mysql.global_grants
 grant select on db1.* to cloud_admin; -- mysql.db
 grant select on db2.t1 to cloud_admin; -- mysql.tables_priv
 grant select, update(val) on db2.t2 to cloud_admin; -- mysql.tables_priv mysql.columns_priv
+
+-- resource group
+create resource group rg1 ru_per_sec = 100;
+alter user user1 resource group rg1;

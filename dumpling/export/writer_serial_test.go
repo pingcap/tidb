@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -120,7 +120,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
 	m := newMetrics(cfg.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
@@ -171,10 +171,29 @@ func TestWriteInsertInCsv(t *testing.T) {
 	require.Equal(t, float64(len(data)), ReadGauge(m.finishedRowsGauge))
 	require.Equal(t, float64(len(expected)), ReadGauge(m.finishedSizeGauge))
 
+	// test line terminator
+	bf.Reset()
+	opt.lineTerminator = []byte("\n")
+	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
+	conf = configForWriteCSV(cfg, true, opt)
+	m = newMetrics(conf.PromFactory, conf.Labels)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+	require.Equal(t, uint64(4), n)
+	require.NoError(t, err)
+
+	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
+		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
+		"3;'male';'john@mail.com';'020-1256';'healthy'\n" +
+		"4;'female';'sarah@mail.com';'020-1235';'healthy'\n"
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, float64(len(data)), ReadGauge(m.finishedRowsGauge))
+	require.Equal(t, float64(len(expected)), ReadGauge(m.finishedSizeGauge))
+
 	// test delimiter that included in values
 	bf.Reset()
 	opt.separator = []byte("&;,?")
 	opt.delimiter = []byte("ma")
+	opt.lineTerminator = []byte("\r\n")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
 	conf = configForWriteCSV(cfg, false, opt)
@@ -211,7 +230,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
@@ -224,6 +243,75 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, float64(0), ReadGauge(m.finishedRowsGauge))
 	require.Equal(t, float64(0), ReadGauge(m.finishedSizeGauge))
+}
+
+func TestWriteInsertInCsvWithDialect(t *testing.T) {
+	cfg := createMockConfig()
+
+	data := [][]driver.Value{
+		{"1", "male", "bob@mail.com", "020-1234", "blob1"},
+		{"2", "female", "sarah@mail.com", "020-1253", "blob2"},
+		{"3", "male", "john@mail.com", "020-1256", "blob3"},
+		{"4", "female", "sarah@mail.com", "020-1235", "blob4"},
+	}
+	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "BLOB"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
+	conf := configForWriteCSV(cfg, true, opt)
+
+	{
+		// test UTF8
+		conf.CsvOutputDialect = CSVDialectDefault
+		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+		m := newMetrics(conf.PromFactory, conf.Labels)
+		bf := storage.NewBufferWriter()
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+		require.NoError(t, err)
+		require.Equal(t, uint64(4), n)
+
+		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"blob1\"\r\n" +
+			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"blob2\"\r\n" +
+			"3,\"male\",\"john@mail.com\",\"020-1256\",\"blob3\"\r\n" +
+			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"blob4\"\r\n"
+		require.Equal(t, expected, bf.String())
+		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
+		require.Equal(t, float64(185), ReadGauge(m.finishedSizeGauge))
+	}
+	{
+		// test HEX
+		conf.CsvOutputDialect = CSVDialectRedshift
+		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+		m := newMetrics(conf.PromFactory, conf.Labels)
+		bf := storage.NewBufferWriter()
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+		require.NoError(t, err)
+		require.Equal(t, uint64(4), n)
+
+		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"626c6f6231\"\r\n" +
+			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"626c6f6232\"\r\n" +
+			"3,\"male\",\"john@mail.com\",\"020-1256\",\"626c6f6233\"\r\n" +
+			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"626c6f6234\"\r\n"
+		require.Equal(t, expected, bf.String())
+		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
+		require.Equal(t, float64(205), ReadGauge(m.finishedSizeGauge))
+	}
+	{
+		// test Base64
+		conf.CsvOutputDialect = CSVDialectBigQuery
+		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+		m := newMetrics(conf.PromFactory, conf.Labels)
+		bf := storage.NewBufferWriter()
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+		require.NoError(t, err)
+		require.Equal(t, uint64(4), n)
+
+		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"YmxvYjE=\"\r\n" +
+			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"YmxvYjI=\"\r\n" +
+			"3,\"male\",\"john@mail.com\",\"020-1256\",\"YmxvYjM=\"\r\n" +
+			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"YmxvYjQ=\"\r\n"
+		require.Equal(t, expected, bf.String())
+		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
+		require.Equal(t, float64(197), ReadGauge(m.finishedSizeGauge))
+	}
 }
 
 func TestSQLDataTypes(t *testing.T) {
@@ -294,6 +382,7 @@ func configForWriteCSV(config *Config, noHeader bool, opt *csvOption) *Config {
 	cfg.CsvNullValue = opt.nullValue
 	cfg.CsvDelimiter = string(opt.delimiter)
 	cfg.CsvSeparator = string(opt.separator)
+	cfg.CsvLineTerminator = string(opt.lineTerminator)
 	cfg.FileSize = UnspecifiedSize
 	return cfg
 }

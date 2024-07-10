@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "plannererrors",
+    srcs = ["planner_terror.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errno",
+        "//pkg/util/dbterror",
+    ],
+)
+
+go_test(
+    name = "plannererrors_test",
+    timeout = "short",
+    srcs = ["errors_test.go"],
+    embed = [":plannererrors"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "@com_github_stretchr_testify//require",
+    ],
+)

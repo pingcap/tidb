@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mvmap",
+    srcs = [
+        "fnv.go",
+        "mvmap.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/mvmap",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/util/mathutil"],
+)
+
+go_test(
+    name = "mvmap_test",
+    timeout = "short",
+    srcs = [
+        "bench_test.go",
+        "main_test.go",
+        "mvmap_test.go",
+    ],
+    embed = [":mvmap"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

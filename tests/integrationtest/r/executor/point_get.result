@@ -1,0 +1,637 @@
+drop table if exists point, tab3;
+create table point (id int primary key, c int, d varchar(10), unique c_d (c, d));
+insert point values (1, 1, 'a');
+insert point values (2, 2, 'b');
+select * from point where id = 1 and c = 0;
+id	c	d
+select * from point where id < 0 and c = 1 and d = 'b';
+id	c	d
+select id as ident from point where id = 1;
+ident
+1
+CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);
+CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);
+INSERT INTO tab3 VALUES(0,854,111.96,'mguub',711,966.36,'snwlo');
+SELECT ALL * FROM tab3 WHERE col4 = 85;
+pk	col0	col1	col2	col3	col4	col5
+drop table if exists t;
+create table t(a bigint primary key, b bigint, c bigint);
+insert into t values(1, NULL, NULL), (2, NULL, 2), (3, 3, NULL), (4, 4, 4), (5, 6, 7);
+select * from t where a = 1;
+a	b	c
+1	NULL	NULL
+select * from t where a = 2;
+a	b	c
+2	NULL	2
+select * from t where a = 3;
+a	b	c
+3	3	NULL
+select * from t where a = 4;
+a	b	c
+4	4	4
+select a, a, b, a, b, c, b, c, c from t where a = 5;
+a	a	b	a	b	c	b	c	c
+5	5	6	5	6	7	6	7	7
+select b, b from t where a = 1;
+b	b
+NULL	NULL
+drop table if exists t0, PK_S_MULTI_31_1;
+CREATE TABLE t0(c1 BOOL UNIQUE);
+INSERT INTO t0(c1) VALUES (-128);
+INSERT INTO t0(c1) VALUES (127);
+SELECT t0.c1 FROM t0 WHERE t0.c1=-129;
+c1
+SELECT t0.c1 FROM t0 WHERE t0.c1=-128;
+c1
+-128
+SELECT t0.c1 FROM t0 WHERE t0.c1=128;
+c1
+SELECT t0.c1 FROM t0 WHERE t0.c1=127;
+c1
+127
+CREATE TABLE `PK_S_MULTI_31_1` (`COL1` tinyint(11) NOT NULL, `COL2` tinyint(11) NOT NULL, `COL3` tinyint(11) DEFAULT NULL, PRIMARY KEY (`COL1`,`COL2`) CLUSTERED);
+select * from PK_S_MULTI_31_1 where col2 = -129 and col1 = 1;
+COL1	COL2	COL3
+insert into PK_S_MULTI_31_1 select 1, 1, 1;
+select * from PK_S_MULTI_31_1 where (col1, col2) in ((1, -129),(1, 1));
+COL1	COL2	COL3
+1	1	1
+drop table if exists PK_1389;
+CREATE TABLE `PK_1389` (   `COL1` bit(1) NOT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL3` datetime DEFAULT NULL,  `COL4` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL,  PRIMARY KEY (`COL1`));
+insert into PK_1389 values(0, "皟钹糁泅埞礰喾皑杏灚暋蛨歜檈瓗跾咸滐梀揉", "7701-12-27 23:58:43", 4806951672419474695, -1.55652e38);
+select count(1) from PK_1389 where col1 = 0x30;
+count(1)
+0
+select count(1) from PK_1389 where col1 in ( 0x30);
+count(1)
+0
+drop table if exists PK_1389;
+set @@tidb_partition_prune_mode = 'dynamic';
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists UK_RP16939;
+CREATE TABLE UK_RP16939 (
+COL1 tinyint(16) DEFAULT '108' COMMENT 'NUMERIC UNIQUE INDEX',
+COL2 varchar(20) DEFAULT NULL,
+COL4 datetime DEFAULT NULL,
+COL3 bigint(20) DEFAULT NULL,
+COL5 float DEFAULT NULL,
+UNIQUE KEY UK_COL1 (COL1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE ( COL1+13 ) (
+PARTITION P0 VALUES LESS THAN (-44),
+PARTITION P1 VALUES LESS THAN (-23),
+PARTITION P2 VALUES LESS THAN (-22),
+PARTITION P3 VALUES LESS THAN (63),
+PARTITION P4 VALUES LESS THAN (75),
+PARTITION P5 VALUES LESS THAN (90),
+PARTITION PMX VALUES LESS THAN (MAXVALUE)
+) ;
+explain format='brief' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
+id	estRows	task	access object	operator info
+IndexLookUp	3.00	root	partition:P3,PMX	
+├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
+select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
+col1	col2
+drop table if exists UK_RP16939;
+CREATE TABLE UK_RP16939 (
+COL1 tinyint(16) DEFAULT '108' COMMENT 'NUMERIC UNIQUE INDEX',
+COL2 varchar(20) DEFAULT NULL,
+COL4 datetime DEFAULT NULL,
+COL3 bigint(20) DEFAULT NULL,
+COL5 float DEFAULT NULL,
+UNIQUE KEY UK_COL1 (COL1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST ( COL1+13 ) (
+PARTITION P0 VALUES IN (-44, -23),
+PARTITION P1 VALUES IN (-22, 63),
+PARTITION P2 VALUES IN (75, 90)
+) ;
+explain format='brief' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
+id	estRows	task	access object	operator info
+IndexLookUp	3.00	root	partition:dual	
+├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
+select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
+col1	col2
+drop table if exists UK_RP16939;
+set @@tidb_partition_prune_mode = DEFAULT;
+set @@session.tidb_enable_list_partition = DEFAULT;
+drop table if exists test_distinct;
+CREATE TABLE test_distinct (
+id bigint(18) NOT NULL COMMENT '主键',
+b bigint(18) NOT NULL COMMENT '用户ID',
+PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert into test_distinct values (123456789101112131,223456789101112131),(123456789101112132,223456789101112131);
+select distinct b from test_distinct where id in (123456789101112131,123456789101112132);
+b
+223456789101112131
+drop table if exists t;
+create table t(a binary(2) primary key, b binary(2));
+insert into t values("a", "b");
+set @@sql_mode="";
+explain format='brief' select * from t where a = "a";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a";
+a	b
+explain format='brief' select * from t where a = "a ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a ";
+a	b
+explain format='brief' select * from t where a = "a  ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a  ";
+a	b
+explain format='brief' select hex(a), hex(b) from t where a = "a\0";
+id	estRows	task	access object	operator info
+Projection	1.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+└─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select hex(a), hex(b) from t where a = "a\0";
+hex(a)	hex(b)
+6100	6200
+insert into t values("a ", "b ");
+explain format='brief' select * from t where a = "a";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a";
+a	b
+explain format='brief' select * from t where a = "a ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a ";
+a	b
+a 	b 
+explain format='brief' select * from t where a = "a  ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a  ";
+a	b
+explain format='brief' select * from t where a = "a";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a";
+a	b
+explain format='brief' select * from t where a = "a ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a ";
+a	b
+a 	b 
+explain format='brief' select * from t where a = "a  ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where a = "a  ";
+a	b
+set @@sql_mode=DEFAULT;
+drop table if exists t;
+create table t(a binary(2) primary key, b binary(2));
+insert into t values("a", "b");
+set @@sql_mode="";
+explain format='brief' select * from t tmp where a = "a";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a";
+a	b
+explain format='brief' select * from t tmp where a = "a ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a ";
+a	b
+explain format='brief' select * from t tmp where a = "a  ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a  ";
+a	b
+explain format='brief' select hex(a), hex(b) from t tmp where a = "a\0";
+id	estRows	task	access object	operator info
+Projection	1.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+└─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select hex(a), hex(b) from t tmp where a = "a\0";
+hex(a)	hex(b)
+6100	6200
+insert into t values("a ", "b ");
+explain format='brief' select * from t tmp where a = "a";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a";
+a	b
+explain format='brief' select * from t tmp where a = "a ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a ";
+a	b
+a 	b 
+explain format='brief' select * from t tmp where a = "a  ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a  ";
+a	b
+explain format='brief' select * from t tmp where a = "a";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a";
+a	b
+explain format='brief' select * from t tmp where a = "a ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a ";
+a	b
+a 	b 
+explain format='brief' select * from t tmp where a = "a  ";
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t tmp where a = "a  ";
+a	b
+set @@sql_mode=DEFAULT;
+drop table if exists t;
+create table t(a binary(2), b binary(2), index idx_1(a));
+insert into t values("a", "b");
+set @@sql_mode="";
+explain format='brief' select * from t where a = "a";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a";
+a	b
+explain format='brief' select * from t where a = "a ";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a ";
+a	b
+explain format='brief' select * from t where a = "a  ";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a  ";
+a	b
+explain format='brief' select hex(a), hex(b) from t where a = "a\0";
+id	estRows	task	access object	operator info
+Projection	10.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+└─IndexLookUp	10.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select hex(a), hex(b) from t where a = "a\0";
+hex(a)	hex(b)
+6100	6200
+set @@sql_mode="";
+explain format='brief' select * from t tmp where a = "a";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
+select * from t tmp where a = "a";
+a	b
+explain format='brief' select * from t tmp where a = "a ";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
+select * from t tmp where a = "a ";
+a	b
+explain format='brief' select * from t tmp where a = "a  ";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
+select * from t tmp where a = "a  ";
+a	b
+explain format='brief' select hex(a), hex(b) from t tmp where a = "a\0";
+id	estRows	task	access object	operator info
+Projection	10.00	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+└─IndexLookUp	10.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tmp, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tmp	keep order:false, stats:pseudo
+select hex(a), hex(b) from t tmp where a = "a\0";
+hex(a)	hex(b)
+6100	6200
+insert into t values("a ", "b ");
+explain format='brief' select * from t where a = "a";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a";
+a	b
+explain format='brief' select * from t where a = "a ";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a ";
+a	b
+a 	b 
+explain format='brief' select * from t where a = "a  ";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a  ";
+a	b
+explain format='brief' select * from t where a = "a";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a","a"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a";
+a	b
+explain format='brief' select * from t where a = "a ";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a ","a "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a ";
+a	b
+a 	b 
+explain format='brief' select * from t where a = "a  ";
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_1(a)	range:["a  ","a  "], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where a = "a  ";
+a	b
+set sql_mode=default;
+drop table if exists t6;
+create table t6 (id bigint, a bigint, primary key(id), unique key(a));
+insert into t6 values(9223372036854775807, 9223372036854775807);
+insert into t6 values(1, 1);
+select * from t6 where a = 9223372036854775808;
+id	a
+select * from t6 where a = '1.123';
+id	a
+select * from t6 where id = 9223372036854775808;
+id	a
+select * from t6 where id = '1.123';
+id	a
+drop table if exists t;
+create table t(pk int1 primary key);
+insert into t values(125);
+explain format='brief' select * from t where pk = 9223372036854775807;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 18446744073709551616;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 9223372036854775808;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 18446744073709551615;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 128;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+drop table if exists t;
+create table t(pk int8 primary key);
+insert into t values(9223372036854775807);
+select * from t where pk = 9223372036854775807;
+pk
+9223372036854775807
+explain format='brief' select * from t where pk = 9223372036854775807;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t	handle:9223372036854775807
+explain format='brief' select * from t where pk = 18446744073709551616;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 9223372036854775808;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 18446744073709551615;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+drop table if exists t;
+create table t(pk int1 unsigned primary key);
+insert into t values(255);
+select * from t where pk = 255;
+pk
+255
+explain format='brief' select * from t where pk = 256;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 9223372036854775807;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 18446744073709551616;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 9223372036854775808;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 18446744073709551615;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+drop table if exists t;
+create table t(pk int8 unsigned primary key);
+insert into t value(18446744073709551615);
+explain format='brief' select * from t where pk = 18446744073709551615;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t	handle:18446744073709551615
+select * from t where pk = 18446744073709551615;
+pk
+18446744073709551615
+explain format='brief' select * from t where pk = 9223372036854775807;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t	handle:9223372036854775807
+explain format='brief' select * from t where pk = 18446744073709551616;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where pk = 9223372036854775808;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t	handle:9223372036854775808
+drop table if exists t;
+create table t(pk int1 primary key);
+insert into t values(1);
+explain format='brief' select * from t where pk = 1.1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t where pk = 1.1;
+pk
+explain format='brief' select * from t where pk = '1.1';
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t where pk = '1.1';
+pk
+explain format='brief' select * from t where pk = 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t	handle:1
+select * from t where pk = 1;
+pk
+1
+explain format='brief' select * from t where pk = '1';
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t	handle:1
+select * from t where pk = '1';
+pk
+1
+explain format='brief' select * from t where pk = '1.0';
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t	handle:1
+select * from t where pk = '1.0';
+pk
+1
+drop table if exists t;
+create table t (a varchar(20), b int);
+insert into t values("aaa", 12);
+explain format = 'brief' select * from t where t._tidb_rowid = 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t	handle:1
+select * from t where t._tidb_rowid = 1;
+a	b
+aaa	12
+drop table if exists t;
+create table t (a varchar(255) charset gbk primary key /*T![clustered_index] clustered */, b int);
+insert into t values ('你好', 1);
+explain select * from t where a = 0xC4E3BAC3;
+id	estRows	task	access object	operator info
+Point_Get_5	1.00	root	table:t, clustered index:PRIMARY(a)	
+select * from t where a = 0xC4E3BAC3;
+a	b
+你好	1
+set tidb_enable_clustered_index = ON;
+drop table if exists pgt;
+create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk));
+insert pgt values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33);
+select * from pgt where (a, b) in (('a', 'a1'), ('c', 'c1'));
+a	b	uk	v
+a	a1	1	11
+c	c1	3	33
+select * from pgt where a = 'b' and b = 'b1';
+a	b	uk	v
+b	b1	2	22
+select * from pgt where uk = 1;
+a	b	uk	v
+a	a1	1	11
+select * from pgt where uk in (1, 2, 3);
+a	b	uk	v
+a	a1	1	11
+b	b1	2	22
+c	c1	3	33
+admin check table pgt;
+drop table if exists snp;
+create table snp(id1 int, id2 int, v int, primary key(id1, id2));
+insert snp values (1, 1, 1), (2, 2, 2), (2, 3, 3);
+explain format = 'brief' select * from snp where id1 = 1;
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:TableRangeScan
+└─TableRangeScan	10.00	cop[tikv]	table:snp	range:[1,1], keep order:false, stats:pseudo
+explain format = 'brief' select * from snp where id1 in (1, 100);
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:TableRangeScan
+└─TableRangeScan	20.00	cop[tikv]	table:snp	range:[1,1], [100,100], keep order:false, stats:pseudo
+select * from snp where id1 = 2;
+id1	id2	v
+2	2	2
+2	3	3
+set tidb_enable_clustered_index = DEFAULT;
+set tidb_enable_clustered_index = ON;
+drop table if exists t1, t2;
+create table t1 (a int, b decimal(10,0), c int, primary key(a,b));
+create table t2 (a varchar(20), b int, primary key(a), unique key(b));
+insert into t1 values(1,1,1),(2,2,2),(3,3,3);
+insert into t2 values('111',1),('222',2),('333',3);
+analyze table t1;
+analyze table t2;
+explain format = 'brief' select * from t1 where a = 1 and b = 1 and c = 1;
+id	estRows	task	access object	operator info
+Selection	0.11	root		eq(executor__point_get.t1.c, 1)
+└─Point_Get	1.00	root	table:t1, clustered index:PRIMARY(a, b)	
+select * from t1 where a = 1 and b = 1 and c = 1;
+a	b	c
+1	1	1
+explain format = 'brief' select * from t2 where t2.a = '111' and t2.b = 1;
+id	estRows	task	access object	operator info
+Selection	0.33	root		eq(executor__point_get.t2.b, 1)
+└─Point_Get	1.00	root	table:t2, clustered index:PRIMARY(a)	
+select * from t2 where t2.a = '111' and t2.b = 1;
+a	b
+111	1
+explain format = 'brief' select * from t1 join t2 on t1.a = t2.b where t1.a = 1;
+id	estRows	task	access object	operator info
+HashJoin	1.00	root		CARTESIAN inner join
+├─Point_Get(Build)	1.00	root	table:t2, index:b(b)	
+└─TableReader(Probe)	1.00	root		data:TableRangeScan
+  └─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1], keep order:false
+select * from t1 join t2 on t1.a = t2.b where t1.a = 1;
+a	b	c	a	b
+1	1	1	111	1
+explain format = 'brief' select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2;
+id	estRows	task	access object	operator info
+Selection	0.56	root		eq(executor__point_get.t1.c, 2)
+└─Batch_Point_Get	2.00	root	table:t1, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2;
+a	b	c
+2	2	2
+explain format = 'brief' select * from t2 where a in ('111','222') and b = 2;
+id	estRows	task	access object	operator info
+Selection	0.67	root		eq(executor__point_get.t2.b, 2)
+└─Batch_Point_Get	2.00	root	table:t2, clustered index:PRIMARY(a)	keep order:false, desc:false
+select * from t2 where a in ('111','222') and b = 2;
+a	b
+222	2
+explain format = 'brief' select * from t2 where a in ('111','222') union all select a,c from t1 where (a,b) in ((1,1),(2,2));
+id	estRows	task	access object	operator info
+Union	3.67	root		
+├─Batch_Point_Get	2.00	root	table:t2, clustered index:PRIMARY(a)	keep order:false, desc:false
+└─Projection	1.67	root		cast(executor__point_get.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, executor__point_get.t1.c->Column#7
+  └─Batch_Point_Get	2.00	root	table:t1, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+select * from t2 where a in ('111','222') union all select a,c from t1 where (a,b) in ((1,1),(2,2));
+a	b
+1	1
+111	1
+2	2
+222	2
+set tidb_enable_clustered_index = DEFAULT;
+drop table if exists t;
+create table t (a int primary key);
+set @a=(select current_timestamp(3));
+select sleep(0.05);
+sleep(0.05)
+0
+insert into t values (1);
+select * from t as of timestamp @a where a = 1;
+a
+drop table if exists t;
+drop table if exists t1;
+create table t1(id int primary key, v int);
+insert into t1 values(1, 10);
+prepare s from 'select * from t1 where id=1';
+set @@tidb_enable_plan_replayer_capture=1;
+execute s;
+id	v
+1	10
+execute s;
+id	v
+1	10
+update t1 set v=v+1;
+execute s;
+id	v
+1	11
+set @@tidb_enable_plan_replayer_capture=default;
+drop table if exists point;
+create table point (id int primary key, c int, d varchar(10), unique c_d (c, d));
+insert point values (1, 1, 'a');
+insert point values (2, 2, 'b');
+lock tables point write;
+select * from point where id = 1;
+id	c	d
+1	1	a
+explain analyze select * from point where id = 1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Point_Get_1	1.00	1	root	table:point	.*num_rpc.*	handle:1	N/A	N/A
+unlock tables;
+update point set c = 3 where id = 1;
+lock tables point write;
+select * from point where id = 1;
+id	c	d
+1	3	a
+explain analyze select * from point where id = 1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Point_Get_1	1.00	1	root	table:point	.*num_rpc.*	handle:1	N/A	N/A
+unlock tables;

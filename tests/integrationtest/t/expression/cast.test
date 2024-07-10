@@ -1,0 +1,89 @@
+# TestCastStrToInt
+--enable_warnings
+select cast('' as signed);
+select cast('12345abcde' as signed);
+select cast('123e456' as signed);
+select cast('-12345abcde' as signed);
+select cast('-123e456' as signed);
+--disable_warnings
+
+# TestCastCoer
+select coercibility(binary('a'));
+select coercibility(cast('a' as char(10)));
+select coercibility(convert('abc', char(10)));
+
+# TestCastRealAsTime
+drop table if exists t;
+create table t(d1 double, f float, d2 decimal(24,8));
+insert into t values(0, 0, 0);
+select cast(111.1 as datetime) from t;
+select cast(1311.1 as datetime) from t;
+insert into t values(111.1, 1122.1, 31212.111);
+insert into t values(121212.1111, 1121212.111111, 11121212.111111);
+insert into t values(99991111.1111111, 101.1111111, 20121212121212.1111111);
+insert into t values(NULL, NULL, NULL);
+insert into t values(1.1, 48.1, 100.1);
+insert into t values(1301.11, 1131.111, 100001111.111);
+insert into t values(20121212121260.1111111, 20121212126012.1111111, 20121212241212.1111111);
+-- sorted_result
+select cast(d1 as datetime), cast(f as datetime), cast(d2 as datetime) from t;
+
+# TestCastAsTime
+drop table if exists t;
+create table t (col1 bigint, col2 double, col3 decimal, col4 varchar(20), col5 json);
+insert into t values (1, 1, 1, "1", "1");
+insert into t values (null, null, null, null, null);
+select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 = 1;
+select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 is null;
+-- error 1426
+select cast(col1 as time(31)) from t where col1 is null;
+-- error 1426
+select cast(col2 as time(31)) from t where col1 is null;
+-- error 1426
+select cast(col3 as time(31)) from t where col1 is null;
+-- error 1426
+select cast(col4 as time(31)) from t where col1 is null;
+-- error 1426
+select cast(col5 as time(31)) from t where col1 is null;
+drop table if exists t;
+create table t(a varchar(50));
+insert into t values ('2020-01-01 12:00:00.123456 +0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456 -0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456');
+select cast(a as datetime(3)) from t;
+
+# TestCastErrMsg
+drop table if exists t1;
+create table t1 (c1 text);
+insert into t1 values ('a');
+--error 1292
+update t1 set c1 = cast('61qw' as decimal);
+--enable_warnings
+select cast('61qw' as decimal);
+--disable_warnings
+
+# TestCastTimeAsYear
+drop table if exists t;
+create table t (y year);
+insert into t values (cast('14:15' as time));
+select 1 from t where y = YEAR(CURDATE());
+select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
+
+# TestIssue49526
+explain select null as a union all select 'a' as a;
+--sorted_result
+select null as a union all select 'a' as a;
+
+# TestNegFloatConvertToUnsigned
+drop table if exists t0;
+create table t0(c0 tinyint(1) unsigned not null );
+insert into t0 values (1);
+select * from t0 where case 0 when t0.c0 > -1.194192591e9 then null else 1 end;
+select t0.c0 > -1.194192591e9 from t0;
+select t0.c0 < -1.194192591e9 from t0;
+select -1.194192591e9 > t0.c0 from t0;
+select -1.194192591e9 < t0.c0 from t0;
+select t0.c0 > 1.194192591e9 from t0;
+select t0.c0 < 1.194192591e9 from t0;
+select 1.194192591e9 > t0.c0 from t0;
+select 1.194192591e9 < t0.c0 from t0;

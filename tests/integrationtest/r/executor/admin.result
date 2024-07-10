@@ -1,0 +1,220 @@
+drop table if exists temporary_admin_test;
+create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;
+insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);
+admin check table temporary_admin_test;
+Error 8006 (HY000): `admin check table` is unsupported on temporary tables.
+admin check index temporary_admin_test c1;
+Error 8006 (HY000): `admin check index` is unsupported on temporary tables.
+drop table if exists temporary_admin_test;
+drop table if exists non_temporary_admin_test;
+create table non_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2));
+insert non_temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);
+admin check table non_temporary_admin_test;
+drop table if exists non_temporary_admin_test;
+drop table if exists temporary_admin_checksum_table_with_index_test;
+drop table if exists temporary_admin_checksum_table_without_index_test;
+create global temporary table temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count)) ON COMMIT DELETE ROWS;
+create global temporary table temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id)) ON COMMIT DELETE ROWS;
+admin checksum table temporary_admin_checksum_table_with_index_test;
+Error 8006 (HY000): `admin checksum table` is unsupported on temporary tables.
+admin checksum table temporary_admin_checksum_table_without_index_test;
+Error 8006 (HY000): `admin checksum table` is unsupported on temporary tables.
+drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;
+drop table if exists local_temporary_admin_test;
+create temporary table local_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2));
+insert local_temporary_admin_test (c1, c2) values (1,1), (2,2), (3,3);
+admin check table local_temporary_admin_test;
+Error 8006 (HY000): `admin check table` is unsupported on temporary tables.
+drop table if exists temporary_admin_test;
+drop table if exists local_temporary_admin_checksum_table_with_index_test;
+drop table if exists local_temporary_admin_checksum_table_without_index_test;
+create temporary table local_temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count));
+create temporary table local_temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id));
+admin checksum table local_temporary_admin_checksum_table_with_index_test;
+Error 8006 (HY000): `admin checksum table` is unsupported on temporary tables.
+admin checksum table local_temporary_admin_checksum_table_without_index_test;
+Error 8006 (HY000): `admin checksum table` is unsupported on temporary tables.
+drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;
+drop table if exists cache_admin_test;
+create table cache_admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));
+insert cache_admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11);
+alter table cache_admin_test cache;
+admin check table cache_admin_test;
+admin check index cache_admin_test c1;
+admin check index cache_admin_test c2;
+alter table cache_admin_test nocache;
+drop table if exists cache_admin_test;
+drop table if exists check_index_test;
+create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b));
+insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi");
+alter table  check_index_test cache;
+admin check index check_index_test a_b (2, 4);
+a	b	extra_handle
+1	ef	3
+2	cd	2
+admin check index check_index_test a_b (3, 5);
+a	b	extra_handle
+-1	hi	4
+1	ef	3
+alter table check_index_test nocache;
+drop table if exists check_index_test;
+drop table if exists cache_admin_table_with_index_test;
+drop table if exists cache_admin_table_without_index_test;
+create table cache_admin_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count));
+create table cache_admin_table_without_index_test (id int, count int, PRIMARY KEY(id));
+alter table cache_admin_table_with_index_test cache;
+alter table cache_admin_table_without_index_test cache;
+admin checksum table cache_admin_table_with_index_test;
+admin checksum table cache_admin_table_without_index_test;
+alter table cache_admin_table_with_index_test nocache;
+alter table cache_admin_table_without_index_test nocache;
+drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;
+drop table if exists t;
+create table t(id bigint(20) primary key, col varchar(255) unique key);
+insert into t values(9223372036854775807, 'test');
+admin recover index t col;
+ADDED_COUNT	SCAN_COUNT
+0	1
+drop table if exists t;
+create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));
+insert into t values(1, 1, 1), (9223372036854775807, 2, 2);
+admin check index t idx;
+drop table if exists test_null;
+CREATE TABLE test_null (
+a int(11) NOT NULL,
+c int(11) NOT NULL,
+PRIMARY KEY (a, c),
+KEY idx_a (a)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+insert into test_null(a, c) values(2, 2);
+ALTER TABLE test_null ADD COLUMN b int NULL DEFAULT '1795454803' AFTER a;
+ALTER TABLE test_null add index b(b);
+ADMIN CHECK TABLE test_null;
+drop table if exists test;
+create table test (
+a time,
+PRIMARY KEY (a)
+);
+insert into test set a='12:10:36';
+admin check table test;
+drop table if exists test;
+CREATE TABLE test (  a decimal, PRIMARY KEY (a));
+insert into test set a=10;
+admin check table test;
+drop table if exists test;
+create table test ( a  TIMESTAMP, primary key(a) );
+insert into test set a='2015-08-10 04:18:49';
+admin check table test;
+drop table if exists test;
+create table test (
+a int not null,
+c int not null,
+primary key (a, c),
+key idx_a (a)) partition by range (c) (
+partition p1 values less than (1),
+partition p2 values less than (4),
+partition p3 values less than (7),
+partition p4 values less than (11));
+insert into test values (1, 1);
+insert into test values (2, 2);
+insert into test values (3, 3);
+insert into test values (4, 4);
+insert into test values (5, 5);
+insert into test values (6, 6);
+insert into test values (7, 7);
+insert into test values (8, 8);
+insert into test values (9, 9);
+insert into test values (10, 10);
+admin check table test;
+drop table if exists test;
+create table test ( b json , c int as (JSON_EXTRACT(b,'$.d')), index idxc(c));
+INSERT INTO test set b='{"d": 100}';
+admin check table test;
+drop table if exists t;
+CREATE TABLE t (
+ID CHAR(32) NOT NULL,
+name CHAR(32) NOT NULL,
+value CHAR(255),
+INDEX indexIDname (ID(8),name(8))
+);
+INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');
+admin check table t;
+use mysql;
+admin check table executor__admin.t;
+admin check table t;
+Error 1146 (42S02): Table 'mysql.t' doesn't exist
+use executor__admin;
+drop table if exists t1;
+CREATE TABLE t1 (c2 YEAR, PRIMARY KEY (c2));
+INSERT INTO t1 SET c2 = '1912';
+ALTER TABLE t1 ADD COLUMN c3 TIMESTAMP NULL DEFAULT '1976-08-29 16:28:11';
+ALTER TABLE t1 ADD COLUMN c4 DATE      NULL DEFAULT '1976-08-29';
+ALTER TABLE t1 ADD COLUMN c5 TIME      NULL DEFAULT '16:28:11';
+ALTER TABLE t1 ADD COLUMN c6 YEAR      NULL DEFAULT '1976';
+ALTER TABLE t1 ADD INDEX idx1 (c2, c3,c4,c5,c6);
+ALTER TABLE t1 ADD INDEX idx2 (c2);
+ALTER TABLE t1 ADD INDEX idx3 (c3);
+ALTER TABLE t1 ADD INDEX idx4 (c4);
+ALTER TABLE t1 ADD INDEX idx5 (c5);
+ALTER TABLE t1 ADD INDEX idx6 (c6);
+admin check table t1;
+drop table if exists td1;
+CREATE TABLE td1 (c2 INT NULL DEFAULT '70');
+INSERT INTO td1 SET c2 = '5';
+ALTER TABLE td1 ADD COLUMN c4 DECIMAL(12,8) NULL DEFAULT '213.41598062';
+ALTER TABLE td1 ADD INDEX id2 (c4) ;
+ADMIN CHECK TABLE td1;
+drop table if exists t1;
+create table t1 (a int);
+insert into t1 set a=2;
+alter table t1 add column b timestamp not null;
+alter table t1 add index(b);
+admin check table t1;
+drop table if exists t1;
+create table t1 (a decimal(2,1), index(a));
+insert into t1 set a='1.9';
+alter table t1 modify column a decimal(3,2);
+delete from t1;
+admin check table t1;
+drop table if exists check_index_test;
+create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b));
+insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi");
+admin check index check_index_test a_b (2, 4);
+a	b	extra_handle
+1	ef	3
+2	cd	2
+admin check index check_index_test a_b (3, 5);
+a	b	extra_handle
+-1	hi	4
+1	ef	3
+use mysql;
+admin check index executor__admin.check_index_test a_b (2, 3), (4, 5);
+a	b	extra_handle
+-1	hi	4
+2	cd	2
+use executor__admin;
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));
+insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL);
+admin check index admin_test c1;
+admin check index admin_test c2;
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) partition by hash(c2) partitions 5;
+insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL);
+admin check index admin_test c1;
+admin check index admin_test c2;
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) PARTITION BY RANGE ( c2 ) (
+PARTITION p0 VALUES LESS THAN (5),
+PARTITION p1 VALUES LESS THAN (10),
+PARTITION p2 VALUES LESS THAN (MAXVALUE));
+insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL);
+admin check index admin_test c1;
+admin check index admin_test c2;
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, primary key(c1), key(c2));
+set cte_max_recursion_depth=100000;
+insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 100000) select * from cte;
+select /*+ read_from_storage(tikv[`executor__admin`.`admin_test`]) */ bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `executor__admin`.`admin_test` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024);
+select bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `executor__admin`.`admin_test` use index(`c2`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024);
+set cte_max_recursion_depth=default;

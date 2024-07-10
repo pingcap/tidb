@@ -1,0 +1,435 @@
+drop table if exists t, t0, t1, t2;
+set @@tidb_partition_prune_mode = 'dynamic';
+set @@session.tidb_enable_list_partition = ON;
+CREATE TABLE t (
+col1 tinyint(4) primary key
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( COL1 DIV 80 )
+PARTITIONS 6;
+insert into t values(-128), (107);
+prepare stmt from 'select col1 from t where col1 in (?, ?, ?)';
+set @a=-128, @b=107, @c=-128;
+execute stmt using @a,@b,@c;
+col1
+-128
+107
+CREATE TABLE t0 (a int primary key) PARTITION BY HASH( a DIV 80 ) PARTITIONS 2;
+insert into t0 values (1);
+select a from t0 where a in (1);
+a
+1
+create table t1 (a int primary key) partition by range (a+5) (
+partition p0 values less than(10), partition p1 values less than(20));
+insert into t1 values (5);
+select a from t1 where a in (5);
+a
+5
+create table  t2 (a int primary key) partition by list (a+5) (
+partition p0 values in (5, 6, 7, 8), partition p1 values in (9, 10, 11, 12));
+insert into t2 values (5);
+select a from t2 where a in (5);
+a
+5
+set @@tidb_partition_prune_mode = default;
+set @@session.tidb_enable_list_partition = default;
+drop table if exists UK_HP16726;
+CREATE TABLE UK_HP16726 (
+COL1 bigint(16) DEFAULT NULL,
+COL2 varchar(20) DEFAULT NULL,
+COL4 datetime DEFAULT NULL,
+COL3 bigint(20) DEFAULT NULL,
+COL5 float DEFAULT NULL,
+UNIQUE KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH( COL1 )
+PARTITIONS 25;
+select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807;
+col1	col1
+explain format='brief' select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807;
+id	estRows	task	access object	operator info
+HashAgg	2866.67	root		group by:executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1, funcs:firstrow(executor__partition__issues.uk_hp16726.col1)->executor__partition__issues.uk_hp16726.col1, funcs:firstrow(executor__partition__issues.uk_hp16726.col1)->executor__partition__issues.uk_hp16726.col1
+└─HashJoin	4479.17	root		inner join, equal:[eq(executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1)]
+  ├─TableReader(Build)	3583.33	root	partition:all	data:Selection
+  │ └─Selection	3583.33	cop[tikv]		gt(executor__partition__issues.uk_hp16726.col1, -9223372036854775808), ne(executor__partition__issues.uk_hp16726.col1, 9223372036854775807), not(isnull(executor__partition__issues.uk_hp16726.col1))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	3583.33	root	partition:all	data:Selection
+    └─Selection	3583.33	cop[tikv]		gt(executor__partition__issues.uk_hp16726.col1, -9223372036854775808), ne(executor__partition__issues.uk_hp16726.col1, 9223372036854775807), not(isnull(executor__partition__issues.uk_hp16726.col1))
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_partition_prune_mode = 'dynamic';
+analyze table UK_HP16726;
+select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807;
+col1	col1
+explain format='brief' select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807;
+id	estRows	task	access object	operator info
+HashAgg	2866.67	root		group by:executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1, funcs:firstrow(executor__partition__issues.uk_hp16726.col1)->executor__partition__issues.uk_hp16726.col1, funcs:firstrow(executor__partition__issues.uk_hp16726.col1)->executor__partition__issues.uk_hp16726.col1
+└─HashJoin	4479.17	root		inner join, equal:[eq(executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1)]
+  ├─TableReader(Build)	3583.33	root	partition:all	data:Selection
+  │ └─Selection	3583.33	cop[tikv]		gt(executor__partition__issues.uk_hp16726.col1, -9223372036854775808), ne(executor__partition__issues.uk_hp16726.col1, 9223372036854775807), not(isnull(executor__partition__issues.uk_hp16726.col1))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	3583.33	root	partition:all	data:Selection
+    └─Selection	3583.33	cop[tikv]		gt(executor__partition__issues.uk_hp16726.col1, -9223372036854775808), ne(executor__partition__issues.uk_hp16726.col1, 9223372036854775807), not(isnull(executor__partition__issues.uk_hp16726.col1))
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_partition_prune_mode = default;
+drop table if exists IDT_HP23902, t;
+CREATE TABLE IDT_HP23902 (
+COL1 smallint DEFAULT NULL,
+COL2 varchar(20) DEFAULT NULL,
+COL4 datetime DEFAULT NULL,
+COL3 bigint DEFAULT NULL,
+COL5 float DEFAULT NULL,
+KEY UK_COL1 (COL1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH( COL1+30 )
+PARTITIONS 6;
+insert ignore into IDT_HP23902 partition(p0, p1)(col1, col3) values(-10355, 1930590137900568573), (13810, -1332233145730692137);
+show warnings;
+Level	Code	Message
+Warning	1748	Found a row not matching the given partition set
+Warning	1748	Found a row not matching the given partition set
+select * from IDT_HP23902;
+COL1	COL2	COL4	COL3	COL5
+create table t (
+a int
+) partition by range(a) (
+partition p0 values less than (10),
+partition p1 values less than (20));
+insert ignore into t partition(p0)(a) values(12);
+show warnings;
+Level	Code	Message
+Warning	1748	Found a row not matching the given partition set
+select * from t;
+a
+drop table if exists tbl_936;
+set @@tidb_partition_prune_mode = 'dynamic';
+CREATE TABLE tbl_936 (
+col_5410 smallint NOT NULL,
+col_5411 double,
+col_5412 boolean NOT NULL DEFAULT 1,
+col_5413 set('Alice', 'Bob', 'Charlie', 'David') NOT NULL DEFAULT 'Charlie',
+col_5414 varbinary(147) COLLATE 'binary' DEFAULT 'bvpKgYWLfyuTiOYSkj',
+col_5415 timestamp NOT NULL DEFAULT '2021-07-06',
+col_5416 decimal(6, 6) DEFAULT 0.49,
+col_5417 text COLLATE utf8_bin,
+col_5418 float DEFAULT 2048.0762299371554,
+col_5419 int UNSIGNED NOT NULL DEFAULT 3152326370,
+PRIMARY KEY (col_5419) )
+PARTITION BY HASH (col_5419) PARTITIONS 3;
+SELECT last_value(col_5414) OVER w FROM tbl_936
+WINDOW w AS (ORDER BY col_5410, col_5411, col_5412, col_5413, col_5414, col_5415, col_5416, col_5417, col_5418, col_5419)
+ORDER BY col_5410, col_5411, col_5412, col_5413, col_5414, col_5415, col_5416, col_5417, col_5418, col_5419, nth_value(col_5412, 5) OVER w;
+last_value(col_5414) OVER w
+set @@tidb_partition_prune_mode = default;
+drop table if exists t;
+CREATE TABLE t (a int, b date, c int, PRIMARY KEY (a,b))
+PARTITION BY RANGE ( TO_DAYS(b) ) (
+PARTITION p0 VALUES LESS THAN (737821),
+PARTITION p1 VALUES LESS THAN (738289)
+);
+INSERT INTO t (a, b, c) VALUES(0, '2021-05-05', 0);
+select c from t use index(primary) where a=0 limit 1;
+c
+0
+CREATE TABLE test_partition (
+a varchar(100) NOT NULL,
+b date NOT NULL,
+c varchar(100) NOT NULL,
+d datetime DEFAULT NULL,
+e datetime DEFAULT NULL,
+f bigint(20) DEFAULT NULL,
+g bigint(20) DEFAULT NULL,
+h bigint(20) DEFAULT NULL,
+i bigint(20) DEFAULT NULL,
+j bigint(20) DEFAULT NULL,
+k bigint(20) DEFAULT NULL,
+l bigint(20) DEFAULT NULL,
+PRIMARY KEY (a,b,c) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE ( TO_DAYS(b) ) (
+PARTITION pmin VALUES LESS THAN (737821),
+PARTITION p20200601 VALUES LESS THAN (738289));
+INSERT INTO test_partition (a, b, c, d, e, f, g, h, i, j, k, l) VALUES('aaa', '2021-05-05', '428ff6a1-bb37-42ac-9883-33d7a29961e6', '2021-05-06 08:13:38', '2021-05-06 13:28:08', 0, 8, 3, 0, 9, 1, 0);
+select c,j,l from test_partition where c='428ff6a1-bb37-42ac-9883-33d7a29961e6' and a='aaa' limit 0, 200;
+c	j	l
+428ff6a1-bb37-42ac-9883-33d7a29961e6	9	0
+drop table if exists tbl_500, tbl_600;
+set @@tidb_partition_prune_mode = 'dynamic';
+CREATE TABLE tbl_500 (
+col_20 tinyint(4) NOT NULL,
+col_21 varchar(399) CHARACTER SET utf8 COLLATE utf8_unicode_ci DEFAULT NULL,
+col_22 json DEFAULT NULL,
+col_23 blob DEFAULT NULL,
+col_24 mediumint(9) NOT NULL,
+col_25 float NOT NULL DEFAULT '7306.384497585912',
+col_26 binary(196) NOT NULL,
+col_27 timestamp DEFAULT '1976-12-08 00:00:00',
+col_28 bigint(20) NOT NULL,
+col_29 tinyint(1) NOT NULL DEFAULT '1',
+PRIMARY KEY (col_29,col_20) /*T![clustered_index] NONCLUSTERED */,
+KEY idx_7 (col_28,col_20,col_26,col_27,col_21,col_24),
+KEY idx_8 (col_25,col_29,col_24)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE tbl_600 (
+col_60 int(11) NOT NULL DEFAULT '-776833487',
+col_61 tinyint(1) NOT NULL DEFAULT '1',
+col_62 tinyint(4) NOT NULL DEFAULT '-125',
+PRIMARY KEY (col_62,col_60,col_61) /*T![clustered_index] NONCLUSTERED */,
+KEY idx_19 (col_60)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
+PARTITION BY HASH( col_60 )
+PARTITIONS 1;
+insert into tbl_500 select -34, 'lrfGPPPUuZjtT', '{"obj1": {"sub_obj0": 100}}', 0x6C47636D, 1325624, 7306.3843, 'abc', '1976-12-08', 4757891479624162031, 0;
+select tbl_5.* from tbl_500 tbl_5 where col_24 in ( select col_62 from tbl_600 where tbl_5.col_26 < 'hSvHLdQeGBNIyOFXStV' );
+col_20	col_21	col_22	col_23	col_24	col_25	col_26	col_27	col_28	col_29
+set @@tidb_partition_prune_mode = default;
+drop table if exists t1, t2;
+set @@tidb_partition_prune_mode='static-only';
+create table t1 (c_datetime datetime, primary key (c_datetime))
+partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')),
+partition p1 values less than (to_days('2020-04-01')),
+partition p2 values less than (to_days('2020-06-01')),
+partition p3 values less than maxvalue);
+create table t2 (c_datetime datetime, unique key(c_datetime));
+insert into t1 values ('2020-06-26 03:24:00'), ('2020-02-21 07:15:33'), ('2020-04-27 13:50:58');
+insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18');
+begin;
+select * from t1 join t2 on t1.c_datetime >= t2.c_datetime for update;
+c_datetime	c_datetime
+2020-02-21 07:15:33	2020-01-10 09:36:00
+2020-02-21 07:15:33	2020-02-04 06:00:00
+2020-04-27 13:50:58	2020-01-10 09:36:00
+2020-04-27 13:50:58	2020-02-04 06:00:00
+2020-06-26 03:24:00	2020-01-10 09:36:00
+2020-06-26 03:24:00	2020-02-04 06:00:00
+2020-06-26 03:24:00	2020-06-12 03:45:18
+rollback;
+set @@tidb_partition_prune_mode = default;
+drop table if exists p, t;
+set @@tidb_enable_list_partition = OFF;
+create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));
+set @@tidb_enable_list_partition = default;
+drop table if exists issue25528;
+set @@tidb_partition_prune_mode = 'static';
+create table issue25528 (id int primary key, balance DECIMAL(10, 2), balance2 DECIMAL(10, 2) GENERATED ALWAYS AS (-balance) VIRTUAL, created_at TIMESTAMP) PARTITION BY HASH(id) PARTITIONS 8;
+insert into issue25528 (id, balance, created_at) values(1, 100, '2021-06-17 22:35:20');
+begin pessimistic;
+select * from issue25528 where id = 1 for update;
+id	balance	balance2	created_at
+1	100.00	-100.00	2021-06-17 22:35:20
+drop table if exists issue25528;
+CREATE TABLE `issue25528` ( `c1` int(11) NOT NULL, `c2` int(11) DEFAULT NULL, `c3` int(11) DEFAULT NULL, `c4` int(11) DEFAULT NULL, PRIMARY KEY (`c1`) /*T![clustered_index] CLUSTERED */, KEY `k2` (`c2`), KEY `k3` (`c3`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( `c1` ) PARTITIONS 10;
+INSERT INTO issue25528 (`c1`, `c2`, `c3`, `c4`) VALUES (1, 1, 1, 1) , (3, 3, 3, 3) , (2, 2, 2, 2) , (4, 4, 4, 4);
+select * from issue25528 where c1 in (3, 4) order by c2 for update;
+c1	c2	c3	c4
+3	3	3	3
+4	4	4	4
+rollback;
+set @@tidb_enable_list_partition = default;
+set @@tidb_enable_index_merge=1,@@tidb_partition_prune_mode='dynamic';
+DROP TABLE IF EXISTS `tbl_18`;
+CREATE TABLE `tbl_18` (`col_119` binary(16) NOT NULL DEFAULT 'skPoKiwYUi',`col_120` int(10) unsigned NOT NULL,`col_121` timestamp NOT NULL,`col_122` double NOT NULL DEFAULT '3937.1887880628115',`col_123` bigint(20) NOT NULL DEFAULT '3550098074891542725',PRIMARY KEY (`col_123`,`col_121`,`col_122`,`col_120`) CLUSTERED,UNIQUE KEY `idx_103` (`col_123`,`col_119`,`col_120`),UNIQUE KEY `idx_104` (`col_122`,`col_120`),UNIQUE KEY `idx_105` (`col_119`,`col_120`),KEY `idx_106` (`col_121`,`col_120`,`col_122`,`col_119`),KEY `idx_107` (`col_121`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci PARTITION BY HASH( `col_120` ) PARTITIONS 3;
+INSERT INTO tbl_18 (`col_119`, `col_120`, `col_121`, `col_122`, `col_123`) VALUES (X'736b506f4b6977595569000000000000', 672436701, '1974-02-24 00:00:00', 3937.1887880628115e0, -7373106839136381229), (X'736b506f4b6977595569000000000000', 2637316689, '1993-10-29 00:00:00', 3937.1887880628115e0, -4522626077860026631), (X'736b506f4b6977595569000000000000', 831809724, '1995-11-20 00:00:00', 3937.1887880628115e0, -4426441253940231780), (X'736b506f4b6977595569000000000000', 1588592628, '2001-03-28 00:00:00', 3937.1887880628115e0, 1329207475772244999), (X'736b506f4b6977595569000000000000', 3908038471, '2031-06-06 00:00:00', 3937.1887880628115e0, -6562815696723135786), (X'736b506f4b6977595569000000000000', 1674237178, '2001-10-24 00:00:00', 3937.1887880628115e0, -6459065549188938772), (X'736b506f4b6977595569000000000000', 3507075493, '2010-03-25 00:00:00', 3937.1887880628115e0, -4329597025765326929), (X'736b506f4b6977595569000000000000', 1276461709, '2019-07-20 00:00:00', 3937.1887880628115e0, 3550098074891542725);
+select col_120,col_122,col_123 from tbl_18 where tbl_18.col_122 = 4763.320888074281 and not( tbl_18.col_121 in ( '2032-11-01' , '1975-05-21' , '1994-05-16' , '1984-01-15' ) ) or not( tbl_18.col_121 >= '2008-10-24' ) order by tbl_18.col_119,tbl_18.col_120,tbl_18.col_121,tbl_18.col_122,tbl_18.col_123 limit 919 for update;
+col_120	col_122	col_123
+1588592628	3937.1887880628115	1329207475772244999
+1674237178	3937.1887880628115	-6459065549188938772
+2637316689	3937.1887880628115	-4522626077860026631
+672436701	3937.1887880628115	-7373106839136381229
+831809724	3937.1887880628115	-4426441253940231780
+select /*+ use_index_merge( tbl_18 ) */ col_120,col_122,col_123 from tbl_18 where tbl_18.col_122 = 4763.320888074281 and not( tbl_18.col_121 in ( '2032-11-01' , '1975-05-21' , '1994-05-16' , '1984-01-15' ) ) or not( tbl_18.col_121 >= '2008-10-24' ) order by tbl_18.col_119,tbl_18.col_120,tbl_18.col_121,tbl_18.col_122,tbl_18.col_123 limit 919 for update;
+col_120	col_122	col_123
+1588592628	3937.1887880628115	1329207475772244999
+1674237178	3937.1887880628115	-6459065549188938772
+2637316689	3937.1887880628115	-4522626077860026631
+672436701	3937.1887880628115	-7373106839136381229
+831809724	3937.1887880628115	-4426441253940231780
+set @@tidb_enable_index_merge=default,@@tidb_partition_prune_mode=default;
+drop table if exists t;
+CREATE TABLE `t` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL) PARTITION BY RANGE (`a`) (PARTITION `p0` VALUES LESS THAN (2021), PARTITION `p1` VALUES LESS THAN (3000));
+set @@tidb_partition_prune_mode = 'static';
+insert into t select * from t where a=3000;
+set @@tidb_partition_prune_mode = 'dynamic';
+insert into t select * from t where a=3000;
+set @@tidb_partition_prune_mode = default;
+set @@tidb_opt_advanced_join_hint=0;
+drop table if exists c, t;
+CREATE TABLE `c` (`serial_id` varchar(24),`occur_trade_date` date,`txt_account_id` varchar(24),`capital_sub_class` varchar(10),`occur_amount` decimal(16,2),`broker` varchar(10),PRIMARY KEY (`txt_account_id`,`occur_trade_date`,`serial_id`) /*T![clustered_index] CLUSTERED */,KEY `idx_serial_id` (`serial_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci PARTITION BY RANGE COLUMNS(`serial_id`) (PARTITION `p202209` VALUES LESS THAN ('20221001'),PARTITION `p202210` VALUES LESS THAN ('20221101'),PARTITION `p202211` VALUES LESS THAN ('20221201'));
+CREATE TABLE `t` ( `txn_account_id` varchar(24), `account_id` varchar(32), `broker` varchar(10), PRIMARY KEY (`txn_account_id`) /*T![clustered_index] CLUSTERED */ ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+INSERT INTO `c` (serial_id, txt_account_id, capital_sub_class, occur_trade_date, occur_amount, broker) VALUES ('2022111700196920','04482786','CUST','2022-11-17',-2.01,'0009');
+INSERT INTO `t` VALUES ('04482786','1142927','0009');
+set tidb_partition_prune_mode='dynamic';
+analyze table c;
+analyze table t;
+explain select
+/*+ inl_join(c) */
+c.occur_amount
+from
+c
+join t on c.txt_account_id = t.txn_account_id
+and t.broker = '0009'
+and c.occur_trade_date = '2022-11-17';
+id	estRows	task	access object	operator info
+IndexJoin_22	1.00	root		inner join, inner:TableReader_21, outer key:executor__partition__issues.t.txn_account_id, inner key:executor__partition__issues.c.txt_account_id, equal cond:eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
+├─TableReader_27(Build)	1.00	root		data:Selection_26
+│ └─Selection_26	1.00	cop[tikv]		eq(executor__partition__issues.t.broker, "0009")
+│   └─TableFullScan_25	1.00	cop[tikv]	table:t	keep order:false
+└─TableReader_21(Probe)	1.00	root	partition:all	data:Selection_20
+  └─Selection_20	1.00	cop[tikv]		eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)
+    └─TableRangeScan_19	1.00	cop[tikv]	table:c	range: decided by [eq(executor__partition__issues.c.txt_account_id, executor__partition__issues.t.txn_account_id) eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false
+select
+/*+ inl_join(c) */
+c.occur_amount
+from
+c
+join t on c.txt_account_id = t.txn_account_id
+and t.broker = '0009'
+and c.occur_trade_date = '2022-11-17';
+occur_amount
+-2.01
+alter table t add column serial_id varchar(24) default '2022111700196920';
+select
+/*+ inl_join(c) */
+c.occur_amount
+from
+c
+join t on c.txt_account_id = t.txn_account_id
+and t.broker = '0009'
+and c.occur_trade_date = '2022-11-17' and c.serial_id = t.serial_id;
+occur_amount
+-2.01
+explain select
+/*+ inl_join(c) */
+c.occur_amount
+from
+c
+join t on c.txt_account_id = t.txn_account_id
+and t.broker = '0009'
+and c.occur_trade_date = '2022-11-17' and c.serial_id = t.serial_id;
+id	estRows	task	access object	operator info
+IndexJoin_20	0.80	root		inner join, inner:TableReader_19, outer key:executor__partition__issues.t.txn_account_id, executor__partition__issues.t.serial_id, inner key:executor__partition__issues.c.txt_account_id, executor__partition__issues.c.serial_id, equal cond:eq(executor__partition__issues.t.serial_id, executor__partition__issues.c.serial_id), eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
+├─TableReader_25(Build)	0.80	root		data:Selection_24
+│ └─Selection_24	0.80	cop[tikv]		eq(executor__partition__issues.t.broker, "0009"), not(isnull(executor__partition__issues.t.serial_id))
+│   └─TableFullScan_23	1.00	cop[tikv]	table:t	keep order:false, stats:partial[serial_id:missing]
+└─TableReader_19(Probe)	0.80	root	partition:all	data:Selection_18
+  └─Selection_18	0.80	cop[tikv]		eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)
+    └─TableRangeScan_17	0.80	cop[tikv]	table:c	range: decided by [eq(executor__partition__issues.c.txt_account_id, executor__partition__issues.t.txn_account_id) eq(executor__partition__issues.c.serial_id, executor__partition__issues.t.serial_id) eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false
+set @@tidb_opt_advanced_join_hint=default;
+set tidb_partition_prune_mode=default;
+drop table if exists t;
+CREATE TABLE `t` (
+`col_51` bigint(20) unsigned NOT NULL,
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`col_51`) PARTITIONS 5;
+insert into t values (9223372036854775807), (9223372036854775808), (9223372036854775809), (9223372036854775812), (9223372036854775813);
+analyze table t;
+desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:p2,p3	data:TableRangeScan_5
+└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
+SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+col_51
+9223372036854775807
+9223372036854775808
+explain select * from t where col_51 between 9223372036854775812 and 9223372036854775813;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:p3,p4	data:TableRangeScan_5
+└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775812,9223372036854775813], keep order:false
+select * from t where col_51 between 9223372036854775812 and 9223372036854775813;
+col_51
+9223372036854775812
+9223372036854775813
+drop table if exists t;
+CREATE TABLE `t` (
+`col_51` bigint(20) NOT NULL,
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`col_51`) PARTITIONS 5;
+insert into t values (9223372036854775807), (-9223372036854775808);
+analyze table t;
+desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:all	data:TableFullScan_5
+└─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
+SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
+col_51
+-9223372036854775808
+9223372036854775807
+drop table if exists t;
+CREATE TABLE `t` (
+`col_51` bigint(20) unsigned NOT NULL,
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`col_51`) PARTITIONS 5;
+insert into t values (9223372036854775807), (9223372036854775808), (9223372036854775809);
+analyze table t;
+desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:p2	data:TableRangeScan_5
+└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
+SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+col_51
+9223372036854775807
+9223372036854775808
+drop table if exists t;
+CREATE TABLE `t` (
+`col_51` bigint(20) NOT NULL,
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`col_51`) PARTITIONS 5;
+insert into t values (9223372036854775807), (-9223372036854775808);
+analyze table t;
+desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:all	data:TableFullScan_5
+└─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
+SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
+col_51
+-9223372036854775808
+9223372036854775807
+drop table if exists t;
+CREATE TABLE `t` (
+`col_29` tinyint(4) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY HASH (`col_29`) PARTITIONS 7;
+INSERT INTO `t` VALUES (-1), (11), (-128), (39), (-46), (38), (-102), (-99), (-87), (-127), (-89), (43), (108), (59), (0), (24), (101), (37), (-103), (90), (-95), (-44), (123), (124), (-123), (-52), (-49), (-98), (-104), (-68), (2), (-24), (67), (89), (1), (-65), (36), (-109), (41), (5), (98), (-63), (-14), (127), (-6), (121), (14), (-122);
+analyze table t;
+explain select * from t where col_29 between -2 and -1;
+id	estRows	task	access object	operator info
+TableReader_7	1.00	root	partition:p1,p2	data:Selection_6
+└─Selection_6	1.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, -1)
+  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+select * from t where col_29 between -2 and -1;
+col_29
+-1
+explain select * from t where col_29 between -2 and 0;
+id	estRows	task	access object	operator info
+TableReader_7	2.00	root	partition:p0,p1,p2	data:Selection_6
+└─Selection_6	2.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, 0)
+  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+select * from t where col_29 between -2 and 0;
+col_29
+-1
+0
+explain select * from t where col_29 between -2 and 1;
+id	estRows	task	access object	operator info
+TableReader_7	3.00	root	partition:p0,p1,p2	data:Selection_6
+└─Selection_6	3.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, 1)
+  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+select * from t where col_29 between -2 and 1;
+col_29
+-1
+0
+1
+explain select * from t where col_29 between -7 and -6;
+id	estRows	task	access object	operator info
+TableReader_7	1.00	root	partition:p0,p6	data:Selection_6
+└─Selection_6	1.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -7), le(executor__partition__issues.t.col_29, -6)
+  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+select * from t where col_29 between -7 and -6;
+col_29
+-6
+create table issue52198 (a int, b int, primary key (b)) partition by hash(b) partitions 5;
+insert into issue52198 values (1,1);
+select space(1), b from issue52198 where b in (1);
+space(1)	b
+ 	1
+drop table issue52198;

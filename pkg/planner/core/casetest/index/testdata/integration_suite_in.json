@@ -1,0 +1,39 @@
+[
+  {
+    "name": "TestNullConditionForPrefixIndex",
+    "cases": [
+      "select count(1) from t1 where c1 = '0xfff' and c2 is not null",
+      "select count(1) from t1 where c1 = '0xfff' and c2 is null",
+      "select count(1) from t1 where c1 >= '0xfff' and c2 is not null",
+      "select count(1) from t1 where c1 >= '0xfff' and c2 is null",
+      "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is not null",
+      "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is null",
+      "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is not null",
+      "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is null",
+      "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is not null",
+      "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is null",
+      "select count(1) from t2 use index(idx) where b is not null",
+      "select count(1) from t2 use index(idx) where b is null",
+      "select b from t2 use index(idx) where b is not null",
+      "select b from t2 use index(idx) where b is null",
+      "select b from t3 where a = 1 and b is not null",
+      "select b from t3 where a = 1 and b is null"
+    ]
+  },
+  {
+    "name": "TestRowFunctionMatchTheIndexRangeScan",
+    "cases": [
+      "select k1 from t1 where (k1,k2) > (1,2)",
+      "select k1 from t1 where (k1,k2) >= (1,2)",
+      "select k1 from t1 where (k1,k2) < (1,2)",
+      "select k1 from t1 where (k1, k2) <= (1,2)",
+      "select k1 from t1 where (k1,k2) = (1,2)",
+      "select k1 from t1 where (k1, k2) != (1,2); -- could not match range scan",
+      "select k1 from t1 where (k1) <=> (1); -- could not match range scan",
+      "select k1 from t1 where (k1, k2) in ((1,2), (3,4))",
+      "select k1 from t1 where (k1, k2) > (1,2) and (k1, k2) < (4,5)",
+      "select k1 from t1 where (k1, k2) >= (1,2) and (k1, k2) <= (4,5)",
+      "select k1 from t1 where (k2, k3) > (1,2); -- could not match range scan "
+    ]
+  }
+]
