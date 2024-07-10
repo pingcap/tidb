@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -94,27 +93,6 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 	})
 	tk2.MustQueryWithContext(ctx, exec2)
 	require.True(t, checked)
-}
-
-func planFingerprint(t *testing.T, p base.Plan) string {
-	switch x := p.(type) {
-	case base.PhysicalPlan:
-		return physicalPlanFingerprint(t, x)
-	default:
-		// TODO: support Update/Insert/Delete plan
-		t.Fatalf("unexpected plan type %T", x)
-		return ""
-	}
-}
-
-func physicalPlanFingerprint(t *testing.T, p base.PhysicalPlan) string {
-	v, err := json.Marshal(p)
-	require.NoError(t, err)
-	childPrints := make([]string, len(p.Children()))
-	for i, child := range p.Children() {
-		childPrints[i] = physicalPlanFingerprint(t, child)
-	}
-	return fmt.Sprintf("%s(%s)", string(v), childPrints)
 }
 
 func TestCheckPlanDeepClone(t *testing.T) {
