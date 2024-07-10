@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -315,3 +316,4 @@ func TestBundles(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, policyInfo, getPolicyInfo)
 }
+
