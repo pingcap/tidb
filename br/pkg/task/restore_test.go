@@ -421,6 +421,68 @@ func TestFilterDDLJobByRules(t *testing.T) {
 	}
 }
 
+func TestCheckDDLJobByRules(t *testing.T) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+		{
+			Type: model.ActionReorganizePartition,
+		},
+	}
+
+	filteredDDlJobs := task.FilterDDLJobByRules(ddlJobs, task.DDLJobLogIncrementalCompactBlockListRule)
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionSetTiFlashReplica,
+		model.ActionAddPrimaryKey,
+		model.ActionUpdateTiFlashReplicaStatus,
+		model.ActionCreateTable,
+		model.ActionLockTable,
+		model.ActionUnlockTable,
+		model.ActionCreateSchema,
+	}
+
+	require.Equal(t, len(expectedDDLTypes), len(filteredDDlJobs))
+	expectedDDLJobs := make([]*model.Job, 0, len(expectedDDLTypes))
+	for i, ddlJob := range filteredDDlJobs {
+		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+		expectedDDLJobs = append(expectedDDLJobs, ddlJob)
+	}
+
+	require.NoError(t, task.CheckDDLJobByRules(expectedDDLJobs, task.DDLJobLogIncrementalCompactBlockListRule))
+	require.Error(t, task.CheckDDLJobByRules(ddlJobs, task.DDLJobLogIncrementalCompactBlockListRule))
+}
+
+// NOTICE: Once there is a new backfilled type ddl, BR needs to ensure that it is correctly cover by the rules:
+func TestMonitorTheIncrementalUnsupportDDLType(t *testing.T) {
+	require.Equal(t, int(5), ddl.BackupFillerTypeCount())
+}
+
 func TestTikvUsage(t *testing.T) {
 	files := []*backuppb.File{
 		{Name: "F1", Size_: 1 * pb},
