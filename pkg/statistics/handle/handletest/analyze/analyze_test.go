@@ -16,6 +16,7 @@ package analyze
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -29,7 +30,7 @@ import (
 
 // nolint:unused
 func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp string, topn, buckets int) {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tt))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tt))
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()

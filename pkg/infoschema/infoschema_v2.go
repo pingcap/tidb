@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
@@ -427,7 +429,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := loadTableInfo(context.Background(), is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil || ret == nil {
 		return nil, false
 	}
@@ -444,7 +446,17 @@ func isSpecialDB(dbName string) bool {
 		dbName == util.MetricSchemaName.L
 }
 
-func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
+// EvictTable is exported for testing only.
+func (is *infoschemaV2) EvictTable(schema, tbl string) {
+	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
+	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
+	if !ok {
+		return
+	}
+	is.tableCache.Remove(tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion})
+}
+
+func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
 	if isSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
 			tbNames := raw.(*schemaTables)
@@ -478,7 +490,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := loadTableInfo(ctx, is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -488,7 +500,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 
 // TableInfoByName implements InfoSchema.TableInfoByName
 func (is *infoschemaV2) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
-	tbl, err := is.TableByName(schema, table)
+	tbl, err := is.TableByName(context.Background(), schema, table)
 	return getTableInfo(tbl), err
 }
 
@@ -677,7 +689,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
-	_, err := is.TableByName(schema, table)
+	_, err := is.TableByName(context.Background(), schema, table)
 	return err == nil
 }
 
@@ -773,7 +785,8 @@ retry:
 	return
 }
 
-func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
+func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
+	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:

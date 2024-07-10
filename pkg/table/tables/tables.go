@@ -1069,10 +1069,6 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		return recordID, nil
 	}
 
-	if shouldIncreaseTTLMetricCount(t.meta) {
-		sessVars.TxnCtx.InsertTTLRowsCount += 1
-	}
-
 	colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
@@ -1740,10 +1736,6 @@ func shouldWriteBinlog(vars *variable.SessionVars, tblInfo *model.TableInfo) boo
 		return false
 	}
 	return !vars.InRestrictedSQL
-}
-
-func shouldIncreaseTTLMetricCount(tblInfo *model.TableInfo) bool {
-	return tblInfo.TTLInfo != nil
 }
 
 func (t *TableCommon) getMutation(ctx table.MutateContext) *binlog.TableMutation {

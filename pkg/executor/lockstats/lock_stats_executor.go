@@ -108,7 +108,7 @@ func populatePartitionIDAndNames(
 	if len(partitionNames) == 0 {
 		return 0, nil, errors.New("partition list should not be empty")
 	}
-	tbl, err := is.TableByName(table.Schema, table.Name)
+	tbl, err := is.TableByName(context.Background(), table.Schema, table.Name)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -142,7 +142,7 @@ func populateTableAndPartitionIDs(
 	tableWithPartitions := make(map[int64]*types.StatsLockTable, len(tables))
 
 	for _, table := range tables {
-		tbl, err := is.TableByName(table.Schema, table.Name)
+		tbl, err := is.TableByName(context.Background(), table.Schema, table.Name)
 		if err != nil {
 			return nil, err
 		}

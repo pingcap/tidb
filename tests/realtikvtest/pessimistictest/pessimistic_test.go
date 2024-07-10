@@ -283,7 +283,7 @@ func TestSingleStatementRollback(t *testing.T) {
 
 	dom := domain.GetDomain(tk1.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("single_statement"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("single_statement"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 

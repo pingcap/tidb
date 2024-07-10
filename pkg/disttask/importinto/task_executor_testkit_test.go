@@ -57,7 +57,7 @@ func TestPostProcessStepExecutor(t *testing.T) {
 
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	taskMeta := &importinto.TaskMeta{
 		Plan: importer.Plan{

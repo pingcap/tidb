@@ -311,12 +311,6 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 }
 
 // PruneColumns implements the interface of base.LogicalPlan.
-// LogicalCTE just do an empty function call. It's logical optimize is indivisual phase.
-func (p *LogicalCTE) PruneColumns(_ []*expression.Column, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	return p, nil
-}
-
-// PruneColumns implements the interface of base.LogicalPlan.
 func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	var err error
 	p.Children()[p.ChildLen()-1], err = p.Children()[p.ChildLen()-1].PruneColumns(parentUsedCols, opt)

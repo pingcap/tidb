@@ -15,6 +15,7 @@
 package domain
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -32,7 +33,7 @@ func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 
 // MustGetTableInfo returns the table info. Only used in unit tests.
 func (do *Domain) MustGetTableInfo(t *testing.T, dbName, tableName string) *model.TableInfo {
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
 	require.Nil(t, err)
 	return tbl.Meta()
 }

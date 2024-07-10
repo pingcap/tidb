@@ -15,6 +15,7 @@
 package globalstats_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -535,7 +536,7 @@ partition by range (a) (
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	require.NoError(t, h.Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	globalStats := h.GetTableStats(tableInfo)
@@ -588,7 +589,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	require.Len(t, result, 7)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	globalStats := h.GetTableStats(tableInfo)
