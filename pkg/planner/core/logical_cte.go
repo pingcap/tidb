@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // LogicalCTE is for CTE.
