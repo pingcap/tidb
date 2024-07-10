@@ -87,10 +87,12 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 var (
 	threadVar             = flag.Int("threads", 100, "number of threads")
 	iterationPerThreadVar = flag.Int("iterations", 30000, "number of iterations per thread")
+	payloadSizeVar        = flag.Int("payload-size", 1024, "size of payload in bytes")
 )
 
 func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
-	thread, iterationPerThread := *threadVar, *iterationPerThreadVar
+	//t.Skip("it's for offline test only, skip it in CI")
+	thread, iterationPerThread, payloadSize := *threadVar, *iterationPerThreadVar, *payloadSizeVar
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	// disable DDL to avoid it interfere the test
 	tk := testkit.NewTestKit(t, store)
@@ -98,11 +100,13 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 	dom.DDL().OwnerManager().CampaignCancel()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
+	payload := []byte(strings.Repeat("a", payloadSize))
 	jobs := []*model.Job{
 		{
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
+			Args:       []interface{}{payload},
 		},
 	}
 	counters := make([]atomic.Int64, thread+1)
