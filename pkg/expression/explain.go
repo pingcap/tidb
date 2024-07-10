@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
@@ -166,7 +167,7 @@ func (expr *Constant) format(dt types.Datum) string {
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
-func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema) string {
+func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, RedactMode string) string {
 	builder := &strings.Builder{}
 	for i, expr := range exprs {
 		switch expr.(type) {
@@ -178,12 +179,28 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema) 
 				builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
 			}
 		case *Constant:
+			redactOn := RedactMode == errors.RedactLogEnable
+			RedactMarker := RedactMode == errors.RedactLogMarker
 			v := expr.StringWithCtx(ctx)
 			length := 64
 			if len(v) < length {
-				builder.WriteString(v)
+				if redactOn {
+					builder.WriteString("?")
+				} else if RedactMarker {
+					builder.WriteString(v)
+				} else {
+					builder.WriteString(v)
+				}
 			} else {
-				builder.WriteString(v[:length])
+				if redactOn {
+					builder.WriteString("?")
+				} else if RedactMarker {
+					builder.WriteString("‹")
+					builder.WriteString(v[:length])
+					builder.WriteString("›")
+				} else {
+					builder.WriteString(v[:length])
+				}
 				fmt.Fprintf(builder, "(len:%d)", len(v))
 			}
 			builder.WriteString("->")

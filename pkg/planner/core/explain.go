@@ -376,7 +376,9 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	exprStr := expression.ExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Exprs, p.schema)
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
+	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.schema, enableRedactLog)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
@@ -386,15 +388,16 @@ func (p *PhysicalProjection) ExplainInfo() string {
 func (p *PhysicalExpand) explainInfoV2() string {
 	sb := strings.Builder{}
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
 	for i, oneL := range p.LevelExprs {
 		if i == 0 {
 			sb.WriteString("level-projection:")
 			sb.WriteString("[")
-			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema))
+			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema, enableRedactLog))
 			sb.WriteString("]")
 		} else {
 			sb.WriteString(",[")
-			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema))
+			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema, enableRedactLog))
 			sb.WriteString("]")
 		}
 	}
