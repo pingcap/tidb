@@ -1,26 +1,40 @@
-// Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2024 PingCAP, Inc. Licensed under Apache-2.0.
 
 package stream
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"path"
+	"slices"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
-const notDeletedBecameFatalThreshold = 128
+const (
+	notDeletedBecameFatalThreshold = 128
+
+	baseMigrationID   = 0
+	baseMigrationName = "BASE"
+	baseTmp           = "BASE_TMP"
+	migrationPrefix   = "v1/migrations"
+)
 
 type StreamMetadataSet struct {
 	// if set true, the metadata and datafile won't be removed
@@ -35,7 +49,7 @@ type StreamMetadataSet struct {
 	Helper *MetadataHelper
 
 	// for test
-	BeforeDoWriteBack func(path string, replaced *backuppb.Metadata) (skip bool)
+	BeforeDoWriteBack func(path string, replaced *pb.Metadata) (skip bool)
 }
 
 // keep these meta-information for statistics and filtering
@@ -222,11 +236,11 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(
 	ctx context.Context,
 	storage storage.ExternalStorage,
 	from uint64,
-	meta *backuppb.Metadata,
+	meta *pb.Metadata,
 	metaPath string,
 ) (num int64, notDeleted []string, err error) {
-	removed := make([]*backuppb.DataFileGroup, 0)
-	remainedDataFiles := make([]*backuppb.DataFileGroup, 0)
+	removed := make([]*pb.DataFileGroup, 0)
+	remainedDataFiles := make([]*pb.DataFileGroup, 0)
 	notDeleted = make([]string, 0)
 	// can we assume those files are sorted to avoid traversing here? (by what?)
 	for _, ds := range meta.FileGroups {
@@ -286,7 +300,7 @@ func (ms *StreamMetadataSet) doWriteBackForFile(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	path string,
-	meta *backuppb.Metadata,
+	meta *pb.Metadata,
 ) error {
 	// If the metadata file contains no data file, remove it due to it is meanless.
 	if len(meta.FileGroups) == 0 {
@@ -355,7 +369,7 @@ func SetTSToFile(
 	return truncateAndWrite(ctx, s, filename, []byte(content))
 }
 
-func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
+func UpdateShiftTS(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bool) {
 	var (
 		minBeginTS uint64
 		isExist    bool
@@ -381,11 +395,7 @@ func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint
 	return minBeginTS, isExist
 }
 
-// replace the filegroups and update the ts of the replaced metadata
-func ReplaceMetadata(meta *backuppb.Metadata, filegroups []*backuppb.DataFileGroup) {
-	// replace the origin metadata
-	meta.FileGroups = filegroups
-
+func updateMetadataInternalStat(meta *pb.Metadata) {
 	if len(meta.FileGroups) == 0 {
 		meta.MinTs = 0
 		meta.MaxTs = 0
@@ -407,4 +417,474 @@ func ReplaceMetadata(meta *backuppb.Metadata, filegroups []*backuppb.DataFileGro
 			meta.ResolvedTs = group.MinResolvedTs
 		}
 	}
+}
+
+// replace the filegroups and update the ts of the replaced metadata
+func ReplaceMetadata(meta *pb.Metadata, filegroups []*pb.DataFileGroup) {
+	// replace the origin metadata
+	meta.FileGroups = filegroups
+
+	updateMetadataInternalStat(meta)
+}
+
+func ellipsisArray[T any](item []T) string {
+	if len(item) == 0 {
+		return "<empty>"
+	}
+	if len(item) == 1 {
+		return fmt.Sprintf("%v", item[0])
+	}
+	return fmt.Sprintf("%v and more %d items", item[0], len(item)-1)
+}
+
+func AddMigrationToTable(m *pb.Migration, table *glue.Table) {
+	if len(m.EditMeta) > 0 {
+		fileNames := make([]string, 0, len(m.EditMeta))
+		totalDeletePhyFile := 0
+		totalDeleteLgcFile := 0
+		for _, edit := range m.EditMeta {
+			fileNames = append(fileNames, edit.Path)
+			totalDeletePhyFile += len(edit.DeletePhysicalFiles)
+			for _, dl := range edit.DeleteLogicalFiles {
+				totalDeleteLgcFile += len(dl.Spans)
+			}
+		}
+		table.Add("edit-meta", ellipsisArray(fileNames))
+		table.Add("delete-physical-file", strconv.Itoa(totalDeletePhyFile))
+		table.Add("delete-logical-file", strconv.Itoa(totalDeleteLgcFile))
+	}
+	for i, c := range m.Compactions {
+		AddCompactionToTable(c, table, i)
+	}
+	for i, c := range m.DestructPrefix {
+		table.Add(fmt.Sprintf("destruct-prefix[%02d]", i), c)
+	}
+	table.Add("truncated-to", strconv.FormatUint(m.TruncatedTo, 10))
+}
+
+func AddCompactionToTable(m *pb.LogFileCompaction, table *glue.Table, idx int) {
+	withIdx := func(s string) string { return fmt.Sprintf("compactions[%d].%s", idx, s) }
+	table.Add(withIdx("name"), m.Name)
+	table.Add(withIdx("compaction-from-ts"), strconv.FormatUint(m.CompactionFromTs, 10))
+	table.Add(withIdx("compaction-until-ts"), strconv.FormatUint(m.CompactionUntilTs, 10))
+	table.Add(withIdx("artifactes"), m.Artifactes)
+	table.Add(withIdx("generated-files"), m.GeneratedFiles)
+	for _, comments := range strings.Split(m.Comments, "\n") {
+		if len(strings.Trim(comments, " \n")) <= 0 {
+			continue
+		}
+		key, value, found := strings.Cut(comments, ":")
+		if !found {
+			table.Add(withIdx("comment"), comments)
+		} else {
+			table.Add(withIdx(key), strings.TrimLeft(value, " "))
+		}
+	}
+}
+
+type MigrationExt struct {
+	s      storage.ExternalStorage
+	prefix string
+}
+
+func MigerationExtension(s storage.ExternalStorage) MigrationExt {
+	return MigrationExt{
+		s:      s,
+		prefix: migrationPrefix,
+	}
+}
+
+// Merge merges two migrations.
+func (m MigrationExt) merge(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
+	out := new(pb.Migration)
+	out.EditMeta = mergeMetaEdits(m1.EditMeta, m2.EditMeta)
+	out.Compactions = append(out.Compactions, m1.Compactions...)
+	out.Compactions = append(out.Compactions, m2.Compactions...)
+	out.TruncatedTo = mathutil.Max(m1.TruncatedTo, m2.TruncatedTo)
+	out.DestructPrefix = append(out.DestructPrefix, m1.DestructPrefix...)
+	out.DestructPrefix = append(out.DestructPrefix, m2.DestructPrefix...)
+	return out
+}
+
+type MergeAndMigratedTo struct {
+	MigratedTo
+	Base   *pb.Migration
+	Source []*OrderedMigration
+}
+
+type MigratedTo struct {
+	Warnings []error
+	NewBase  *pb.Migration
+}
+
+type Migrations struct {
+	Base   *pb.Migration
+	Layers []*OrderedMigration
+}
+
+type OrderedMigration struct {
+	ID      int          `json:"id"`
+	Path    string       `json:"path"`
+	Content pb.Migration `json:"content"`
+}
+
+func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
+	opt := &storage.WalkOption{
+		SubDir: m.prefix,
+	}
+	items := storage.UnmarshalDir(ctx, opt, m.s, func(t *OrderedMigration, name string, b []byte) error {
+		t.Path = name
+		var err error
+		t.ID, err = migIdOf(path.Base(name))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if t.ID == baseMigrationID {
+			truncatedTs, err := GetTSFromFile(ctx, m.s, TruncateSafePointFileName)
+			if err != nil {
+				return errors.Annotate(err, "failed to get the truncate safepoint for base migration")
+			}
+			t.Content.TruncatedTo = mathutil.Max(truncatedTs, t.Content.TruncatedTo)
+		}
+		return t.Content.Unmarshal(b)
+	})
+	collected := iter.CollectAll(ctx, items)
+	if collected.Err != nil {
+		return Migrations{}, collected.Err
+	}
+	sort.Slice(collected.Item, func(i, j int) bool {
+		return collected.Item[i].ID < collected.Item[j].ID
+	})
+
+	var result Migrations
+	if collected.Item[0].ID == baseMigrationID {
+		result = Migrations{
+			Base:   &collected.Item[0].Content,
+			Layers: collected.Item[1:],
+		}
+	} else {
+		result = Migrations{
+			Base:   new(pb.Migration),
+			Layers: collected.Item,
+		}
+	}
+	return result, nil
+}
+
+func (m MigrationExt) EstimateEffectFor(ctx context.Context, mig *pb.Migration) (MigratedTo, []storage.Effect) {
+	drySelf := MigrationExt{
+		s:      storage.DryRun(m.s),
+		prefix: m.prefix,
+	}
+	res := drySelf.MigrateTo(ctx, mig)
+	return res, drySelf.s.(*storage.Dry).Effects()
+}
+
+func (m MigrationExt) MergeTo(migs Migrations, version int) *pb.Migration {
+	newBase := migs.Base
+	for _, mig := range migs.Layers {
+		newBase = m.merge(newBase, &mig.Content)
+	}
+	return newBase
+}
+
+func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, version int) (result MergeAndMigratedTo) {
+	migs, err := m.Load(ctx)
+	if err != nil {
+		result.MigratedTo = MigratedTo{Warnings: []error{errors.Annotate(err, "failed to load migrations, nothing will happen")}}
+		return
+	}
+	result.Base = migs.Base
+	for _, mig := range migs.Layers {
+		if mig.ID > version {
+			break
+		}
+		result.Source = append(result.Source, mig)
+	}
+
+	newBase := result.Base
+	for _, mig := range result.Source {
+		newBase = m.merge(newBase, &mig.Content)
+	}
+
+	migTo := m.MigrateTo(ctx, newBase)
+	err = m.writeBase(ctx, migTo.NewBase)
+	if err != nil {
+		result.MigratedTo = MigratedTo{Warnings: []error{errors.Annotatef(err, "failed to save the new base")}}
+		return
+	}
+	for _, mig := range result.Source {
+		err = m.s.DeleteFile(ctx, mig.Path)
+		if err != nil {
+			migTo.Warnings = append(migTo.Warnings, errors.Annotatef(err, "failed to delete the merged migration %s", migs.Layers[0].Path))
+		}
+	}
+	result.MigratedTo = migTo
+	return
+}
+
+func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration) MigratedTo {
+	result := MigratedTo{
+		NewBase: new(pb.Migration),
+	}
+	// Fills: EditMeta for new Base.
+	m.doMetaEdits(ctx, mig, &result)
+	// Fills: TruncatedTo, Compactions, DesctructPrefix.
+	m.doTruncating(ctx, mig, &result)
+	return result
+}
+
+func (m MigrationExt) writeBase(ctx context.Context, mig *pb.Migration) error {
+	content, err := mig.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.s.WriteFile(ctx, path.Join(m.prefix, baseTmp), content)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.s.Rename(ctx, path.Join(m.prefix, baseTmp), path.Join(m.prefix, baseMigrationName))
+}
+
+func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
+	for _, medit := range mig.EditMeta {
+		if isEmptyEdition(medit) {
+			continue
+		}
+		err := m.applyMetaEditToMeta(ctx, medit)
+		if err != nil {
+			out.NewBase.EditMeta = append(out.NewBase.EditMeta, medit)
+			out.Warnings = append(out.Warnings, errors.Annotatef(err, "failed to apply meta edit %s to meta file", medit.Path))
+			continue
+		}
+
+		newMetaEdit := &pb.MetaEdit{
+			Path: medit.Path,
+		}
+
+		if len(medit.DeletePhysicalFiles) > 0 {
+			err = m.s.DeleteFiles(ctx, medit.DeletePhysicalFiles)
+			if err != nil {
+				out.Warnings = append(out.Warnings, errors.Annotate(err, "failed to delete file"))
+				newMetaEdit.DeletePhysicalFiles = slices.Clone(medit.DeletePhysicalFiles)
+			}
+		}
+
+		physicalFilesToDelete := []string{}
+		for _, spans := range medit.DeleteLogicalFiles {
+			if physicalFileCanBeDeleted(spans) {
+				physicalFilesToDelete = append(physicalFilesToDelete, spans.Path)
+			} else {
+				newMetaEdit.DeleteLogicalFiles = append(newMetaEdit.DeleteLogicalFiles, spans)
+			}
+		}
+		if len(physicalFilesToDelete) > 0 {
+			err = m.s.DeleteFiles(ctx, physicalFilesToDelete)
+			if err != nil {
+				out.Warnings = append(out.Warnings, errors.Annotate(err, "failed to delete file"))
+				newMetaEdit.DeletePhysicalFiles = append(newMetaEdit.DeletePhysicalFiles, physicalFilesToDelete...)
+			}
+		}
+
+		if !isEmptyEdition(newMetaEdit) {
+			out.NewBase.EditMeta = append(out.NewBase.EditMeta, newMetaEdit)
+		}
+	}
+}
+
+func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdit) (err error) {
+	if medit.DestructSelf {
+		return m.s.DeleteFile(ctx, medit.Path)
+	}
+
+	mContent, err := m.s.ReadFile(ctx, medit.Path)
+	if err != nil {
+		return err
+	}
+	var metadata pb.Metadata
+	err = metadata.Unmarshal(mContent)
+	if err != nil {
+		return err
+	}
+	metadata.Files = slices.DeleteFunc(metadata.Files, func(dfi *pb.DataFileInfo) bool {
+		// Here, `DeletePhysicalFiles` is usually tiny.
+		// Use a hashmap to filter out if this gets slow in the future.
+		return slices.Contains(medit.DeletePhysicalFiles, dfi.Path)
+	})
+	metadata.FileGroups = slices.DeleteFunc(metadata.FileGroups, func(dfg *pb.DataFileGroup) bool {
+		return slices.Contains(medit.DeletePhysicalFiles, dfg.Path)
+	})
+	for _, group := range metadata.FileGroups {
+		idx := slices.IndexFunc(medit.DeleteLogicalFiles, func(dsof *pb.DeleteSpansOfFile) bool {
+			return dsof.Path == group.Path
+		})
+		if idx >= 0 {
+			sort.Slice(medit.DeleteLogicalFiles[idx].Spans, func(i, j int) bool {
+				return medit.DeleteLogicalFiles[idx].Spans[i].Offset < medit.DeleteLogicalFiles[idx].Spans[j].Offset
+			})
+			group.DataFilesInfo = slices.DeleteFunc(group.DataFilesInfo, func(dfi *pb.DataFileInfo) bool {
+				received, ok := slices.BinarySearchFunc(medit.DeleteLogicalFiles[idx].Spans, dfi.RangeOffset, func(s *pb.Span, u uint64) int {
+					return int(s.Offset - u)
+				})
+				if ok && medit.DeleteLogicalFiles[idx].Spans[received].Length != dfi.RangeLength {
+					err = errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "trying to delete a span that mismatches with metadata: to delete is %v, found %v",
+						medit.DeleteLogicalFiles[idx].Spans[received], dfi)
+				}
+				return ok
+			})
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	updateMetadataInternalStat(&metadata)
+	newContent, err := metadata.Marshal()
+	if err != nil {
+		return err
+	}
+	return truncateAndWrite(ctx, m.s, medit.Path, newContent)
+}
+
+func (m MigrationExt) tryRemovePrefix(ctx context.Context, pfx string, out *MigratedTo) {
+	enumerateAndDelete := func(prefix string) error {
+		if isInsane(prefix) {
+			return errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "trying to delete a prefix %q that is too wide, skipping deleting", prefix)
+		}
+		files, err := m.loadFilesOfPrefix(ctx, prefix)
+		if err != nil {
+			return err
+		}
+		return m.s.DeleteFiles(ctx, files)
+	}
+	if err := enumerateAndDelete(pfx); err != nil {
+		out.Warnings = append(out.Warnings, errors.Annotatef(err, "failed to delete prefix %s", pfx))
+		out.NewBase.DestructPrefix = append(out.NewBase.DestructPrefix, pfx)
+	}
+}
+
+func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	// NOTE: Execution of truncation wasn't implemented here.
+	// If we are going to truncate some files, for now we still need to use `br log truncate`.
+	for _, compaction := range mig.Compactions {
+		// Can we also remove the compaction when `until-ts` is equal to `truncated-to`...?
+		if compaction.CompactionUntilTs > mig.TruncatedTo {
+			result.NewBase.Compactions = append(result.NewBase.Compactions, compaction)
+		} else {
+			m.tryRemovePrefix(ctx, compaction.Artifactes, result)
+			m.tryRemovePrefix(ctx, compaction.GeneratedFiles, result)
+		}
+	}
+	for _, pfx := range mig.DestructPrefix {
+		m.tryRemovePrefix(ctx, pfx, result)
+	}
+	result.NewBase.TruncatedTo = mig.TruncatedTo
+}
+
+func (m MigrationExt) loadFilesOfPrefix(ctx context.Context, prefix string) (out []string, err error) {
+	err = m.s.WalkDir(ctx, &storage.WalkOption{SubDir: prefix}, func(path string, size int64) error {
+		out = append(out, path)
+		return nil
+	})
+	return
+}
+
+func physicalFileCanBeDeleted(fs *pb.DeleteSpansOfFile) bool {
+	sort.Slice(fs.Spans, func(i, j int) bool {
+		return fs.Spans[i].Offset < fs.Spans[j].Offset
+	})
+	lastOffset := uint64(0)
+	for _, s := range fs.Spans {
+		if s.Offset != lastOffset {
+			return false
+		}
+		lastOffset += s.Length
+	}
+	return lastOffset == fs.WholeFileLength
+}
+
+func mergeMetaEdits(s1, s2 []*pb.MetaEdit) []*pb.MetaEdit {
+	edits := map[string]*pb.MetaEdit{}
+	for _, edit := range s1 {
+		edits[edit.GetPath()] = &pb.MetaEdit{
+			Path:                edit.Path,
+			DeletePhysicalFiles: edit.DeletePhysicalFiles[:len(edit.DeletePhysicalFiles):len(edit.DeletePhysicalFiles)],
+			DeleteLogicalFiles:  edit.DeleteLogicalFiles[:len(edit.DeleteLogicalFiles):len(edit.DeleteLogicalFiles)],
+		}
+	}
+	for _, edit := range s2 {
+		target, ok := edits[edit.GetPath()]
+		if !ok {
+			edits[edit.GetPath()] = edit
+		} else {
+			target.DeletePhysicalFiles = append(target.DeletePhysicalFiles, edit.GetDeletePhysicalFiles()...)
+			target.DeleteLogicalFiles = mergeDeleteLogicalFiles(target.GetDeleteLogicalFiles(), edit.GetDeleteLogicalFiles())
+		}
+	}
+
+	val := make([]*pb.MetaEdit, 0, len(edits))
+	for _, v := range edits {
+		val = append(val, v)
+	}
+	return val
+}
+
+func mergeDeleteLogicalFiles(s1, s2 []*pb.DeleteSpansOfFile) []*pb.DeleteSpansOfFile {
+	files := map[string]*pb.DeleteSpansOfFile{}
+	for _, file := range s1 {
+		files[file.GetPath()] = &pb.DeleteSpansOfFile{
+			Path:            file.GetPath(),
+			Spans:           file.GetSpans()[:len(file.GetSpans()):len(file.GetSpans())],
+			WholeFileLength: file.GetWholeFileLength(),
+		}
+	}
+	for _, file := range s2 {
+		target, ok := files[file.GetPath()]
+		if !ok {
+			files[file.GetPath()] = file
+		} else {
+			target.Spans = append(target.Spans, file.GetSpans()...)
+		}
+	}
+
+	val := make([]*pb.DeleteSpansOfFile, 0, len(files))
+	for _, v := range files {
+		val = append(val, v)
+	}
+	return val
+}
+
+func isEmptyEdition(medit *pb.MetaEdit) bool {
+	return len(medit.DeletePhysicalFiles) == 0 && len(medit.DeleteLogicalFiles) == 0 && !medit.DestructSelf
+}
+
+func migIdOf(s string) (int, error) {
+	const (
+		migrationPrefixLen = 8
+	)
+	if s == baseMigrationName {
+		return baseMigrationID, nil
+	}
+	if len(s) < 8 {
+		return 0, errors.Annotatef(berrors.ErrUnknown,
+			"migration name %s is too short, perhaps `migrations` dir corrupted", s)
+	}
+	toParse := s[:migrationPrefixLen]
+	result, err := strconv.Atoi(toParse)
+	if err != nil {
+		return 0, errors.Annotatef(err,
+			"migration name %s is not a valid number, perhaps `migrations` dir corrupted", s)
+	}
+	return result, nil
+}
+
+func isInsane(pfx string) bool {
+	normalized := path.Clean(pfx)
+	switch normalized {
+	case "", ".", "/", "/v1", "v1":
+		return true
+	default:
+	}
+
+	return strings.HasPrefix(pfx, "..")
 }

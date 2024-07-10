@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
@@ -384,88 +383,10 @@ type WithMigrate struct {
 	deletedFiles map[string]*pb.SpansOfFile
 }
 
-func UnmarshalDir[T any](ctx context.Context, prefix string, s storage.ExternalStorage, unmarshal func(*T, []byte) error) iter.TryNextor[*T] {
-	ch := make(chan *T)
-	errCh := make(chan error, 1)
-	reader := func() {
-		defer close(ch)
-		err := s.WalkDir(ctx, &storage.WalkOption{SubDir: prefix}, func(path string, size int64) error {
-			metaBytes, err := s.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Annotatef(err, "failed during reading file %s", path)
-			}
-			var meta T
-			if err := unmarshal(&meta, metaBytes); err != nil {
-				return errors.Annotatef(err, "failed to parse subcompaction meta of file %s", path)
-			}
-			select {
-			case ch <- &meta:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			return nil
-		})
-		if err != nil {
-			select {
-			case errCh <- err:
-			case <-ctx.Done():
-			}
-		}
-	}
-	go reader()
-	return iter.Func(func(ctx context.Context) iter.IterResult[*T] {
-		select {
-		case <-ctx.Done():
-			return iter.Throw[*T](ctx.Err())
-		case err := <-errCh:
-			return iter.Throw[*T](err)
-		case meta, ok := <-ch:
-			if !ok {
-				return iter.Done[*T]()
-			}
-			return iter.Emit(meta)
-		}
-	})
-}
-
 func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubcompactionIter {
-	return UnmarshalDir(ctx, prefix, s, func(t *pb.LogFileSubcompactionMeta, b []byte) error { return t.Unmarshal(b) })
+	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: prefix}, s, func(t *pb.LogFileSubcompactionMeta, name string, b []byte) error { return t.Unmarshal(b) })
 }
 
 func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*pb.Migration] {
-	return UnmarshalDir(ctx, "v1/migrations/", s, func(t *pb.Migration, b []byte) error { return t.Unmarshal(b) })
-}
-
-type MigrationExt struct {
-	s      storage.ExternalStorage
-	prefix string
-}
-
-func (m MigrationExt) Merge(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
-	out := new(pb.Migration)
-	out.DeleteFiles = append(out.DeleteFiles, m1.DeleteFiles...)
-	out.DeleteFiles = append(out.DeleteFiles, m2.DeleteFiles...)
-	out.DeleteLogicalFiles = append(out.DeleteLogicalFiles, m1.DeleteLogicalFiles...)
-	out.DeleteLogicalFiles = append(out.DeleteLogicalFiles, m2.DeleteLogicalFiles...)
-	out.Compactions = append(out.Compactions, m1.Compactions...)
-	out.Compactions = append(out.Compactions, m2.Compactions...)
-	out.TruncatedTo = mathutil.Max(m1.TruncatedTo, m2.TruncatedTo)
-
-	return out
-}
-
-type MigratedTo struct {
-	Warnings []error
-	NewBase  *pb.Migration
-}
-
-func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration) MigratedTo {
-	out := MigratedTo{
-		Warnings: nil,
-		NewBase:  new(pb.Migration),
-	}
-	err := m.s.DeleteFiles(ctx, mig.DeleteFiles)
-	if err != nil {
-		out.Warnings = append(out.Warnings)
-	}
+	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: "v1/migrations/"}, s, func(t *pb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
 }

@@ -332,4 +332,4 @@ replace (
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/kvproto => github.com/yujuncen/kvproto v0.0.0-20240702110540-d9acef74207e
+replace github.com/pingcap/kvproto => github.com/yujuncen/kvproto v0.0.0-20240709031634-baefbf030e28
