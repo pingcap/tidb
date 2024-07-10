@@ -330,7 +330,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustQuery("select count(*) from t;").Check(testkit.Rows(fmt.Sprintf("%d", regionCnt)))
 
 	var err error
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("op"), model.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("op"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	start = tbl.RecordPrefix()
 	end = tbl.RecordPrefix().PrefixNext()

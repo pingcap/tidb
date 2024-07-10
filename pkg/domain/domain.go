@@ -203,6 +203,44 @@ type Domain struct {
 	stopAutoAnalyze atomicutil.Bool
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
+
+	// deferFn is used to release infoschema object lazily during v1 and v2 switch
+	deferFn
+}
+
+type deferFn struct {
+	sync.Mutex
+	data []deferFnRecord
+}
+
+type deferFnRecord struct {
+	fn   func()
+	fire time.Time
+}
+
+func (df *deferFn) add(fn func(), fire time.Time) {
+	df.Lock()
+	defer df.Unlock()
+	df.data = append(df.data, deferFnRecord{fn: fn, fire: fire})
+}
+
+func (df *deferFn) check() {
+	now := time.Now()
+	df.Lock()
+	defer df.Unlock()
+
+	// iterate the slice, call the defer function and remove it.
+	rm := 0
+	for i := 0; i < len(df.data); i++ {
+		record := &df.data[i]
+		if now.After(record.fire) {
+			record.fn()
+			rm++
+		} else {
+			df.data[i-rm] = df.data[i]
+		}
+	}
+	df.data = df.data[:len(df.data)-rm]
 }
 
 type mdlCheckTableInfo struct {
@@ -250,6 +288,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		schemaTs = 0
 	}
 
+	enableV2 := variable.SchemaCacheSize.Load() > 0
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -265,15 +304,17 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
-		enableV2 := variable.SchemaCacheSize.Load() > 0
 		if enableV2 == isV2 {
 			return is, true, 0, nil, nil
 		}
 	}
 
+	var isV1V2Switch bool
 	currentSchemaVersion := int64(0)
 	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
+		isV2, _ := infoschema.IsV2(oldInfoSchema)
+		isV1V2Switch = enableV2 != isV2
 	}
 
 	// TODO: tryLoadSchemaDiffs has potential risks of failure. And it becomes worse in history reading cases.
@@ -294,7 +335,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 				zap.Bool("isV2", isV2),
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
-				zap.Duration("start time", time.Since(startTime)),
+				zap.Duration("elapsed time", time.Since(startTime)),
 				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
@@ -319,18 +360,27 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
+
 	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
+	is := newISBuilder.Build(startTS)
+	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
+		zap.Bool("isV2", isV2),
 		zap.Int64("currentSchemaVersion", currentSchemaVersion),
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
-		zap.Duration("start time", time.Since(startTime)))
+		zap.Duration("elapsed time", time.Since(startTime)))
 
-	is := newISBuilder.Build(startTS)
-	do.infoCache.Insert(is, schemaTs)
+	if isV1V2Switch && schemaTs > 0 {
+		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
+		fn := do.infoCache.Upsert(is, schemaTs)
+		do.deferFn.add(fn, time.Now().Add(10*time.Minute))
+	} else {
+		do.infoCache.Insert(is, schemaTs)
+	}
 	return is, false, currentSchemaVersion, nil, nil
 }
 
@@ -937,6 +987,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
+			do.deferFn.check()
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {

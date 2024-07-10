@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -77,7 +78,7 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)

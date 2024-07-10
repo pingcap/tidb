@@ -15,6 +15,7 @@
 package infoschemav2test
 
 import (
+	"context"
 	"slices"
 	"strconv"
 	"strings"
@@ -84,7 +85,7 @@ func checkPIDNotExist(t *testing.T, dom *domain.Domain, pid int64) {
 
 func getPIDForP3(t *testing.T, dom *domain.Domain) (int64, table.Table) {
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("pt"))
 	require.NoError(t, err)
 	pi := tbl.Meta().GetPartitionInfo()
 	pid := pi.GetPartitionIDByName("p3")
@@ -142,12 +143,12 @@ PARTITION p5 VALUES LESS THAN (1980))`)
 	// Test FindTableByPartitionID after exchange partition.
 	tk.MustExec("create table nt (id int)")
 	is = dom.InfoSchema()
-	ntbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("nt"))
+	ntbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("nt"))
 	require.NoError(t, err)
 
 	tk.MustExec("alter table pt exchange partition p3 with table nt")
 	is = dom.InfoSchema()
-	ptbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
+	ptbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("pt"))
 	require.NoError(t, err)
 	pi := ptbl.Meta().GetPartitionInfo()
 	pid = pi.GetPartitionIDByName("p3")
@@ -262,4 +263,19 @@ func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
 	ok, raw = infoschema.IsV2(is)
 	require.True(t, ok)
 	require.Equal(t, raw.Data.CacheCapacity(), uint64(1073741824))
+}
+
+func TestTrace(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+	tk.MustExec("create table t_trace(id int key auto_increment)")
+	is := dom.InfoSchema()
+	ok, raw := infoschema.IsV2(is)
+	require.True(t, ok)
+
+	// Evict the table cache and check the trace information can catch this calling.
+	raw.EvictTable("test", "t_trace")
+	tk.MustQuery("trace select * from information_schema.tables").CheckContain("infoschema.loadTableInfo")
 }

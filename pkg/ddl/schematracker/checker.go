@@ -127,8 +127,8 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model
 		return
 	}
 
-	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
-	tableInfo2, _ := d.tracker.TableByName(dbName, tableName)
+	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(context.Background(), dbName, tableName)
+	tableInfo2, _ := d.tracker.TableByName(context.Background(), dbName, tableName)
 
 	if tableInfo == nil || tableInfo2 == nil {
 		if tableInfo == nil && tableInfo2 == nil {

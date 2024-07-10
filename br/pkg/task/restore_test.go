@@ -282,7 +282,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
 	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
-	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
+	tableInfo, err := infoSchema.TableByName(context.Background(), model.NewCIStr("test_db"), model.NewCIStr("test_table"))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,
@@ -347,7 +347,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
 	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
-	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
+	tableInfo, err := infoSchema.TableByName(context.Background(), model.NewCIStr("test_db"), model.NewCIStr("test_table"))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,

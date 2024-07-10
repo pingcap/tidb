@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -128,6 +129,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 // Optimize does optimization and creates a Plan.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
@@ -167,7 +169,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sessVars.StmtCtx)
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
-		setVarHintChecker, hypoIndexChecker(is),
+		setVarHintChecker, hypoIndexChecker(ctx, is),
 		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
@@ -301,7 +303,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(),
-				setVarHintChecker, hypoIndexChecker(is),
+				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
@@ -493,7 +495,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is info
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := core.VisitInfo4PrivCheck(is, node, builder.GetVisitInfo())
+		visitInfo := core.VisitInfo4PrivCheck(ctx, is, node, builder.GetVisitInfo())
 		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
 			return nil, nil, 0, err
 		}
@@ -605,9 +607,9 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	return true, warning
 }
 
-func hypoIndexChecker(is infoschema.InfoSchema) func(db, tbl model.CIStr, cols ...model.CIStr) error {
+func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl model.CIStr, cols ...model.CIStr) error {
 	return func(db, tbl model.CIStr, cols ...model.CIStr) error {
-		t, err := is.TableByName(db, tbl)
+		t, err := is.TableByName(ctx, db, tbl)
 		if err != nil {
 			return errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)
 		}

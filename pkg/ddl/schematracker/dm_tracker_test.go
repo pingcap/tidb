@@ -99,7 +99,7 @@ func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 }
 
 func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, table string) *model.TableInfo {
-	tblInfo, err := tracker.TableByName(model.NewCIStr(schema), model.NewCIStr(table))
+	tblInfo, err := tracker.TableByName(context.Background(), model.NewCIStr(schema), model.NewCIStr(table))
 	require.NoError(t, err)
 	return tblInfo
 }
