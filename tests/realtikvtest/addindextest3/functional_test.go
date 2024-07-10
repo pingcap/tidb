@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -42,7 +43,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "estimate_row_size")
 	tkSess := tk.Session()
 	exec := tkSess.GetRestrictedSQLExecutor()
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	size := ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
@@ -66,7 +67,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
 	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
 	tk.MustExec("analyze table t;")
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 19, size)
@@ -89,14 +90,15 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	for range idxIDs {
 		uniques = append(uniques, false)
 	}
-	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, &model.TableInfo{})
+	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, tables.MockTableFromMeta(&model.TableInfo{}))
 	require.NoError(t, err)
 
 	wg := sync.WaitGroup{}
 	wg.Add(3)
 	for i := 0; i < 3; i++ {
 		go func() {
-			bCtx.UnregisterEngines()
+			err := bCtx.FinishAndUnregisterEngines()
+			require.NoError(t, err)
 			wg.Done()
 		}()
 	}

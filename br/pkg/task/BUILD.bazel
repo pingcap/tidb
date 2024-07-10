@@ -62,6 +62,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/cdcutil",
         "//pkg/util/collate",
+        "//pkg/util/engine",
         "//pkg/util/mathutil",
         "//pkg/util/table-filter",
         "@com_github_docker_go_units//:go-units",
@@ -83,6 +84,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//http",
         "@com_google_cloud_go_storage//:storage",
         "@io_etcd_go_etcd_client_pkg_v3//transport",
         "@io_etcd_go_etcd_client_v3//:client",
@@ -108,7 +110,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 32,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",
@@ -144,6 +146,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//keepalive",
     ],
 )

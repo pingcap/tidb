@@ -123,7 +123,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableStatistics:
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
-			err = e.setDataFromTables(sctx, dbs)
+			err = e.setDataFromTables(ctx, sctx, dbs)
 		case infoschema.TableReferConst:
 			err = e.setDataFromReferConst(sctx, dbs)
 		case infoschema.TableSequences:
@@ -177,7 +177,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
-			err = e.setDataForAttributes(sctx, is)
+			err = e.setDataForAttributes(ctx, sctx, is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
 		case infoschema.TableTrxSummary:
@@ -235,13 +235,13 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getAutoIncrementID(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) (int64, error) {
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(schema, tblInfo.Name)
+func getAutoIncrementID(ctx context.Context, sctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) (int64, error) {
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(ctx, schema, tblInfo.Name)
 	if err != nil {
 		return 0, err
 	}
-	return tbl.Allocators(ctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1, nil
+	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1, nil
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
@@ -543,7 +543,7 @@ func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	return false
 }
 
-func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 
@@ -589,7 +589,7 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 				var autoIncID any
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
-					autoIncID, err = getAutoIncrementID(sctx, schema, table)
+					autoIncID, err = getAutoIncrementID(ctx, sctx, schema, table)
 					if err != nil {
 						return err
 					}
@@ -2153,7 +2153,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 		} else {
 			// The user specified the table, extract the specified tables of this db to initialTable.
 			for tb := range tables {
-				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
+				if tb, err := is.TableByName(context.Background(), model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
 					// For every db.table, check it's privileges.
 					if checker(DB, tb.Meta().Name.L) {
 						e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
@@ -2326,7 +2326,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 		}
 		var tid int64
 		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-		tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		tb, err := is.TableByName(ctx, model.NewCIStr(dbName), model.NewCIStr(tableName))
 		if err != nil {
 			return nil, percentage, totalCnt, err
 		}
@@ -3321,8 +3321,8 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	return outputRows, nil
 }
 
-func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is infoschema.InfoSchema) error {
-	checker := privilege.GetPrivilegeManager(ctx)
+func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
+	checker := privilege.GetPrivilegeManager(sctx)
 	rules, err := infosync.GetAllLabelRules(context.TODO())
 	skipValidateTable := false
 	failpoint.Inject("mockOutputOfAttributes", func() {
@@ -3380,11 +3380,11 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 			continue
 		}
 
-		if !skipValidateTable && tableOrPartitionNotExist(dbName, tableName, partitionName, is, tableID) {
+		if !skipValidateTable && tableOrPartitionNotExist(ctx, dbName, tableName, partitionName, is, tableID) {
 			continue
 		}
 
-		if tableName != "" && dbName != "" && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.SelectPriv)) {
+		if tableName != "" && dbName != "" && (checker == nil || checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.SelectPriv)) {
 			skip = false
 		}
 		if skip {
@@ -3686,9 +3686,9 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 	return
 }
 
-func tableOrPartitionNotExist(dbName string, tableName string, partitionName string, is infoschema.InfoSchema, tableID int64) (tableNotExist bool) {
+func tableOrPartitionNotExist(ctx context.Context, dbName string, tableName string, partitionName string, is infoschema.InfoSchema, tableID int64) (tableNotExist bool) {
 	if len(partitionName) == 0 {
-		curTable, _ := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		curTable, _ := is.TableByName(ctx, model.NewCIStr(dbName), model.NewCIStr(tableName))
 		if curTable == nil {
 			return true
 		}

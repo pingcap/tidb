@@ -20,12 +20,20 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
 var _ AllocatorContext = MutateContext(nil)
+
+// RowEncodingConfig is used to provide config for row encoding.
+type RowEncodingConfig struct {
+	// IsRowLevelChecksumEnabled indicates whether the row level checksum is enabled.
+	IsRowLevelChecksumEnabled bool
+	// RowEncoder is used to encode a row
+	RowEncoder *rowcodec.Encoder
+}
 
 // MutateContext is used to when mutating a table.
 type MutateContext interface {
@@ -39,45 +47,23 @@ type MutateContext interface {
 	// If the active parameter is true, call this function will wait for the pending txn
 	// to become valid.
 	Txn(active bool) (kv.Transaction, error)
-	// StmtGetMutation gets the binlog mutation for current statement.
-	StmtGetMutation(int64) *binlog.TableMutation
+	// BinlogEnabled returns whether the binlog is enabled.
+	BinlogEnabled() bool
+	// GetBinlogMutation returns a `binlog.TableMutation` object for a table.
+	GetBinlogMutation(tblID int64) *binlog.TableMutation
 	// GetDomainInfoSchema returns the latest information schema in domain
 	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// TxnRecordTempTable record the temporary table to the current transaction.
 	// This method will be called when the temporary table is modified or should allocate id in the transaction.
 	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
-	// GetTablesBuffer returns the TablesBuffer,
+	// InRestrictedSQL returns whether the current context is used in restricted SQL.
+	InRestrictedSQL() bool
+	// GetRowEncodingConfig returns the RowEncodingConfig.
+	GetRowEncodingConfig() RowEncodingConfig
+	// GetMutateBuffers returns the MutateBuffers,
 	// which is a buffer for table related structures that aims to reuse memory and
 	// saves allocation.
-	GetTablesBuffer() *TablesBuffer
-}
-
-// TablesBuffer is a memory pool for table related memory allocation that aims to reuse memory
-// and saves allocation
-type TablesBuffer struct {
-	Update *UpdateRecordBuffer
-	Add    *AddRecordBuffer
-	Remove *RemoveRecordBuffer
-}
-
-// RemoveRecordBuffer is for RemoveRecord
-type RemoveRecordBuffer struct {
-	ColSize []variable.ColSize
-}
-
-// AddRecordBuffer is for AddRecord
-type AddRecordBuffer struct {
-	ColIDs  []int64
-	Row     []types.Datum
-	ColSize []variable.ColSize
-}
-
-// UpdateRecordBuffer is for UpdateRecord
-type UpdateRecordBuffer struct {
-	ColIDs     []int64
-	Row        []types.Datum
-	RowToCheck []types.Datum
-	ColSize    []variable.ColSize
+	GetMutateBuffers() *MutateBuffers
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.

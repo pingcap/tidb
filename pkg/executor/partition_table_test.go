@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -147,7 +148,7 @@ func TestPartitionInfoDisable(t *testing.T) {
   PARTITION p202011 VALUES LESS THAN ("2020-12-01")
 )`)
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_info_null"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_info_null"))
 	require.NoError(t, err)
 
 	tbInfo := tbl.Meta()

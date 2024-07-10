@@ -15,6 +15,7 @@
 package handletest
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -47,7 +48,7 @@ func TestEmptyTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -64,7 +65,7 @@ func TestColumnIDs(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -86,7 +87,7 @@ func TestColumnIDs(t *testing.T) {
 	do.StatsHandle().Clear()
 	err = do.StatsHandle().Update(is)
 	require.NoError(t, err)
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -113,7 +114,7 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("analyze table t1")
 	do := dom
 	is := do.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.GetAutoAnalyzeProcID)
@@ -132,7 +133,7 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("analyze table t2")
 	is = do.InfoSchema()
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
 	// A smaller version write, and we can still read it.
@@ -183,7 +184,7 @@ func TestVersion(t *testing.T) {
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Nil(t, statsTbl2.GetCol(int64(3)))
-	tbl2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 = tbl2.Meta()
 	statsTbl2, err = h.TableStatsFromStorage(tableInfo2, tableInfo2.ID, true, 0)
@@ -206,7 +207,7 @@ func TestLoadHist(t *testing.T) {
 	}
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	oldStatsTbl := h.GetTableStats(tableInfo)
@@ -237,7 +238,7 @@ func TestLoadHist(t *testing.T) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	require.NoError(t, h.Update(is))
@@ -450,7 +451,7 @@ func TestExtendedStatsOps(t *testing.T) {
 	))
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	err = do.StatsHandle().Update(is)
@@ -494,7 +495,7 @@ func TestAdminReloadStatistics1(t *testing.T) {
 	))
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	err = do.StatsHandle().Update(is)
@@ -571,7 +572,7 @@ func TestCorrelationStatsCompute(t *testing.T) {
 	))
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	err = do.StatsHandle().Update(is)
@@ -654,7 +655,7 @@ func TestSyncStatsExtendedRemoval(t *testing.T) {
 	tk.MustExec("analyze table t")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -1120,7 +1121,7 @@ func TestLoadHistogramWithCollate(t *testing.T) {
 	do := dom
 	h := do.StatsHandle()
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
@@ -1138,7 +1139,7 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl1 := h.GetTableStats(tableInfo)
@@ -1163,7 +1164,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 		h := dom.StatsHandle()
 		err := h.HandleDDLEvent(<-h.DDLEventCh())
 		require.NoError(t, err)
-		tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		tid := tblInfo.ID
@@ -1240,7 +1241,7 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 	tk.MustExec("alter table t add index multi(a, b)")
 	tk.MustExec("analyze table t with 2 topn")
 
-	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta(), tableInfo.Meta().ID, false)
 	require.NoError(t, err)
@@ -1265,7 +1266,7 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
 	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -1294,7 +1295,7 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tblStats := h.GetTableStats(tblInfo)
@@ -1382,7 +1383,7 @@ func TestInitStatsLite(t *testing.T) {
 	}()
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colBID := tblInfo.Columns[1].ID
@@ -1457,7 +1458,7 @@ func TestSkipMissingPartitionStats(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t partition p0, p1")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	globalStats := h.GetTableStats(tblInfo)

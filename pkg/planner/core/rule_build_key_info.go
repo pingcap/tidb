@@ -72,68 +72,6 @@ func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Sch
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	if p.MaxOneRow() {
-		return
-	}
-	eqCols := make(map[int64]struct{}, len(childSchema[0].Columns))
-	for _, cond := range p.Conditions {
-		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-			for i, arg := range sf.GetArgs() {
-				if col, isCol := arg.(*expression.Column); isCol {
-					_, isCon := sf.GetArgs()[1-i].(*expression.Constant)
-					_, isCorCol := sf.GetArgs()[1-i].(*expression.CorrelatedColumn)
-					if isCon || isCorCol {
-						eqCols[col.UniqueID] = struct{}{}
-					}
-					break
-				}
-			}
-		}
-	}
-	p.SetMaxOneRow(checkMaxOneRowCond(eqCols, childSchema[0]))
-}
-
-// A bijection exists between columns of a projection's schema and this projection's Exprs.
-// Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
-func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, selfSchema.Len())...)
-	for _, expr := range p.Exprs {
-		if col, isCol := expr.(*expression.Column); isCol {
-			schema.Append(col)
-		} else {
-			// If the expression is not a column, we add a column to occupy the position.
-			schema.Append(&expression.Column{
-				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-			})
-		}
-	}
-	return schema
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
-	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	selfSchema.Keys = nil
-	schema := p.buildSchemaByExprs(selfSchema)
-	for _, key := range childSchema[0].Keys {
-		indices := schema.ColumnsIndices(key)
-		if indices == nil {
-			continue
-		}
-		newKey := make([]*expression.Column, 0, len(key))
-		for _, i := range indices {
-			newKey = append(newKey, selfSchema.Columns[i])
-		}
-		selfSchema.Keys = append(selfSchema.Keys, newKey)
-	}
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	switch p.JoinType {
@@ -257,35 +195,6 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 			}
 		}
 	}
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	ts.Source.BuildKeyInfo(selfSchema, childSchema)
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
-	selfSchema.Keys = nil
-	for _, path := range is.Source.PossibleAccessPaths {
-		if path.IsTablePath() {
-			continue
-		}
-		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		} else if uniqueKey != nil {
-			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
-		}
-	}
-	handle := is.getPKIsHandleCol(selfSchema)
-	if handle != nil {
-		selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{handle})
-	}
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	selfSchema.Keys = childSchema[0].Keys
 }
 
 func (*buildKeySolver) name() string {

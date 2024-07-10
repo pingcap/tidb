@@ -257,7 +257,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
 	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
-		p, err := stack[0].Clone()
+		p, err := stack[0].Clone(e.ctx.GetPlanCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -269,7 +269,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			if _, ok := stack[i].(*PhysicalSequence); ok {
 				continue
 			}
-			ch, err := stack[i].Clone()
+			ch, err := stack[i].Clone(e.ctx.GetPlanCtx())
 			if err != nil {
 				return errors.Trace(err)
 			}

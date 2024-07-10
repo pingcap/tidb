@@ -15,6 +15,7 @@
 package usage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -46,7 +47,7 @@ func TestCleanupPredicateColumns(t *testing.T) {
 	tk.MustExec("alter table t drop column b")
 	// Get table ID.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	columns, err := h.GetPredicateColumns(tbl.Meta().ID)
 	require.NoError(t, err)
@@ -74,7 +75,7 @@ func TestAnalyzeTableWithPredicateColumns(t *testing.T) {
 	// Analyze table and check analyze jobs.
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table column a with 256 buckets, 100 topn, 1 samplerate"),
 	)
 
 	// More columns.
@@ -175,7 +176,7 @@ func TestAnalyzeTableWithTiDBPersistAnalyzeOptionsDisabled(t *testing.T) {
 	// Analyze again, it should use the predicate columns.
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table column a with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
@@ -242,9 +243,8 @@ func TestAnalyzeNoPredicateColumnsWithIndexes(t *testing.T) {
 			"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		),
 	)
-	// TODO: we should also include indexes in the job info.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table all indexes, columns a, b with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
@@ -263,12 +263,18 @@ func TestAnalyzeWithNoPredicateColumnsAndNoIndexes(t *testing.T) {
 	err := h.DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
+	// Check stats_meta first.
+	rows := tk.MustQuery("select * from mysql.stats_meta where version != 0").Rows()
+	require.Len(t, rows, 0, "haven't been analyzed yet")
 	// Analyze table.
 	tk.MustExec("analyze table t")
-	// FIXME: We should correct the job info or skip this kind of job.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns  with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table with 256 buckets, 100 topn, 1 samplerate"),
 	)
+
+	// Check stats_meta again.
+	rows = tk.MustQuery("select * from mysql.stats_meta where version != 0 and modify_count = 0").Rows()
+	require.Len(t, rows, 1, "modify_count should be flushed")
 }
 
 func TestAnalyzeNoPredicateColumnsWithPrimaryKey(t *testing.T) {
@@ -290,6 +296,6 @@ func TestAnalyzeNoPredicateColumnsWithPrimaryKey(t *testing.T) {
 	// Analyze table.
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table all indexes, columns a, b with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }

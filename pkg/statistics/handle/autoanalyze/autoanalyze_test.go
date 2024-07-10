@@ -15,6 +15,7 @@
 package autoanalyze_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -125,7 +126,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 
 	// Check analyze jobs.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t auto analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t auto analyze table column a with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
@@ -181,7 +182,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	// Auto analyze when global ver is 1.
 	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
@@ -220,7 +221,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tt"))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(is))
 	h.HandleAutoAnalyze()
@@ -247,7 +248,7 @@ func TestTableAnalyzed(t *testing.T) {
 	testKit.MustExec("insert into t values (1)")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -342,7 +343,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 		exec.AutoAnalyzeMinCnt = originalVal
 	}()
 	require.True(t, h.HandleAutoAnalyze())
-	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 100 topn, 1 samplerate"))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table all indexes, columns a, b, d with 256 buckets, 100 topn, 1 samplerate"))
 }
 
 func TestAutoAnalyzeOnEmptyTable(t *testing.T) {

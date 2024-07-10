@@ -752,6 +752,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
+		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		updateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)

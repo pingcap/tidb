@@ -589,7 +589,7 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 
 func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Executor {
 	tblInfo := v.Table.TableInfo
-	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	t, err := b.is.TableByName(context.Background(), v.Table.Schema, tblInfo.Name)
 	if err != nil {
 		b.err = err
 		return nil
@@ -651,7 +651,7 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 
 func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Executor {
 	tblInfo := v.Table.TableInfo
-	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	t, err := b.is.TableByName(context.Background(), v.Table.Schema, tblInfo.Name)
 	if err != nil {
 		b.err = err
 		return nil
@@ -689,7 +689,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 }
 
 func (b *executorBuilder) buildCheckIndexRange(v *plannercore.CheckIndexRange) exec.Executor {
-	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name)
+	tb, err := b.is.TableByName(context.Background(), v.Table.Schema, v.Table.Name)
 	if err != nil {
 		b.err = err
 		return nil
@@ -1672,7 +1672,7 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 }
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
-	if join.EnableHashJoinV2.Load() && v.CanUseHashJoinV2() {
+	if join.IsHashJoinV2Enabled() && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}
 	leftExec := b.build(v.Children()[0])
@@ -2436,7 +2436,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
 		joiners := make([]join.Joiner, 0, v.Concurrency)
 		for i := 0; i < v.Concurrency; i++ {
-			clonedInnerPlan, err := plannercore.SafeClone(innerPlan)
+			clonedInnerPlan, err := plannercore.SafeClone(v.SCtx(), innerPlan)
 			if err != nil {
 				b.err = nil
 				return serialExec
@@ -3627,7 +3627,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
-		sctx:       b.ctx,
 		partitions: partitions,
 	}
 
@@ -4464,11 +4463,10 @@ func dedupHandles(lookUpContents []*join.IndexJoinLookUpContent) ([]kv.Handle, [
 }
 
 type kvRangeBuilderFromRangeAndPartition struct {
-	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
 	ret := make([][]kv.KeyRange, len(h.partitions))
 	pids := make([]int64, 0, len(h.partitions))
 	for i, p := range h.partitions {
@@ -4478,7 +4476,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 		if len(ranges) == 0 {
 			continue
 		}
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetDistSQLCtx(), []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -4487,7 +4485,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 	return pids, ret, nil
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range) ([][]kv.KeyRange, error) {
 	ret := make([][]kv.KeyRange, len(h.partitions))
 	if len(ranges) == 0 {
 		return ret, nil
@@ -4495,7 +4493,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Rang
 	for i, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetDistSQLCtx(), []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
 		if err != nil {
 			return nil, err
 		}

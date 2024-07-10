@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -246,6 +247,10 @@ func WithRetryV2[T any](
 	return *new(T), allErrors // nolint:wrapcheck
 }
 
+var sampleLoggerFactory = logutil.SampleLoggerFactory(
+	time.Minute, 3, zap.String(logutil.LogFieldCategory, "utils"),
+)
+
 // WithRetryReturnLastErr is like WithRetry but the returned error is the last
 // error during retry rather than a multierr.
 func WithRetryReturnLastErr(
@@ -262,10 +267,14 @@ func WithRetryReturnLastErr(
 		if lastErr == nil {
 			return nil
 		}
+		backoff := backoffer.NextBackoff(lastErr)
+		sampleLoggerFactory().Info(
+			"retryable operation failed",
+			zap.Error(lastErr), zap.Duration("backoff", backoff))
 		select {
 		case <-ctx.Done():
 			return lastErr
-		case <-time.After(backoffer.NextBackoff(lastErr)):
+		case <-time.After(backoff):
 		}
 	}
 

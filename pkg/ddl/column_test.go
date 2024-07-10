@@ -107,7 +107,7 @@ func testDropTable(tk *testkit.TestKit, t *testing.T, dbName, tblName string, do
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
 	require.NoError(t, dom.Reload())
-	_, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	_, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tblName))
 	require.Error(t, err)
 	return id
 }
