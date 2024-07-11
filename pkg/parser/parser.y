@@ -4115,6 +4115,7 @@ DropStatisticsStmt:
  *   | WITH PARSER parser_name
  *   | COMMENT 'string'
  *   | {VISIBLE | INVISIBLE}
+ *   | GLOBAL
  *
  * index_type:
  *     USING {BTREE | HASH}
@@ -6445,6 +6446,8 @@ IndexOptionList:
 				opt1.Visibility = opt2.Visibility
 			} else if opt2.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
+			} else if opt2.Global {
+				opt1.Global = true
 			}
 			$$ = opt1
 		}
@@ -6487,6 +6490,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			PrimaryKeyTp: $1.(model.PrimaryKeyType),
+		}
+	}
+|	"GLOBAL"
+	{
+		$$ = &ast.IndexOption{
+			Global: true,
 		}
 	}
 
