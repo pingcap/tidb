@@ -185,12 +185,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			return err
 		}
 	}
-<<<<<<< HEAD
-	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
-=======
-	return txn.MayFlush()
->>>>>>> 9960ae746a3 (executor: do not track membuffer's memory in executor (#53985))
 }
 
 // Next implements the Executor Next interface.
