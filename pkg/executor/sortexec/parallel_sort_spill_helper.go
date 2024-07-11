@@ -59,7 +59,6 @@ func (p *parallelSortSpillHelper) close() {
 	for _, inDisk := range p.sortedRowsInDisk {
 		inDisk.Close()
 	}
-	p.tmpSpillChunk.Destroy(spillChunkSize, p.fieldTypes)
 }
 
 func (p *parallelSortSpillHelper) isNotSpilledNoLock() bool {
