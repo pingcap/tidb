@@ -59,6 +59,10 @@ func (p *parallelSortSpillHelper) close() {
 	for _, inDisk := range p.sortedRowsInDisk {
 		inDisk.Close()
 	}
+
+	if p.tmpSpillChunk != nil {
+		p.tmpSpillChunk.Destroy(spillChunkSize, p.fieldTypes)
+	}
 }
 
 func (p *parallelSortSpillHelper) isNotSpilledNoLock() bool {
@@ -171,7 +175,7 @@ func (p *parallelSortSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByC
 
 func (p *parallelSortSpillHelper) initForSpill() {
 	if p.tmpSpillChunk == nil {
-		p.tmpSpillChunk = chunk.NewChunkWithCapacity(p.fieldTypes, spillChunkSize)
+		p.tmpSpillChunk = chunk.NewChunkFromPoolWithCapacity(p.fieldTypes, spillChunkSize)
 	}
 }
 
