@@ -4835,7 +4835,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 			var viewHintSelectOffset int
 			if viewQBNameHintTable[0].QBName.L == "" {
-				// If we do not explicit set the qbName, we will set the empty qb Name to @sel_1.
+				// If we do not explicit set the qbName, we will set the empty qb name to @sel_1.
 				viewHintSelectOffset = 1
 			} else {
 				viewHintSelectOffset = b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
