@@ -127,7 +127,12 @@ func hasRecordPrefixSep(key kv.Key) bool {
 
 // DecodeRecordKey decodes the key and gets the tableID, handle.
 func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
-	if len(key) < prefixLen {
+	return DecodeRecordKeyAllowEmptyRecord(key, false)
+}
+
+// DecodeRecordKeyAllowEmptyRecord decodes the key and gets the tableID, handle, and optionally allows empty record.
+func DecodeRecordKeyAllowEmptyRecord(key kv.Key, allowEmpty bool) (tableID int64, handle kv.Handle, err error) {
+	if len(key) < prefixLen || (!allowEmpty && len(key) == prefixLen) {
 		return 0, nil, errInvalidRecordKey.GenWithStack("invalid record key - %q", key)
 	}
 

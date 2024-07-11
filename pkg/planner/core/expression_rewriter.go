@@ -2647,7 +2647,7 @@ func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchem
 			return s
 		}
 		return ret
-	} else if _, _, err := tablecodec.DecodeRecordKey(key); err == nil {
+	} else if _, _, err := tablecodec.DecodeRecordKeyAllowEmptyRecord(key, true); err == nil {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {
 			tc.AppendWarning(err)
@@ -2660,12 +2660,9 @@ func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchem
 }
 
 func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
-	keyTableID, handle, err := tablecodec.DecodeRecordKey(key)
+	_, handle, err := tablecodec.DecodeRecordKeyAllowEmptyRecord(key, true)
 	if err != nil {
 		return "", errors.Trace(err)
-	}
-	if tableID > 0 && keyTableID > 0 && tableID != keyTableID {
-		return "", errors.Trace(errors.Errorf("tableID %X not matching the key: %X", tableID, key))
 	}
 	ret := make(map[string]any)
 	if tbl != nil && tbl.Meta().Partition != nil {
