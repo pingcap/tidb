@@ -15,12 +15,22 @@
 package join
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"math/big"
+	"sort"
+	"strconv"
+	"testing"
+
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/stretchr/testify/require"
 )
 
 type hashJoinInfo struct {
@@ -49,7 +59,7 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 		BuildWorkers:          make([]*BuildWorkerV2, concurrency),
 		HashJoinCtxV2: &HashJoinCtxV2{
 			OtherCondition:  info.otherCondition,
-			PartitionNumber: 2,
+			PartitionNumber: 4,
 		},
 	}
 	e.HashJoinCtxV2.SessCtx = info.ctx
@@ -141,4 +151,137 @@ func buildDataSource(sortCase *testutil.SortCase, schema *expression.Schema) *te
 		Ndvs:       sortCase.Ndvs,
 	}
 	return testutil.BuildMockDataSource(opt)
+}
+
+func generateCMPFunc(fieldTypes []*types.FieldType) func(chunk.Row, chunk.Row) int {
+	cmpFuncs := make([]chunk.CompareFunc, 0, len(fieldTypes))
+	for _, colType := range fieldTypes {
+		cmpFuncs = append(cmpFuncs, chunk.GetCompareFunc(colType))
+	}
+
+	cmp := func(rowI, rowJ chunk.Row) int {
+		for i, cmpFunc := range cmpFuncs {
+			cmp := cmpFunc(rowI, i, rowJ, i)
+			if cmp != 0 {
+				return cmp
+			}
+		}
+		return 0
+	}
+
+	return cmp
+}
+
+func sortRows(chunks []*chunk.Chunk, fieldTypes []*types.FieldType) []chunk.Row {
+	cmp := generateCMPFunc(fieldTypes)
+
+	rowNum := 0
+	for _, chk := range chunks {
+		rowNum += chk.NumRows()
+	}
+
+	rows := make([]chunk.Row, 0, rowNum)
+	for _, chk := range chunks {
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			rows = append(rows, row)
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		return cmp(rows[i], rows[j]) < 0
+	})
+
+	return rows
+}
+
+func buildJoinKeyIntDatums(num int) []any {
+	datumSet := make(map[int64]bool, num)
+	datums := make([]any, 0, num)
+	for len(datums) < num {
+		randVal, _ := rand.Int(rand.Reader, big.NewInt(100000))
+		val := randVal.Int64()
+		if datumSet[val] {
+			continue
+		}
+		datumSet[val] = true
+		datums = append(datums, val)
+	}
+	return datums
+}
+
+func buildJoinKeyStringDatums(num int) []any {
+	datumSet := make(map[string]bool, num)
+	datums := make([]any, 0, num)
+	for len(datums) < num {
+		buff := make([]byte, 10)
+		_, err := rand.Read(buff)
+		if err != nil {
+			panic("rand.Read returns error")
+		}
+
+		val := base64.RawURLEncoding.EncodeToString(buff)
+		if datumSet[val] {
+			continue
+		}
+		datumSet[val] = true
+		datums = append(datums, val)
+	}
+	return datums
+}
+
+func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column) (*testutil.MockDataSource, *testutil.MockDataSource) {
+	leftSchema := expression.NewSchema(leftCols...)
+	rightSchema := expression.NewSchema(rightCols...)
+
+	joinKeyIntDatums := buildJoinKeyIntDatums(5000)
+	joinKeyStringDatums := buildJoinKeyStringDatums(2)
+	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{0, -1, 0, -1, 0}, Datums: [][]any{nil, joinKeyIntDatums, nil, joinKeyStringDatums, nil}}
+	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, 0, -1, 0, 0}, Datums: [][]any{joinKeyIntDatums, nil, joinKeyStringDatums, nil, nil}}
+	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm)
+}
+
+func buildSchema(schemaTypes []*types.FieldType) *expression.Schema {
+	schema := &expression.Schema{}
+	for _, tp := range schemaTypes {
+		schema.Append(&expression.Column{
+			RetType: tp,
+		})
+	}
+	return schema
+}
+
+func executeHashJoinExec(t *testing.T, hashJoinExec *HashJoinV2Exec) []*chunk.Chunk {
+	tmpCtx := context.Background()
+	err := hashJoinExec.Open(tmpCtx)
+	require.NoError(t, err)
+	results := make([]*chunk.Chunk, 0)
+	chk := exec.NewFirstChunk(hashJoinExec)
+	for {
+		err = hashJoinExec.Next(tmpCtx, chk)
+		require.NoError(t, err)
+		if chk.NumRows() == 0 {
+			break
+		}
+		results = append(results, chk)
+		chk = exec.NewFirstChunk(hashJoinExec)
+	}
+	err = hashJoinExec.Close()
+	require.NoError(t, err)
+	return results
+}
+
+func getSortedResults(t *testing.T, hashJoinExec *HashJoinV2Exec, resultTypes []*types.FieldType) []chunk.Row {
+	results := executeHashJoinExec(t, hashJoinExec)
+	return sortRows(results, resultTypes)
+}
+
+func checkResults(t *testing.T, fieldTypes []*types.FieldType, actualResult []chunk.Row, expectedResult []chunk.Row) {
+	require.Equal(t, len(expectedResult), len(actualResult))
+	cmp := generateCMPFunc(fieldTypes)
+
+	for i := 0; i < len(actualResult); i++ {
+		x := cmp(actualResult[i], expectedResult[i])
+		require.Equal(t, 0, x, "result index = "+strconv.Itoa(i))
+	}
 }

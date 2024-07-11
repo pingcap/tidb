@@ -60,6 +60,10 @@ type hashJoinSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	triggeredInBuildStageForTest bool
+	triggeredInProbeStageForTest bool
+	spillRoundForTest            int
 }
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
@@ -144,12 +148,6 @@ func (h *hashJoinSpillHelper) isSpillNeeded() bool {
 	h.cond.L.Lock()
 	defer h.cond.L.Unlock()
 	return h.spillStatus == needSpill
-}
-
-func (h *hashJoinSpillHelper) isInSpilling() bool {
-	h.cond.L.Lock()
-	defer h.cond.L.Unlock()
-	return h.spillStatus == inSpilling
 }
 
 func (h *hashJoinSpillHelper) isSpillTriggered() bool {
@@ -302,7 +300,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDisk(disk *chunk.DataInDiskByChunks
 	// Get row bytes from segment and spill them
 	for _, seg := range segments {
 		validJoinKeys = h.generateSpilledValidJoinKey(seg, validJoinKeys)
-		rows := seg.getRowsBytes() // TODO do not spill `next_row_ptr`
+		rows := seg.getRowsBytesForSpill()
 
 		for i, row := range rows {
 			if h.tmpSpillBuildSideChunks[0].IsFull() {
@@ -339,7 +337,7 @@ func (h *hashJoinSpillHelper) spillProbeChk(partID int, chk *chunk.Chunk) error 
 func (h *hashJoinSpillHelper) init() {
 	if h.buildRowsInDisk == nil {
 		// It's the first time that spill is triggered
-		h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
+		h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 
 		partitionNum := h.hashJoinExec.PartitionNumber
 		h.buildRowsInDisk = make([]*chunk.DataInDiskByChunks, partitionNum)
@@ -355,6 +353,12 @@ func (h *hashJoinSpillHelper) spillBuildRows(isInBuildStage bool) error {
 	err := checkSQLKiller(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuildSpill")
 	if err != nil {
 		return err
+	}
+
+	if isInBuildStage {
+		h.triggeredInBuildStageForTest = true
+	} else {
+		h.triggeredInProbeStageForTest = true
 	}
 
 	h.init()
@@ -494,7 +498,7 @@ func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, b
 	// Spill data in segments
 	for _, seg := range segments {
 		validJoinKeys = h.generateSpilledValidJoinKey(seg, validJoinKeys)
-		rows := seg.getRowsBytes()
+		rows := seg.getRowsBytesForSpill()
 
 		for i, row := range rows {
 			newHashValue := h.rehash(seg.hashValues[i])
@@ -626,7 +630,7 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 	// Existing chunks in `h.tmpSpillBuildSideChunks` can be reused
 	if len(h.tmpSpillBuildSideChunks) < h.hashJoinExec.PartitionNumber {
 		for i := len(h.tmpSpillBuildSideChunks); i < h.hashJoinExec.PartitionNumber; i++ {
-			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
+			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}
 }
@@ -634,7 +638,7 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 func (h *hashJoinSpillHelper) initTmpSpillProbeSideChunks() {
 	if len(h.tmpSpillProbeSideChunks) == 0 {
 		for i := 0; i < h.hashJoinExec.PartitionNumber; i++ {
-			h.tmpSpillProbeSideChunks = append(h.tmpSpillProbeSideChunks, chunk.NewChunkFromPoolWithCapacity(h.probeFieldTypes, spillChunkSize))
+			h.tmpSpillProbeSideChunks = append(h.tmpSpillProbeSideChunks, chunk.NewChunkWithCapacity(h.probeFieldTypes, spillChunkSize))
 		}
 	}
 }
@@ -698,6 +702,7 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 				round:           newRound,
 			})
 		}
+		h.spillRoundForTest = max(h.spillRoundForTest, newRound)
 
 		return nil, spillTriggered, nil
 	} else {
@@ -709,6 +714,22 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 	hashTable.partitionNumber = 1
 
 	return hashTable, spillTriggered, nil
+}
+
+func (h *hashJoinSpillHelper) isSpillTriggeredInBuildStageForTest() bool {
+	return h.triggeredInBuildStageForTest
+}
+
+func (h *hashJoinSpillHelper) isSpillTriggeredInProbeStageForTest() bool {
+	return h.triggeredInProbeStageForTest
+}
+
+func (h *hashJoinSpillHelper) isSpillTriggeredBothInBuildAndProbeStageForTest() bool {
+	return h.triggeredInBuildStageForTest && h.triggeredInProbeStageForTest
+}
+
+func (h *hashJoinSpillHelper) isRespillTriggeredForTest() bool {
+	return h.spillRoundForTest > 1
 }
 
 // Data in this structure are in same partition

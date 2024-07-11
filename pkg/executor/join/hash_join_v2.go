@@ -17,6 +17,7 @@ package join
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -65,15 +67,6 @@ type hashTableContext struct {
 	hashTable         *hashTableV2
 	memoryTracker     *memory.Tracker
 	spilledPartitions []bool
-}
-
-func (ht *hashTableContext) releaseAllMemoryUsage() {
-	// Segments in rowTables and hashTable are the same,
-	// so it's needless to get memory usage in rowTables.
-	totalMemoryUsage := ht.hashTable.getAllMemoryUsage()
-	ht.rowTables = nil
-	ht.hashTable = nil
-	ht.memoryTracker.Consume(-totalMemoryUsage)
 }
 
 func (htc *hashTableContext) reset() {
@@ -296,6 +289,7 @@ type HashJoinV2Exec struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
+	log.Info(fmt.Sprintf("xzxdebug total used memory %d", e.memTracker.BytesConsumed()))
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -331,6 +325,7 @@ func (e *HashJoinV2Exec) Close() error {
 	}
 	e.spillHelper.close()
 	err := e.BaseExecutor.Close()
+
 	return err
 }
 

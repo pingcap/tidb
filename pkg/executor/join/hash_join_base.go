@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -201,6 +202,12 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 				// there is no need to probe, so just return
 				return
 			}
+
+			failpoint.Inject("ConsumeMemAfterBuildFinished", func() {
+				log.Info(fmt.Sprintf("xzxdebug memory consumed %d", hashJoinCtx.memTracker.BytesConsumed()))
+				// hashJoinCtx.memTracker.Consume()
+			})
+
 			hasWaitedForBuild = true
 		}
 

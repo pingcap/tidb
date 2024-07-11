@@ -228,7 +228,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
 	if j.ctx.spillHelper.isSpillTriggered() && len(j.spillTmpChk) != j.ctx.PartitionNumber {
 		for i := 0; i < j.ctx.PartitionNumber; i++ {
-			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkFromPoolWithCapacity(j.probeChkFieldTypes, spillChunkSize))
+			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.probeChkFieldTypes, spillChunkSize))
 		}
 	}
 
