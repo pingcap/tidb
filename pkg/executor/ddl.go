@@ -74,7 +74,7 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
-	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(schema, table)
+	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), schema, table)
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil, false
 	}

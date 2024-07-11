@@ -956,11 +956,11 @@ INSERT INTO `t` VALUES('[12474495489656359869, 14407883655486982855, 42211846364
 EXPLAIN SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 id	estRows	task	access object	operator info
 Projection_8	6.66	root		planner__core__indexmerge_path.t.col_37->Column#7
-└─IndexMerge_13	6.66	root		type: union
-  ├─TableFullScan_9(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  ├─IndexRangeScan_10(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
-  └─Selection_12(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
-    └─TableRowIDScan_11	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexMerge_14	6.66	root		type: union
+  ├─TableFullScan_10(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
+  └─Selection_13(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
+    └─TableRowIDScan_12	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 MIN(col_37)
 drop table if exists t1;

@@ -19,7 +19,6 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -71,44 +70,6 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	return p, nil
 }
 
-// PruneColumns implements base.LogicalPlan interface.
-// If any expression has SetVar function or Sleep function, we do not prune it.
-func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
-	prunedColumns := make([]*expression.Column, 0)
-
-	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
-			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
-		}
-	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
-	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	child := p.Children()[0]
-	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
-	var err error
-	p.Children()[0], err = child.PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	addConstOneForEmptyProjection(p.Children()[0])
-	return p, nil
-}
-
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)
@@ -138,26 +99,6 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 	}
 	logicaltrace.AppendByItemsPruneTraceStep(p, prunedByItems, opt)
 	return
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.handleCols.NumCols(); i++ {
-		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
-	}
-	for _, col := range p.Schema().Columns {
-		if col.ID == model.ExtraPhysTblID {
-			parentUsedCols = append(parentUsedCols, col)
-		}
-	}
-	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
-	parentUsedCols = append(parentUsedCols, condCols...)
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
 }
 
 // PruneColumns implements base.LogicalPlan interface.
@@ -224,38 +165,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		return proj, nil
 	}
 	return ds, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	switch p.TableInfo.Name.O {
-	case infoschema.TableStatementsSummary,
-		infoschema.TableStatementsSummaryHistory,
-		infoschema.TableSlowQuery,
-		infoschema.ClusterTableStatementsSummary,
-		infoschema.ClusterTableStatementsSummaryHistory,
-		infoschema.ClusterTableSlowLog,
-		infoschema.TableTiDBTrx,
-		infoschema.ClusterTableTiDBTrx,
-		infoschema.TableDataLockWaits,
-		infoschema.TableDeadlocks,
-		infoschema.ClusterTableDeadlocks,
-		infoschema.TableTables:
-	default:
-		return p, nil
-	}
-	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && p.Schema().Len() > 1 {
-			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.SetOutputNames(append(p.OutputNames()[:i], p.OutputNames()[i+1:]...))
-			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
-		}
-	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	return p, nil
 }
 
 func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
@@ -399,20 +308,4 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
-}
-
-// PruneColumns implements the interface of base.LogicalPlan.
-// LogicalCTE just do an empty function call. It's logical optimize is indivisual phase.
-func (p *LogicalCTE) PruneColumns(_ []*expression.Column, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	return p, nil
-}
-
-// PruneColumns implements the interface of base.LogicalPlan.
-func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	var err error
-	p.Children()[p.ChildLen()-1], err = p.Children()[p.ChildLen()-1].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
 }

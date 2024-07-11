@@ -648,8 +648,8 @@ id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:t	handle:0
 explain format = 'brief' select * from t where _tidb_rowid > 0;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		explain_easy.t.a
-└─TableReader	10000.00	root		data:TableRangeScan
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		explain_easy.t.a
   └─TableRangeScan	10000.00	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
 explain format = 'brief' select a, _tidb_rowid from t where a > 0;
 id	estRows	task	access object	operator info
@@ -658,8 +658,8 @@ TableReader	3333.33	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where _tidb_rowid > 0 and a > 0;
 id	estRows	task	access object	operator info
-Projection	2666.67	root		explain_easy.t.a
-└─TableReader	2666.67	root		data:Selection
+TableReader	2666.67	root		data:Projection
+└─Projection	2666.67	cop[tikv]		explain_easy.t.a
   └─Selection	2666.67	cop[tikv]		gt(explain_easy.t.a, 0)
     └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
 drop table if exists t;

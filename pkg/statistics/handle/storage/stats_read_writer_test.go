@@ -15,6 +15,7 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -45,7 +46,7 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(
+	tbl, err := is.TableByName(context.Background(),
 		model.NewCIStr("test"), model.NewCIStr("t"),
 	)
 	require.NoError(t, err)

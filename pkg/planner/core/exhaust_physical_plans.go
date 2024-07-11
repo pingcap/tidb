@@ -52,8 +52,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalUnionScan) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalUnionScan(p *LogicalUnionScan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
@@ -131,7 +130,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	return []*property.PhysicalProperty{lProp, rProp}, true
 }
 
-func (*LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
+func checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 	// if a left key and its corresponding right key have different collation, don't use MergeJoin since
 	// the their children may sort their records in different ways
 	for i := range leftKeys {
@@ -192,7 +191,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		leftKeys = leftKeys[:prefixLen]
 		rightKeys = rightKeys[:prefixLen]
 		newIsNullEQ = newIsNullEQ[:prefixLen]
-		if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
+		if !checkJoinKeyCollation(leftKeys, rightKeys) {
 			continue
 		}
 		offsets = offsets[:prefixLen]
@@ -340,7 +339,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 	newNullEQ := getNewNullEQByOffsets(isNullEQ, offsets)
 	otherConditions := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
 	copy(otherConditions, p.OtherConditions)
-	if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
+	if !checkJoinKeyCollation(leftKeys, rightKeys) {
 		// if the join keys' collation are conflicted, we use the empty join key
 		// and move EqualConditions to OtherConditions.
 		leftKeys = nil
@@ -427,9 +426,10 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []bas
 	}
 
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
-	if !forced && p.shouldSkipHashJoin() {
+	shouldSkipHashJoin := p.shouldSkipHashJoin()
+	if !forced && shouldSkipHashJoin {
 		return nil, false
-	} else if forced && p.shouldSkipHashJoin() {
+	} else if forced && shouldSkipHashJoin {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, " +
 				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence.")
@@ -2687,25 +2687,6 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 	return newKeys
 }
 
-// TryToGetChildProp will check if this sort property can be pushed or not.
-// When a sort column will be replaced by scalar function, we refuse it.
-// When a sort column will be replaced by a constant, we just remove it.
-func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
-	newProp := prop.CloneEssentialFields()
-	newCols := make([]property.SortItem, 0, len(prop.SortItems))
-	for _, col := range prop.SortItems {
-		idx := p.Schema().ColumnIndex(col.Col)
-		switch expr := p.Exprs[idx].(type) {
-		case *expression.Column:
-			newCols = append(newCols, property.SortItem{Col: expr, Desc: col.Desc})
-		case *expression.ScalarFunction:
-			return nil, false
-		}
-	}
-	newProp.SortItems = newCols
-	return newProp, true
-}
-
 // ExhaustPhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
 func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
@@ -2739,8 +2720,7 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	return nil, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalProjection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4Projection(p *LogicalProjection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil, true, nil
@@ -3503,8 +3483,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	return hashAggs
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalSelection(p *LogicalSelection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	newProps := make([]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
 	newProps = append(newProps, childProp)
@@ -3525,13 +3504,6 @@ func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty)
 		ret = append(ret, sel)
 	}
 	return ret, true, nil
-}
-
-// utility function to check whether we can push down Selection to TiKV or TiFlash
-func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
-	return !expression.ContainVirtualColumn(p.Conditions) &&
-		p.CanPushToCop(storeTp) &&
-		expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
 }
 
 func getLimitPhysicalPlans(p *LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
@@ -3664,8 +3636,7 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(p *LogicalMaxOneRow, prop *property.P
 	return []base.PhysicalPlan{mor}, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	pcte := PhysicalCTE{CTE: p.cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
 		pcte.storageSender = PhysicalExchangeSender{
@@ -3677,8 +3648,7 @@ func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]ba
 	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalSequence) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalSequence(p *LogicalSequence, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
 	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.TaskTp == property.MppTaskType {
