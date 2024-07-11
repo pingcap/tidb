@@ -294,6 +294,7 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(workerID int, partID in
 }
 
 func (h *hashJoinSpillHelper) spillSegmentsToDisk(workerID int, disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
+	// TODO we can validJoinKeys buffer into hashJoinSpillHelper so that we can avoid repeated allocation
 	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
 	h.tmpSpillBuildSideChunks[workerID].Reset()
 
