@@ -3099,7 +3099,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			if c.cte.recursivePartLogicalPlan != nil || !c.cte.seedPartLogicalPlan.CanPushToCop(storeTp) {
+			if c.Cte.recursivePartLogicalPlan != nil || !c.Cte.seedPartLogicalPlan.CanPushToCop(storeTp) {
 				return false
 			}
 			return true
@@ -3637,7 +3637,7 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(p *LogicalMaxOneRow, prop *property.P
 }
 
 func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	pcte := PhysicalCTE{CTE: p.cte}.Init(p.SCtx(), p.StatsInfo())
+	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
 		pcte.storageSender = PhysicalExchangeSender{
 			ExchangeType: tipb.ExchangeType_Broadcast,
