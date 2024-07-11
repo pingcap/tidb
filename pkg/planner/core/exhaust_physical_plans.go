@@ -130,7 +130,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	return []*property.PhysicalProperty{lProp, rProp}, true
 }
 
-func (*LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
+func checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 	// if a left key and its corresponding right key have different collation, don't use MergeJoin since
 	// the their children may sort their records in different ways
 	for i := range leftKeys {
@@ -191,7 +191,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		leftKeys = leftKeys[:prefixLen]
 		rightKeys = rightKeys[:prefixLen]
 		newIsNullEQ = newIsNullEQ[:prefixLen]
-		if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
+		if !checkJoinKeyCollation(leftKeys, rightKeys) {
 			continue
 		}
 		offsets = offsets[:prefixLen]
@@ -339,7 +339,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 	newNullEQ := getNewNullEQByOffsets(isNullEQ, offsets)
 	otherConditions := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
 	copy(otherConditions, p.OtherConditions)
-	if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
+	if !checkJoinKeyCollation(leftKeys, rightKeys) {
 		// if the join keys' collation are conflicted, we use the empty join key
 		// and move EqualConditions to OtherConditions.
 		leftKeys = nil

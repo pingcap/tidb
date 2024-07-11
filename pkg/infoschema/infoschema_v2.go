@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -79,16 +80,12 @@ type Data struct {
 	//
 	// It means as long as we can find an item in it, the item is available, even through the
 	// schema version maybe smaller than required.
-	//
-	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	byName *btree.BTreeG[tableItem]
 
 	// For the TableByID API, sorted by {tableID, schemaVersion} => dbID
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
 	// It provides the tableID => databaseID mapping.
-	//
-	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
-	// But this mapping MUST be synced with byName.
+	// This mapping MUST be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
@@ -406,7 +403,6 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
 	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
-		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, false
 	}
 
@@ -435,7 +431,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	if !noRefill {
-		is.tableCache.Set(key, ret)
+		is.tableCache.Set(oldKey, ret)
 	}
 	return ret, true
 }
@@ -454,6 +450,7 @@ func (is *infoschemaV2) EvictTable(schema, tbl string) {
 		return
 	}
 	is.tableCache.Remove(tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion})
+	is.tableCache.Remove(tableCacheKey{itm.tableID, itm.schemaVersion})
 }
 
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
@@ -470,22 +467,13 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
-		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
-	// Get from the cache.
-	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
-	res, found := is.tableCache.Get(key)
-	if found && res != nil {
-		return res, nil
-	}
-
-	// get cache with old key
+	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	res, found = is.tableCache.Get(oldKey)
+	res, found := is.tableCache.Get(oldKey)
 	if found && res != nil {
-		is.tableCache.Set(key, res)
 		return res, nil
 	}
 
@@ -494,7 +482,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	is.tableCache.Set(key, ret)
+	is.tableCache.Set(oldKey, ret)
 	return ret, nil
 }
 
@@ -787,6 +775,9 @@ retry:
 
 func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
+	failpoint.Inject("mockLoadTableInfoError", func(_ failpoint.Value) {
+		failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
+	})
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:
