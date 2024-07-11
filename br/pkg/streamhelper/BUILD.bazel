@@ -68,11 +68,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 22,
-=======
-    shard_count = 28,
->>>>>>> 184c76b9162 (br: fix checkpoint cannot advance after pause->stop->start (#53091))
+    shard_count = 24,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",

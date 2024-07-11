@@ -23,6 +23,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/dbterror",

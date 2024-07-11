@@ -1361,7 +1361,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	memBuffer.Release(sh)
 
 	if shouldWriteBinlog(ctx, t.meta) {
-		cols := t.Cols()
+		cols := t.DeletableCols()
 		colIDs := make([]int64, 0, len(cols)+1)
 		for _, col := range cols {
 			colIDs = append(colIDs, col.ID)

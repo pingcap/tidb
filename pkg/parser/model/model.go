@@ -542,6 +542,15 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"revision"`
+}
+
+// TableNameInfo provides meta data describing a table name info.
+type TableNameInfo struct {
+	ID   int64 `json:"id"`
+	Name CIStr `json:"name"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
@@ -1306,6 +1315,14 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 		}
 	}
 	return false
+}
+
+// ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
+func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLType = PartitionTypeNone
+	pi.DDLExpr = ""
+	pi.DDLColumns = nil
+	pi.NewTableID = 0
 }
 
 // PartitionState is the state of the partition.

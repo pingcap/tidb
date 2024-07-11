@@ -194,7 +194,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -256,7 +256,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		// https://github.com/pingcap/tidb/issues/44196

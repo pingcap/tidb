@@ -63,7 +63,22 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
-			args[i] = types.NewBytesDatum(enc.DecodeInput(boundParams[i]))
+			args[i] = types.NewBytesDatum(boundParams[i])
+
+			// The legacy logic is kept: if the `paramTypes` somehow didn't contain the type information, it will be treated as
+			// BLOB type. We didn't return `mysql.ErrMalformPacket` to keep compatibility with older versions, though it's
+			// meaningless if every clients work properly.
+			if (i<<1)+1 < len(paramTypes) {
+				// Only TEXT or BLOB type will be sent through `SEND_LONG_DATA`.
+				tp := paramTypes[i<<1]
+
+				switch tp {
+				case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBit:
+					args[i] = types.NewStringDatum(string(hack.String(enc.DecodeInput(boundParams[i]))))
+				case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+					args[i] = types.NewBytesDatum(boundParams[i])
+				}
+			}
 			continue
 		}
 

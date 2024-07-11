@@ -315,6 +315,11 @@ func TestMeta(t *testing.T) {
 	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
 
+	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
+	tblName2 := &model.TableNameInfo{ID: tbInfo2.ID, Name: tbInfo2.Name}
+	tableNames, err := m.ListSimpleTables(1)
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableNameInfo{tblName, tblName2}, tableNames)
 	tables, err := m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
@@ -350,6 +355,9 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), n)
 
+	tableNames, err = m.ListSimpleTables(1)
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableNameInfo{tblName}, tableNames)
 	tables, err = m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
@@ -394,7 +402,7 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
+	err = m.CreateTableAndSetAutoID(1, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)

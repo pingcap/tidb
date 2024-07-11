@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -181,4 +183,54 @@ func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyV
 	kv := kvs[0]
 	require.Equal(t, key, string(kv.Key))
 	require.Equal(t, val, string(kv.Value))
+}
+
+func TestPutKVToEtcdMono(t *testing.T) {
+	integration.BeforeTestExternal(t)
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	cli := cluster.RandClient()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(1))
+	require.NoError(t, err)
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(2))
+	require.NoError(t, err)
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(3))
+	require.NoError(t, err)
+
+	eg := util.NewWaitGroupEnhancedWrapper("", nil, false)
+
+	var errCount atomic.Int64
+	for i := 0; i < 30; i++ {
+		eg.Run(func() {
+			err := util2.PutKVToEtcdMono(ctx, cli, 1, "testKey", strconv.Itoa(5))
+			if err != nil {
+				errCount.Add(1)
+			}
+		}, fmt.Sprintf("test_%v", i))
+	}
+	// PutKVToEtcdMono should be conflicted and get errors.
+	eg.Wait()
+	require.True(t, errCount.Load() > 0)
+
+	errCount.Store(0)
+	eg = util.NewWaitGroupEnhancedWrapper("", nil, false)
+	for i := 0; i < 30; i++ {
+		eg.Run(func() {
+			err := util2.PutKVToEtcd(ctx, cli, 1, "testKey", strconv.Itoa(5))
+			if err != nil {
+				errCount.Add(1)
+			}
+		}, fmt.Sprintf("test_%v", i))
+	}
+	eg.Wait()
+	require.True(t, errCount.Load() == 0)
+
+	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(1))
+	require.NoError(t, err)
 }

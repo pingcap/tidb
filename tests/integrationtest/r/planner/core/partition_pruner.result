@@ -3687,6 +3687,6 @@ id	estRows	task	access object	operator info
 TableDual_7	0.00	root		rows:0
 desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
 id	estRows	task	access object	operator info
-TableReader_9	8000.00	root		data:Selection_8
-└─Selection_8	8000.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
+TableReader_9	20.00	root		data:Selection_8
+└─Selection_8	20.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
   └─TableFullScan_7	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo

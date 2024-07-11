@@ -439,6 +439,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
 			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			logutil.BgLogger().Info("diff load InfoSchema get empty schema diff", zap.Int64("version", usedVersion))
+			do.infoCache.InsertEmptySchemaVersion(usedVersion)
 			continue
 		}
 		diffs = append(diffs, diff)
@@ -2290,6 +2292,25 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 			do.gcAnalyzeHistory(owner)
 		},
 		"gcAnalyzeHistory",
+	)
+	do.wg.Run(
+		func() {
+			// The initStatsCtx is used to store the internal session for initializing stats,
+			// so we need the gc min start ts calculation to track it as an internal session.
+			// Since the session manager may not be ready at this moment, `infosync.StoreInternalSession` can fail.
+			// we need to retry until the session manager is ready or the init stats completes.
+			for !infosync.StoreInternalSession(initStatsCtx) {
+				waitRetry := time.After(time.Second)
+				select {
+				case <-do.StatsHandle().InitStatsDone:
+					return
+				case <-waitRetry:
+				}
+			}
+			<-do.StatsHandle().InitStatsDone
+			infosync.DeleteInternalSession(initStatsCtx)
+		},
+		"RemoveInitStatsFromInternalSessions",
 	)
 	return nil
 }

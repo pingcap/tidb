@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -1869,7 +1870,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				if fields[offset].AuxiliaryColInAgg {
 					continue
 				}
-				item := fd.NewFastIntSet()
+				item := intset.NewFastIntSet()
 				switch x := expr.(type) {
 				case *expression.Column:
 					item.Insert(int(x.UniqueID))
@@ -1911,7 +1912,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				baseCols := expression.ExtractColumns(expr)
 				errShowCol := baseCols[0]
 				for _, col := range baseCols {
-					colSet := fd.NewFastIntSet(int(col.UniqueID))
+					colSet := intset.NewFastIntSet(int(col.UniqueID))
 					if !colSet.SubsetOf(strictClosure) {
 						errShowCol = col
 						break
@@ -1936,7 +1937,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			}
 			if fds.GroupByCols.Only1Zero() {
 				// maxOneRow is delayed from agg's ExtractFD logic since some details listed in it.
-				projectionUniqueIDs := fd.NewFastIntSet()
+				projectionUniqueIDs := intset.NewFastIntSet()
 				for _, expr := range proj.Exprs {
 					switch x := expr.(type) {
 					case *expression.Column:
@@ -1996,7 +1997,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	} else if b.GetType() == mysql.TypeNull {
 		return a
 	}
-	resultTp := types.NewFieldType(types.MergeFieldType(a.GetType(), b.GetType()))
+	resultTp := types.AggFieldType([]*types.FieldType{a, b})
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
 	if resultTp.GetType() == mysql.TypeNewDecimal {
 		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.
@@ -3343,7 +3344,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
-		if g.exprDepth == 1 {
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
@@ -3381,6 +3382,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				} else if ast.HasWindowFlag(ret) {
 					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
+					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+						isParam.UseAsValueInGbyByClause = true
+					}
 					return ret, true
 				}
 			}
@@ -5438,7 +5442,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 	// Once the all conditions are not equal to nil, built it again.
 	if ds.fdSet == nil || ds.allConds != nil {
 		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
-		allCols := fd.NewFastIntSet()
+		allCols := intset.NewFastIntSet()
 		// should use the column's unique ID avoiding fdSet conflict.
 		for _, col := range ds.TblCols {
 			// todo: change it to int64
@@ -5446,7 +5450,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		}
 		// int pk doesn't store its index column in indexInfo.
 		if ds.tableInfo.PKIsHandle {
-			keyCols := fd.NewFastIntSet()
+			keyCols := intset.NewFastIntSet()
 			for _, col := range ds.TblCols {
 				if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 					keyCols.Insert(int(col.UniqueID))
@@ -5472,7 +5476,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		}
 		// other indices including common handle.
 		for _, idx := range ds.tableInfo.Indices {
-			keyCols := fd.NewFastIntSet()
+			keyCols := intset.NewFastIntSet()
 			allColIsNotNull := true
 			if ds.isForUpdateRead && changed {
 				latestIndex, ok := latestIndexes[idx.ID]
@@ -5531,14 +5535,14 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		// the generated column is sequentially dependent on the forward column.
 		// a int, b int as (a+1), c int as (b+1), here we can build the strict FD down:
 		// {a} -> {b}, {b} -> {c}, put the maintenance of the dependencies between generated columns to the FD graph.
-		notNullCols := fd.NewFastIntSet()
+		notNullCols := intset.NewFastIntSet()
 		for _, col := range ds.TblCols {
 			if col.VirtualExpr != nil {
-				dependencies := fd.NewFastIntSet()
+				dependencies := intset.NewFastIntSet()
 				dependencies.Insert(int(col.UniqueID))
 				// dig out just for 1 level.
 				directBaseCol := expression.ExtractColumns(col.VirtualExpr)
-				determinant := fd.NewFastIntSet()
+				determinant := intset.NewFastIntSet()
 				for _, col := range directBaseCol {
 					determinant.Insert(int(col.UniqueID))
 				}
@@ -5784,7 +5788,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 			terror.ErrorNotEqual(err, ErrInternal) &&
 			terror.ErrorNotEqual(err, ErrFieldNotInGroupBy) &&
 			terror.ErrorNotEqual(err, ErrMixOfGroupFuncAndFields) &&
-			terror.ErrorNotEqual(err, ErrViewNoExplain) {
+			terror.ErrorNotEqual(err, ErrViewNoExplain) &&
+			terror.ErrorNotEqual(err, ErrNotSupportedYet) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
@@ -6428,8 +6433,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			allAssignmentsAreConstant = false
 		}
 		p = np
-		if col, ok := newExpr.(*expression.Column); ok {
-			b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan = append(b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan, col.UniqueID)
+		if cols := expression.ExtractColumnSet(newExpr); cols.Len() > 0 {
+			b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan.UnionWith(cols)
 		}
 		newList = append(newList, &expression.Assignment{Col: col, ColName: name.ColName, Expr: newExpr})
 		dbName := name.DBName.L

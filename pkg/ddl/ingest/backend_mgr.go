@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -37,18 +37,12 @@ type BackendCtxMgr interface {
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
-
-	MarkJobProcessing(jobID int64) (ok bool)
-	MarkJobFinish()
 }
 
 type litBackendCtxMgr struct {
 	generic.SyncMap[int64, *litBackendCtx]
-	memRoot         MemRoot
-	diskRoot        DiskRoot
-	processingJobID int64
-	lastLoggingTime time.Time
-	mu              sync.Mutex
+	memRoot  MemRoot
+	diskRoot DiskRoot
 }
 
 func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
@@ -69,30 +63,6 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	return mgr
 }
 
-// MarkJobProcessing marks ingest backfill is processing.
-func (m *litBackendCtxMgr) MarkJobProcessing(jobID int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.processingJobID == 0 || m.processingJobID == jobID {
-		m.processingJobID = jobID
-		return true
-	}
-	if time.Since(m.lastLoggingTime) > 1*time.Minute {
-		logutil.BgLogger().Info("ingest backfill worker is already in used by another DDL job",
-			zap.String("category", "ddl-ingest"),
-			zap.Int64("processing job ID", m.processingJobID))
-		m.lastLoggingTime = time.Now()
-	}
-	return false
-}
-
-// MarkJobFinish marks ingest backfill is finished.
-func (m *litBackendCtxMgr) MarkJobFinish() {
-	m.mu.Lock()
-	m.processingJobID = 0
-	m.mu.Unlock()
-}
-
 // CheckAvailable checks if the ingest backfill is available.
 func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
@@ -101,6 +71,9 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 	}
 	return true, nil
 }
+
+// ResignOwnerForTest is only used for test.
+var ResignOwnerForTest = atomic.NewBool(false)
 
 // Register creates a new backend and registers it to the backend context.
 func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error) {

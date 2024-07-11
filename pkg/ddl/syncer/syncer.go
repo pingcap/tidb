@@ -238,7 +238,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 	var path string
 	if variable.EnableMDL.Load() {
 		path = fmt.Sprintf("%s/%d/%s", util.DDLAllSchemaVersionsByJob, jobID, s.ddlID)
-		err = util.PutKVToEtcd(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
+		err = util.PutKVToEtcdMono(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
 	} else {
 		path = s.selfSchemaVerPath
 		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,

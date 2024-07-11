@@ -1026,3 +1026,11 @@ create table t (id bigint, b varchar(20), index idxb(b)) partition by range(id) 
 alter table t reorganize partition p0 into (partition p01 values less than (10), partition p02 values less than (20));
 show warnings;
 
+# Test Generated column use Grouping function, issue #49909.
+drop table if exists t;
+--error 1111
+create table t(a int, b int as ((grouping(a))) stored);
+create table t(a int);
+--error 1111
+alter table t add column  b int as ((grouping(a))) stored;
+drop table t;
