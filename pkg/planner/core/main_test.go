@@ -40,6 +40,7 @@ func TestMain(m *testing.M) {
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/usage/collector.(*globalCollector[...]).StartWorker.func1"),
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
