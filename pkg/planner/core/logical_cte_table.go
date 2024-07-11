@@ -29,7 +29,7 @@ type LogicalCTETable struct {
 
 	SeedStat     *property.StatsInfo
 	Name         string
-	IdForStorage int
+	IDForStorage int
 
 	// SeedSchema is only used in columnStatsUsageCollector to get column mapping
 	SeedSchema *expression.Schema
