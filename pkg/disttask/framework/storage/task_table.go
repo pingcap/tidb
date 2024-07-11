@@ -375,16 +375,6 @@ func (mgr *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *pro
 	return Row2Task(rs[0]), nil
 }
 
-// GetTaskCountByKeyPrefix gets the task count by the task key prefix.
-func (mgr *TaskManager) GetTaskCountByKeyPrefix(ctx context.Context, keyPrefix string) (int64, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select count(*) from mysql.tidb_global_task t where task_key like %?", keyPrefix+"%")
-	if err != nil {
-		return 0, err
-	}
-
-	return rs[0].GetInt64(0), nil
-}
-
 // GetTaskByKeyWithHistory gets the task from history table by the task key.
 func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string) (task *proto.Task, err error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where task_key = %?"+

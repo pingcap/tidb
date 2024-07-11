@@ -908,7 +908,7 @@ func (d *ddl) CleanUpTempDirLoop(path string) {
 			if j := d.runningJobs.Load(); j != nil {
 				runningIDs = j.cloneRunningIDs()
 			}
-			ingest.CleanUpTempDir(d.ctx, path, runningIDs)
+			ingest.CleanUpTempDir(path, runningIDs)
 			d.sessPool.Put(se)
 		case <-d.ctx.Done():
 			return

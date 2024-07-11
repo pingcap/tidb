@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -425,9 +424,4 @@ func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model
 		return errors.Trace(kv.ErrKeyExists.FastGenByArgs(key, indexName))
 	}
 	return kv.GenKeyExistsErr(valueStr, indexName)
-}
-
-// DistTaskKey generates the key for the dist task.
-func DistTaskKey(taskType proto.TaskType, jobID int64) string {
-	return fmt.Sprintf("ddl/%s/%d", taskType, jobID)
 }
