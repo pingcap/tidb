@@ -2348,8 +2348,10 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 	}
 
-	for _, indexInfo := range globalIndexes {
-		analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
+	if isAnalyzeTable {
+		for _, indexInfo := range globalIndexes {
+			analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
+		}
 	}
 
 	return nil
