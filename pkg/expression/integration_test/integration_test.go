@@ -667,12 +667,12 @@ func TestTiDBDecodeKeyFuncString(t *testing.T) {
 	//rawKeys[2] = "7480000000000000685f7203800000000000000301fb40cf60fb40d97dff0000000000000000f7"
 	//rawKeys[3] = "7480000000000000685f72038000000000000004010000000000000000f7"
 	//rawKeys[4] = "7480000000000000685f72038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb"
-	expectedRes[0] = fmt.Sprintf(`{"handle":{"a":"1","b":"1c3e"},"table_id":%d}`, tbl.Meta().ID)
-	expectedRes[1] = fmt.Sprintf(`{"handle":{"a":"2","b":"1e0c1d651c3f"},"table_id":%d}`, tbl.Meta().ID)
-	expectedRes[2] = fmt.Sprintf(`{"handle":{"a":"3","b":"fb40cf60fb40d97d"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[0] = fmt.Sprintf(`{"handle":{"a":"1","b":"0x1c3e"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[1] = fmt.Sprintf(`{"handle":{"a":"2","b":"0x1e0c1d651c3f"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[2] = fmt.Sprintf(`{"handle":{"a":"3","b":"0xfb40cf60fb40d97d"},"table_id":%d}`, tbl.Meta().ID)
 	// 0x07 / Alarm / Bell has Sort Key of length 0!
 	expectedRes[3] = fmt.Sprintf(`{"handle":{"a":"4","b":""},"table_id":%d}`, tbl.Meta().ID)
-	expectedRes[4] = fmt.Sprintf(`{"handle":{"a":"5","b":"1c471e331e951e711daa1ddd1e331cf41c471e71"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[4] = fmt.Sprintf(`{"handle":{"a":"5","b":"0x1c471e331e951e711daa1ddd1e331cf41c471e71"},"table_id":%d}`, tbl.Meta().ID)
 	i := 0
 	for it.Valid() {
 		key := it.Key()
@@ -697,10 +697,10 @@ func TestTiDBDecodeKeyFuncString(t *testing.T) {
 	//rawKeys[3] = "7480000000000000685f69800000000000000203800000000000000301fb40cf60fb40d97dff0000000000000000f7038000000000000003"
 	//rawKeys[4] = "7480000000000000685f698000000000000002038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb038000000000000005"
 	expectedRes[0] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"4","b":"","c":"0"},"table_id":%d}`, tbl.Meta().ID)
-	expectedRes[1] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"1","b":"1c3e","c":"1"},"table_id":%d}`, tbl.Meta().ID)
-	expectedRes[2] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"2","b":"1e0c1d651c3f","c":"2"},"table_id":%d}`, tbl.Meta().ID)
-	expectedRes[3] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"3","b":"fb40cf60fb40d97d","c":"3"},"table_id":%d}`, tbl.Meta().ID)
-	expectedRes[4] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"5","b":"1c471e331e951e711daa1ddd1e331cf41c471e71","c":"5"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[1] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"1","b":"0x1c3e","c":"1"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[2] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"2","b":"0x1e0c1d651c3f","c":"2"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[3] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"3","b":"0xfb40cf60fb40d97d","c":"3"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[4] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"5","b":"0x1c471e331e951e711daa1ddd1e331cf41c471e71","c":"5"},"table_id":%d}`, tbl.Meta().ID)
 	i = 0
 	for it.Valid() {
 		key := it.Key()

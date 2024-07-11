@@ -2716,7 +2716,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 				var dtStr any
 				if types.NeedRestoredData(cols[colID]) {
 					// Using Sort key, better to show the key as HEX
-					dtStr = fmt.Sprintf("%x", dt.GetString())
+					dtStr = fmt.Sprintf("%#x", dt.GetString())
 				} else {
 					dtStr, err = datumToJSONObject(&dt)
 					if err != nil {
@@ -2799,7 +2799,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		for i := 0; i < len(targetIndex.Columns); i++ {
 			if types.NeedRestoredData(tps[i]) {
 				// Using sort key, better to show the key as HEX
-				idxValMap[targetIndex.Columns[i].Name.L] = fmt.Sprintf("%x", ds[i].GetString())
+				idxValMap[targetIndex.Columns[i].Name.L] = fmt.Sprintf("%#x", ds[i].GetString())
 			} else {
 				dtStr, err := datumToJSONObject(&ds[i])
 				if err != nil {
