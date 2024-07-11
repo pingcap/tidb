@@ -16,17 +16,17 @@ package ingest
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -107,10 +107,10 @@ func GenIngestTempDataDir() (string, error) {
 	return sortPath, nil
 }
 
-// CleanUpTempDir is used to remove the stale index data. This function gets
-// running DDL jobs from jobScheduler and it only removes the folders that
-// related to finished jobs.
-func CleanUpTempDir(path string, runningIDs map[int64]struct{}) {
+// CleanUpTempDir is used to remove the stale index data. Caller will pass
+// running DDL jobs from jobScheduler and it internally checks disktask system
+// table to filter related jobs.
+func CleanUpTempDir(ctx context.Context, path string, runningIDs map[int64]struct{}) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such file") {
@@ -144,35 +144,27 @@ func CleanUpTempDir(path string, runningIDs map[int64]struct{}) {
 		return
 	}
 
-	for id := range toCheckJobIDs {
-		logutil.DDLIngestLogger().Info("remove stale temp index data",
-			zap.Int64("jobID", id))
-		p := filepath.Join(path, encodeBackendTag(id))
-		err = os.RemoveAll(p)
-		if err != nil {
-			logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err))
-		}
+	m, err2 := storage.GetTaskManager()
+	if err2 != nil {
+		logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err2))
+		return
 	}
-}
 
-func filterProcessingJobIDs(ctx context.Context, se *sess.Session, jobIDs []int64) ([]int64, error) {
-	var sb strings.Builder
-	for i, id := range jobIDs {
-		if i != 0 {
-			sb.WriteString(",")
+	for id := range toCheckJobIDs {
+		cnt, err3 := m.GetTaskCountByKeyPrefix(ctx, ddlutil.DistTaskKey(proto.Backfill, id))
+		if err3 != nil {
+			logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err3))
+			continue
 		}
-		sb.WriteString(strconv.FormatInt(id, 10))
+
+		if cnt == 0 {
+			logutil.DDLIngestLogger().Info("remove stale temp index data",
+				zap.Int64("jobID", id))
+			p := filepath.Join(path, encodeBackendTag(id))
+			err = os.RemoveAll(p)
+			if err != nil {
+				logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err))
+			}
+		}
 	}
-	sql := fmt.Sprintf(
-		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s) AND processing",
-		sb.String())
-	rows, err := se.Execute(ctx, sql, "filter_processing_job_ids")
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ret := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		ret = append(ret, row.GetInt64(0))
-	}
-	return ret, nil
 }
