@@ -55,12 +55,19 @@ import (
 type backfillerType byte
 
 const (
-	typeAddIndexWorker         backfillerType = 0
-	typeUpdateColumnWorker     backfillerType = 1
-	typeCleanUpIndexWorker     backfillerType = 2
-	typeAddIndexMergeTmpWorker backfillerType = 3
-	typeReorgPartitionWorker   backfillerType = 4
+	typeAddIndexWorker backfillerType = iota
+	typeUpdateColumnWorker
+	typeCleanUpIndexWorker
+	typeAddIndexMergeTmpWorker
+	typeReorgPartitionWorker
+
+	typeCount
 )
+
+// BackupFillerTypeCount represents the count of ddl jobs that need to do backfill.
+func BackupFillerTypeCount() int {
+	return int(typeCount)
+}
 
 func (bT backfillerType) String() string {
 	switch bT {

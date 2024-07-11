@@ -52,11 +52,12 @@ import (
 )
 
 const (
-	flagOnline              = "online"
-	flagNoSchema            = "no-schema"
-	flagLoadStats           = "load-stats"
-	flagGranularity         = "granularity"
-	flagConcurrencyPerStore = "tikv-max-restore-concurrency"
+	flagOnline                   = "online"
+	flagNoSchema                 = "no-schema"
+	flagLoadStats                = "load-stats"
+	flagGranularity              = "granularity"
+	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
+	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -171,6 +172,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagWithSysTable, true, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
+
 	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
@@ -241,6 +243,10 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
+	// AllowPITRFromIncremental indicates whether this restore should enter a compatibility mode for incremental restore.
+	// In this restore mode, the restore will not perform timestamp rewrite on the incremental data.
+	AllowPITRFromIncremental bool `json:"allow-pitr-from-incremental" toml:"allow-pitr-from-incremental"`
+
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
@@ -283,6 +289,10 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
+	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
+		" default is true, the incremental restore will not perform rewrite on the incremental data"+
+		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
+		" these ddl jobs are Add index, Modify column and Reorganize partition")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -397,6 +407,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
+	}
+
+	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -704,7 +719,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if IsStreamRestore(cmdName) {
 		restoreError = RunStreamRestore(c, g, cmdName, cfg)
 	} else {
-		restoreError = runRestore(c, g, cmdName, cfg)
+		restoreError = runRestore(c, g, cmdName, cfg, nil)
 	}
 	if restoreError != nil {
 		return errors.Trace(restoreError)
@@ -736,7 +751,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
-func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -837,6 +852,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	restoreTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// for full + log restore. should check the cluster is empty.
+	if client.IsFull() && checkInfo != nil && checkInfo.FullRestoreCheckErr != nil {
+		return checkInfo.FullRestoreCheckErr
 	}
 
 	if client.IsIncremental() {
@@ -950,6 +970,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
+	if cfg.AllowPITRFromIncremental {
+		err = CheckDDLJobByRules(ddlJobs, DDLJobLogIncrementalCompactBlockListRule)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder)
 	if err != nil {
@@ -1008,13 +1034,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	var newTS uint64
 	if client.IsIncremental() {
-		// we need to get the new ts after execDDL
-		// or backfilled data in upstream may not be covered by
-		// the new ts.
-		// see https://github.com/pingcap/tidb/issues/54426
-		newTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient())
-		if err != nil {
-			return errors.Trace(err)
+		if !cfg.AllowPITRFromIncremental {
+			// we need to get the new ts after execDDL
+			// or backfilled data in upstream may not be covered by
+			// the new ts.
+			// see https://github.com/pingcap/tidb/issues/54426
+			newTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	// We make bigger errCh so we won't block on multi-part failed.
@@ -1618,6 +1646,19 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 	return ddlJobs
 }
 
+// CheckDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
+func CheckDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) error {
+	for _, ddlJob := range srcDDLJobs {
+		for _, rule := range rules {
+			if rule(ddlJob) {
+				return errors.Annotatef(berrors.ErrRestoreModeMismatch, "DDL job %s is not allowed in incremental restore"+
+					" when --allow-pitr-from-incremental enabled", ddlJob.String())
+			}
+		}
+	}
+	return nil
+}
+
 // FilterDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
 func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (dstDDLJobs []*model.Job) {
 	dstDDLJobs = make([]*model.Job, 0, len(srcDDLJobs))
@@ -1647,9 +1688,19 @@ var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
 	model.ActionUnlockTable:                {},
 }
 
+var logIncrementalRestoreCompactibleBlockList = map[model.ActionType]struct{}{
+	model.ActionAddIndex:            {},
+	model.ActionModifyColumn:        {},
+	model.ActionReorganizePartition: {},
+}
+
 // DDLJobBlockListRule rule for filter ddl job with type in block list.
 func DDLJobBlockListRule(ddlJob *model.Job) bool {
 	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
+}
+
+func DDLJobLogIncrementalCompactBlockListRule(ddlJob *model.Job) bool {
+	return checkIsInActions(ddlJob.Type, logIncrementalRestoreCompactibleBlockList)
 }
 
 func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
