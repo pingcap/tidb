@@ -345,7 +345,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
 				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
 			}
-			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
 		}
 	}
@@ -366,7 +366,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate {
-		s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+		s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 	}
 	return nil
 }
@@ -557,21 +557,18 @@ func (s *statsSyncLoad) updateCachedItem(tbleInfo table.Table, item model.TableI
 		}
 		tbl = tbl.Copy()
 		tbl.SetCol(item.ID, colHist)
-		// If the column is analyzed we refresh the map for the possible change.
-		if colHist.StatsAvailable() {
-			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
-		} else {
-			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, false)
-		}
+
 		// All the objects shares the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
 			tbl.StatsVer = statistics.Version0
 		}
 		if tbl.ColAndIdxExistenceMap.IsColEmpty() {
 			for _, col := range tbleInfo.Meta().Columns {
-
+				tbl.ColAndIdxExistenceMap.InsertCol(col.ID, col, colHist.StatsAvailable())
 			}
 		}
+		// If the column is analyzed we refresh the map for the possible change.
+		tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, colHist.StatsAvailable())
 	} else if item.IsIndex && idxHist != nil {
 		index := tbl.GetIdx(item.ID)
 		// - If the stats is fully loaded,
