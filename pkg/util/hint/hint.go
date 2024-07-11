@@ -290,7 +290,7 @@ func (sh *StmtHints) addHypoIndex(db, tbl, idx string, idxInfo *model.IndexInfo)
 // ParseStmtHints parses statement hints.
 func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVarHintChecker func(varName, hint string) (ok bool, warning error),
-	hypoIndexChecker func(db, tbl model.CIStr, cols ...model.CIStr) error,
+	hypoIndexChecker func(db, tbl, col model.CIStr) (colOffset int, err error),
 	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
@@ -345,16 +345,22 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			idx := hint.Tables[1].TableName
 			var colNames []model.CIStr
 			var cols []*model.IndexColumn
+			invalid := false
 			for i := 2; i < len(hint.Tables); i++ {
 				colNames = append(colNames, hint.Tables[i].TableName)
+				offset, err := hypoIndexChecker(model.NewCIStr(db), tbl, hint.Tables[i].TableName)
+				if err != nil {
+					invalid = true
+					warns = append(warns, errors.NewNoStackErrorf("invalid HYPO_INDEX hint: %v", err))
+					break
+				}
 				cols = append(cols, &model.IndexColumn{
 					Name:   hint.Tables[i].TableName,
-					Offset: i - 2,
+					Offset: offset,
 					Length: types.UnspecifiedLength,
 				})
 			}
-			if err := hypoIndexChecker(model.NewCIStr(db), tbl, colNames...); err != nil {
-				warns = append(warns, errors.NewNoStackErrorf("invalid HYPO_INDEX hint: %v", err))
+			if invalid {
 				continue
 			}
 			idxInfo := &model.IndexInfo{

@@ -612,15 +612,6 @@ func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
 	return ret
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	p.SetStats(p.seedStat)
-	return p.StatsInfo(), nil
-}
-
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
 func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) {
 	statsRecord := ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
