@@ -18,6 +18,7 @@ import (
 	"cmp"
 	stdctx "context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"sync"
@@ -513,6 +514,12 @@ func (is *infoSchemaMisc) AllResourceGroups() []*model.ResourceGroupInfo {
 	return groups
 }
 
+func (is *infoSchemaMisc) CloneResourceGroups() map[string]*model.ResourceGroupInfo {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	return maps.Clone(is.resourceGroupMap)
+}
+
 // AllPlacementPolicies returns all placement policies
 func (is *infoSchemaMisc) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
@@ -522,6 +529,12 @@ func (is *infoSchemaMisc) AllPlacementPolicies() []*model.PolicyInfo {
 		policies = append(policies, policy)
 	}
 	return policies
+}
+
+func (is *infoSchemaMisc) ClonePlacementPolicies() map[string]*model.PolicyInfo {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	return maps.Clone(is.policyMap)
 }
 
 func (is *infoSchemaMisc) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
