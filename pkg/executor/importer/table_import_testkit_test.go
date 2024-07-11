@@ -80,7 +80,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	require.NoError(t, err)
 	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
 		Table: &ast.TableName{

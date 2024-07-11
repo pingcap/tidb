@@ -895,7 +895,7 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		if reqTableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
 			cTableName := model.NewCIStr(reqTableName)
-			data, e := schema.TableByName(cDBName, cTableName)
+			data, e := schema.TableByName(context.Background(), cDBName, cTableName)
 			if e != nil {
 				handler.WriteError(w, e)
 				return
@@ -977,7 +977,7 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if tableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
 			cTableName := model.NewCIStr(tableName)
-			data, err := schema.TableByName(cDBName, cTableName)
+			data, err := schema.TableByName(context.Background(), cDBName, cTableName)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
@@ -1037,7 +1037,7 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	tableName, partitionName := handler.ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		handler.WriteError(w, err)
 		return

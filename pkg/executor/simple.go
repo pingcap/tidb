@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/querywatch"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -1081,6 +1082,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if !variable.EnableResourceControl.Load() {
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
+		if s.IsCreateRole {
+			return infoschema.ErrResourceGroupInvalidForRole
+		}
 
 		resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
 
@@ -1164,16 +1168,21 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				return err
 			}
 		}
-		pwd, ok := spec.EncodedPassword()
-
-		if !ok {
-			return errors.Trace(exeerrors.ErrPasswordFormat)
-		}
+		var pluginImpl *extension.AuthPlugin
 
 		switch authPlugin {
 		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
 		default:
-			return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			found := false
+			// If the plugin is not a registered extension auth plugin, return error
+			if pluginImpl, found = e.Ctx().GetExtensions().GetAuthPlugin(authPlugin); !found {
+				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			}
+		}
+
+		pwd, ok := encodePassword(spec, pluginImpl)
+		if !ok {
+			return errors.Trace(exeerrors.ErrPasswordFormat)
 		}
 
 		recordTokenIssuer := tokenIssuer
@@ -1268,6 +1277,26 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return errors.Trace(err)
 	}
 	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+}
+
+func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (bool, error) {
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, `SELECT 1 FROM %n.%n WHERE User=%? AND Host=%? AND Account_locked="Y" AND Password_expired="Y";`,
+		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
 }
 
 func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo, err error) {
@@ -1607,6 +1636,10 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		// and the Password Reuse Policy does not take effect.
 		return nil
 	}
+	// Skip password reuse checks for extension auth plugins
+	if _, ok := sctx.GetExtensions().GetAuthPlugin(authPlugin); ok {
+		return nil
+	}
 	// read password reuse info from mysql.user and global variables.
 	passwdReuseInfo, err := getUserPasswordLimit(ctx, sqlExecutor, userDetail.user, userDetail.host, userDetail.pLI)
 	if err != nil {
@@ -1787,6 +1820,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt.AuthPlugin == "" {
 				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
+			var authPluginImpl *extension.AuthPlugin
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL, "":
 				authTokenOptionHandler = noNeedAuthTokenOptions
@@ -1795,7 +1829,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					authTokenOptionHandler = RequireAuthTokenOptions
 				}
 			default:
-				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+				found := false
+				if authPluginImpl, found = e.Ctx().GetExtensions().GetAuthPlugin(spec.AuthOpt.AuthPlugin); !found {
+					return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+				}
 			}
 			// changing the auth method prunes history.
 			if spec.AuthOpt.AuthPlugin != currentAuthPlugin {
@@ -1813,7 +1850,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-			pwd, ok := spec.EncodedPassword()
+			pwd, ok := encodePassword(spec, authPluginImpl)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
@@ -1891,6 +1928,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if s.ResourceGroupNameOption != nil {
 			if !variable.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
+			}
+			is, err := isRole(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+			if err != nil {
+				return err
+			}
+			if is {
+				return infoschema.ErrResourceGroupInvalidForRole
 			}
 
 			// check if specified resource group exists
@@ -2480,7 +2524,13 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.FastGenByArgs(u, h))
 		pwd = ""
 	default:
-		pwd = auth.EncodePassword(s.Password)
+		if pluginImpl, ok := e.Ctx().GetExtensions().GetAuthPlugin(authplugin); ok {
+			if pwd, ok = pluginImpl.GenerateAuthString(s.Password); !ok {
+				return exeerrors.ErrPasswordFormat.GenWithStackByArgs()
+			}
+		} else {
+			pwd = auth.EncodePassword(s.Password)
+		}
 	}
 
 	// for Support Password Reuse Policy.

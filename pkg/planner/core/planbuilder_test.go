@@ -256,7 +256,7 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
-	clonedPlan, err := tableReader.Clone()
+	clonedPlan, err := tableReader.Clone(ctx)
 	require.NoError(t, err)
 	newTableReader, ok := clonedPlan.(*PhysicalTableReader)
 	require.True(t, ok)
@@ -404,7 +404,7 @@ func typeName(t reflect.Type) string {
 }
 
 func checkPhysicalPlanClone(p base.PhysicalPlan) error {
-	cloned, err := p.Clone()
+	cloned, err := p.Clone(p.SCtx())
 	if err != nil {
 		return err
 	}

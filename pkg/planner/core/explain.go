@@ -906,16 +906,6 @@ func (p *LogicalJoin) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalProjection) ExplainInfo() string {
-	return expression.ExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Exprs, p.Schema())
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalSelection) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalApply) ExplainInfo() string {
 	return p.LogicalJoin.ExplainInfo()
 }
@@ -977,15 +967,6 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 	return res
 }
 
-// ExplainInfo implements Plan interface.
-func (p *LogicalUnionScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "conds:%s",
-		expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.conditions))
-	fmt.Fprintf(buffer, ", handle:%s", p.handleCols)
-	return buffer.String()
-}
-
 func explainByItems(ctx expression.EvalContext, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		if item.Desc {
@@ -1014,42 +995,6 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 		}
 	}
 	return buffer
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalTableScan) ExplainInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.Source.HandleCols != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.Source.HandleCols.StringWithCtx(ectx))
-	}
-	if len(p.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalIndexScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	index := p.Index
-	if len(index.Columns) > 0 {
-		buffer.WriteString(", index:")
-		for i, idxCol := range index.Columns {
-			if tblCol := p.Source.TableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(index.Columns) {
-				buffer.WriteString(", ")
-			}
-		}
-	}
-	if len(p.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
-	}
-	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
