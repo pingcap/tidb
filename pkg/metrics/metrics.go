@@ -279,6 +279,14 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalSortUploadWorkerCount)
 	prometheus.MustRegister(AddIndexScanRate)
 
+<<<<<<< HEAD
+=======
+	prometheus.MustRegister(InfoSchemaV2CacheCounter)
+	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
+	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)
+	prometheus.MustRegister(TableByNameDuration)
+
+>>>>>>> 51770f01007 (infoschema, metrics: add TableByName API duration metrics for infoschema v2 (#54507))
 	prometheus.MustRegister(BindingCacheHitCounter)
 	prometheus.MustRegister(BindingCacheMissCounter)
 	prometheus.MustRegister(BindingCacheMemUsage)
