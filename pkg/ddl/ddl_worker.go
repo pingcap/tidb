@@ -1391,9 +1391,6 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
-	if waitTime == 0 {
-		return nil
-	}
 
 	timeStart := time.Now()
 	var err error

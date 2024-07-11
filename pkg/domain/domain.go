@@ -1341,6 +1341,12 @@ func (do *Domain) Init(
 		return err
 	}
 
+	// TODO there are many place set ddlLease to 0, remove them completely, we want
+	//  UT to run similar code path as normal.
+	if intest.InTest && ddlLease == 0 {
+		ddlLease = time.Second
+	}
+
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
