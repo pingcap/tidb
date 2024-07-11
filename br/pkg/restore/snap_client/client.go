@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -44,10 +43,9 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	tidallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
-	internalutils "github.com/pingcap/tidb/br/pkg/restore/internal/utils"
+	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -70,15 +68,16 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	defaultDDLConcurrency = 16
-	maxSplitKeysOnce      = 10240
+	resetSpeedLimitRetryTimes = 3
+	defaultDDLConcurrency     = 16
+	maxSplitKeysOnce          = 10240
 )
 
 const minBatchDdlSize = 1
 
 type SnapClient struct {
+	restorer sstfiles.FileRestorer
 	// Tool clients used by SnapClient
-	fileImporter *SnapFileImporter
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
 
@@ -148,7 +147,7 @@ type SnapClient struct {
 	withSysTable bool
 
 	// the rewrite mode of the downloaded SST files in TiKV.
-	rewriteMode RewriteMode
+	rewriteMode sstfiles.RewriteMode
 
 	// checkpoint information for snapshot restore
 	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
@@ -171,6 +170,10 @@ func NewRestoreClient(
 	}
 }
 
+func (rc *SnapClient) GetRestorer() sstfiles.FileRestorer {
+	return rc.restorer
+}
+
 func (rc *SnapClient) closeConn() {
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
@@ -186,8 +189,8 @@ func (rc *SnapClient) Close() {
 	// close the connection, and it must be succeed when in SQL mode.
 	rc.closeConn()
 
-	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
+	if err := rc.restorer.Close(); err != nil {
+		log.Warn("failed to close file restorer")
 	}
 
 	log.Info("Restore client closed")
@@ -252,13 +255,13 @@ func (rc *SnapClient) SetWithSysTable(withSysTable bool) {
 func (rc *SnapClient) SetRewriteMode(ctx context.Context) {
 	if err := version.CheckClusterVersion(ctx, rc.pdClient, version.CheckVersionForKeyspaceBR); err != nil {
 		log.Warn("Keyspace BR is not supported in this cluster, fallback to legacy restore", zap.Error(err))
-		rc.rewriteMode = RewriteModeLegacy
+		rc.rewriteMode = sstfiles.RewriteModeLegacy
 	} else {
-		rc.rewriteMode = RewriteModeKeyspace
+		rc.rewriteMode = sstfiles.RewriteModeKeyspace
 	}
 }
 
-func (rc *SnapClient) GetRewriteMode() RewriteMode {
+func (rc *SnapClient) GetRewriteMode() sstfiles.RewriteMode {
 	return rc.rewriteMode
 }
 
@@ -432,6 +435,7 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 }
 
 func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) error {
+	var fileImporter *sstfiles.SnapFileImporter
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		return errors.Annotate(err, "failed to get stores")
@@ -439,14 +443,85 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	rc.storeCount = len(stores)
 	rc.updateConcurrency()
 
+	var createCallBacks []func(*sstfiles.SnapFileImporter) error
+	var closeCallBacks []func(*sstfiles.SnapFileImporter) error
 	var splitClientOpts []split.ClientOptionalParameter
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+		createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+			return importer.SetRawRange([]byte(""), []byte(""))
+		})
 	}
+	createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+		return importer.CheckMultiIngestSupport(ctx, stores)
+	})
+	if rc.rateLimit != 0 {
+		setFn := func(ctx context.Context, importer *sstfiles.SnapFileImporter, limit uint64) error {
+			eg, ectx := errgroup.WithContext(ctx)
+			for _, store := range stores {
+				if err := ectx.Err(); err != nil {
+					return errors.Trace(err)
+				}
+
+				finalStore := store
+				rc.workerPool.ApplyOnErrorGroup(eg,
+					func() error {
+						err := importer.SetDownloadSpeedLimit(ectx, finalStore.GetId(), limit)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						return nil
+					})
+			}
+			return eg.Wait()
+		}
+		createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+			return setFn(ctx, importer, rc.rateLimit)
+
+		})
+		closeCallBacks = append(closeCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+			var resetErr error
+			for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
+				resetErr = setFn(ctx, importer, 0)
+				if resetErr != nil {
+					log.Warn("failed to reset speed limit, retry it",
+						zap.Int("retry time", retry), logutil.ShortError(resetErr))
+					time.Sleep(time.Duration(retry+3) * time.Second)
+					continue
+				}
+				break
+			}
+			if resetErr != nil {
+				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
+			}
+			return resetErr
+		})
+	}
+
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter, err = NewSnapFileImporter(ctx, metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore)
-	return errors.Trace(err)
+	if isRawKvMode || isTxnKvMode {
+		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
+		fileImporter, err = sstfiles.NewSnapFileImporter(
+			ctx, rc.cipher, rc.backupMeta.ApiVersion, metaClient,
+			importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rc.restorer = sstfiles.NewSimpleFileRestorer(fileImporter, metaClient, rc.workerPool)
+
+	} else {
+		// or create a fileImporter with the cluster API version
+		fileImporter, err = sstfiles.NewSnapFileImporter(
+			ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
+			importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rc.restorer = sstfiles.NewCompleteFileRestorer(fileImporter, metaClient, rc.workerPool, rc.checkpointRunner)
+	}
+	return nil
 }
 
 func (rc *SnapClient) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
@@ -907,169 +982,6 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 	return nil
 }
 
-func (rc *SnapClient) ResetSpeedLimit(ctx context.Context) error {
-	rc.hasSpeedLimited = false
-	err := rc.setSpeedLimit(ctx, 0)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (rc *SnapClient) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
-	if !rc.hasSpeedLimited {
-		stores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.SkipTiFlash)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		eg, ectx := errgroup.WithContext(ctx)
-		for _, store := range stores {
-			if err := ectx.Err(); err != nil {
-				return errors.Trace(err)
-			}
-
-			finalStore := store
-			rc.workerPool.ApplyOnErrorGroup(eg,
-				func() error {
-					err := rc.fileImporter.SetDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					return nil
-				})
-		}
-
-		if err := eg.Wait(); err != nil {
-			return errors.Trace(err)
-		}
-		rc.hasSpeedLimited = true
-	}
-	return nil
-}
-
-func getFileRangeKey(f string) string {
-	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare with out the `_{cf}.sst` suffix
-	idx := strings.LastIndex(f, "_")
-	if idx < 0 {
-		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
-	}
-
-	return f[:idx]
-}
-
-// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
-func isFilesBelongToSameRange(f1, f2 string) bool {
-	return getFileRangeKey(f1) == getFileRangeKey(f2)
-}
-
-func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.File) {
-	if len(files) == 0 {
-		return nil, nil
-	}
-	idx := 1
-	for idx < len(files) {
-		if !isFilesBelongToSameRange(files[idx-1].Name, files[idx].Name) {
-			break
-		}
-		idx++
-	}
-
-	return files[:idx], files[idx:]
-}
-
-// RestoreSSTFiles tries to restore the files.
-func (rc *SnapClient) RestoreSSTFiles(
-	ctx context.Context,
-	tableIDWithFiles []TableIDWithFiles,
-	updateCh glue.Progress,
-) (err error) {
-	start := time.Now()
-	fileCount := 0
-	defer func() {
-		elapsed := time.Since(start)
-		if err == nil {
-			log.Info("Restore files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", fileCount, elapsed)
-		}
-	}()
-
-	log.Debug("start to restore files", zap.Int("files", fileCount))
-
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	eg, ectx := errgroup.WithContext(ctx)
-	err = rc.setSpeedLimit(ctx, rc.rateLimit)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	var rangeFiles []*backuppb.File
-	var leftFiles []*backuppb.File
-LOOPFORTABLE:
-	for _, tableIDWithFile := range tableIDWithFiles {
-		tableID := tableIDWithFile.TableID
-		files := tableIDWithFile.Files
-		rules := tableIDWithFile.RewriteRules
-		fileCount += len(files)
-		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
-			if ectx.Err() != nil {
-				log.Warn("Restoring encountered error and already stopped, give up remained files.",
-					zap.Int("remained", len(leftFiles)),
-					logutil.ShortError(ectx.Err()))
-				// We will fetch the error from the errgroup then (If there were).
-				// Also note if the parent context has been canceled or something,
-				// breaking here directly is also a reasonable behavior.
-				break LOOPFORTABLE
-			}
-			filesReplica := rangeFiles
-			rc.fileImporter.WaitUntilUnblock()
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
-				fileStart := time.Now()
-				defer func() {
-					if restoreErr == nil {
-						log.Info("import files done", logutil.Files(filesReplica),
-							zap.Duration("take", time.Since(fileStart)))
-						updateCh.Inc()
-					}
-				}()
-				if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
-					return errors.Trace(importErr)
-				}
-
-				// the data of this range has been import done
-				if rc.checkpointRunner != nil && len(filesReplica) > 0 {
-					rangeKey := getFileRangeKey(filesReplica[0].Name)
-					// The checkpoint range shows this ranges of kvs has been restored into
-					// the table corresponding to the table-id.
-					if err := checkpoint.AppendRangesForRestore(ectx, rc.checkpointRunner, tableID, rangeKey); err != nil {
-						return errors.Trace(err)
-					}
-				}
-				return nil
-			})
-		}
-	}
-
-	if err := eg.Wait(); err != nil {
-		summary.CollectFailureUnit("file", err)
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
-		return errors.Trace(err)
-	}
-	// Once the parent context canceled and there is no task running in the errgroup,
-	// we may break the for loop without error in the errgroup. (Will this happen?)
-	// At that time, return the error in the context here.
-	return ctx.Err()
-}
-
 func (rc *SnapClient) execChecksum(
 	ctx context.Context,
 	tbl *CreatedTable,
@@ -1145,31 +1057,9 @@ func (rc *SnapClient) execChecksum(
 	return nil
 }
 
-func (rc *SnapClient) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
-	errCh := make(chan error, len(files))
-	eg, ectx := errgroup.WithContext(ctx)
-	defer close(errCh)
-
-	for _, file := range files {
-		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				defer func() {
-					log.Info("import sst files done", logutil.Files(files))
-					updateCh.Inc()
-				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, restoreutils.EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
-			})
-	}
-	if err := eg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 // RestoreRaw tries to restore raw keys in the specified range.
 func (rc *SnapClient) RestoreRaw(
-	ctx context.Context, startKey []byte, endKey []byte, files []*backuppb.File, updateCh glue.Progress,
+	ctx context.Context, startKey, endKey []byte, updateCh glue.Progress, files []sstfiles.SstFilesInfo,
 ) error {
 	start := time.Now()
 	defer func() {
@@ -1179,12 +1069,8 @@ func (rc *SnapClient) RestoreRaw(
 			logutil.Key("endKey", endKey),
 			zap.Duration("take", elapsed))
 	}()
-	err := rc.fileImporter.SetRawRange(startKey, endKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
-	err = rc.WaitForFilesRestored(ctx, files, updateCh)
+	err := rc.restorer.RestoreFiles(ctx, updateCh, files)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1194,34 +1080,4 @@ func (rc *SnapClient) RestoreRaw(
 		logutil.Key("endKey", endKey),
 	)
 	return nil
-}
-
-// SplitRanges implements TiKVRestorer. It splits region by
-// data range after rewrite.
-func (rc *SnapClient) SplitRanges(
-	ctx context.Context,
-	ranges []rtree.Range,
-	updateCh glue.Progress,
-	isRawKv bool,
-) error {
-	splitClientOpts := make([]split.ClientOptionalParameter, 0, 2)
-	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
-	}))
-	if isRawKv {
-		splitClientOpts = append(splitClientOpts, split.WithRawKV())
-	}
-
-	splitter := internalutils.NewRegionSplitter(split.NewClient(
-		rc.pdClient,
-		rc.pdHTTPClient,
-		rc.tlsConf,
-		maxSplitKeysOnce,
-		rc.storeCount+1,
-		splitClientOpts...,
-	))
-
-	return splitter.ExecuteSplit(ctx, ranges)
 }

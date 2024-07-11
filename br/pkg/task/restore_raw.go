@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
@@ -145,7 +146,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	err = client.SplitRanges(ctx, ranges, updateCh, true)
+	err = client.GetRestorer().SplitRanges(ctx, ranges, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -157,7 +158,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 
-	err = client.RestoreRaw(ctx, cfg.StartKey, cfg.EndKey, files, updateCh)
+	err = client.RestoreRaw(ctx, cfg.StartKey, cfg.EndKey, updateCh, sstfiles.NewEmptyRuleFilesInfo(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
