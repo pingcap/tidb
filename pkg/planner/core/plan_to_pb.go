@@ -117,9 +117,11 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 		if len(p.tiflashPreAggMode) != 0 {
 			if preAggModeVal, ok := p.tiflashPreAggMode.ToTiPBTiFlashPreAggMode(); !ok {
 				err = fmt.Errorf("unexpected tiflash pre agg mode: %v", p.tiflashPreAggMode)
-				return nil, err
 			} else {
 				aggExec.PreAggMode = &preAggModeVal
+			}
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
