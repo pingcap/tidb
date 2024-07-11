@@ -828,17 +828,17 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	if concurrency < 1 {
 		concurrency = 1
 	}
-	sem := make(chan struct{}, concurrency)
+	concurrencyLimiter := make(chan struct{}, concurrency)
 	var cacheMu sync.Mutex
 
 	for _, r := range ranges {
-		sem <- struct{}{}
+		concurrencyLimiter <- struct{}{}
 		wg.Add(1)
 
 		go func(r util.DelRangeTask) {
 			var err error
 			defer func() {
-				<-sem
+				<-concurrencyLimiter
 				wg.Done()
 			}()
 			se := createSession(w.store)
