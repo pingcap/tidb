@@ -15,19 +15,14 @@
 package core
 
 import (
-	"unsafe"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -253,41 +248,4 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
 	}
 	return nil
-}
-
-// ShowContents stores the contents for the `SHOW` statement.
-type ShowContents struct {
-	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName            string
-	Table             *ast.TableName  // Used for showing columns.
-	Partition         model.CIStr     // Use for showing partition
-	Column            *ast.ColumnName // Used for `desc table column`.
-	IndexName         model.CIStr
-	ResourceGroupName string               // Used for showing resource group
-	Flag              int                  // Some flag parsed from sql, such as FULL.
-	User              *auth.UserIdentity   // Used for show grants.
-	Roles             []*auth.RoleIdentity // Used for show grants.
-
-	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
-
-	Full        bool
-	IfNotExists bool       // Used for `show create database if not exists`.
-	GlobalScope bool       // Used by show variables.
-	Extended    bool       // Used for `show extended columns from ...`
-	Limit       *ast.Limit // Used for limit Result Set row number.
-
-	ImportJobID *int64 // Used for SHOW LOAD DATA JOB <jobID>
-}
-
-const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))
-
-// MemoryUsage return the memory usage of ShowContents
-func (s *ShowContents) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = emptyShowContentsSize + int64(len(s.DBName)) + s.Partition.MemoryUsage() + s.IndexName.MemoryUsage() +
-		int64(cap(s.Roles))*size.SizeOfPointer
-	return
 }
