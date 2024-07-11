@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -520,7 +521,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	mutateBuffers := sctx.GetMutateBuffers()
 	encodeRowBuffer := mutateBuffers.GetEncodeRowBufferWithCap(numColsCap)
 	checkRowBuffer := mutateBuffers.GetCheckRowBufferWithCap(numColsCap)
-	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
+	if shouldWriteBinlog(sctx, t.meta) {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
@@ -563,7 +564,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 		checkRowBuffer.AddColVal(value)
-		if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) && !t.canSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog(sctx, t.meta) && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -631,7 +632,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 
 	memBuffer.Release(sh)
-	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
+	if shouldWriteBinlog(sctx, t.meta) {
 		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h.IntValue()))
@@ -899,10 +900,6 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 	}
 
-	var (
-		binlogColIDs []int64
-		binlogRow    []types.Datum
-	)
 	// a reusable buffer to save malloc
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
@@ -1056,10 +1053,9 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 
 	memBuffer.Release(sh)
 
-	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
+	if shouldWriteBinlog(sctx, t.meta) {
 		// For insert, TiDB and Binlog can use same row and schema.
-		binlogColIDs, binlogRow = encodeRowBuffer.GetColDataBuffer()
-		err = t.addInsertBinlog(sctx, recordID, binlogRow, binlogColIDs)
+		err = t.addInsertBinlog(sctx, recordID, encodeRowBuffer)
 		if err != nil {
 			return nil, err
 		}
@@ -1320,7 +1316,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	}
 	memBuffer.Release(sh)
 
-	if shouldWriteBinlog(ctx.GetSessionVars(), t.meta) {
+	if shouldWriteBinlog(ctx, t.meta) {
 		cols := t.DeletableCols()
 		colIDs := make([]int64, 0, len(cols)+1)
 		for _, col := range cols {
@@ -1362,53 +1358,58 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	return err
 }
 
-func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, row []types.Datum, colIDs []int64) error {
-	mutation := t.getMutation(ctx)
+func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, encodeRowBuffer *tbctx.EncodeRowBuffer) error {
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	handleData, err := h.Data()
 	if err != nil {
 		return err
 	}
-	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleData...)
-	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+	pk, err := codec.EncodeValue(loc, nil, handleData...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return err
 	}
-	value, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), row, colIDs, nil, nil)
-	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+	value, err := encodeRowBuffer.EncodeBinlogRowData(loc, ec)
 	if err != nil {
 		return err
 	}
 	bin := append(pk, value...)
+	mutation := ctx.GetBinlogMutation(t.tableID)
 	mutation.InsertedRows = append(mutation.InsertedRows, bin)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
 	return nil
 }
 
 func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, oldRow, newRow []types.Datum, colIDs []int64) error {
-	old, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), oldRow, colIDs, nil, nil)
-	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
+	old, err := tablecodec.EncodeOldRow(loc, oldRow, colIDs, nil, nil)
+	err = ec.HandleError(err)
 	if err != nil {
 		return err
 	}
-	newVal, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), newRow, colIDs, nil, nil)
-	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+	newVal, err := tablecodec.EncodeOldRow(loc, newRow, colIDs, nil, nil)
+	err = ec.HandleError(err)
 	if err != nil {
 		return err
 	}
 	bin := append(old, newVal...)
-	mutation := t.getMutation(ctx)
+	mutation := ctx.GetBinlogMutation(t.tableID)
 	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Update)
 	return nil
 }
 
 func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), r, colIDs, nil, nil)
-	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
+	data, err := tablecodec.EncodeOldRow(loc, r, colIDs, nil, nil)
+	err = ec.HandleError(err)
 	if err != nil {
 		return err
 	}
-	mutation := t.getMutation(ctx)
+	mutation := ctx.GetBinlogMutation(t.tableID)
 	mutation.DeletedRows = append(mutation.DeletedRows, data)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteRow)
 	return nil
@@ -1723,23 +1724,19 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-func shouldWriteBinlog(vars *variable.SessionVars, tblInfo *model.TableInfo) bool {
+func shouldWriteBinlog(ctx table.MutateContext, tblInfo *model.TableInfo) bool {
 	failpoint.Inject("forceWriteBinlog", func() {
 		// Just to cover binlog related code in this package, since the `BinlogClient` is
 		// still nil, mutations won't be written to pump on commit.
 		failpoint.Return(true)
 	})
-	if vars.BinlogClient == nil {
+	if !ctx.BinlogEnabled() {
 		return false
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
 		return false
 	}
-	return !vars.InRestrictedSQL
-}
-
-func (t *TableCommon) getMutation(ctx table.MutateContext) *binlog.TableMutation {
-	return ctx.StmtGetMutation(t.tableID)
+	return !ctx.InRestrictedSQL()
 }
 
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
