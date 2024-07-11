@@ -92,11 +92,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 38,
-=======
     shard_count = 32,
->>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
