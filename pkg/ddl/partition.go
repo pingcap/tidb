@@ -3233,13 +3233,9 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, nil
 			}
 
-<<<<<<< HEAD
 			// TODO: Extend for normal tables
 			// TODO: Extend for REMOVE PARTITIONING
 			_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
-=======
-			_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, handle, rawRow, sysTZ, w.rowMap)
->>>>>>> d5fece20f73 (ddl: Regenerating AutoIDs for _tidb_rowid during Reorganize Partition (#53770))
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -3270,12 +3266,12 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 					// TODO: Which autoid allocator to use?
 					ids := uint64(max(1, w.batchCnt-len(w.rowRecords)))
 					// Keep using the original table's allocator
-					stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
+					stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = tables.AllocHandleIDs(w.ctx, w.sessCtx, w.reorgedTbl, ids)
 					if err != nil {
 						return false, errors.Trace(err)
 					}
 				}
-				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
+				recordID, err := tables.AllocHandle(w.ctx, w.sessCtx, w.reorgedTbl)
 				if err != nil {
 					return false, errors.Trace(err)
 				}

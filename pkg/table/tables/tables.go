@@ -885,14 +885,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			// The reserved ID could be used in the future within this statement, by the
 			// following AddRecord() operation.
 			// Make the IDs continuous benefit for the performance of TiKV.
-<<<<<<< HEAD
 			stmtCtx := sctx.GetSessionVars().StmtCtx
-			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
-=======
-			sessVars := sctx.GetSessionVars()
-			stmtCtx := sessVars.StmtCtx
 			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
->>>>>>> d5fece20f73 (ddl: Regenerating AutoIDs for _tidb_rowid during Reorganize Partition (#53770))
 			if err != nil {
 				return nil, err
 			}
@@ -1690,21 +1684,13 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 		}
 	}
 
-<<<<<<< HEAD
-	_, rowID, err := allocHandleIDs(ctx, sctx, t, 1)
-	return kv.IntHandle(rowID), err
-}
-
-func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
-=======
-	_, rowID, err := AllocHandleIDs(ctx, mctx, t, 1)
+	_, rowID, err := AllocHandleIDs(ctx, sctx, t, 1)
 	return kv.IntHandle(rowID), err
 }
 
 // AllocHandleIDs allocates n handle ids (_tidb_rowid), and caches the range
-// in the table.MutateContext.
-func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table, n uint64) (int64, int64, error) {
->>>>>>> d5fece20f73 (ddl: Regenerating AutoIDs for _tidb_rowid during Reorganize Partition (#53770))
+// in the session context.
+func AllocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
 	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
