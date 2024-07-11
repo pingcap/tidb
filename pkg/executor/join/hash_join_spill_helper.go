@@ -277,7 +277,7 @@ func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, 
 	return validJoinKeys
 }
 
-func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []*rowTableSegment) error {
+func (h *hashJoinSpillHelper) spillBuildSideOnePartition(workerID int, partID int, segments []*rowTableSegment) error {
 	if h.buildRowsInDisk[partID] == nil {
 		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
@@ -290,12 +290,12 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []
 		h.hashJoinExec.hashTableContext.setPartitionSpilled(partID)
 	}
 
-	return h.spillSegmentsToDisk(h.buildRowsInDisk[partID], segments)
+	return h.spillSegmentsToDisk(workerID, h.buildRowsInDisk[partID], segments)
 }
 
-func (h *hashJoinSpillHelper) spillSegmentsToDisk(disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
+func (h *hashJoinSpillHelper) spillSegmentsToDisk(workerID int, disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
 	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
-	h.tmpSpillBuildSideChunks[0].Reset()
+	h.tmpSpillBuildSideChunks[workerID].Reset()
 
 	// Get row bytes from segment and spill them
 	for _, seg := range segments {
@@ -303,27 +303,27 @@ func (h *hashJoinSpillHelper) spillSegmentsToDisk(disk *chunk.DataInDiskByChunks
 		rows := seg.getRowsBytesForSpill()
 
 		for i, row := range rows {
-			if h.tmpSpillBuildSideChunks[0].IsFull() {
-				err := disk.Add(h.tmpSpillBuildSideChunks[0])
+			if h.tmpSpillBuildSideChunks[workerID].IsFull() {
+				err := disk.Add(h.tmpSpillBuildSideChunks[workerID])
 				if err != nil {
 					return err
 				}
-				h.tmpSpillBuildSideChunks[0].Reset()
+				h.tmpSpillBuildSideChunks[workerID].Reset()
 			}
 
-			h.tmpSpillBuildSideChunks[0].AppendInt64(0, int64(seg.hashValues[i]))
-			h.tmpSpillBuildSideChunks[0].AppendBytes(1, validJoinKeys[i:i+1])
-			h.tmpSpillBuildSideChunks[0].AppendBytes(2, row)
+			h.tmpSpillBuildSideChunks[workerID].AppendInt64(0, int64(seg.hashValues[i]))
+			h.tmpSpillBuildSideChunks[workerID].AppendBytes(1, validJoinKeys[i:i+1])
+			h.tmpSpillBuildSideChunks[workerID].AppendBytes(2, row)
 		}
 	}
 
 	// Spill remaining rows in tmpSpillChunk[0]
-	if h.tmpSpillBuildSideChunks[0].NumRows() > 0 {
-		err := disk.Add(h.tmpSpillBuildSideChunks[0])
+	if h.tmpSpillBuildSideChunks[workerID].NumRows() > 0 {
+		err := disk.Add(h.tmpSpillBuildSideChunks[workerID])
 		if err != nil {
 			return err
 		}
-		h.tmpSpillBuildSideChunks[0].Reset()
+		h.tmpSpillBuildSideChunks[workerID].Reset()
 	}
 	return nil
 }
@@ -337,11 +337,10 @@ func (h *hashJoinSpillHelper) spillProbeChk(partID int, chk *chunk.Chunk) error 
 func (h *hashJoinSpillHelper) init() {
 	if h.buildRowsInDisk == nil {
 		// It's the first time that spill is triggered
-		h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
+		h.initTmpSpillBuildSideChunks()
 
-		partitionNum := h.hashJoinExec.PartitionNumber
-		h.buildRowsInDisk = make([]*chunk.DataInDiskByChunks, partitionNum)
-		h.probeRowsInDisk = make([]*chunk.DataInDiskByChunks, partitionNum)
+		h.buildRowsInDisk = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
+		h.probeRowsInDisk = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
 	}
 }
 
@@ -373,7 +372,7 @@ func (h *hashJoinSpillHelper) spillBuildRows(isInBuildStage bool) error {
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
 	for i := 0; i < len(partitionsNeedSpill); i++ {
-		go func(partID int) {
+		go func(workerID int, partID int) {
 			defer func() {
 				if err := recover(); err != nil {
 					errChannel <- util.GetRecoverError(err)
@@ -404,11 +403,11 @@ func (h *hashJoinSpillHelper) spillBuildRows(isInBuildStage bool) error {
 				h.hashJoinExec.hashTableContext.clearSegments(-1, partID)
 			}
 
-			err := h.spillBuildSideOnePartition(partID, spilledSegments)
+			err := h.spillBuildSideOnePartition(workerID, partID, spilledSegments)
 			if err != nil {
 				errChannel <- util.GetRecoverError(err)
 			}
-		}(partitionsNeedSpill[i])
+		}(i, partitionsNeedSpill[i])
 	}
 
 	waiter.Wait()
@@ -493,7 +492,14 @@ func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, b
 
 	newBuildInDisk := h.createNewDiskForBuild()
 	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
-	h.initTmpSpillBuildSideChunks()
+
+	if len(h.tmpSpillBuildSideChunks) < h.hashJoinExec.PartitionNumber {
+		panic("length of tmpSpillBuildSideChunks should not be smaller than partition number")
+	}
+
+	for _, chk := range h.tmpSpillBuildSideChunks {
+		chk.Reset()
+	}
 
 	// Spill data in segments
 	for _, seg := range segments {
@@ -627,10 +633,9 @@ func (h *hashJoinSpillHelper) createNewDiskForProbe() []*chunk.DataInDiskByChunk
 }
 
 func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
-	// Existing chunks in `h.tmpSpillBuildSideChunks` can be reused
 	if len(h.tmpSpillBuildSideChunks) < h.hashJoinExec.PartitionNumber {
 		for i := len(h.tmpSpillBuildSideChunks); i < h.hashJoinExec.PartitionNumber; i++ {
-			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
+			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}
 }
@@ -638,7 +643,7 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 func (h *hashJoinSpillHelper) initTmpSpillProbeSideChunks() {
 	if len(h.tmpSpillProbeSideChunks) == 0 {
 		for i := 0; i < h.hashJoinExec.PartitionNumber; i++ {
-			h.tmpSpillProbeSideChunks = append(h.tmpSpillProbeSideChunks, chunk.NewChunkWithCapacity(h.probeFieldTypes, spillChunkSize))
+			h.tmpSpillProbeSideChunks = append(h.tmpSpillProbeSideChunks, chunk.NewChunkFromPoolWithCapacity(h.probeFieldTypes, spillChunkSize))
 		}
 	}
 }
