@@ -15,6 +15,7 @@
 package coretestsdk
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ import (
 // SetTiFlashReplica is to set TiFlash replica
 func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
