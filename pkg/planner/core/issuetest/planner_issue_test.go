@@ -86,3 +86,33 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
+
+func Test54535(t *testing.T) {
+	// test for tidb_enable_inl_join_inner_multi_pattern system variable
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_enable_inl_join_inner_multi_pattern='ON'")
+	tk.MustExec("create table ta(a1 int, a2 int, a3 int, index idx_a(a1))")
+	tk.MustExec("create table tb(b1 int, b2 int, b3 int, index idx_b(b1))")
+	tk.MustExec("analyze table ta")
+	tk.MustExec("analyze table tb")
+
+	stmt, err := parser.New().ParseOneStmt("SELECT /*+ inl_join(tmp) */ * FROM ta, (SELECT b1, COUNT(b3) AS cnt FROM tb GROUP BY b1, b2) as tmp where ta.a1 = tmp.b1", "", "")
+	require.NoError(t, err)
+
+	p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, domain.InfoSchema())
+	require.NoError(t, err)
+	require.NotNil(t, p)
+
+	// The optimizer should choose IndexJoin
+	var ok bool
+	for {
+		_, ok = p.(*core.PhysicalIndexJoin)
+		if ok || len(p.(base.PhysicalPlan).Children()) == 0 {
+			break
+		}
+		p = p.(base.PhysicalPlan).Children()[0]
+	}
+	require.True(t, ok)
+}
