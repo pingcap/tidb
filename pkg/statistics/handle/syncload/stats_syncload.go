@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -304,6 +305,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	if !ok {
 		return nil
 	}
+	var tblInfo table.Table
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
@@ -328,7 +330,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
 			// so we have to get the column info from the domain.
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			tblInfo, ok := s.statsHandle.TableInfoByID(is, item.TableID)
+			tblInfo, ok = s.statsHandle.TableInfoByID(is, item.TableID)
 			if !ok {
 				return nil
 			}
@@ -537,7 +539,7 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+func (s *statsSyncLoad) updateCachedItem(tbleInfo table.Table, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.StatsLoad.Lock()
 	defer s.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -564,6 +566,11 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		// All the objects shares the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
 			tbl.StatsVer = statistics.Version0
+		}
+		if tbl.ColAndIdxExistenceMap.IsColEmpty() {
+			for _, col := range tbleInfo.Meta().Columns {
+
+			}
 		}
 	} else if item.IsIndex && idxHist != nil {
 		index := tbl.GetIdx(item.ID)
