@@ -288,7 +288,7 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	// create tiflash replica
 	{
 		is := dom.InfoSchema()
-		tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("show_warnings_expr_pushdown"))
+		tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("show_warnings_expr_pushdown"))
 		require.NoError(t, err)
 		tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:     1,

@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -51,13 +52,13 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	// set tiflash replica
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
 		Available: true,
 	}
-	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tblInfo, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
