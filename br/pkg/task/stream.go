@@ -458,18 +458,8 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 	return nil
 }
 
-<<<<<<< HEAD
-func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
-	se, err := g.CreateSession(s.mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
-	supportStream, err := utils.IsLogBackupEnabled(execCtx)
-=======
 func (s *streamMgr) checkStreamStartEnable(ctx context.Context) error {
 	supportStream, err := s.mgr.IsLogBackupEnabled(ctx, s.httpCli)
->>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 	if err != nil {
 		return errors.Trace(err)
 	}
