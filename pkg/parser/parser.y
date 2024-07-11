@@ -1555,6 +1555,7 @@ import (
 	FirstOrNext       "FIRST or NEXT"
 	RowOrRows         "ROW or ROWS"
 	Replica           "{REPLICA | SLAVE}"
+	GlobalOpt         "GLOBAL or empty"
 
 %type	<ident>
 	Identifier                      "identifier or unreserved keyword"
@@ -2754,6 +2755,15 @@ WithClustered:
 		$$ = model.PrimaryKeyTypeNonClustered
 	}
 
+GlobalOpt:
+	{
+		$$ = ""
+	}
+|	"GLOBAL"
+	{
+		$$ = "Global"
+	}
+
 AlgorithmClause:
 	"ALGORITHM" EqOpt "DEFAULT"
 	{
@@ -3549,27 +3559,31 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoIncrement}
 	}
-|	PrimaryOpt "KEY"
+|	PrimaryOpt "KEY" GlobalOpt
 	{
 		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
 		// can also be specified as just KEY when given in a column definition.
 		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey, StrValue: $3}
 	}
-|	PrimaryOpt "KEY" WithClustered
+|	PrimaryOpt "KEY" WithClustered GlobalOpt
 	{
 		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
 		// can also be specified as just KEY when given in a column definition.
 		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey, PrimaryKeyTp: $3.(model.PrimaryKeyType)}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey, PrimaryKeyTp: $3.(model.PrimaryKeyType), StrValue: $4}
+	}
+|	"UNIQUE" "GLOBAL"
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey, StrValue: "Global"}
 	}
 |	"UNIQUE" %prec lowerThanKey
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
 	}
-|	"UNIQUE" "KEY"
+|	"UNIQUE" "KEY" GlobalOpt
 	{
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey, StrValue: $3}
 	}
 |	"DEFAULT" DefaultValueExpr
 	{

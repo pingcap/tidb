@@ -3763,3 +3763,35 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.True(t, idxInfo.Primary)
 	}
 }
+func TestGlobalIndexExplicitOption(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=OFF")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:1503]A PRIMARY KEY must include all columns in the table's partitioning function")
+	tk.MustExec("set tidb_enable_global_index=ON")
+	tk.MustContainErrMsg(`create table t (a int key global, b int) partition by hash(b) partitions 3`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`create table t (a int unique, b int) partition by hash(b) partitions 3`, "The index needs to be global, but it is not explicitly set as such")
+	tk.MustContainErrMsg(`create table t (a int unique key, b int) partition by hash(b) partitions 3`, "The index needs to be global, but it is not explicitly set as such")
+	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "The index needs to be global, but it is not explicitly set as such")
+	tk.MustExec(`create table t (a int primary key nonclustered global, b int) partition by hash(b) partitions 3`)
+	createTable := "CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`b`) PARTITIONS 3"
+	res := tk.MustQuery(`show create table t`)
+	res.Check(testkit.Rows("t " + createTable))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(createTable)
+	tk.MustQuery(`show create table t`).Check(res.Rows())
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int key nonclustered global, b int) partition by hash(b) partitions 3`)
+	tk.MustQuery(`show create table t`).Check(res.Rows())
+	tk.MustExec(`drop table t`)
+}

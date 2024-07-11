@@ -1254,6 +1254,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				if col.GetFlag()&mysql.PriKeyFlag == 0 {
 					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys,
 						Option: &ast.IndexOption{PrimaryKeyTp: v.PrimaryKeyTp}}
+					if v.StrValue == "Global" {
+						constraint.Option.Global = true
+					}
 					constraints = append(constraints, constraint)
 					col.AddFlag(mysql.PriKeyFlag)
 					// Add NotNullFlag early so that processColumnFlags() can see it.
@@ -1263,6 +1266,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				// Check UniqueFlag first to avoid extra duplicate constraints.
 				if col.GetFlag()&mysql.UniqueFlag == 0 {
 					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
+					if v.StrValue == "Global" {
+						constraint.Option.Global = true
+					}
 					constraints = append(constraints, constraint)
 					col.AddFlag(mysql.UniqueKeyFlag)
 				}
@@ -2246,8 +2252,8 @@ func BuildTableInfo(
 		}
 
 		var (
-			indexName       = constr.Name
-			primary, unique bool
+			indexName               = constr.Name
+			primary, unique, global bool
 		)
 
 		// Check if the index is primary or unique.
@@ -2256,8 +2262,14 @@ func BuildTableInfo(
 			primary = true
 			unique = true
 			indexName = mysql.PrimaryKeyName
+			if constr.Option != nil && constr.Option.Global {
+				global = true
+			}
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
+			if constr.Option != nil && constr.Option.Global {
+				global = true
+			}
 		}
 
 		// check constraint
@@ -2330,7 +2342,7 @@ func BuildTableInfo(
 			model.NewCIStr(indexName),
 			primary,
 			unique,
-			false,
+			global,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -2386,6 +2398,7 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
+		// TODO: When supporting Table Partitioning, also add support for Global Index!
 		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, idxName, false, false, false, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
@@ -4739,6 +4752,7 @@ func getPartitionInfoTypeNone() *model.PartitionInfo {
 }
 
 // AlterTablePartitioning reorganize one set of partitions to a new set of partitions.
+// TODO: How to handle Global when altering partitioning?!? Having a new option?
 func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -4767,6 +4781,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 
 	for _, index := range newMeta.Indices {
 		if index.Unique {
+			// TODO: Check that GLOBAL was given as IndexOption!!!
 			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
 			if err != nil {
 				return err
@@ -7588,6 +7603,10 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 			}
 			// index columns does not contain all partition columns, must set global
+			if indexOption == nil || !indexOption.Global {
+				// TODO: update to better error?
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("GLOBAL IndexOption not set")
+			}
 			global = true
 		}
 	}
@@ -7841,7 +7860,12 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			if !ctx.GetSessionVars().EnableGlobalIndex {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
+			// TODO: Also check that IndexOption has GLOBAL set!
 			// index columns does not contain all partition columns, must set global
+			if indexOption == nil || !indexOption.Global {
+				// TODO: create a better error!
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("GLOBAL IndexOption not set!")
+			}
 			global = true
 		}
 	}
