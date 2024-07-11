@@ -47,6 +47,7 @@ type Misc interface {
 	AllPlacementBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
+	// ClonePlacementPolicies returns a copy of all placement policies.
 	ClonePlacementPolicies() map[string]*model.PolicyInfo
 	// AllResourceGroups returns all resource groups
 	AllResourceGroups() []*model.ResourceGroupInfo
