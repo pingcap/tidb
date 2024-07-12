@@ -27,12 +27,12 @@ import (
 type LogicalCTETable struct {
 	logicalop.LogicalSchemaProducer
 
-	seedStat     *property.StatsInfo
-	name         string
-	idForStorage int
+	SeedStat     *property.StatsInfo
+	Name         string
+	IDForStorage int
 
-	// seedSchema is only used in columnStatsUsageCollector to get column mapping
-	seedSchema *expression.Schema
+	// SeedSchema is only used in columnStatsUsageCollector to get column mapping
+	SeedSchema *expression.Schema
 }
 
 // Init only assigns type and context.
@@ -73,7 +73,7 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	p.SetStats(p.seedStat)
+	p.SetStats(p.SeedStat)
 	return p.StatsInfo(), nil
 }
 
