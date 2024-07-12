@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -60,8 +61,9 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		wg.Run(func() {
 			kit := testkit.NewTestKit(t, store)
+			ddlSe := sess.NewSession(kit.Session())
 			for i := 0; i < 1000; i++ {
-				require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, kit.Session(), jobs))
+				require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
 			}
 		})
 	}
@@ -115,8 +117,9 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 		index := i
 		wg.Run(func() {
 			kit := testkit.NewTestKit(t, store)
+			ddlSe := sess.NewSession(kit.Session())
 			for i := 0; i < iterationPerThread; i++ {
-				require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, kit.Session(), jobs))
+				require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
 
 				counters[0].Add(1)
 				counters[index+1].Add(1)
