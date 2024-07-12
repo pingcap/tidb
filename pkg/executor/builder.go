@@ -5290,7 +5290,17 @@ func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, p
 }
 
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
-	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, planPartInfo.PruningConds, planPartInfo.PartitionNames, planPartInfo.Columns, planPartInfo.ColumnNames)
+	var pruningConds []expression.Expression
+	var partitionNames []model.CIStr
+	var columns []*expression.Column
+	var columnNames types.NameSlice
+	if planPartInfo != nil {
+		pruningConds = planPartInfo.PruningConds
+		partitionNames = planPartInfo.PartitionNames
+		columns = planPartInfo.Columns
+		columnNames = planPartInfo.ColumnNames
+	}
+	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, pruningConds, partitionNames, columns, columnNames)
 	if err != nil {
 		return nil, err
 	}
