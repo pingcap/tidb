@@ -26,10 +26,10 @@ import (
 func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTableScan)
 	*cloned = *op
-	if base, err := op.physicalSchemaProducer.cloneWithSelf(newCtx, cloned); err != nil {
+	if basePlan, ok := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned); !ok {
 		return nil, false
 	} else {
-		cloned.physicalSchemaProducer = *base
+		cloned.physicalSchemaProducer = *basePlan
 	}
 	cloned.AccessCondition = util.CloneExprs(op.AccessCondition)
 	cloned.filterCondition = util.CloneExprs(op.filterCondition)
@@ -55,10 +55,10 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexScan)
 	*cloned = *op
-	if base, err := op.physicalSchemaProducer.cloneWithSelf(newCtx, cloned); err != nil {
+	if basePlan, ok := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned); !ok {
 		return nil, false
 	} else {
-		cloned.physicalSchemaProducer = *base
+		cloned.physicalSchemaProducer = *basePlan
 	}
 	cloned.AccessCondition = util.CloneExprs(op.AccessCondition)
 	cloned.IdxCols = util.CloneCols(op.IdxCols)
@@ -79,10 +79,10 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalSelection)
 	*cloned = *op
-	if base, err := op.basePhysicalPlan.cloneWithSelf(newCtx, cloned); err != nil {
+	if basePlan, ok := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned); !ok {
 		return nil, false
 	} else {
-		cloned.basePhysicalPlan = *base
+		cloned.basePhysicalPlan = *basePlan
 	}
 	cloned.Conditions = util.CloneExprs(op.Conditions)
 	return cloned, true
@@ -92,10 +92,10 @@ func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalProjection)
 	*cloned = *op
-	if base, err := op.physicalSchemaProducer.cloneWithSelf(newCtx, cloned); err != nil {
+	if basePlan, ok := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned); !ok {
 		return nil, false
 	} else {
-		cloned.physicalSchemaProducer = *base
+		cloned.physicalSchemaProducer = *basePlan
 	}
 	cloned.Exprs = util.CloneExprs(op.Exprs)
 	return cloned, true
