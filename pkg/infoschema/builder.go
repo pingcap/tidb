@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -805,21 +806,16 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 	oldIS := oldSchema.base()
 	b.initBundleInfoBuilder()
 	b.infoSchema.schemaMetaVersion = oldIS.schemaMetaVersion
-	b.copySchemasMap(oldIS)
-	b.copyBundlesMap(oldIS)
-	b.copyPoliciesMap(oldIS)
-	b.copyResourceGroupMap(oldIS)
-	b.copyTemporaryTableIDsMap(oldIS)
-	b.copyReferredForeignKeyMap(oldIS)
+	b.infoSchema.schemaMap = maps.Clone(oldIS.schemaMap)
+	b.infoSchema.schemaID2Name = maps.Clone(oldIS.schemaID2Name)
+	b.infoSchema.ruleBundleMap = maps.Clone(oldIS.ruleBundleMap)
+	b.infoSchema.policyMap = oldIS.ClonePlacementPolicies()
+	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
+	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
+	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b, nil
-}
-
-func (b *Builder) copySchemasMap(oldIS *infoSchema) {
-	for _, v := range oldIS.schemaMap {
-		b.infoSchema.addSchema(v)
-	}
 }
 
 // getSchemaAndCopyIfNecessary creates a new schemaTables instance when a table in the database has changed.
@@ -832,10 +828,7 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 		oldSchemaTables := b.infoSchema.schemaMap[dbName]
 		newSchemaTables := &schemaTables{
 			dbInfo: oldSchemaTables.dbInfo.Copy(),
-			tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
-		}
-		for k, v := range oldSchemaTables.tables {
-			newSchemaTables.tables[k] = v
+			tables: maps.Clone(oldSchemaTables.tables),
 		}
 		b.infoSchema.addSchema(newSchemaTables)
 		return newSchemaTables.dbInfo
