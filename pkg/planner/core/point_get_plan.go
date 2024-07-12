@@ -339,6 +339,16 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		// reading for the Global Index / table id
 		return false
 	}
+	if p.IndexInfo == nil && p.HandleColOffset == -1 && len(p.PartitionNames) == 1 {
+		// _tidb_rowid + specify a partition
+		for i, def := range pi.Definitions {
+			if def.Name.L == p.PartitionNames[0].L {
+				p.PartitionIdx = &i
+				break
+			}
+		}
+		return false
+	}
 	// If tryPointGetPlan did generate the plan,
 	// then PartitionIdx is not set and needs to be set here!
 	// There are two ways to get here from static mode partition pruning:

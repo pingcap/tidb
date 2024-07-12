@@ -877,3 +877,8 @@ insert into t values(0),(0);
 analyze table t;
 explain select *,_tidb_rowid from t where _tidb_rowid=1;
 select *,_tidb_rowid from t where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;

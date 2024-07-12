@@ -1304,3 +1304,18 @@ TableReader_6	2.00	root	partition:all	data:TableRangeScan_5
 select *,_tidb_rowid from t where _tidb_rowid=1;
 id	_tidb_rowid
 0	1
+explain select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+Point_Get_5	1.00	root	table:t, partition:p0	handle:1
+select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+id	_tidb_rowid
+0	1
+explain select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+Point_Get_5	1.00	root	table:t, partition:p1	handle:1
+select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+id	_tidb_rowid
+explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:p0,p1	data:TableRangeScan_5
+└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[1,1], keep order:false

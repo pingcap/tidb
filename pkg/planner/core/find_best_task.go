@@ -1401,6 +1401,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet && ds.table.Meta().GetPartitionInfo() != nil {
 			// partition table with dynamic prune not support batchPointGet
 			// Due to sorting?
+			// Please make sure handle `where _tidb_rowid in (xx, xx)` correctly when delete this if statements.
 			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				canConvertPointGet = false
 			}
@@ -1418,8 +1419,8 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 					canConvertPointGet = false
 				}
 			}
-			// Partition table can't use `_tidb_rowid` to generate PointGet Plan.
-			if canConvertPointGet && path.IsIntHandlePath && ds.HandleCols != nil && ds.HandleCols.GetCol(0).ID == model.ExtraHandleID {
+			// Partition table can't use `_tidb_rowid` to generate PointGet Plan unless one partition is explicitly specified.
+			if canConvertPointGet && path.IsIntHandlePath && ds.HandleCols != nil && ds.HandleCols.GetCol(0).ID == model.ExtraHandleID && len(ds.PartitionNames) != 1 {
 				canConvertPointGet = false
 			}
 			if canConvertPointGet {
@@ -2627,7 +2628,11 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		found := false
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
-				pointGetPlan.HandleColOffset = ds.Columns[i].Offset
+				if ds.HandleCols.GetCol(0).ID == model.ExtraHandleID {
+					pointGetPlan.HandleColOffset = -1
+				} else {
+					pointGetPlan.HandleColOffset = ds.Columns[i].Offset
+				}
 				found = true
 				break
 			}
