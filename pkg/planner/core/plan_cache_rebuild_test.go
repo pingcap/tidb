@@ -39,7 +39,7 @@ type mockOperator1 struct {
 	p1 *int
 }
 
-func (m *mockOperator1) CloneForPlanCache(newCtx base.PlanContext) (cloned base.Plan, ok bool) {
+func (m *mockOperator1) CloneForPlanCache(base.PlanContext) (cloned base.Plan, ok bool) {
 	return nil, false
 }
 
@@ -49,7 +49,7 @@ type mockOperator2 struct {
 	p1 *int `plan-cache-shallow-clone:"true"`
 }
 
-func (m *mockOperator2) CloneForPlanCache(newCtx base.PlanContext) (cloned base.Plan, ok bool) {
+func (m *mockOperator2) CloneForPlanCache(base.PlanContext) (cloned base.Plan, ok bool) {
 	return nil, false
 }
 
@@ -74,7 +74,7 @@ func getAllCloneForPlanCacheImplCode(t *testing.T) []string {
 			if strings.HasSuffix(line, "//") {
 				continue
 			}
-			if strings.HasPrefix(line, "func (") &&
+			if strings.HasPrefix(line, "func (") && // TODO: use golang.Parse instead of matching text
 				strings.Contains(line, ") CloneForPlanCache(") {
 				beginLine = i
 			}
