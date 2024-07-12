@@ -68,7 +68,7 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.ByItems = util.CloneByItems(op.ByItems)
-	cloned.pkIsHandleCol = op.pkIsHandleCol.Clone()
+	cloned.pkIsHandleCol = op.pkIsHandleCol.Clone().(*expression.Column)
 	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
 	copy(cloned.constColsByCond, op.constColsByCond)
 	return cloned, true

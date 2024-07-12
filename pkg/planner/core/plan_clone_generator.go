@@ -80,8 +80,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = util.CloneCols(op.%v)", f.Name, f.Name)
 		case "util.HandleCols":
 			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
-		case "*core.PhysPlanPartInfo", "*expression.Column":
+		case "*core.PhysPlanPartInfo":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
+		case "*expression.Column":
+			c.write("cloned.%v = op.%v.Clone().(*expression.Column)", f.Name, f.Name)
 		default:
 			return nil, fmt.Errorf("can't generate Clone method for type: %v", f.Type.String())
 		}
