@@ -857,12 +857,12 @@ type PhysicalTableScan struct {
 	// TODO: remove this field after we support pushing down selection to coprocessor.
 	LateMaterializationFilterCondition []expression.Expression
 
-	Table   *model.TableInfo
-	Columns []*model.ColumnInfo
-	DBName  model.CIStr
+	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
+	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
+	DBName  model.CIStr         `plan-cache-clone:"shallow"`
 	Ranges  []*ranger.Range
 
-	TableAsName *model.CIStr
+	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
 
 	physicalTableID int64
 
@@ -890,13 +890,13 @@ type PhysicalTableScan struct {
 
 	PlanPartInfo *PhysPlanPartInfo
 
-	SampleInfo *tablesampler.TableSampleInfo
+	SampleInfo *tablesampler.TableSampleInfo `plan-cache-clone:"must-nil"`
 
 	// required by cost model
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
-	tblCols     []*expression.Column
-	tblColHists *statistics.HistColl
-	prop        *property.PhysicalProperty
+	tblCols     []*expression.Column       `plan-cache-clone:"shallow"`
+	tblColHists *statistics.HistColl       `plan-cache-clone:"shallow"`
+	prop        *property.PhysicalProperty `plan-cache-clone:"shallow"`
 
 	// constColsByCond records the constant part of the index columns caused by the access conds.
 	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
@@ -905,10 +905,10 @@ type PhysicalTableScan struct {
 
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
-	usedStatsInfo *stmtctx.UsedStatsInfoForTable
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
 
 	// for runtime filter
-	runtimeFilterList []*RuntimeFilter
+	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 	maxWaitTimeMs     int
 }
 
