@@ -699,7 +699,7 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableItemID]expression.Expression `plan-cache-clone:"must-nil",json:"-"`
+	GenExprs map[model.TableItemID]expression.Expression `plan-cache-clone:"must-nil" json:"-"`
 
 	isPartition bool
 	Desc        bool
