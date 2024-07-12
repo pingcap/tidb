@@ -82,7 +82,7 @@ var (
 
 type tableScanAndPartitionInfo struct {
 	tableScan        *PhysicalTableScan
-	physPlanPartInfo PhysPlanPartInfo
+	physPlanPartInfo *PhysPlanPartInfo
 }
 
 // MemoryUsage return the memory usage of tableScanAndPartitionInfo
@@ -141,7 +141,7 @@ type PhysicalTableReader struct {
 	IsCommonHandle bool
 
 	// Used by partition table.
-	PlanPartInfo PhysPlanPartInfo
+	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo
 }
@@ -155,6 +155,16 @@ type PhysPlanPartInfo struct {
 }
 
 const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
+
+// Clone clones the PhysPlanPartInfo.
+func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
+	cloned := new(PhysPlanPartInfo)
+	cloned.PruningConds = util.CloneExprs(pi.PruningConds)
+	cloned.PartitionNames = util.CloneCIStrs(pi.PartitionNames)
+	cloned.Columns = util.CloneCols(pi.Columns)
+	cloned.ColumnNames = util.CloneFieldNames(pi.ColumnNames)
+	return cloned
+}
 
 // MemoryUsage return the memory usage of PhysPlanPartInfo
 func (pi *PhysPlanPartInfo) MemoryUsage() (sum int64) {
@@ -298,7 +308,7 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 
 	// Used by partition table.
-	PlanPartInfo PhysPlanPartInfo
+	PlanPartInfo *PhysPlanPartInfo
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -435,7 +445,7 @@ type PhysicalIndexLookUpReader struct {
 	CommonHandleCols []*expression.Column
 
 	// Used by partition table.
-	PlanPartInfo PhysPlanPartInfo
+	PlanPartInfo *PhysPlanPartInfo
 
 	// required by cost calculation
 	expectedCnt uint64
@@ -581,7 +591,7 @@ type PhysicalIndexMergeReader struct {
 	tablePlan base.PhysicalPlan
 
 	// Used by partition table.
-	PlanPartInfo PhysPlanPartInfo
+	PlanPartInfo *PhysPlanPartInfo
 
 	KeepOrder bool
 
@@ -878,7 +888,7 @@ type PhysicalTableScan struct {
 
 	isChildOfIndexLookUp bool
 
-	PlanPartInfo PhysPlanPartInfo
+	PlanPartInfo *PhysPlanPartInfo
 
 	SampleInfo *tablesampler.TableSampleInfo
 
