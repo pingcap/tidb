@@ -272,6 +272,7 @@ func (p *basePhysicalPlan) cloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 	cloned := new(basePhysicalPlan)
 	*cloned = *p
 	cloned.SetSCtx(newCtx)
+	cloned.self = newSelf
 	cloned.children = make([]base.PhysicalPlan, 0, len(p.children))
 	for _, child := range p.children {
 		clonedChild, ok := child.CloneForPlanCache(newCtx)
