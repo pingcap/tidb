@@ -75,7 +75,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "*core.PhysPlanPartInfo":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 		default:
-			panic("unsupported field type: " + f.Type.String())
+			return nil, fmt.Errorf("can't generate Clone method for type: %v", f.Type.String())
 		}
 	}
 	c.write("return cloned, true")
