@@ -1280,8 +1280,8 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	pid := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4)`)
-	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
-	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) GLOBAL")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c) global")
 
 	tk.MustExec("alter table test_global drop partition p2;")
 	result := tk.MustQuery("select * from test_global;")
