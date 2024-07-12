@@ -488,33 +488,20 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		injectModifyJobArgFailPoint(job)
 	}
 
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	ddlSe := sess.NewSession(se)
 	localMode := tasks[0].job.LocalMode
 	if localMode {
-		var ids []int64
-		// lock to reduce conflict
-		d.globalIDLock.Lock()
-		err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			ids, err = t.GenGlobalIDs(len(tasks))
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			return nil
-		})
-		d.globalIDLock.Unlock()
-		if err != nil {
-			return errors.Trace(err)
+		if err = fillJobIDs(ctx, ddlSe, tasks); err != nil {
+			return err
 		}
-
-		for i, task := range tasks {
-			task.job.ID = ids[i]
+		for _, task := range tasks {
 			d.localJobCh <- task
 		}
 		return nil
 	}
 
-	if err = GenIDAndInsertJobsWithRetry(ctx, se, jobs); err != nil {
+	if err = GenIDAndInsertJobsWithRetry(ctx, ddlSe, jobs); err != nil {
 		return errors.Trace(err)
 	}
 	for _, job := range jobs {
@@ -529,10 +516,33 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 // make sure DDL jobs are inserted in id order, then we can query from a min job ID
 // when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
 // so this function has side effect, it will set the job id of 'tasks'.
-func GenIDAndInsertJobsWithRetry(ctx context.Context, se sessionctx.Context, jobs []*model.Job) error {
-	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	ddlSe := sess.NewSession(se)
+func GenIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobs []*model.Job) error {
+	return genIDAndCallWithRetry(ctx, ddlSe, len(jobs), func(ids []int64) error {
+		for idx := range jobs {
+			jobs[idx].ID = ids[idx]
+		}
+		return insertDDLJobs2Table(ctx, ddlSe, jobs...)
+	})
+}
 
+func fillJobIDs(ctx context.Context, ddlSe *sess.Session, tasks []*limitJobTask) error {
+	var allocatedIDs []int64
+	if err := genIDAndCallWithRetry(ctx, ddlSe, len(tasks), func(ids []int64) error {
+		allocatedIDs = ids
+		return nil
+	}); err != nil {
+		return errors.Trace(err)
+	}
+
+	for i, task := range tasks {
+		task.job.ID = allocatedIDs[i]
+	}
+	return nil
+}
+
+// genIDAndCallWithRetry generates global IDs and calls the function with retry.
+// generate ID and call function runs in the same transaction.
+func genIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, fn func(ids []int64) error) error {
 	for i := uint(0); i < kv.MaxRetryCnt; i++ {
 		resErr := func() (err error) {
 			if err := ddlSe.Begin(ctx); err != nil {
@@ -555,14 +565,11 @@ func GenIDAndInsertJobsWithRetry(ctx context.Context, se sessionctx.Context, job
 			txn.GetSnapshot().SetOption(kv.SnapshotTS, forUpdateTS)
 
 			m := meta.NewMeta(txn)
-			ids, err := m.GenGlobalIDs(len(jobs))
+			ids, err := m.GenGlobalIDs(count)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			for idx := range jobs {
-				jobs[idx].ID = ids[idx]
-			}
-			if err = insertDDLJobs2Table(ctx, ddlSe, jobs...); err != nil {
+			if err = fn(ids); err != nil {
 				return errors.Trace(err)
 			}
 			return ddlSe.Commit(ctx)
