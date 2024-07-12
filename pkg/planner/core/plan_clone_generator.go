@@ -25,7 +25,7 @@ import (
 // Using code-gen is safer than writing by hand, for example, if someone adds a new field to a struct,
 // the code-gen can update the Clone method correctly and automatically.
 func genPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{PhysicalTableScan{}, PhysicalSelection{}, PhysicalProjection{}}
+	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{}}
 	c := new(codeGen)
 	c.write(_PREFIX)
 	for _, s := range structures {
@@ -76,9 +76,11 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = util.CloneRanges(op.%v)", f.Name, f.Name)
 		case "[]*util.ByItems":
 			c.write("cloned.%v = util.CloneByItems(op.%v)", f.Name, f.Name)
+		case "[]*expression.Column":
+			c.write("cloned.%v = util.CloneCols(op.%v)", f.Name, f.Name)
 		case "util.HandleCols":
 			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
-		case "*core.PhysPlanPartInfo":
+		case "*core.PhysPlanPartInfo", "*expression.Column":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 		default:
 			return nil, fmt.Errorf("can't generate Clone method for type: %v", f.Type.String())

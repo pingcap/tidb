@@ -680,26 +680,26 @@ type PhysicalIndexScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 
-	Table      *model.TableInfo
-	Index      *model.IndexInfo
+	Table      *model.TableInfo `plan-cache-clone:"shallow"`
+	Index      *model.IndexInfo `plan-cache-clone:"shallow"`
 	IdxCols    []*expression.Column
 	IdxColLens []int
 	Ranges     []*ranger.Range
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
+	Columns    []*model.ColumnInfo `plan-cache-clone:"shallow"`
+	DBName     model.CIStr         `plan-cache-clone:"shallow"`
 
-	TableAsName *model.CIStr
+	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
 
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
-	dataSourceSchema *expression.Schema
+	dataSourceSchema *expression.Schema `plan-cache-clone:"shallow"`
 
 	rangeInfo string
 
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableItemID]expression.Expression `json:"-"`
+	GenExprs map[model.TableItemID]expression.Expression `plan-cache-clone:"must-nil",json:"-"`
 
 	isPartition bool
 	Desc        bool
@@ -715,18 +715,18 @@ type PhysicalIndexScan struct {
 
 	// required by cost model
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
-	tblColHists   *statistics.HistColl
+	tblColHists   *statistics.HistColl `plan-cache-clone:"shallow"`
 	pkIsHandleCol *expression.Column
 
 	// constColsByCond records the constant part of the index columns caused by the access conds.
 	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
 	constColsByCond []bool
 
-	prop *property.PhysicalProperty
+	prop *property.PhysicalProperty `plan-cache-clone:"shallow"`
 
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
-	usedStatsInfo *stmtctx.UsedStatsInfoForTable
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
 }
 
 // Clone implements op.PhysicalPlan interface.

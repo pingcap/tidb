@@ -51,6 +51,30 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 }
 
 // CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalIndexScan)
+	*cloned = *op
+	if base, err := op.physicalSchemaProducer.cloneWithSelf(newCtx, cloned); err != nil {
+		return nil, false
+	} else {
+		cloned.physicalSchemaProducer = *base
+	}
+	cloned.AccessCondition = util.CloneExprs(op.AccessCondition)
+	cloned.IdxCols = util.CloneCols(op.IdxCols)
+	cloned.IdxColLens = make([]int, len(op.IdxColLens))
+	copy(cloned.IdxColLens, op.IdxColLens)
+	cloned.Ranges = util.CloneRanges(op.Ranges)
+	if op.GenExprs != nil {
+		return nil, false
+	}
+	cloned.ByItems = util.CloneByItems(op.ByItems)
+	cloned.pkIsHandleCol = op.pkIsHandleCol.Clone()
+	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
+	copy(cloned.constColsByCond, op.constColsByCond)
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalSelection)
 	*cloned = *op
