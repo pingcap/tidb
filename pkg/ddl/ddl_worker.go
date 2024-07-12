@@ -511,10 +511,10 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	return nil
 }
 
-// GenIDAndInsertJobsWithRetry inserts DDL jobs to the DDL job table with retry.
-// job id allocation and job insertion are in the same transaction, as we want to
-// make sure DDL jobs are inserted in id order, then we can query from a min job ID
-// when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
+// GenIDAndInsertJobsWithRetry generate job ID and inserts DDL jobs to the DDL job
+// table with retry. job id allocation and job insertion are in the same transaction,
+// as we want to make sure DDL jobs are inserted in id order, then we can query from
+// a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
 // so this function has side effect, it will set the job id of 'tasks'.
 func GenIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobs []*model.Job) error {
 	return genIDAndCallWithRetry(ctx, ddlSe, len(jobs), func(ids []int64) error {
@@ -543,8 +543,9 @@ func fillJobIDs(ctx context.Context, ddlSe *sess.Session, tasks []*limitJobTask)
 // genIDAndCallWithRetry generates global IDs and calls the function with retry.
 // generate ID and call function runs in the same transaction.
 func genIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, fn func(ids []int64) error) error {
+	var resErr error
 	for i := uint(0); i < kv.MaxRetryCnt; i++ {
-		resErr := func() (err error) {
+		resErr = func() (err error) {
 			if err := ddlSe.Begin(ctx); err != nil {
 				return errors.Trace(err)
 			}
@@ -582,7 +583,7 @@ func genIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, 
 		}
 		break
 	}
-	return nil
+	return resErr
 }
 
 // lockGlobalIDKey locks the global ID key in the meta store. it keeps trying if
