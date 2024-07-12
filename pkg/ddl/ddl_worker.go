@@ -1053,9 +1053,9 @@ func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 	if err != nil {
 		return err
 	}
-	if job.IsCancelled(){
-		w.sess.Reset()	
-		if err= w.HandleJobDone(d,job,t);err!=nil{
+	if job.IsCancelled() {
+		w.sess.Reset()
+		if err = w.HandleJobDone(d, job, t); err != nil {
 			return err
 		}
 		// return job.Error to let outer known job is cancelled.
