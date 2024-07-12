@@ -498,7 +498,7 @@ func TestTikvUsage(t *testing.T) {
 		total += f.GetSize_()
 	}
 	ret := task.EstimateTikvUsage(files, replica, storeCnt)
-	require.Equal(t, total*replica/uint64(storeCnt), ret)
+	require.Equal(t, total*replica/storeCnt, ret)
 }
 
 func TestTiflashUsage(t *testing.T) {
