@@ -92,17 +92,17 @@ const (
 
 	FlagResetSysUsers = "reset-sys-users"
 
-	defaultPiTRBatchCount     = 8
-	defaultPiTRBatchSize      = 16 * 1024 * 1024
-	defaultRestoreConcurrency = 128
-	defaultPiTRConcurrency    = 16
-	defaultPDConcurrency      = 1
-	defaultStatsConcurrency   = 12
-	defaultBatchFlushInterval = 16 * time.Second
-	defaultFlagDdlBatchSize   = 128
-	resetSpeedLimitRetryTimes = 3
-	maxRestoreBatchSizeLimit  = 10240
-	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
+	defaultPiTRBatchCount            = 8
+	defaultPiTRBatchSize             = 16 * 1024 * 1024
+	defaultRestoreConcurrency        = 128
+	defaultPiTRConcurrency           = 16
+	defaultPDConcurrency             = 1
+	defaultStatsConcurrency          = 12
+	defaultBatchFlushInterval        = 16 * time.Second
+	defaultFlagDdlBatchSize          = 128
+	resetSpeedLimitRetryTimes        = 3
+	maxRestoreBatchSizeLimit         = 10240
+	pb                        uint64 = 1024 * 1024 * 1024 * 1024 * 1024
 )
 
 const (
@@ -1251,7 +1251,7 @@ func EstimateTikvUsage(files []*backuppb.File, replicaCnt uint64, storeCnt uint6
 	for _, file := range files {
 		totalSize += file.GetSize_()
 	}
-	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt",replicaCnt), zap.Uint64("store count", storeCnt))
+	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
 	return totalSize * replicaCnt / storeCnt
 }
 
@@ -1261,7 +1261,7 @@ func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
 	}
 	tiflashTotal := uint64(0)
 	for _, table := range tables {
-		if table.Info.TiFlashReplica == nil ||table.Info.TiFlashReplica.Count <= 0 {
+		if table.Info.TiFlashReplica == nil || table.Info.TiFlashReplica.Count <= 0 {
 			continue
 		}
 		tableBytes := uint64(0)
@@ -1284,7 +1284,7 @@ func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
 	}
 	if uint64(available) < necessary {
-		return errors.Errorf("store %d has no space left on device, available %s, necessary %s",
+		return errors.Annotatef(berrors.ErrKVDiskFull, "store %d has no space left on device, available %s, necessary %s",
 			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
 	}
 	return nil
