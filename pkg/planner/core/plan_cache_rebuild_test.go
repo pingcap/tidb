@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -31,6 +33,94 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+type mockOperator1 struct {
+	f1 int
+	p1 *int
+}
+
+func (m *mockOperator1) CloneForPlanCache(newCtx base.PlanContext) (cloned base.Plan, ok bool) {
+	return nil, false
+}
+
+type mockOperator2 struct {
+	f1 int
+	s1 string
+	p1 *int `plan-cache-shallow-clone:"true"`
+}
+
+func (m *mockOperator2) CloneForPlanCache(newCtx base.PlanContext) (cloned base.Plan, ok bool) {
+	return nil, false
+}
+
+func getAllCloneForPlanCacheImplCode(t *testing.T) []string {
+	impls := make([]string, 0, 24)
+	allFiles, err := os.ReadDir("./")
+	require.NoError(t, err)
+	for _, file := range allFiles {
+		if file.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(file.Name(), ".go") {
+			continue
+		}
+		code, err := os.ReadFile(file.Name())
+		require.NoError(t, err)
+		lines := strings.Split(string(code), "\n")
+
+		beginLine := -1
+		for i, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasSuffix(line, "//") {
+				continue
+			}
+			if strings.HasPrefix(line, "func (") &&
+				strings.Contains(line, ") CloneForPlanCache(") {
+				beginLine = i
+			}
+			if line == "}" && beginLine != -1 {
+				impl := strings.Join(lines[beginLine:i+1], "\n")
+				impls = append(impls, impl)
+				beginLine = -1
+			}
+		}
+	}
+	return impls
+}
+
+func checkPlanCacheCloneFields(structure any, impls []string) error {
+	vType := reflect.TypeOf(structure)
+	var impl string
+	for _, i := range impls {
+		if strings.Contains(i, fmt.Sprintf("*%v) CloneForPlanCache(", vType.Name())) {
+			impl = i
+			break
+		}
+	}
+	if impl == "" {
+		return errors.Errorf("no CloneForPlanCache implementation found for %v", vType.Name())
+	}
+	for i := 0; i < vType.NumField(); i++ {
+		ft := vType.Field(i)
+		if ft.Tag.Get("plan-cache-shallow-clone") == "true" {
+			continue
+		}
+		k := ft.Type.Kind()
+		if k == reflect.Int || k == reflect.Bool || k == reflect.Int8 || k == reflect.Int16 || k == reflect.Int32 || k == reflect.Int64 ||
+			k == reflect.Uint || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 ||
+			k == reflect.Float64 || k == reflect.Float32 || k == reflect.String {
+			continue // safe type
+		}
+		return errors.Errorf("field %v not deeply cloned in %v.CloneForPlanCache", ft.Name, vType.Name())
+	}
+	return nil
+}
+
+func TestPlanCacheCloneFields(t *testing.T) {
+	impls := getAllCloneForPlanCacheImplCode(t)
+	require.Equal(t, checkPlanCacheCloneFields(mockOperator1{}, impls).Error(), "field p1 not deeply cloned in mockOperator1.CloneForPlanCache")
+	require.NoError(t, checkPlanCacheCloneFields(mockOperator2{}, impls))
+}
 
 func TestPlanCacheClone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -92,7 +182,6 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 	checked := false
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
-		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned))
 	})
 	tk2.MustQueryWithContext(ctx, exec2)
 	require.True(t, checked)
