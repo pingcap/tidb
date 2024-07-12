@@ -1317,8 +1317,8 @@ func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
 	tt := external.GetTableByName(t, tk, "test", "test_global")
 	pid := tt.Meta().Partition.Definitions[1].ID
 
-	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
-	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) global")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c) global")
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (21, 21, 21), (29, 29, 29)`)
 
 	tk.MustExec("alter table test_global drop partition p1, p2;")
@@ -1352,7 +1352,7 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	hook := &callback.TestDDLCallback{Do: dom}
@@ -1389,7 +1389,7 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	hook := &callback.TestDDLCallback{Do: dom}
@@ -1428,8 +1428,8 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tt := external.GetTableByName(t, tk, "test", "test_global")
 	pid := tt.Meta().Partition.Definitions[1].ID
 
-	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
-	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) global")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c) global")
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)`)
 
 	tk2 := testkit.NewTestKit(t, store)
@@ -1512,7 +1512,7 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
@@ -1548,7 +1548,7 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by hash(a) partitions 4;`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
@@ -1586,7 +1586,7 @@ func TestGlobalIndexReaderAndIndexLookUpInTruncatePartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
@@ -1625,7 +1625,7 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
@@ -1660,7 +1660,7 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	var indexScanResult *testkit.Result
@@ -1696,7 +1696,7 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	var indexLookupResult *testkit.Result
@@ -1738,7 +1738,7 @@ partition p2 values less than (10))`)
 	rs = tk.MustQuery("show table p index uidx regions").Rows()
 	require.Equal(t, len(rs), 3)
 
-	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("alter table p add unique idx(id) global")
 	rs = tk.MustQuery("show table p regions").Rows()
 	require.Equal(t, len(rs), 4)
 	rs = tk.MustQuery("show table p index idx regions").Rows()
@@ -3491,10 +3491,10 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	require.Equal(t, 0, len(tt.Meta().Indices))
 	pid1 := tt.Meta().Partition.Definitions[1].ID
 
-	tk.MustExec("Alter Table t Add Unique Index idx_b (b)")
+	tk.MustExec("Alter Table t Add Unique Index idx_b (b) global")
 	tk.MustExec(`INSERT INTO t VALUES (4, 5, 6), (6, 4, 5), (11, 6, 4), (12, 7, 7)`)
 	tk.MustExec(`INSERT INTO t VALUES (8, 8, 9), (9, 9, 8), (18, 18, 17), (19, 17, 18)`)
-	tk.MustExec("Alter Table t Add Unique Index idx_c (c)")
+	tk.MustExec("Alter Table t Add Unique Index idx_c (c) global")
 
 	tk.MustExec("alter table t reorganize partition p2 into (partition p2 values less than (15), partition p3 values less than (20), partition pMax values less than (maxvalue))")
 	result := tk.MustQuery("select * from t")
@@ -3567,7 +3567,7 @@ func TestRemovePartitioningGlobalIndex(t *testing.T) {
 	defer func() {
 		tk.MustExec("set tidb_enable_global_index=default")
 	}()
-	tk.MustExec(`create table t (a int unsigned not null, b varchar(255), unique key idx_b(b), unique key idx_a(a)) partition by key(b) partitions 3`)
+	tk.MustExec(`create table t (a int unsigned not null, b varchar(255), unique key idx_b(b), unique key idx_a(a) global) partition by key(b) partitions 3`)
 	tk.MustExec(`create table t2 (a int unsigned not null, b varchar(255), unique key idx_b(b), unique key idx_a(a))`)
 	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,"Hello, World!")`)
 	tk.MustExec(`INSERT INTO t2 select * from t`)
