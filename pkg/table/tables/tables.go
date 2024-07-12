@@ -657,7 +657,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		oldLen := size - 1
 		colSizeBuffer.AddColSizeDelta(col.ID, int64(newLen-oldLen))
 	}
-	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 0, 1, colSizeBuffer.GetColSizeDelta())
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSizeBuffer)
 	return nil
 }
 
@@ -1073,7 +1073,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 		colSizeBuffer.AddColSizeDelta(col.ID, int64(size-1))
 	}
-	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, colSizeBuffer.GetColSizeDelta())
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSizeBuffer)
 	return recordID, nil
 }
 
@@ -1352,8 +1352,8 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		}
 		colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(
-		t.physicalTableID, -1, 1, colSizeBuffer.GetColSizeDelta(),
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(
+		t.physicalTableID, -1, 1, colSizeBuffer,
 	)
 	return err
 }
