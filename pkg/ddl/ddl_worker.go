@@ -591,6 +591,8 @@ func genIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, 
 // https://github.com/pingcap/tidb/issues/27197#issuecomment-2216315057.
 // this part is same as how we implement pessimistic + repeatable read isolation
 // level in SQL executor, see doLockKeys.
+// TODO maybe we can unify the lock mechanism with SQL executor in the future, or
+// implement it inside TiKV client-go.
 func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transaction) (uint64, error) {
 	var (
 		iteration   uint
