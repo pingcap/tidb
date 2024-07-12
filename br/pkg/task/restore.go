@@ -1240,33 +1240,38 @@ func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err
 	return stores, nil
 }
 
-func EstimateTikvUsage(files []*backuppb.File, maxReplica uint64, storeCnt int) uint64 {
+func EstimateTikvUsage(files []*backuppb.File, replicaCnt uint64, storeCnt uint64) uint64 {
 	if storeCnt == 0 {
 		return 0
 	}
-	var totalSize uint64 = 0
+	if replicaCnt > storeCnt {
+		replicaCnt = storeCnt
+	}
+	totalSize := uint64(0)
 	for _, file := range files {
 		totalSize += file.GetSize_()
 	}
-	return totalSize * maxReplica / uint64(storeCnt)
+	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt",replicaCnt), zap.Uint64("store count", storeCnt))
+	return totalSize * replicaCnt / storeCnt
 }
 
-func EstimateTiflashUsage(tables []*metautil.Table, storeCnt int) uint64 {
+func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
 	if storeCnt == 0 {
 		return 0
 	}
-	var tiflashTotal uint64 = 0
+	tiflashTotal := uint64(0)
 	for _, table := range tables {
-		if table.TiFlashReplicas <= 0 {
+		if table.Info.TiFlashReplica == nil ||table.Info.TiFlashReplica.Count <= 0 {
 			continue
 		}
 		tableBytes := uint64(0)
 		for _, file := range table.Files {
 			tableBytes += file.GetSize_()
 		}
-		tiflashTotal += tableBytes * uint64(table.TiFlashReplicas)
+		tiflashTotal += tableBytes * uint64(table.Info.TiFlashReplica.Count)
 	}
-	return tiflashTotal / uint64(storeCnt)
+	log.Info("estimate tiflash usage", zap.Uint64("total size", tiflashTotal), zap.Uint64("store count", storeCnt))
+	return tiflashTotal / storeCnt
 }
 
 func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
@@ -1295,7 +1300,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 		return errors.Trace(err)
 	}
 
-	tikvCnt, tiflashCnt := 0, 0
+	var tikvCnt, tiflashCnt uint64 = 0, 0
 	for i := range stores.Stores {
 		store := &stores.Stores[i]
 		if engine.IsTiFlashHTTPResp(&store.Store) {
@@ -1313,7 +1318,8 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 		return base * uint64(ratio*10) / 10
 	}
 	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
-	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.1)
+	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.3)
+	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
 
 	err = utils.WithRetry(ctx, func() error {
 		stores, err = getStores(ctx, mgr)
