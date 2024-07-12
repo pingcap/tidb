@@ -447,8 +447,6 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
-<<<<<<< HEAD
-=======
 	case EventPause:
 		if c.task.GetName() == e.Name {
 			c.isPaused.Store(true)
@@ -457,7 +455,6 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		if c.task.GetName() == e.Name {
 			c.isPaused.Store(false)
 		}
->>>>>>> 184c76b9162 (br: fix checkpoint cannot advance after pause->stop->start (#53091))
 	case EventErr:
 		return e.Err
 	}
