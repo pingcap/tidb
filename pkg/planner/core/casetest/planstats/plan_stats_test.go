@@ -62,8 +62,8 @@ func TestPlanStatsLoad(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
-	tk.MustExec("analyze table pt")
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table pt all columns")
 
 	testCases := []struct {
 		sql   string
@@ -264,7 +264,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
 	require.NoError(t, dom.StatsHandle().Update(is))
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -432,9 +432,9 @@ func TestPartialStatsInExplain(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table t2")
-	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table tp all columns")
 	tk.RequireNoError(dom.StatsHandle().Update(dom.InfoSchema()))
 	tk.MustQuery("explain select * from tp where a = 1")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")

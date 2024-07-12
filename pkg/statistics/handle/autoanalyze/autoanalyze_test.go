@@ -134,7 +134,7 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, index idx(a))")
 	tk.MustExec("insert into t values (1)")
 	h := dom.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
@@ -244,7 +244,7 @@ func TestTableAnalyzed(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a int)")
+	testKit.MustExec("create table t (a int, index idx(a))")
 	testKit.MustExec("insert into t values (1)")
 
 	is := dom.InfoSchema()
@@ -332,9 +332,11 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
 	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
+	tk.MustExec("select * from t where a = 1 and b = 1 and c = '1'")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
 
 	originalVal := exec.AutoAnalyzeMinCnt

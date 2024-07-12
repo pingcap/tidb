@@ -197,7 +197,7 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	}()
 	h := statHandle.Domain().StatsHandle()
 	tk := testkit.NewDBTestKit(t, db)
-	tk.MustExec("create table test2(a int) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
+	tk.MustExec("create table test2(a int, index idx(a)) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
 	tk.MustExec("insert into test2 (a) values (1)")
 	tk.MustExec("analyze table test2")
 	is := statHandle.Domain().InfoSchema()

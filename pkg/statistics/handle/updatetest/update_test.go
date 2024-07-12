@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -364,6 +365,7 @@ func TestAutoUpdate(t *testing.T) {
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a varchar(20))")
+		analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "a")
 
 		exec.AutoAnalyzeMinCnt = 0
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
@@ -467,7 +469,7 @@ func TestAutoUpdatePartition(t *testing.T) {
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
+		testKit.MustExec("create table t (a int, index idx(a)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
 		testKit.MustExec("analyze table t")
 
 		exec.AutoAnalyzeMinCnt = 0
@@ -627,7 +629,7 @@ func TestLoadHistCorrelation(t *testing.T) {
 	h.SetLease(time.Second)
 	defer func() { h.SetLease(origLease) }()
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t(c int)")
+	testKit.MustExec("create table t(c int, index idx(c))")
 	testKit.MustExec("insert into t values(1),(2),(3),(4),(5)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")
@@ -638,7 +640,7 @@ func TestLoadHistCorrelation(t *testing.T) {
 	testKit.MustExec("explain select * from t where c = 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'")
-	require.Len(t, result.Rows(), 1)
+	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "1", result.Rows()[0][9])
 }
 
@@ -858,7 +860,7 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, index idx(a))")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -930,11 +932,9 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 	require.True(t, rows[0][4].(string) != "<nil>")
 	require.True(t, rows[0][5].(string) == "<nil>")
 
-	tk.MustExec("analyze table t1")
 	tk.MustExec("select * from t1 where b > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
-	// t1.a updates last_used_at first and then updates last_analyzed_at while t1.b updates last_analyzed_at first and then updates last_used_at.
-	// Check both of them behave as expected.
+	tk.MustExec("analyze table t1")
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, []any{"test", "t1", "", "a"}, rows[0][:4])
@@ -1062,7 +1062,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, index idx(a))")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -1274,6 +1274,7 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	tk.MustExec("insert into t values (1,2), (3,4), (11,12),(13,14)")
 	tk.MustExec("set session tidb_analyze_version = 2")
 	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	require.False(t, h.HandleAutoAnalyze())
 	tk.MustExec("alter table t add index idx(a)")
