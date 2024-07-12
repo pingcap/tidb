@@ -182,6 +182,7 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 	checked := false
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
+		// TODO: check cloned is deeply cloned from plan.
 	})
 	tk2.MustQueryWithContext(ctx, exec2)
 	require.True(t, checked)
