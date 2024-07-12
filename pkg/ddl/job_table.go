@@ -596,7 +596,7 @@ func (s *jobScheduler) runOneJobStep(wk *worker, job *model.Job) error {
 				return err
 			}
 		} else {
-			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job, 2*s.lease)
+			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
 				return err
