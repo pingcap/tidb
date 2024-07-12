@@ -1275,7 +1275,6 @@ func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
 }
 
 func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
-	// Be careful editing the message, it is used in DiskCheckBackoffer
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
 		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
