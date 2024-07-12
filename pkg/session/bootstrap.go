@@ -1105,7 +1105,7 @@ const (
 	// version 209
 	//   sets `tidb_resource_control_strict_mode` to off when a cluster upgrades from some version lower than v8.2.
 	version209 = 209
-	// version210 indicates that if TiDB is upgraded from a lower version(8.3.0), the tidb_analyze_column_options will be set to ALL.
+	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
 	version210 = 210
 )
 
