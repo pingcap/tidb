@@ -249,14 +249,14 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 type basePhysicalPlan struct {
 	baseimpl.Plan
 
-	childrenReqProps []*property.PhysicalProperty
+	childrenReqProps []*property.PhysicalProperty `plan-cache-clone:"shallow"`
 	self             base.PhysicalPlan
 	children         []base.PhysicalPlan
 
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
-	planCostVer2 costusage.CostVer2
+	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
@@ -266,6 +266,28 @@ type basePhysicalPlan struct {
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
 	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
 	TiFlashFineGrainedShuffleStreamCount uint64
+}
+
+func (p *basePhysicalPlan) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, bool) {
+	cloned := new(basePhysicalPlan)
+	*cloned = *p
+	cloned.SetSCtx(newCtx)
+	cloned.children = make([]base.PhysicalPlan, 0, len(p.children))
+	for _, child := range p.children {
+		clonedChild, ok := child.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		cloned.children = append(cloned.children, clonedChild.(base.PhysicalPlan))
+	}
+	for _, probe := range p.probeParents {
+		clonedProbe, ok := probe.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		cloned.probeParents = append(cloned.probeParents, clonedProbe.(base.PhysicalPlan))
+	}
+	return cloned, true
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
