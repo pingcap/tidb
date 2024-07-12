@@ -69,7 +69,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	})
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := model.NewCIStr(tableName)
-	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
+	tbl, err := do.InfoSchema().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return

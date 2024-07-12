@@ -750,15 +750,17 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		return
 	}
 	w.rowCntListener.Written(rs.Added)
+	flushed, imported, err := w.backendCtx.Flush(ingest.FlushModeAuto)
+	if err != nil {
+		w.ctx.onError(err)
+		return
+	}
 	if w.cpMgr != nil {
 		totalCnt, nextKey := w.cpMgr.Status()
 		rs.Total = totalCnt
 		rs.Next = nextKey
-		err := w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
-		if err != nil {
-			w.ctx.onError(err)
-			return
-		}
+		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
+		w.cpMgr.AdvanceWatermark(flushed, imported)
 	}
 	send(rs)
 }
@@ -928,11 +930,14 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	_, _, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
+	flushed, imported, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
 	if err != nil {
 		logutil.Logger(s.ctx).Error("flush error",
 			zap.String("category", "ddl"), zap.Error(err))
 		return err
+	}
+	if s.cpMgr != nil {
+		s.cpMgr.AdvanceWatermark(flushed, imported)
 	}
 	return nil
 }

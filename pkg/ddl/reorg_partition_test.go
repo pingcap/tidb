@@ -203,9 +203,9 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	tk.MustExec(`admin check table t`)
 	writeOnlyInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), writeOnlyInfoSchema.SchemaMetaVersion()-deleteOnlyInfoSchema.SchemaMetaVersion())
-	deleteOnlyTbl, err := deleteOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	deleteOnlyTbl, err := deleteOnlyInfoSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
-	writeOnlyTbl, err := writeOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	writeOnlyTbl, err := writeOnlyInfoSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	writeOnlyParts := writeOnlyTbl.Meta().Partition
 	writeOnlyTbl.Meta().Partition = deleteOnlyTbl.Meta().Partition
@@ -246,13 +246,13 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	deleteReorgInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), deleteReorgInfoSchema.SchemaMetaVersion()-writeReorgInfoSchema.SchemaMetaVersion())
 	tk.MustExec(`insert into t values (16, "16", 16)`)
-	oldTbl, err := writeReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	oldTbl, err := writeReorgInfoSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	partDef := oldTbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1", partDef.Name.O)
 	rows := getNumRowsFromPartitionDefs(t, tk, oldTbl, oldTbl.Meta().Partition.Definitions[1:2])
 	require.Equal(t, 5, rows)
-	currTbl, err := deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	currTbl, err := deleteReorgInfoSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	currPart := currTbl.Meta().Partition
 	currTbl.Meta().Partition = oldTbl.Meta().Partition
@@ -290,7 +290,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	tk.MustExec(`admin check table t`)
 	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
-	oldTbl, err = deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	oldTbl, err = deleteReorgInfoSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	partDef = oldTbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1a", partDef.Name.O)
@@ -308,7 +308,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	newTbl, err := deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	newTbl, err := deleteReorgInfoSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	newPart := newTbl.Meta().Partition
 	newTbl.Meta().Partition = oldTbl.Meta().Partition
@@ -412,7 +412,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1a,p1b into (partition p1a values less than (14), partition p1b values less than (17), partition p1c values less than (20))", alterErr)
 	wait <- true
 	infoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	tbl, err := infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	tbl, err := infoSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 0, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 14`)
@@ -420,7 +420,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	tk.MustExec(`admin check table t`)
 	wait <- true
 	wait <- true
-	tbl, err = infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	tbl, err = infoSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 5, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 15`)
@@ -553,7 +553,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	noNewTablesAfter(t, tk, ctx, tbl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy", `return(true)`))
@@ -577,7 +577,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 
-	tbl, err = is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	noNewTablesAfter(t, tk, ctx, tbl)
 }

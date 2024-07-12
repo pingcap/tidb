@@ -442,7 +442,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 			return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
 		}
 	}
-	table, err := is.TableByName(dbName, tName)
+	table, err := is.TableByName(context.Background(), dbName, tName)
 	if err != nil {
 		return nil, err
 	}
@@ -3701,7 +3701,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars = variable.NewSessionVars(s)
 	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
@@ -3764,7 +3764,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
@@ -3918,7 +3918,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future:    future,
 		store:     s.store,
 		txnScope:  scope,
-		pipelined: s.usePipelinedDmlOrWarn(),
+		pipelined: s.usePipelinedDmlOrWarn(ctx),
 	})
 	return nil
 }
@@ -4398,7 +4398,7 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 }
 
 // usePipelinedDmlOrWarn returns the current statement can be executed as a pipelined DML.
-func (s *session) usePipelinedDmlOrWarn() bool {
+func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	if !s.sessionVars.BulkDMLEnabled {
 		return false
 	}
@@ -4461,7 +4461,7 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 	}
 	for _, t := range stmtCtx.Tables {
 		// get table schema from current infoschema
-		tbl, err := is.TableByName(model.NewCIStr(t.DB), model.NewCIStr(t.Table))
+		tbl, err := is.TableByName(ctx, model.NewCIStr(t.DB), model.NewCIStr(t.Table))
 		if err != nil {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get table schema. Fallback to standard mode"))
 			return false

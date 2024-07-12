@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "contextimpl",
@@ -12,5 +12,21 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/table/context",
         "//pkg/util/tableutil",
+        "@com_github_pingcap_tipb//go-binlog",
+    ],
+)
+
+go_test(
+    name = "contextimpl_test",
+    timeout = "short",
+    srcs = ["table_test.go"],
+    flaky = True,
+    deps = [
+        ":contextimpl",
+        "//pkg/sessionctx/binloginfo",
+        "//pkg/testkit",
+        "//pkg/util/mock",
+        "@com_github_pingcap_tipb//go-binlog",
+        "@com_github_stretchr_testify//require",
     ],
 )

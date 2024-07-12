@@ -413,7 +413,7 @@ func SampleLoggerFactory(tick time.Duration, first int, fields ...zap.Field) fun
 			sampleCore := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 				return zapcore.NewSamplerWithOptions(core, tick, first, 0)
 			})
-			logger = BgLogger().With(fields...).WithOptions(sampleCore)
+			logger = BgLogger().With(fields...).With(zap.String("sampled", "")).WithOptions(sampleCore)
 		})
 		return logger
 	}

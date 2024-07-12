@@ -494,7 +494,15 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 
-		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
+		for i := int64(0); i < variable.GetDDLErrorCountLimit(); i++ {
+			err := wk.HandleLocalDDLJob(d.ddlCtx, job)
+			// since local the job is not inserted into the ddl job queue, we need to add retry logic here.
+			if err == nil || !isRetryableError(err) {
+				break
+			}
+			logutil.DDLLogger().Info("handle local ddl job", zap.Int64("retry times", i), zap.Error(err))
+			time.Sleep(time.Second)
+		}
 		pool.put(wk)
 		if err != nil {
 			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
@@ -588,7 +596,7 @@ func (s *jobScheduler) runOneJobStep(wk *worker, job *model.Job) error {
 				return err
 			}
 		} else {
-			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job, 2*s.lease)
+			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
 				return err
@@ -611,10 +619,11 @@ func (s *jobScheduler) runOneJobStep(wk *worker, job *model.Job) error {
 		}
 	})
 
+	failpoint.InjectCall("beforeWaitSchemaChanged", job)
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
-	if err = waitSchemaChanged(wk.ctx, s.ddlCtx, s.lease*2, schemaVer, job); err != nil {
+	if err = waitSchemaChanged(wk.ctx, s.ddlCtx, schemaVer, job); err != nil {
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)

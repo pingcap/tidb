@@ -332,7 +332,7 @@ func (e *BaseExecutor) Ctx() sessionctx.Context {
 // UpdateDeltaForTableID updates the delta info for the table with tableID.
 func (e *BaseExecutor) UpdateDeltaForTableID(id int64) {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+	txnCtx.UpdateDeltaForTable(id, 0, 0, nil)
 }
 
 // GetSysSession gets a system session context from executor.
