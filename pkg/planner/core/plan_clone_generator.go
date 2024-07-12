@@ -27,7 +27,7 @@ import (
 func genPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{}}
 	c := new(codeGen)
-	c.write(_PREFIX)
+	c.write(codeGenPrefix)
 	for _, s := range structures {
 		code, err := genPlanCloneForPlanCache(s)
 		if err != nil {
@@ -125,7 +125,7 @@ func (c *codeGen) format() ([]byte, error) {
 	return format.Source(c.buffer.Bytes())
 }
 
-const _PREFIX = `// Copyright 2024 PingCAP, Inc.
+const codeGenPrefix = `// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
