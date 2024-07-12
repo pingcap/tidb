@@ -1709,7 +1709,11 @@ func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model
 			return nil, false
 		}
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
-		if col == nil { // Handling the case when the column is _tidb_rowid.
+		if col == nil {
+			// Partition table can't use `_tidb_rowid` to generate PointGet Plan.
+			if tbl.GetPartitionInfo() != nil && colName.Name.Name.L == model.ExtraHandleName.L {
+				return nil, false
+			}
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
 		}
 
