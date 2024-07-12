@@ -230,13 +230,13 @@ partition by range (a) (
 
 	tk.MustExec("insert into t values (1), (2)") // update p0
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(2, 2, 2, 2, 0, 0)
 	checkHealthy(0, 0, 100)
 
 	tk.MustExec("insert into t values (11), (12), (13), (14)") // update p1
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(6, 6, 2, 2, 4, 4)
 	checkHealthy(0, 0, 0)
 
@@ -246,7 +246,7 @@ partition by range (a) (
 
 	tk.MustExec("insert into t values (4), (5), (15), (16)") // update p0 and p1 together
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
 	checkHealthy(33, 0, 50)
 }
@@ -535,7 +535,7 @@ partition by range (a) (
 	do := dom
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -580,12 +580,12 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	h := do.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
 		"(11), (21), (31), (41), (51)," +
 		"(12), (22), (32), (42), (52);")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	require.Len(t, result, 7)
@@ -598,7 +598,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tk.MustExec("alter table t truncate partition p2, p4;")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	// We will update the global-stats after the truncate operation.
 	globalStats = h.GetTableStats(tableInfo)
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
@@ -875,7 +875,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t")
-		require.Nil(t, h.Update(dom.InfoSchema()))
+		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 			Check(testkit.Rows("1", "2", "3", "15"))
 		tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
@@ -896,7 +896,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t index idx")
-		require.Nil(t, h.Update(dom.InfoSchema()))
+		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 		rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
 		require.Equal(t, "4.00", rows[0][1])
 
@@ -914,7 +914,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t index")
-		require.Nil(t, h.Update(dom.InfoSchema()))
+		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
 			Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
 				"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
