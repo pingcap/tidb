@@ -1134,6 +1134,7 @@ import (
 	Constraint                             "table constraint"
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
+	ConvertToGlobalOpt                     "CONVERT TO GLOBAL INDEX or empty"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -4453,22 +4454,33 @@ PartitionOpt:
 	{
 		$$ = nil
 	}
-|	"PARTITION" "BY" PartitionMethod PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt
+|	"PARTITION" "BY" PartitionMethod PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt ConvertToGlobalOpt
 	{
 		method := $3.(*ast.PartitionMethod)
 		method.Num = $4.(uint64)
 		sub, _ := $5.(*ast.PartitionMethod)
 		defs, _ := $6.([]*ast.PartitionDefinition)
+		convertToGlobal, _ := $7.(bool)
 		opt := &ast.PartitionOptions{
 			PartitionMethod: *method,
 			Sub:             sub,
 			Definitions:     defs,
+			ConvertToGlobal: convertToGlobal,
 		}
 		if err := opt.Validate(); err != nil {
 			yylex.AppendError(err)
 			return 1
 		}
 		$$ = opt
+	}
+
+ConvertToGlobalOpt:
+	{
+		$$ = false
+	}
+|	"CONVERT" "TO" "GLOBAL" "INDEX"
+	{
+		$$ = true
 	}
 
 SubPartitionMethod:

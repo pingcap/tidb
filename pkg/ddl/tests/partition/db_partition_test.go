@@ -3529,7 +3529,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	require.False(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)
 	// This should replace the unique index with a global index
-	tk.MustExec(`alter table t partition by range (a) (partition p1 values less than (10), partition p2 values less than (20))`)
+	tk.MustExec(`alter table t partition by range (a) (partition p1 values less than (10), partition p2 values less than (20)) convert to global index`)
 	tt = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo = tt.Meta().FindIndexByName("idx_b")
@@ -3548,7 +3548,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	require.True(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)
 	tk.MustExec(`alter table t remove partitioning`)
-	tk.MustExec(`alter table t partition by range columns (c) (partition p0 values less than (10), partition pMax values less than (maxvalue))`)
+	tk.MustExec(`alter table t partition by range columns (c) (partition p0 values less than (10), partition pMax values less than (maxvalue)) convert to global index`)
 	tt = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo = tt.Meta().FindIndexByName("idx_b")

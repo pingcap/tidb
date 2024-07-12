@@ -629,7 +629,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	for _, index := range tbInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
 			// Require explicit mentioning of GLOBAL, to have a global index!
-			if !index.Global && ctx.GetSessionVars().EnableGlobalIndex {
+			if !s.ConvertToGlobal && !index.Global && ctx.GetSessionVars().EnableGlobalIndex {
 				// TODO: create a better error!
 				return errors.New("The index needs to be global, but it is not explicitly set as such")
 			}
