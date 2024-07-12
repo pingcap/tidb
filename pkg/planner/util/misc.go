@@ -44,9 +44,7 @@ func CloneCIStrs(strs []model.CIStr) []model.CIStr {
 		return nil
 	}
 	cloned := make([]model.CIStr, 0, len(strs))
-	for _, str := range strs {
-		cloned = append(cloned, str)
-	}
+	cloned = append(cloned, strs...)
 	return cloned
 }
 
