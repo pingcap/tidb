@@ -116,7 +116,7 @@ type codeGen struct {
 	buffer bytes.Buffer
 }
 
-func (c *codeGen) write(format string, args ...interface{}) {
+func (c *codeGen) write(format string, args ...any) {
 	c.buffer.WriteString(fmt.Sprintf(format, args...))
 	c.buffer.WriteString("\n")
 }
