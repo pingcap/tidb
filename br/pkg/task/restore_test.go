@@ -492,7 +492,7 @@ func TestTikvUsage(t *testing.T) {
 		{Name: "F5", Size_: 5 * pb},
 	}
 	replica := uint64(3)
-	storeCnt := 6
+	storeCnt := uint64(6)
 	total := uint64(0)
 	for _, f := range files {
 		total += f.GetSize_()
@@ -508,7 +508,7 @@ func TestTiflashUsage(t *testing.T) {
 		{TiFlashReplicas: 2, Files: []*backuppb.File{{Size_: 3 * pb}}},
 	}
 
-	storeCnt := 3
+	var storeCnt uint64 = 3
 	ret := task.EstimateTiflashUsage(tables, storeCnt)
 	require.Equal(t, 8*pb/3, ret)
 }

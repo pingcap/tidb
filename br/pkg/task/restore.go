@@ -92,17 +92,17 @@ const (
 
 	FlagResetSysUsers = "reset-sys-users"
 
-	defaultPiTRBatchCount            = 8
-	defaultPiTRBatchSize             = 16 * 1024 * 1024
-	defaultRestoreConcurrency        = 128
-	defaultPiTRConcurrency           = 16
-	defaultPDConcurrency             = 1
-	defaultStatsConcurrency          = 12
-	defaultBatchFlushInterval        = 16 * time.Second
-	defaultFlagDdlBatchSize          = 128
-	resetSpeedLimitRetryTimes        = 3
-	maxRestoreBatchSizeLimit         = 10240
-	pb                        uint64 = 1024 * 1024 * 1024 * 1024 * 1024
+	defaultPiTRBatchCount     = 8
+	defaultPiTRBatchSize      = 16 * 1024 * 1024
+	defaultRestoreConcurrency = 128
+	defaultPiTRConcurrency    = 16
+	defaultPDConcurrency      = 1
+	defaultStatsConcurrency   = 12
+	defaultBatchFlushInterval = 16 * time.Second
+	defaultFlagDdlBatchSize   = 128
+	resetSpeedLimitRetryTimes = 3
+	maxRestoreBatchSizeLimit  = 10240
+	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
 )
 
 const (
@@ -1268,7 +1268,7 @@ func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
 		for _, file := range table.Files {
 			tableBytes += file.GetSize_()
 		}
-		tiflashTotal += tableBytes * uint64(table.Info.TiFlashReplica.Count)
+		tiflashTotal += tableBytes * table.Info.TiFlashReplica.Count
 	}
 	log.Info("estimate tiflash usage", zap.Uint64("total size", tiflashTotal), zap.Uint64("store count", storeCnt))
 	return tiflashTotal / storeCnt
