@@ -25,7 +25,7 @@ import (
 // Using code-gen is safer than writing by hand, for example, if someone adds a new field to a struct,
 // the code-gen can update the Clone method correctly and automatically.
 func genPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{PhysicalTableScan{}, PhysicalSelection{}}
+	var structures = []any{PhysicalTableScan{}, PhysicalSelection{}, PhysicalProjection{}}
 	c := new(codeGen)
 	c.write(_PREFIX)
 	for _, s := range structures {

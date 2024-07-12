@@ -62,3 +62,16 @@ func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.Conditions = util.CloneExprs(op.Conditions)
 	return cloned, true
 }
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalProjection)
+	*cloned = *op
+	if base, err := op.physicalSchemaProducer.cloneWithSelf(newCtx, cloned); err != nil {
+		return nil, false
+	} else {
+		cloned.physicalSchemaProducer = *base
+	}
+	cloned.Exprs = util.CloneExprs(op.Exprs)
+	return cloned, true
+}
