@@ -2269,6 +2269,23 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
 
+	isAnalyzeTable := len(as.PartitionNames) == 0
+	isAnalyzeIndex := len(as.IndexNames) != 0
+	allGlobalIndex := true
+	for _, idxName := range as.IndexNames {
+		idx := tbl.TableInfo.FindIndexByName(idxName.L)
+		if idx == nil || idx.State != model.StatePublic {
+			return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
+		}
+		if idx.Global {
+			if !isAnalyzeTable && isAnalyzeIndex {
+				return errors.NewNoStackErrorf("Analyze global index %s can't work with analyze partition", idxName.O)
+			}
+		} else {
+			allGlobalIndex = false
+		}
+	}
+
 	astOpts, err := handleAnalyzeOptionsV2(as.AnalyzeOpts)
 	if err != nil {
 		return err
@@ -2289,7 +2306,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if err != nil {
 		return err
 	}
-	isAnalyzeTable := len(as.PartitionNames) == 0
+
 	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns)
 	if err != nil {
 		return err
@@ -2300,57 +2317,74 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	var indexes, independentIndexes, globalIndexes []*model.IndexInfo
 
-	// Build tasks for each partition.
-	for i, id := range physicalIDs {
-		physicalID := id
-		if id == tbl.TableInfo.ID {
-			id = statistics.NonPartitionTableID
+	needAnalyzeCols := !(isAnalyzeIndex && allGlobalIndex)
+
+	if needAnalyzeCols {
+		if isAnalyzeIndex {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 would collect all statistics not only the selected indexes"))
 		}
-		info := AnalyzeInfo{
-			DBName:        tbl.Schema.O,
-			TableName:     tbl.Name.O,
-			PartitionName: partitionNames[i],
-			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-			StatsVersion:  version,
-		}
-		if optsV2, ok := optionsMap[physicalID]; ok {
-			info.V2Options = &optsV2
-		}
-		execColsInfo := astColsInfo
-		if colsInfo, ok := colsInfoMap[physicalID]; ok {
-			execColsInfo = colsInfo
-		}
-		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
-		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes, independentIndexes, globalIndexes = getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
-		newTask := AnalyzeColumnsTask{
-			HandleCols:  handleCols,
-			ColsInfo:    execColsInfo,
-			AnalyzeInfo: info,
-			TblInfo:     tbl.TableInfo,
-			Indexes:     indexes,
-		}
-		if newTask.HandleCols == nil {
-			extraCol := model.NewExtraHandleColInfo()
-			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
-			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
-			newTask.HandleCols = util.NewIntHandleCols(colInfoToColumn(extraCol, len(newTask.ColsInfo)-1))
-		}
-		analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
-		for _, indexInfo := range independentIndexes {
-			newIdxTask := AnalyzeIndexTask{
-				IndexInfo:   indexInfo,
-				TblInfo:     tbl.TableInfo,
-				AnalyzeInfo: info,
+		// Build tasks for each partition.
+		for i, id := range physicalIDs {
+			physicalID := id
+			if id == tbl.TableInfo.ID {
+				id = statistics.NonPartitionTableID
 			}
-			analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, newIdxTask)
+			info := AnalyzeInfo{
+				DBName:        tbl.Schema.O,
+				TableName:     tbl.Name.O,
+				PartitionName: partitionNames[i],
+				TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+				StatsVersion:  version,
+			}
+			if optsV2, ok := optionsMap[physicalID]; ok {
+				info.V2Options = &optsV2
+			}
+			execColsInfo := astColsInfo
+			if colsInfo, ok := colsInfoMap[physicalID]; ok {
+				execColsInfo = colsInfo
+			}
+			execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
+			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
+			indexes, independentIndexes, globalIndexes = getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
+			newTask := AnalyzeColumnsTask{
+				HandleCols:  handleCols,
+				ColsInfo:    execColsInfo,
+				AnalyzeInfo: info,
+				TblInfo:     tbl.TableInfo,
+				Indexes:     indexes,
+			}
+			if newTask.HandleCols == nil {
+				extraCol := model.NewExtraHandleColInfo()
+				// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
+				newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
+				newTask.HandleCols = util.NewIntHandleCols(colInfoToColumn(extraCol, len(newTask.ColsInfo)-1))
+			}
+			analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
+			for _, indexInfo := range independentIndexes {
+				newIdxTask := AnalyzeIndexTask{
+					IndexInfo:   indexInfo,
+					TblInfo:     tbl.TableInfo,
+					AnalyzeInfo: info,
+				}
+				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, newIdxTask)
+			}
 		}
 	}
 
 	if isAnalyzeTable {
-		for _, indexInfo := range globalIndexes {
-			analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
+		if !isAnalyzeIndex {
+			for _, indexInfo := range globalIndexes {
+				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
+			}
+		} else {
+			for _, idxName := range as.IndexNames {
+				idx := tbl.TableInfo.FindIndexByName(idxName.L)
+				if idx == nil || !idx.Global {
+					continue
+				}
+				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, nil, nil, version)...)
+			}
 		}
 	}
 
@@ -2630,7 +2664,6 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
@@ -2682,7 +2715,6 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idx := range tblInfo.Indices {
