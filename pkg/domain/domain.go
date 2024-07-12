@@ -983,6 +983,9 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
+			failpoint.Inject("disableOnTickReload", func() {
+				failpoint.Continue()
+			})
 			err := do.Reload()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))

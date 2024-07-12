@@ -413,5 +413,5 @@ func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime t
 		}
 	})
 
-	return waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
+	return waitSchemaChanged(ctx, d, latestSchemaVersion, job)
 }
