@@ -108,7 +108,7 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []interface{}{payload},
+			Args:       []any{payload},
 		},
 	}
 	counters := make([]atomic.Int64, thread+1)
@@ -136,9 +136,7 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 		}
 		lastCnt := getCounts()
 		for {
-			select {
-			case <-time.After(5 * time.Second):
-			}
+			time.Sleep(5 * time.Second)
 			currCnt := getCounts()
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("QPS - total:%.0f", float64(currCnt[0]-lastCnt[0])/5))
