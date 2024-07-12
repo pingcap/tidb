@@ -144,6 +144,7 @@ const _PREFIX = `// Copyright 2024 PingCAP, Inc.
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
