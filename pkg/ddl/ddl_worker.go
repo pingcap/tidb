@@ -533,13 +533,6 @@ func GenIDAndInsertJobsWithRetry(ctx context.Context, se sessionctx.Context, job
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ddlSe := sess.NewSession(se)
 
-	idCnt := len(jobs)
-	for _, j := range jobs {
-		if j.Type == model.ActionCreateTable {
-			idCnt++
-		}
-	}
-
 	for i := uint(0); i < kv.MaxRetryCnt; i++ {
 		resErr := func() (err error) {
 			if err := ddlSe.Begin(ctx); err != nil {
@@ -562,19 +555,12 @@ func GenIDAndInsertJobsWithRetry(ctx context.Context, se sessionctx.Context, job
 			txn.GetSnapshot().SetOption(kv.SnapshotTS, forUpdateTS)
 
 			m := meta.NewMeta(txn)
-			ids, err := m.GenGlobalIDs(idCnt)
+			ids, err := m.GenGlobalIDs(len(jobs))
 			if err != nil {
 				return errors.Trace(err)
 			}
-			var idx int
-			for _, job := range jobs {
-				job.ID = ids[idx]
-				idx++
-				if job.Type == model.ActionCreateTable {
-					job.TableID = ids[idx]
-					idx++
-					job.Args[0].(*model.TableInfo).ID = job.TableID
-				}
+			for idx := range jobs {
+				jobs[idx].ID = ids[idx]
 			}
 			if err = insertDDLJobs2Table(ctx, ddlSe, jobs...); err != nil {
 				return errors.Trace(err)
