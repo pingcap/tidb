@@ -408,10 +408,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
-	m, err := domain.GetDomain(e.Ctx()).GetSnapshotMeta(job.StartTS)
-	if err != nil {
-		return err
-	}
+	m := domain.GetDomain(e.Ctx()).GetSnapshotMeta(job.StartTS)
 	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
@@ -475,10 +472,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	getTable := func(startTS uint64, schemaID int64, tableID int64) (*model.TableInfo, error) {
-		snapMeta, err := dom.GetSnapshotMeta(startTS)
-		if err != nil {
-			return nil, err
-		}
+		snapMeta := dom.GetSnapshotMeta(startTS)
 		tbl, err := snapMeta.GetTable(schemaID, tableID)
 		return tbl, err
 	}
@@ -569,10 +563,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
-	m, err := domain.GetDomain(e.Ctx()).GetSnapshotMeta(job.StartTS)
-	if err != nil {
-		return err
-	}
+	m := domain.GetDomain(e.Ctx()).GetSnapshotMeta(job.StartTS)
 	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
@@ -639,10 +630,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 			if job.Type != model.ActionDropSchema {
 				continue
 			}
-			snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
-			if err != nil {
-				return false, err
-			}
+			snapMeta := dom.GetSnapshotMeta(job.StartTS)
 			schemaInfo, err := snapMeta.GetDatabase(job.SchemaID)
 			if err != nil {
 				return false, err
@@ -656,6 +644,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 			if schemaInfo.Name.L != schemaName.L {
 				continue
 			}
+<<<<<<< HEAD
 			tables, err := snapMeta.ListTables(job.SchemaID)
 			if err != nil {
 				return false, err
@@ -677,6 +666,15 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 				})
 			}
 			recoverSchemaInfo = &ddl.RecoverSchemaInfo{DBInfo: schemaInfo, RecoverTabsInfo: recoverTabsInfo, DropJobID: job.ID, SnapshotTS: job.StartTS, OldSchemaName: schemaName}
+=======
+			recoverSchemaInfo = &ddl.RecoverSchemaInfo{
+				DBInfo:              schemaInfo,
+				LoadTablesOnExecute: true,
+				DropJobID:           job.ID,
+				SnapshotTS:          job.StartTS,
+				OldSchemaName:       schemaName,
+			}
+>>>>>>> 8b78a4faa31 (ddl: improve FLASHBACK DATABASE for many table case (#54439))
 			return true, nil
 		}
 		return false, nil
