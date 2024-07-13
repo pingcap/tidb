@@ -239,6 +239,8 @@ github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21 h1:YEetp8
 github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21/go.mod h1:+020luEh2TKB4/GOp8oxxtq0Daoen/Cii55CzbTV6DU=
 github.com/eapache/queue v1.1.0 h1:YOEu7KNc61ntiQlcEeUIoDTJ2o8mQznoNvUhiigpIqc=
 github.com/eapache/queue v1.1.0/go.mod h1:6eCeP0CKFpHLu8blIFXhExK/dRa7WDZfr6jVFPTqq+I=
+github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20240713082010-83c407e9a757 h1:ZgHq+7d9yL/NMSw5ENBlh7QfdFBIo7t9rIB40mP69EI=
+github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20240713082010-83c407e9a757/go.mod h1:4HDOAx8OXAJPtqhCZ03IhChXgaFs4B3+vSrPWmiPxjg=
 github.com/emirpasic/gods v1.18.1 h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc=
 github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FMNAnJvWQ=
 github.com/envoyproxy/go-control-plane v0.9.0/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
@@ -852,8 +854,6 @@ github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
 github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
-github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503 h1:0mUlg3+dA5LvwKs1U6i/ID/8RsYgLVLGyM8fSBMb630=
-github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503/go.mod h1:4HDOAx8OXAJPtqhCZ03IhChXgaFs4B3+vSrPWmiPxjg=
 github.com/tikv/pd/client v0.0.0-20240703065657-6b25787aff4d h1:iTvGLERJltVzl/+W2e2nIpLgmymzMXK4VJW/HVl15ps=
 github.com/tikv/pd/client v0.0.0-20240703065657-6b25787aff4d/go.mod h1:EHHidLItrJGh0jqfdfFhIHG5vwkR8+43tFnp7v7iv1Q=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
