@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
@@ -252,14 +253,6 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		} else {
 			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
 		}
-		// Clear all placement when recover
-		for _, recoverTabInfo := range recoverSchemaInfo.RecoverTabsInfo {
-			err = clearTablePlacementAndBundles(recoverTabInfo.TableInfo)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-			}
-		}
 		schemaInfo.State = model.StateWriteOnly
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -272,6 +265,36 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
+
+		recoverTbls := recoverSchemaInfo.RecoverTabsInfo
+		if recoverSchemaInfo.LoadTablesOnExecute {
+			sid := recoverSchemaInfo.DBInfo.ID
+			snap := w.store.GetSnapshot(kv.NewVersion(recoverSchemaInfo.SnapshotTS))
+			snapMeta := meta.NewSnapshotMeta(snap)
+			tables, err2 := snapMeta.ListTables(sid)
+			if err2 != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err2)
+			}
+			recoverTbls = make([]*RecoverInfo, 0, len(tables))
+			for _, tblInfo := range tables {
+				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
+				if err3 != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Trace(err3)
+				}
+				recoverTbls = append(recoverTbls, &RecoverInfo{
+					SchemaID:      sid,
+					TableInfo:     tblInfo,
+					DropJobID:     recoverSchemaInfo.DropJobID,
+					SnapshotTS:    recoverSchemaInfo.SnapshotTS,
+					AutoIDs:       autoIDs,
+					OldSchemaName: recoverSchemaInfo.OldSchemaName.L,
+					OldTableName:  tblInfo.Name.L,
+				})
+			}
+		}
+
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
 		err = t.CreateDatabase(dbInfo)
@@ -284,7 +307,8 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
+
+		for _, recoverInfo := range recoverTbls {
 			if recoverInfo.TableInfo.TTLInfo != nil {
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
@@ -295,13 +319,18 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			}
 		}
 		schemaInfo.State = model.StatePublic
-		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
+		diffInfos := make([]schemaIDAndTableInfo, 0, len(recoverTbls))
+		for _, recoverInfo := range recoverTbls {
 			recoverInfo.TableInfo.State = model.StatePublic
 			recoverInfo.TableInfo.UpdateTS = t.StartTS
+			diffInfos = append(diffInfos, schemaIDAndTableInfo{
+				schemaID: schemaInfo.ID,
+				tblInfo:  recoverInfo.TableInfo,
+			})
 		}
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(d, t, job, diffInfos...)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

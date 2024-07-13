@@ -586,9 +586,9 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 }
 
 // GetSnapshotMeta gets a new snapshot meta at startTS.
-func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
+func (do *Domain) GetSnapshotMeta(startTS uint64) *meta.Meta {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
-	return meta.NewSnapshotMeta(snapshot), nil
+	return meta.NewSnapshotMeta(snapshot)
 }
 
 // ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
