@@ -1364,7 +1364,7 @@ type PhysicalHashJoin struct {
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 	switch p.JoinType {
-	case LeftOuterJoin, InnerJoin:
+	case LeftOuterJoin, RightOuterJoin, InnerJoin:
 		// null aware join is not supported yet
 		if len(p.LeftNAJoinKeys) > 0 {
 			return false
