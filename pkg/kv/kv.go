@@ -194,6 +194,9 @@ type MemBuffer interface {
 
 	// BatchGet gets values from the memory buffer.
 	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+
+	EnableCache()
+	DisableCache()
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
