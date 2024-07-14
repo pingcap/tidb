@@ -185,6 +185,12 @@ func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 	return mb.Get(ctx, key)
 }
 
+// EnableCache is not applicable for MemBuf.
+func (*MemBuf) EnableCache() {}
+
+// DisableCache is not applicable for MemBuf.
+func (*MemBuf) DisableCache() {}
+
 // Size returns sum of keys and values length.
 func (mb *MemBuf) Size() int {
 	return mb.size
