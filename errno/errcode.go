@@ -1119,23 +1119,12 @@ const (
 	ErrPausedDDLJob       = 8262
 
 	// Resource group errors.
-<<<<<<< HEAD:errno/errcode.go
 	ErrResourceGroupExists            = 8248
 	ErrResourceGroupNotExists         = 8249
 	ErrResourceGroupSupportDisabled   = 8250
 	ErrResourceGroupConfigUnavailable = 8251
 	ErrResourceGroupThrottled         = 8252
-=======
-	ErrResourceGroupExists                    = 8248
-	ErrResourceGroupNotExists                 = 8249
-	ErrResourceGroupSupportDisabled           = 8250
-	ErrResourceGroupConfigUnavailable         = 8251
-	ErrResourceGroupThrottled                 = 8252
-	ErrResourceGroupQueryRunawayInterrupted   = 8253
-	ErrResourceGroupQueryRunawayQuarantine    = 8254
-	ErrResourceGroupInvalidBackgroundTaskName = 8255
-	ErrResourceGroupInvalidForRole            = 8257
->>>>>>> cbf34c51e99 (executor/simple: prohibit setting a resource group to a role (#54525)):pkg/errno/errcode.go
+	ErrResourceGroupInvalidForRole    = 8257
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
