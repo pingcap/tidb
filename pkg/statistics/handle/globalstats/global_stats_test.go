@@ -872,7 +872,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 			"PARTITION p3 VALUES LESS THAN (40))")
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t")
 		require.Nil(t, h.Update(dom.InfoSchema()))
@@ -885,7 +885,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		// analyze table t index idx
 		tk.MustExec("drop table if exists t")
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered)" +
 			"PARTITION BY RANGE (a) (" +
 			"PARTITION p0 VALUES LESS THAN (10)," +
 			"PARTITION p1 VALUES LESS THAN (20)," +
@@ -893,7 +893,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 			"PARTITION p3 VALUES LESS THAN (40));")
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t index idx")
 		require.Nil(t, h.Update(dom.InfoSchema()))
@@ -911,7 +911,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 			"PARTITION p3 VALUES LESS THAN (40));")
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
-		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t index")
 		require.Nil(t, h.Update(dom.InfoSchema()))

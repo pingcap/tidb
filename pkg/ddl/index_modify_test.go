@@ -689,7 +689,7 @@ func TestAddGlobalIndex(t *testing.T) {
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
 	tk.MustExec("insert test_t1 values (1, 1)")
-	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	tk.MustExec("alter table test_t1 add unique index p_a (a) global")
 	tk.MustExec("insert test_t1 values (2, 11)")
 	tbl := external.GetTableByName(t, tk, "test", "test_t1")
 	tblInfo := tbl.Meta()
@@ -719,7 +719,7 @@ func TestAddGlobalIndex(t *testing.T) {
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
 	tk.MustExec("insert test_t2 values (1, 1)")
-	tk.MustExec("alter table test_t2 add primary key (a) nonclustered;")
+	tk.MustExec("alter table test_t2 add primary key (a) nonclustered global")
 	tk.MustExec("insert test_t2 values (2, 11)")
 	tbl = external.GetTableByName(t, tk, "test", "test_t2")
 	tblInfo = tbl.Meta()
