@@ -1,0 +1,14 @@
+@@ -556,6 +559,13 @@
+ 	}
+ 	return types.BinaryJSON{}, m.i == nil, m.err
+ }
++func (m *MockExpr) EvalVectorFloat32(ctx sessionctx.Context, row chunk.Row) (val types.VectorFloat32, isNull bool, err error) {
++	if x, ok := m.i.(types.VectorFloat32); ok {
++		return x, false, m.err
++	}
++	return types.ZeroVectorFloat32, m.i == nil, m.err
++}
++
+ func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+ 	return types.Datum{}, m.err
+ }

@@ -1,0 +1,18 @@
+@@ -675,6 +699,8 @@
+ 		return d.compareMysqlJSON(sc, ad.GetMysqlJSON())
+ 	case KindMysqlTime:
+ 		return d.compareMysqlTime(sc, ad.GetMysqlTime())
++	case KindVectorFloat32:
++		return d.compareVectorFloat32(sc, ad.GetVectorFloat32())
+ 	default:
+ 		return 0, nil
+ 	}
+@@ -940,6 +980,8 @@
+ 		return d.convertToMysqlSet(sc, target)
+ 	case mysql.TypeJSON:
+ 		return d.convertToMysqlJSON(sc, target)
++	case mysql.TypeTiDBVectorFloat32:
++		return d.convertToVectorFloat32(sc, target)
+ 	case mysql.TypeNull:
+ 		return Datum{}, nil
+ 	default:

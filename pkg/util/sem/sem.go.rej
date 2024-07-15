@@ -1,0 +1,10 @@
+@@ -237,7 +237,8 @@
+ 		variable.TiDBStmtSummaryFilename,
+ 		tidbAuditRetractLog,
+ 		variable.TiDBEnableAsyncCommit,
+-		variable.TiDBEnableResourceControl:
++		variable.TiDBEnableResourceControl,
++		variable.TiDBEnableVectorType:
+ 		return true
+ 	}
+ 	return IsStrictMode() && strictModeInvisibleSysVar(varNameInLower)

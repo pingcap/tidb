@@ -60,7 +60,7 @@ import (
 func TestVectorColumnInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	tk.MustExec("USE test;")
 
 	// Create vector type column without specified dimension.
 	tk.MustExec("create table t(embedding VECTOR)")
@@ -201,7 +201,6 @@ func TestVectorOperators(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-
 	tk.MustExec(`CREATE TABLE t(embedding VECTOR);`)
 	tk.MustExec(`INSERT INTO t VALUES
 		('[1, 2, 3]'),

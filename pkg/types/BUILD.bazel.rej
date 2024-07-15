@@ -1,0 +1,17 @@
+@@ -35,6 +35,8 @@
+         "overflow.go",
+         "set.go",
+         "time.go",
++        "vector.go",
++        "vector_functions.go",
+     ],
+     importpath = "github.com/pingcap/tidb/types",
+     visibility = [
+@@ -59,6 +61,7 @@
+         "//util/parser",
+         "//util/size",
+         "//util/stringutil",
++        "@com_github_json_iterator_go//:go",
+         "@com_github_pingcap_errors//:errors",
+         "@com_github_pingcap_log//:log",
+         "@org_golang_x_exp//slices",
