@@ -35,7 +35,7 @@ type TableContextImpl struct {
 	// The buffers are supposed to be used inside AddRecord/UpdateRecord/RemoveRecord.
 	mutateBuffers *context.MutateBuffers
 
-	hasExtraPosInfo      bool
+	hasExtraPosInfo bool
 	// extraIndexKeyInfo records how we locate indexes from the given row data.
 	// The original IndexInfo only records the column offsets in the full row.
 	// We'll need the extraIndexKeyPosInfo when the given row is pruned and only needed columns are left.
@@ -93,10 +93,10 @@ func (ctx *TableContextImpl) GetExtraIndexKeyPosInfo(idxID int64) []int {
 }
 
 // ResetExtraInfo resets the extra index key pos info.
-// We need to reset it just after the info is used because we supported the foriegn key 
+// We need to reset it just after the info is used because we supported the foreign key
 // and it's executed before the recordSet.Close() is called.
 // If we reset it in the executor's Close() triggered by recordSet.Close().
-// The execution of the foriegn key will get wrong information.
+// The execution of the foreign key will get wrong information.
 func (ctx *TableContextImpl) ResetExtraInfo() {
 	ctx.hasExtraPosInfo = false
 	ctx.extraIndexKeyPosInfo = nil
