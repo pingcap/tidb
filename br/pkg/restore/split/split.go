@@ -274,7 +274,7 @@ func NewBackoffMayNotCountBackoffer() *BackoffMayNotCountBackoffer {
 	}
 }
 
-// NextBackoff implements utils.Backoffer. For BackoffMayNotCountBackoffer, only
+// NextBackoff implements utils.BackoffStrategy. For BackoffMayNotCountBackoffer, only
 // ErrBackoff and ErrBackoffAndDontCount is meaningful.
 func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
 	if errors.ErrorEqual(err, ErrBackoff) {
@@ -289,7 +289,7 @@ func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
 	return 0
 }
 
-// Attempt implements utils.Backoffer.
+// Attempt implements utils.BackoffStrategy.
 func (b *BackoffMayNotCountBackoffer) Attempt() int {
 	return b.state.Attempt()
 }

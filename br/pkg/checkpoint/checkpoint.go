@@ -598,7 +598,7 @@ func (r *CheckpointRunner[K, V]) getTS(ctx context.Context) (int64, int64, error
 		}
 
 		return nil
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 
 	return p, l, errors.Trace(errRetry)
 }

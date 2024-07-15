@@ -379,7 +379,7 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
 		}
 		return nil
-	}, utils.NewImportSSTBackoffer())
+	}, utils.NewImportSSTBackoffStrategy())
 	if err != nil {
 		log.Error("import sst file failed after retry, stop the whole progress", logutil.Files(files), zap.Error(err))
 		return errors.Trace(err)
@@ -511,7 +511,7 @@ func (importer *SnapFileImporter) download(
 		}
 
 		return nil
-	}, utils.NewDownloadSSTBackoffer())
+	}, utils.NewDownloadSSTBackoffStrategy())
 
 	return downloadMetas, errDownload
 }
@@ -610,7 +610,7 @@ func (importer *SnapFileImporter) downloadSST(
 				}
 				var err error
 				var resp *import_sstpb.DownloadResponse
-				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffStrategy(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 					defer cancel()
 					return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)

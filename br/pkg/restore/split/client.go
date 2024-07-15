@@ -810,7 +810,7 @@ func (c *pdClient) SetStoresLabel(
 	return nil
 }
 
-func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []*RegionInfo, backoffer utils.Backoffer) {
+func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []*RegionInfo, backoffer utils.BackoffStrategy) {
 	newRegionSet := make(map[uint64]*RegionInfo, len(newRegions))
 	for _, newRegion := range newRegions {
 		newRegionSet[newRegion.Region.Id] = newRegion

@@ -4,10 +4,8 @@ package utils
 
 import (
 	"context"
-	"database/sql"
 	"io"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -50,22 +48,9 @@ const (
 	ChecksumRetryTime       = 8
 	ChecksumWaitInterval    = 1 * time.Second
 	ChecksumMaxWaitInterval = 30 * time.Second
-
-	gRPC_Cancel = "the client connection is closing"
 )
 
-// At least, there are two possible cancel() call,
-// one from go context, another from gRPC, here we retry when gRPC cancel with connection closing
-func isGRPCCancel(err error) bool {
-	if s, ok := status.FromError(err); ok {
-		if strings.Contains(s.Message(), gRPC_Cancel) {
-			return true
-		}
-	}
-	return false
-}
-
-// ConstantBackoff is a backoffer that retry forever until success.
+// ConstantBackoff is a backoff strategy that retry forever until success.
 type ConstantBackoff time.Duration
 
 // NextBackoff returns a duration to wait before retrying again
@@ -80,7 +65,7 @@ func (c ConstantBackoff) Attempt() int {
 }
 
 // RetryState is the mutable state needed for retrying.
-// It likes the `utils.Backoffer`, but more fundamental:
+// It likes the `utils.BackoffStrategy`, but more fundamental:
 // this only control the backoff time and knows nothing about what error happens.
 // NOTE: Maybe also implement the backoffer via this.
 type RetryState struct {
@@ -125,197 +110,154 @@ func (rs *RetryState) ReduceRetry() {
 	rs.retryTimes--
 }
 
-// Attempt implements the `Backoffer`.
+// Attempt implements the `BackoffStrategy`.
 // TODO: Maybe use this to replace the `exponentialBackoffer` (which is nearly homomorphic to this)?
 func (rs *RetryState) Attempt() int {
 	return rs.maxRetry - rs.retryTimes
 }
 
-// NextBackoff implements the `Backoffer`.
+// NextBackoff implements the `BackoffStrategy`.
 func (rs *RetryState) NextBackoff(error) time.Duration {
 	return rs.ExponentialBackoff()
 }
 
-type importerBackoffer struct {
-	attempt      int
-	delayTime    time.Duration
-	maxDelayTime time.Duration
-	errContext   *ErrorContext
+type backoffStrategyImpl struct {
+	attempt        int
+	delayTime      time.Duration
+	maxDelayTime   time.Duration
+	errContext     *ErrorContext
+	retryErrs      map[error]struct{}
+	nonRetryErrs   map[error]struct{}
+	grpcRetryCodes map[codes.Code]struct{}
 }
 
-// NewBackoffer creates a new controller regulating a truncated exponential backoff.
-func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration, errContext *ErrorContext) Backoffer {
-	return &importerBackoffer{
-		attempt:      attempt,
-		delayTime:    delayTime,
-		maxDelayTime: maxDelayTime,
-		errContext:   errContext,
+// NewBackoffStrategy creates a new controller regulating a truncated exponential backoff.
+func NewBackoffStrategy(attempt int, delayTime, maxDelayTime time.Duration, errContext *ErrorContext,
+	retryErrs map[error]struct{}, nonRetryErrs map[error]struct{}, grpcRetryCodes map[codes.Code]struct{}) BackoffStrategy {
+	return &backoffStrategyImpl{
+		attempt:        attempt,
+		delayTime:      delayTime,
+		maxDelayTime:   maxDelayTime,
+		errContext:     errContext,
+		retryErrs:      retryErrs,
+		nonRetryErrs:   nonRetryErrs,
+		grpcRetryCodes: grpcRetryCodes,
 	}
 }
 
-func NewImportSSTBackoffer() Backoffer {
+func NewTiKVStoreBackoffStrategy(maxRetry int, delayTime, maxDelayTime time.Duration,
+	errContext *ErrorContext) BackoffStrategy {
+	retryErrs := map[error]struct{}{
+		berrors.ErrKVEpochNotMatch:  {},
+		berrors.ErrKVDownloadFailed: {},
+		berrors.ErrKVIngestFailed:   {},
+		berrors.ErrPDLeaderNotFound: {},
+	}
+	nonRetryErrs := map[error]struct{}{
+		context.Canceled: {},
+	}
+	grpcRetryCodes := map[codes.Code]struct{}{
+		codes.Unavailable:       {},
+		codes.Aborted:           {},
+		codes.DeadlineExceeded:  {},
+		codes.ResourceExhausted: {},
+		codes.Internal:          {},
+		codes.Canceled:          {},
+	}
+
+	return NewBackoffStrategy(maxRetry, delayTime, maxDelayTime, errContext, retryErrs, nonRetryErrs, grpcRetryCodes)
+}
+
+func NewImportSSTBackoffStrategy() BackoffStrategy {
 	errContext := NewErrorContext("import sst", 3)
-	return NewBackoffer(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval, errContext)
+	return NewTiKVStoreBackoffStrategy(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval, errContext)
 }
 
-func NewDownloadSSTBackoffer() Backoffer {
+func NewDownloadSSTBackoffStrategy() BackoffStrategy {
 	errContext := NewErrorContext("download sst", 3)
-	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval, errContext)
+	return NewTiKVStoreBackoffStrategy(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval,
+		errContext)
 }
 
-func NewBackupSSTBackoffer() Backoffer {
+func NewBackupSSTBackoffStrategy() BackoffStrategy {
 	errContext := NewErrorContext("backup sst", 3)
-	return NewBackoffer(backupSSTRetryTimes, backupSSTWaitInterval, backupSSTMaxWaitInterval, errContext)
+	return NewTiKVStoreBackoffStrategy(backupSSTRetryTimes, backupSSTWaitInterval, backupSSTMaxWaitInterval, errContext)
 }
 
-func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
+func NewPDBackoffStrategy(maxRetry int, delayTime, maxDelayTime time.Duration) BackoffStrategy {
+	retryErrs := map[error]struct{}{
+		berrors.ErrRestoreTotalKVMismatch: {},
+		io.EOF:                            {},
+	}
+	nonRetryErrs := map[error]struct{}{
+		context.Canceled: {},
+	}
+	grpcRetryCodes := map[codes.Code]struct{}{
+		codes.DeadlineExceeded:  {},
+		codes.Canceled:          {},
+		codes.NotFound:          {},
+		codes.AlreadyExists:     {},
+		codes.PermissionDenied:  {},
+		codes.ResourceExhausted: {},
+		codes.Aborted:           {},
+		codes.OutOfRange:        {},
+		codes.Unavailable:       {},
+		codes.DataLoss:          {},
+		codes.Unknown:           {},
+	}
+
+	return NewBackoffStrategy(maxRetry, delayTime, maxDelayTime, NewNoRetryContext(),
+		retryErrs, nonRetryErrs, grpcRetryCodes)
+}
+
+func NewAggressivePDBackoffStrategy() BackoffStrategy {
+	return NewPDBackoffStrategy(resetTSRetryTime, resetTSWaitInterval, resetTSMaxWaitInterval)
+}
+
+func NewConservativePDBackoffStrategy() BackoffStrategy {
+	return NewPDBackoffStrategy(resetTSRetryTimeExt, resetTSWaitIntervalExt, resetTSMaxWaitIntervalExt)
+}
+
+func NewDiskCheckBackoffStrategy() BackoffStrategy {
+	retryErrs := map[error]struct{}{
+		berrors.ErrPDInvalidResponse: {},
+		berrors.ErrKVDiskFull:        {},
+	}
+	nonRetryErrs := map[error]struct{}{
+		context.Canceled:         {},
+		context.DeadlineExceeded: {},
+	}
+	grpcRetryCodes := map[codes.Code]struct{}{}
+	return NewBackoffStrategy(resetTSRetryTime, resetTSWaitInterval, resetTSMaxWaitInterval, NewNoRetryContext(),
+		retryErrs, nonRetryErrs, grpcRetryCodes)
+}
+
+func (bo *backoffStrategyImpl) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
 	errs := multierr.Errors(err)
 	lastErr := errs[len(errs)-1]
+	// TODO: should put all the error handling logic in one place.
 	res := bo.errContext.HandleErrorMsg(lastErr.Error(), 0)
 	if res.Strategy == RetryStrategy {
-		bo.delayTime = 2 * bo.delayTime
-		bo.attempt--
+		bo.doBackoff()
 	} else {
 		e := errors.Cause(lastErr)
-		switch e { // nolint:errorlint
-		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed, berrors.ErrPDLeaderNotFound:
-			bo.delayTime = 2 * bo.delayTime
-			bo.attempt--
-		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:
-			// Expected error, finish the operation
-			bo.delayTime = 0
-			bo.attempt = 0
-		default:
-			switch status.Code(e) {
-			case codes.Unavailable, codes.Aborted, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Internal:
-				bo.delayTime = 2 * bo.delayTime
-				bo.attempt--
-			case codes.Canceled:
-				if isGRPCCancel(lastErr) {
-					bo.delayTime = 2 * bo.delayTime
-					bo.attempt--
-				} else {
-					bo.delayTime = 0
-					bo.attempt = 0
-				}
-			default:
-				// Unexpected error
-				bo.delayTime = 0
-				bo.attempt = 0
-				log.Warn("unexpected error, stop retrying", zap.Error(err))
-			}
-		}
-	}
-	if bo.delayTime > bo.maxDelayTime {
-		return bo.maxDelayTime
-	}
-	return bo.delayTime
-}
-
-func (bo *importerBackoffer) Attempt() int {
-	return bo.attempt
-}
-
-type pdReqBackoffer struct {
-	attempt      int
-	delayTime    time.Duration
-	maxDelayTime time.Duration
-}
-
-func NewPDReqBackoffer() Backoffer {
-	return &pdReqBackoffer{
-		attempt:      resetTSRetryTime,
-		delayTime:    resetTSWaitInterval,
-		maxDelayTime: resetTSMaxWaitInterval,
-	}
-}
-
-func NewPDReqBackofferExt() Backoffer {
-	return &pdReqBackoffer{
-		attempt:      resetTSRetryTimeExt,
-		delayTime:    resetTSWaitIntervalExt,
-		maxDelayTime: resetTSMaxWaitIntervalExt,
-	}
-}
-
-func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
-	// bo.delayTime = 2 * bo.delayTime
-	// bo.attempt--
-	e := errors.Cause(err)
-	switch e { // nolint:errorlint
-	case nil, context.Canceled, context.DeadlineExceeded, sql.ErrNoRows:
-		// Excepted error, finish the operation
-		bo.delayTime = 0
-		bo.attempt = 0
-	case berrors.ErrRestoreTotalKVMismatch, io.EOF:
-		bo.delayTime = 2 * bo.delayTime
-		bo.attempt--
-	default:
-		// If the connection timeout, pd client would cancel the context, and return grpc context cancel error.
-		// So make the codes.Canceled retryable too.
-		// It's OK to retry the grpc context cancel error, because the parent context cancel returns context.Canceled.
-		// For example, cancel the `ectx` and then pdClient.GetTS(ectx) returns context.Canceled instead of grpc context canceled.
-		switch status.Code(e) {
-		case codes.DeadlineExceeded, codes.Canceled, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
-			bo.delayTime = 2 * bo.delayTime
-			bo.attempt--
-		default:
-			// Unexcepted error
-			bo.delayTime = 0
-			bo.attempt = 0
-			log.Warn("unexcepted error, stop to retry", zap.Error(err))
+		grpcErrCode := status.Code(e)
+		if _, ok := bo.retryErrs[e]; ok {
+			bo.doBackoff()
+		} else if _, ok := bo.nonRetryErrs[e]; ok {
+			bo.stopBackoff()
+		} else if _, ok := bo.grpcRetryCodes[grpcErrCode]; ok {
+			bo.doBackoff()
+		} else {
+			log.Warn("stop retrying on error", zap.Error(err))
+			bo.stopBackoff()
 		}
 	}
 
 	failpoint.Inject("set-attempt-to-one", func(_ failpoint.Value) {
 		bo.attempt = 1
 	})
-	if bo.delayTime > bo.maxDelayTime {
-		return bo.maxDelayTime
-	}
-	return bo.delayTime
-}
-
-func (bo *pdReqBackoffer) Attempt() int {
-	return bo.attempt
-}
-
-type DiskCheckBackoffer struct {
-	attempt      int
-	delayTime    time.Duration
-	maxDelayTime time.Duration
-}
-
-func NewDiskCheckBackoffer() Backoffer {
-	return &DiskCheckBackoffer{
-		attempt:      resetTSRetryTime,
-		delayTime:    resetTSWaitInterval,
-		maxDelayTime: resetTSMaxWaitInterval,
-	}
-}
-
-func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
-	e := errors.Cause(err)
-	switch e { // nolint:errorlint
-	case nil, context.Canceled, context.DeadlineExceeded:
-		bo.delayTime = 0
-		bo.attempt = 0
-	case berrors.ErrPDInvalidResponse:
-		bo.delayTime = 2 * bo.delayTime
-		bo.attempt--
-	default:
-		if strings.Contains(e.Error(), "no space left on device") {
-			bo.delayTime = 0
-			bo.attempt = 0
-		} else {
-			bo.delayTime = 2 * bo.delayTime
-			if bo.attempt > 5 {
-				bo.attempt = 5
-			}
-			bo.attempt--
-		}
-	}
 
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
@@ -323,6 +265,16 @@ func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
 	return bo.delayTime
 }
 
-func (bo *DiskCheckBackoffer) Attempt() int {
+func (bo *backoffStrategyImpl) Attempt() int {
 	return bo.attempt
+}
+
+func (bo *backoffStrategyImpl) doBackoff() {
+	bo.delayTime = 2 * bo.delayTime
+	bo.attempt--
+}
+
+func (bo *backoffStrategyImpl) stopBackoff() {
+	bo.delayTime = 0
+	bo.attempt = 0
 }

@@ -624,10 +624,10 @@ func TestRetryRecognizeErrCode(t *testing.T) {
 				return errors.Trace(e)
 			}
 			return nil
-		}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("download sst", 3)))
+		}, utils.NewBackoffStrategy(10, waitTime, maxWaitTime, utils.NewErrorContext("download sst", 3)))
 		outer++
 		return errors.Trace(e)
-	}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("import sst", 3)))
+	}, utils.NewBackoffStrategy(10, waitTime, maxWaitTime, utils.NewErrorContext("import sst", 3)))
 	require.Equal(t, 10, outer)
 	require.Equal(t, 100, inner)
 }

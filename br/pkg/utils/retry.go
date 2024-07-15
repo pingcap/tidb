@@ -88,6 +88,14 @@ func NewDefaultContext() *ErrorContext {
 	}
 }
 
+func NewNoRetryContext() *ErrorContext {
+	return &ErrorContext{
+		scenario:                 "no-retry",
+		encounterTimes:           make(map[uint64]int),
+		encounterTimesLimitation: 0,
+	}
+}
+
 func (ec *ErrorContext) HandleError(err *backuppb.Error, uuid uint64) ErrorResult {
 	if err == nil {
 		return ErrorResult{RetryStrategy, "unreachable retry"}
@@ -196,8 +204,8 @@ type RetryableFunc func() error
 
 type RetryableFuncV2[T any] func(context.Context) (T, error)
 
-// Backoffer implements a backoff policy for retrying operations.
-type Backoffer interface {
+// BackoffStrategy implements a backoff policy for retrying operations.
+type BackoffStrategy interface {
 	// NextBackoff returns a duration to wait before retrying again
 	NextBackoff(err error) time.Duration
 	// Attempt returns the remain attempt times
@@ -211,7 +219,7 @@ type Backoffer interface {
 func WithRetry(
 	ctx context.Context,
 	retryableFunc RetryableFunc,
-	backoffer Backoffer,
+	backoffer BackoffStrategy,
 ) error {
 	_, err := WithRetryV2[struct{}](ctx, backoffer, func(ctx context.Context) (struct{}, error) {
 		innerErr := retryableFunc()
@@ -227,7 +235,7 @@ func WithRetry(
 // Comparing with `WithRetry`, this function reordered the argument order and supports catching the return value.
 func WithRetryV2[T any](
 	ctx context.Context,
-	backoffer Backoffer,
+	backoffer BackoffStrategy,
 	fn RetryableFuncV2[T],
 ) (T, error) {
 	var allErrors error
@@ -256,7 +264,7 @@ var sampleLoggerFactory = logutil.SampleLoggerFactory(
 func WithRetryReturnLastErr(
 	ctx context.Context,
 	retryableFunc RetryableFunc,
-	backoffer Backoffer,
+	backoffer BackoffStrategy,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -375,7 +383,7 @@ func (r *RetryWithBackoffer) Inner() *tikv.Backoffer {
 }
 
 type verboseBackoffer struct {
-	inner   Backoffer
+	inner   BackoffStrategy
 	logger  *zap.Logger
 	groupID uuid.UUID
 }
@@ -400,7 +408,7 @@ func (v *verboseBackoffer) Attempt() int {
 	return attempt
 }
 
-func VerboseRetry(bo Backoffer, logger *zap.Logger) Backoffer {
+func VerboseRetry(bo BackoffStrategy, logger *zap.Logger) BackoffStrategy {
 	if logger == nil {
 		logger = log.L()
 	}
@@ -413,7 +421,7 @@ func VerboseRetry(bo Backoffer, logger *zap.Logger) Backoffer {
 }
 
 type failedOnErr struct {
-	inner    Backoffer
+	inner    BackoffStrategy
 	failed   bool
 	failedOn []error
 }
@@ -440,7 +448,7 @@ func (f *failedOnErr) Attempt() int {
 	return f.inner.Attempt()
 }
 
-func GiveUpRetryOn(bo Backoffer, errs ...error) Backoffer {
+func GiveUpRetryOn(bo BackoffStrategy, errs ...error) BackoffStrategy {
 	return &failedOnErr{
 		inner:    bo,
 		failed:   false,
