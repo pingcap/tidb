@@ -142,8 +142,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		//	but because the predicate columns feature is turned on, and it doesn't have any columns or indexes analyzed,
 		//	it only analyzes _row_id and refreshes stats_meta, in which case the snapshot is not zero.
 		// 2. LastAnalyzeVersion is 0 because it has never been loaded.
-		// In this case, we can initialize LastAnalyzeVersion to a snapshot,
-		//	otherwise auto-analyze will think that the table has never been analyzed and try to analyze it again.
+		// In this case, we can initialize LastAnalyzeVersion to the snapshot,
+		//	otherwise auto-analyze will assume that the table has never been analyzed and try to analyze it again.
 		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
 			tbl.LastAnalyzeVersion = snapshot
 		}
