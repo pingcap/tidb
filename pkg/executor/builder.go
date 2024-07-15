@@ -3407,7 +3407,7 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 }
 
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
-	tablePlans := v.TablePlans
+	tablePlans := v.FlatPushedTablePlans()
 	if v.StoreType == kv.TiFlash {
 		tablePlans = []base.PhysicalPlan{v.GetTablePlan()}
 	}
@@ -3450,9 +3450,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		byItems:                    ts.ByItems,
 		columns:                    ts.Columns,
 		paging:                     paging,
-		corColInFilter:             b.corColInDistPlan(v.TablePlans),
-		corColInAccess:             b.corColInAccess(v.TablePlans[0]),
-		plans:                      v.TablePlans,
+		corColInFilter:             b.corColInDistPlan(v.FlatPushedTablePlans()),
+		corColInAccess:             b.corColInAccess(v.FlatPushedTablePlans()[0]),
+		plans:                      v.FlatPushedTablePlans(),
 		tablePlan:                  v.GetTablePlan(),
 		storeType:                  v.StoreType,
 		batchCop:                   v.ReadReqType == plannercore.BatchCop,

@@ -320,7 +320,7 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 			// When allow batch cop is 2, every query uses batch cop.
 			switch ctx.GetSessionVars().AllowBatchCop {
 			case 1:
-				for _, plan := range p.TablePlans {
+				for _, plan := range p.FlatPushedTablePlans() {
 					switch plan.(type) {
 					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
 						p.ReadReqType = BatchCop
@@ -341,7 +341,6 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	if p.tablePlan == nil {
 		return &p
 	}
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.schema = p.tablePlan.Schema()
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {

@@ -403,8 +403,8 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 
 func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 	if p, ok := root.(*core.PhysicalTableReader); ok {
-		if p.TablePlans != nil {
-			baseAgg := p.TablePlans[len(p.TablePlans)-1]
+		if p.FlatPushedTablePlans() != nil {
+			baseAgg := p.FlatPushedTablePlans()[len(p.FlatPushedTablePlans())-1]
 			if agg, ok := baseAgg.(*core.PhysicalHashAgg); ok {
 				for i, aggfunc := range agg.AggFuncs {
 					require.Equal(t, aggfunc.RetTp, agg.Schema().Columns[i].RetType)
@@ -475,7 +475,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 			}
 			return nil
 		case *core.PhysicalTableReader:
-			for _, child := range v.TablePlans {
+			for _, child := range v.FlatPushedTablePlans() {
 				if sel := findSelection(child); sel != nil {
 					return sel
 				}

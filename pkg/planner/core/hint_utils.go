@@ -74,7 +74,7 @@ func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	}
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
+		ts := x.FlatPushedTablePlans()[0].(*PhysicalTableScan)
 		if ts.TableAsName.L != "" {
 			return &ts.DBName, ts.TableAsName
 		}
@@ -152,7 +152,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			})
 		}
 	case *PhysicalTableReader:
-		tbl, ok := pp.TablePlans[0].(*PhysicalTableScan)
+		tbl, ok := pp.FlatPushedTablePlans()[0].(*PhysicalTableScan)
 		if !ok {
 			return res
 		}

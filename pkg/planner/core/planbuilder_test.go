@@ -251,16 +251,15 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 
 	// table reader
 	tableReader := &PhysicalTableReader{
-		tablePlan:  tableScan,
-		TablePlans: []base.PhysicalPlan{tableScan},
-		StoreType:  kv.TiFlash,
+		tablePlan: tableScan,
+		StoreType: kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
 	clonedPlan, err := tableReader.Clone(ctx)
 	require.NoError(t, err)
 	newTableReader, ok := clonedPlan.(*PhysicalTableReader)
 	require.True(t, ok)
-	require.True(t, newTableReader.tablePlan == newTableReader.TablePlans[0])
+	require.True(t, newTableReader.tablePlan == newTableReader.FlatPushedTablePlans()[0])
 }
 
 func TestPhysicalPlanClone(t *testing.T) {
@@ -287,9 +286,8 @@ func TestPhysicalPlanClone(t *testing.T) {
 
 	// table reader
 	tableReader := &PhysicalTableReader{
-		tablePlan:  tableScan,
-		TablePlans: []base.PhysicalPlan{tableScan},
-		StoreType:  kv.TiFlash,
+		tablePlan: tableScan,
+		StoreType: kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
 	require.NoError(t, checkPhysicalPlanClone(tableReader))

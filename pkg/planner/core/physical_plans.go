@@ -127,9 +127,9 @@ func (r ReadReqType) Name() string {
 type PhysicalTableReader struct {
 	physicalSchemaProducer
 
-	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans []base.PhysicalPlan
-	tablePlan  base.PhysicalPlan
+	// flatPushedTablePlans is lazy initialized from tablePlan, not access it directly, use FlatPushedTablePlans().
+	flatPushedTablePlans []base.PhysicalPlan
+	tablePlan            base.PhysicalPlan
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
@@ -193,10 +193,18 @@ func (p *PhysicalTableReader) GetTablePlan() base.PhysicalPlan {
 	return p.tablePlan
 }
 
+// FlatPushedTablePlans returns all pushed down plans.
+func (p *PhysicalTableReader) FlatPushedTablePlans() []base.PhysicalPlan {
+	if p.flatPushedTablePlans == nil {
+		p.flatPushedTablePlans = flattenPushDownPlan(p.tablePlan)
+	}
+	return p.flatPushedTablePlans
+}
+
 // GetTableScans exports the tableScan that contained in tablePlans.
 func (p *PhysicalTableReader) GetTableScans() []*PhysicalTableScan {
 	tableScans := make([]*PhysicalTableScan, 0, 1)
-	for _, tablePlan := range p.TablePlans {
+	for _, tablePlan := range p.FlatPushedTablePlans() {
 		tableScan, ok := tablePlan.(*PhysicalTableScan)
 		if ok {
 			tableScans = append(tableScans, tableScan)
@@ -262,20 +270,17 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	if cloned.tablePlan, err = p.tablePlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
-	// TablePlans are actually the flattened plans in tablePlan, so can't copy them, just need to extract from tablePlan
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	return cloned, nil
 }
 
 // SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 	p.tablePlan = children[0]
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
-	for _, child := range p.TablePlans {
+	for _, child := range p.FlatPushedTablePlans() {
 		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols

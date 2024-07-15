@@ -409,7 +409,7 @@ func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObj
 		return DynamicPartitionAccessObjects(nil)
 	}
 	if len(p.TableScanAndPartitionInfos) == 0 {
-		ts, ok := p.TablePlans[0].(*PhysicalTableScan)
+		ts, ok := p.FlatPushedTablePlans()[0].(*PhysicalTableScan)
 		if !ok {
 			return OtherAccessObject("")
 		}
