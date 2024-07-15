@@ -453,6 +453,10 @@ const fetchSchemaConcurrency = 1
 
 func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
+	if variable.SchemaCacheSize.Load() > 0 && len(schemas) > 1000 {
+		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
+		groupSize = 8
+	}
 	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
 	schemaCnt := len(schemas)
 	for i := 0; i < schemaCnt; i += groupSize {
@@ -471,10 +475,22 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 			// schema is not public, can't be used outside.
 			continue
 		}
-		tables, err := m.ListTables(di.ID)
-		if err != nil {
-			done <- err
-			return
+		var tables []*model.TableInfo
+		var err error
+		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndSpecialAttributeInfo(m, di.ID)
+			if err != nil {
+				done <- err
+				return
+			}
+			di.TableName2ID = name2ID
+			tables = specialTableInfos
+		} else {
+			tables, err = m.ListTables(di.ID)
+			if err != nil {
+				done <- err
+				return
+			}
 		}
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
 		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {

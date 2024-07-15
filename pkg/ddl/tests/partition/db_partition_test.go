@@ -2621,6 +2621,8 @@ func getPartitionTableRecordsNum(t *testing.T, ctx sessionctx.Context, tbl table
 func TestPartitionErrorCode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec("drop database if exists test_db_with_partition")
@@ -2665,7 +2667,6 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk.MustGetErrCode("alter table t_part repair partition p1;", errno.ErrUnsupportedDDLOperation)
 
 	// Reduce the impact on DML when executing partition DDL
-	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1.MustExec("drop table if exists t;")

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 var (
@@ -1010,6 +1012,70 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 		return nil, errors.Trace(err)
 	}
 	return res, nil
+}
+
+// CheckSpecialAttributes checks if the special attributes are in the table info.
+// Make it same as hasSpecialAttributes.
+// Exported for testing.
+// It's the regexp version for hasSpecialAttributes(), please keep up-to-date with it.
+func CheckSpecialAttributes(str string) bool {
+	if strings.Contains(str, "\"tiflash_replica\":null") && strings.Contains(str, "\"policy_ref_info\":null") &&
+		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") {
+		return false
+	}
+	return true
+}
+
+// NameExtractRegexp is exported for testing.
+const NameExtractRegexp = `"L":"([^"\\]*(?:\\.[^"\\]*)*)"}`
+
+// Unescape is exported for testing.
+func Unescape(s string) string {
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\\`, `\`)
+	return s
+}
+
+// GetAllNameToIDAndSpecialAttributeInfo gets all the fields and values and table info for special attributes in a hash.
+// It's used to get some infos for information schema cache in a faster way.
+func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	res := make(map[string]int64)
+	idRegex := regexp.MustCompile(`"id":(\d+)`)
+	nameLRegex := regexp.MustCompile(NameExtractRegexp)
+
+	tableInfos := make([]*model.TableInfo, 0)
+
+	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
+			return nil
+		}
+
+		idMatch := idRegex.FindStringSubmatch(string(hack.String(value)))
+		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(value)))
+		id, err := strconv.Atoi(idMatch[1])
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		res[Unescape(nameLMatch[1])] = int64(id)
+		if CheckSpecialAttributes(string(hack.String(value))) {
+			tbInfo := &model.TableInfo{}
+			err = json.Unmarshal(value, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbInfo.DBID = dbID
+			tableInfos = append(tableInfos, tbInfo)
+		}
+		return nil
+	})
+
+	return res, tableInfos, errors.Trace(err)
 }
 
 // ListTables shows all tables in database.
