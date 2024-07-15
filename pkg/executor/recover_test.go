@@ -27,11 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
->>>>>>> 8b78a4faa31 (ddl: improve FLASHBACK DATABASE for many table case (#54439))
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
@@ -553,7 +548,10 @@ func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
 }
 
 func TestFlashbackSchema(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+	}()
 
 	store := testkit.CreateMockStore(t)
 
@@ -578,13 +576,13 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("drop database test_flashback")
 
 	// test PD connection issue causes failure after tidb_ddl_error_count_limit
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `return()`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `return()`))
 	// TODO(lance6716): fix it later
 	//tk.MustGetErrMsg("flashback database test_flashback", "[ddl:-1]DDL job rollback, error msg: mock error for clearTablePlacementAndBundles")
 	tk.MustExecToErr("flashback database test_flashback")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `1*return()`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `1*return()`))
 	tk.MustExec("flashback database test_flashback")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr"))
 
 	// Test flashback database with db_not_exists name.
 	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")

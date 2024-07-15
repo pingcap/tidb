@@ -644,29 +644,6 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 			if schemaInfo.Name.L != schemaName.L {
 				continue
 			}
-<<<<<<< HEAD
-			tables, err := snapMeta.ListTables(job.SchemaID)
-			if err != nil {
-				return false, err
-			}
-			recoverTabsInfo := make([]*ddl.RecoverInfo, 0)
-			for _, tblInfo := range tables {
-				autoIDs, err := snapMeta.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
-				if err != nil {
-					return false, err
-				}
-				recoverTabsInfo = append(recoverTabsInfo, &ddl.RecoverInfo{
-					SchemaID:      job.SchemaID,
-					TableInfo:     tblInfo,
-					DropJobID:     job.ID,
-					SnapshotTS:    job.StartTS,
-					AutoIDs:       autoIDs,
-					OldSchemaName: schemaName.L,
-					OldTableName:  tblInfo.Name.L,
-				})
-			}
-			recoverSchemaInfo = &ddl.RecoverSchemaInfo{DBInfo: schemaInfo, RecoverTabsInfo: recoverTabsInfo, DropJobID: job.ID, SnapshotTS: job.StartTS, OldSchemaName: schemaName}
-=======
 			recoverSchemaInfo = &ddl.RecoverSchemaInfo{
 				DBInfo:              schemaInfo,
 				LoadTablesOnExecute: true,
@@ -674,7 +651,6 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 				SnapshotTS:          job.StartTS,
 				OldSchemaName:       schemaName,
 			}
->>>>>>> 8b78a4faa31 (ddl: improve FLASHBACK DATABASE for many table case (#54439))
 			return true, nil
 		}
 		return false, nil
