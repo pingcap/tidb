@@ -120,7 +120,7 @@ func (do *Domain) getExternalTimestamp(ctx context.Context) (uint64, error) {
 	return do.store.GetOracle().GetExternalTimestamp(ctx)
 }
 
-func (do *Domain) changeSchemaCacheSize(size uint64) error {
+func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error {
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), do.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return t.SetSchemaCacheSize(size)
