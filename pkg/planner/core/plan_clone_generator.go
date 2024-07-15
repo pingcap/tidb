@@ -59,17 +59,17 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
 		case "core.physicalSchemaProducer":
-			c.write(`if basePlan, ok := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned); !ok {
+			c.write(`basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+							if !baseOK {
 								return nil, false
-							} else {
-								cloned.physicalSchemaProducer = *basePlan
-							}`)
+							}
+							cloned.physicalSchemaProducer = *basePlan`)
 		case "core.basePhysicalPlan":
-			c.write(`if basePlan, ok := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned); !ok {
+			c.write(`basePlan, baseOK := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned)
+							if !baseOK {
 								return nil, false
-							} else {
-								cloned.basePhysicalPlan = *basePlan
-							}`)
+							}
+							cloned.basePhysicalPlan = *basePlan}`)
 		case "[]expression.Expression":
 			c.write("cloned.%v = util.CloneExprs(op.%v)", f.Name, f.Name)
 		case "[]*ranger.Range":
