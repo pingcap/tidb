@@ -21,9 +21,14 @@ import (
 	"reflect"
 )
 
-// genPlanCloneForPlanCacheCode generates CloneForPlanCache method for all physical plan nodes.
+// genPlanCloneForPlanCacheCode generates CloneForPlanCache for all physical plan nodes in plan_clone_generated.go.
 // Using code-gen is safer than writing by hand, for example, if someone adds a new field to a struct,
 // the code-gen can update the Clone method correctly and automatically.
+// To update plan_clone_generated.go, please run TestUpdatePlanCloneCode manually.
+// This function relies on Golang field tags to determine whether to shallow clone a field or not.
+// If a field is tagged with `plan-cache-clone:"shallow"`, then it will be shallow cloned.
+// If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
+// If a field is not tagged, then it will be deep cloned.
 func genPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{}}
 	c := new(codeGen)

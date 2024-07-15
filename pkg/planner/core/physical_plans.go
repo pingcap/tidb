@@ -680,7 +680,7 @@ type PhysicalIndexScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 
-	Table      *model.TableInfo `plan-cache-clone:"shallow"`
+	Table      *model.TableInfo `plan-cache-clone:"shallow"` // please see comment on genPlanCloneForPlanCacheCode.
 	Index      *model.IndexInfo `plan-cache-clone:"shallow"`
 	IdxCols    []*expression.Column
 	IdxColLens []int
@@ -699,7 +699,7 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableItemID]expression.Expression `plan-cache-clone:"must-nil" json:"-"`
+	GenExprs map[model.TableItemID]expression.Expression `plan-cache-clone:"must-nil"`
 
 	isPartition bool
 	Desc        bool
