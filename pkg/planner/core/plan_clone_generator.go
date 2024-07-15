@@ -69,7 +69,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 							if !baseOK {
 								return nil, false
 							}
-							cloned.basePhysicalPlan = *basePlan}`)
+							cloned.basePhysicalPlan = *basePlan`)
 		case "[]expression.Expression":
 			c.write("cloned.%v = util.CloneExprs(op.%v)", f.Name, f.Name)
 		case "[]*ranger.Range":
