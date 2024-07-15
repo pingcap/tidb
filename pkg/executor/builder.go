@@ -3754,11 +3754,11 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, err := builder.ConstructDAGReq(b.ctx, v.IndexPlans, kv.TiKV)
+	dagReq, err := builder.ConstructDAGReq(b.ctx, v.FlatPushedIndexPlans(), kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.FlatPushedIndexPlans()[0].(*plannercore.PhysicalIndexScan)
 	tbl, _ := b.is.TableByID(is.Table.ID)
 	isPartition, physicalTableID := is.IsPartition()
 	if isPartition {
@@ -3790,11 +3790,11 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		columns:            is.Columns,
 		byItems:            is.ByItems,
 		paging:             paging,
-		corColInFilter:     b.corColInDistPlan(v.IndexPlans),
-		corColInAccess:     b.corColInAccess(v.IndexPlans[0]),
+		corColInFilter:     b.corColInDistPlan(v.FlatPushedIndexPlans()),
+		corColInAccess:     b.corColInAccess(v.FlatPushedIndexPlans()[0]),
 		idxCols:            is.IdxCols,
 		colLens:            is.IdxColLens,
-		plans:              v.IndexPlans,
+		plans:              v.FlatPushedIndexPlans(),
 		outputColumns:      v.OutputColumns,
 	}
 
@@ -3806,7 +3806,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) exec.Executor {
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.FlatPushedIndexPlans()[0].(*plannercore.PhysicalIndexScan)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
@@ -4596,7 +4596,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.FlatPushedIndexPlans()[0].(*plannercore.PhysicalIndexScan)
 	if is.Index.Global {
 		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {

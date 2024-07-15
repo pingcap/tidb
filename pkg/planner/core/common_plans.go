@@ -1398,7 +1398,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 
 	switch v := p.(type) {
 	case *PhysicalIndexReader:
-		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
+		indexScan := v.FlatPushedIndexPlans()[0].(*PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(vars.StmtCtx.TypeCtx())
 	case *PhysicalTableReader:
 		tableScan, ok := v.FlatPushedTablePlans()[0].(*PhysicalTableScan)

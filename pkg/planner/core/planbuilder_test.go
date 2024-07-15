@@ -306,7 +306,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 	// index reader
 	indexReader := &PhysicalIndexReader{
 		indexPlan:     indexScan,
-		IndexPlans:    []base.PhysicalPlan{indexScan},
 		OutputColumns: []*expression.Column{col, col},
 	}
 	indexReader = indexReader.Init(ctx, 0)

@@ -80,7 +80,7 @@ func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
 		}
 		return &ts.DBName, &ts.Table.Name
 	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		is := x.FlatPushedIndexPlans()[0].(*PhysicalIndexScan)
 		if is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName
 		}
@@ -201,7 +201,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
 	case *PhysicalIndexReader:
-		index := pp.IndexPlans[0].(*PhysicalIndexScan)
+		index := pp.FlatPushedIndexPlans()[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: model.NewCIStr(h.HintUseIndex),

@@ -474,7 +474,7 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 }
 
 func (p *PhysicalIndexReader) accessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
+	return getAccessObjectFromIndexScan(sctx, p.FlatPushedIndexPlans()[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
 func (p *PhysicalIndexLookUpReader) accessObject(sctx base.PlanContext) base.AccessObject {

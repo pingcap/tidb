@@ -305,15 +305,23 @@ func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOpt
 type PhysicalIndexReader struct {
 	physicalSchemaProducer
 
-	// IndexPlans flats the indexPlan to construct executor pb.
-	IndexPlans []base.PhysicalPlan
-	indexPlan  base.PhysicalPlan
+	// flatPushedIndexPlans is lazy initialized from indexPlan, not access it directly, use FlatPushedIndexPlans().
+	flatPushedIndexPlans []base.PhysicalPlan
+	indexPlan            base.PhysicalPlan
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
+}
+
+// FlatPushedIndexPlans returns all pushed down plans.
+func (p *PhysicalIndexReader) FlatPushedIndexPlans() []base.PhysicalPlan {
+	if p.flatPushedIndexPlans == nil {
+		p.flatPushedIndexPlans = flattenPushDownPlan(p.indexPlan)
+	}
+	return p.flatPushedIndexPlans
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -328,9 +336,6 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	if cloned.indexPlan, err = p.indexPlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
-	if cloned.IndexPlans, err = clonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
-		return nil, err
-	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
 	return cloned, err
 }
@@ -338,12 +343,11 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
-		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
 		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.schema = p.indexPlan.Schema()
 		default:
-			is := p.IndexPlans[0].(*PhysicalIndexScan)
+			is := p.FlatPushedIndexPlans()[0].(*PhysicalIndexScan)
 			p.schema = is.dataSourceSchema
 		}
 		p.OutputColumns = p.schema.Clone().Columns
@@ -358,7 +362,7 @@ func (p *PhysicalIndexReader) SetChildren(children ...base.PhysicalPlan) {
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
-	for _, child := range p.IndexPlans {
+	for _, child := range p.FlatPushedIndexPlans() {
 		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
@@ -392,7 +396,7 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 		p.indexPlan.MemoryUsage()
 	}
 
-	for _, plan := range p.IndexPlans {
+	for _, plan := range p.FlatPushedIndexPlans() {
 		sum += plan.MemoryUsage()
 	}
 	for _, col := range p.OutputColumns {
@@ -403,7 +407,7 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
-	is := p.IndexPlans[0].(*PhysicalIndexScan)
+	is := p.FlatPushedIndexPlans()[0].(*PhysicalIndexScan)
 	loadTableStats(ctx, is.Table, is.physicalTableID)
 }
 
