@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -2901,20 +2900,16 @@ func (e *SimpleExec) executeAdminUnsetBDRRole() error {
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {
-	originalResourceGroup := e.Ctx().GetSessionVars().ResourceGroupName
+	var name string
 	if s.Name.L != "" {
 		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
 			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
 		}
-		e.Ctx().GetSessionVars().ResourceGroupName = s.Name.L
+		name = s.Name.L
 	} else {
-		e.Ctx().GetSessionVars().ResourceGroupName = resourcegroup.DefaultResourceGroupName
+		name = resourcegroup.DefaultResourceGroupName
 	}
-	newResourceGroup := e.Ctx().GetSessionVars().ResourceGroupName
-	if originalResourceGroup != newResourceGroup {
-		metrics.ConnGauge.WithLabelValues(originalResourceGroup).Dec()
-		metrics.ConnGauge.WithLabelValues(newResourceGroup).Inc()
-	}
+	e.Ctx().GetSessionVars().SetResourceGroupName(name)
 	return nil
 }
 

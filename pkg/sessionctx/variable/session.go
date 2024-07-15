@@ -1519,6 +1519,7 @@ type SessionVars struct {
 
 	// Resource group name
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
+	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -2810,7 +2811,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
-	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.SetResourceGroupName(sessionStates.ResourceGroupName)
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
@@ -2819,6 +2820,15 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
+}
+
+// SetResourceGroupName changes the resource group name and inc/dec the metrics accordingly.
+func (s *SessionVars) SetResourceGroupName(groupName string) {
+	if s.ResourceGroupName != groupName {
+		metrics.ConnGauge.WithLabelValues(s.ResourceGroupName).Dec()
+		metrics.ConnGauge.WithLabelValues(groupName).Inc()
+	}
+	s.ResourceGroupName = groupName
 }
 
 // TableDelta stands for the changed count for one table or partition.
