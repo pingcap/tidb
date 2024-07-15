@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +81,6 @@ func TestAddIndexMergeProcess(t *testing.T) {
 }
 
 func TestAddPrimaryKeyMergeProcess(t *testing.T) {
-	// Disable auto schema reload.
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 0)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -94,11 +94,9 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 
 	var checkErr error
 	var runDML, backfillDone bool
-	originHook := dom.DDL().GetHook()
-	callback := &callback.TestDDLCallback{
-		Do: nil, // We'll reload the schema manually.
-	}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	// only trigger reload when schema version changed
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "primary")
 			if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
@@ -114,12 +112,8 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 			// Add delete record 4 to the temporary index.
 			_, checkErr = tk2.Exec("delete from t where c1 = 4;")
 		}
-		assert.NoError(t, dom.Reload())
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	dom.DDL().SetHook(callback)
+	})
 	tk.MustExec("alter table t add primary key idx(c1);")
-	dom.DDL().SetHook(originHook)
 	require.True(t, backfillDone)
 	require.True(t, runDML)
 	require.NoError(t, checkErr)

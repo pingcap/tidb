@@ -20,6 +20,7 @@ go_test(
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
+        "//pkg/testkit/analyzehelper",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",

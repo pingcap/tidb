@@ -32,7 +32,7 @@ func TestDDLAfterLoad(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -280,8 +280,8 @@ func TestExchangePartitionWithASystemTable(t *testing.T) {
 	h := do.StatsHandle()
 	testKit.MustExec("use test")
 	// Test exchange partition with a system table.
-	testKit.MustExec("create table t (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6))")
-	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (6))")
+	testKit.MustExec("create table mysql.test (c1 int, c2 int, index idx(c1, c2))")
 	// Insert some data to table t.
 	testKit.MustExec("insert into t values (1,2),(2,2)")
 	// Analyze table t.
@@ -359,7 +359,7 @@ func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -494,7 +494,7 @@ func TestDDLHistogram(t *testing.T) {
 	h := do.StatsHandle()
 
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	<-h.DDLEventCh()
 	testKit.MustExec("insert into t values(1,2),(3,4)")
 	testKit.MustExec("analyze table t")
@@ -577,7 +577,7 @@ func TestDDLHistogram(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(1, true))
+	require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, true))
 	testKit.MustExec("analyze table t")
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -736,7 +736,7 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int, b int) partition by hash(a) partitions 2")
+	testKit.MustExec("create table t (a int, b int, index idx(a, b)) partition by hash(a) partitions 2")
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
@@ -804,7 +804,7 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int, b int) partition by hash(a) partitions 4")
+	testKit.MustExec("create table t (a int, b int, index idx(a, b)) partition by hash(a) partitions 4")
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()

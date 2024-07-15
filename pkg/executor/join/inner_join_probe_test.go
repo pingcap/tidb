@@ -230,9 +230,9 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		require.Equal(t, 0, len(leftFilter), "inner join does not support left filter")
 		require.Equal(t, 0, len(rightFilter), "inner join does not support right filter")
 	case plannercore.LeftOuterJoin:
-		require.Equal(t, 0, len(rightFilter), "inner join does not support right filter")
+		require.Equal(t, 0, len(rightFilter), "left outer join does not support right filter")
 	case plannercore.RightOuterJoin:
-		require.Equal(t, 0, len(leftFilter), "inner join does not support left filter")
+		require.Equal(t, 0, len(leftFilter), "right outer join does not support left filter")
 	case plannercore.SemiJoin, plannercore.AntiSemiJoin:
 		require.Equal(t, 0, len(leftFilter), "semi/anti join does not support left filter")
 		require.Equal(t, 0, len(rightFilter), "semi/anti join does not support right filter")
@@ -364,6 +364,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			}
 		}
 	}
+
 	if joinProbe.NeedScanRowTable() {
 		joinProbes := make([]ProbeV2, 0, hashJoinCtx.Concurrency)
 		for i := uint(0); i < hashJoinCtx.Concurrency; i++ {
@@ -393,6 +394,10 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	case plannercore.LeftOuterJoin:
 		expectedChunks := genLeftOuterJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case plannercore.RightOuterJoin:
+		expectedChunks := genRightOuterJoinResult(t, hashJoinCtx.SessCtx, rightFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
 			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	default:

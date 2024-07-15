@@ -4581,7 +4581,7 @@ create table t6(a int, b int, key(a));
 create table t7(a int, b int, key(a));
 create table t8(a int, b int, key(a));
 insert into t3 values(1, 1), (2, 2), (3, 3);
-analyze table t3;
+analyze table t3 all columns;
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]

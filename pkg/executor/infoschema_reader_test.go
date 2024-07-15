@@ -309,7 +309,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("insert into analyze_test values (1,2),(3,4)")
 
 	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check([][]any{})
-	tk.MustExec("analyze table analyze_test")
+	tk.MustExec("analyze table analyze_test all columns")
 	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check(testkit.Rows("analyze_test"))
 
 	// test the privilege of new user for information_schema.analyze_status
@@ -326,7 +326,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	// test the privilege of user with privilege of test.t1 for information_schema.analyze_status
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
-	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t1 all columns")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"")) // 1 note.
 	require.NoError(t, dom.StatsHandle().LoadNeededHistograms())
 	tk.MustExec("CREATE ROLE r_t1 ;")

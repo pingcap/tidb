@@ -22,11 +22,37 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
+// CloneFieldNames uses types.FieldName.Clone to clone a slice of types.FieldName.
+func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
+	if names == nil {
+		return nil
+	}
+	cloned := make([]*types.FieldName, len(names))
+	for i, name := range names {
+		*cloned[i] = *name
+	}
+	return cloned
+}
+
+// CloneCIStrs uses model.CIStr.Clone to clone a slice of model.CIStr.
+func CloneCIStrs(strs []model.CIStr) []model.CIStr {
+	if strs == nil {
+		return nil
+	}
+	cloned := make([]model.CIStr, 0, len(strs))
+	cloned = append(cloned, strs...)
+	return cloned
+}
+
 // CloneExprs uses Expression.Clone to clone a slice of Expression.
 func CloneExprs(exprs []expression.Expression) []expression.Expression {
+	if exprs == nil {
+		return nil
+	}
 	cloned := make([]expression.Expression, 0, len(exprs))
 	for _, e := range exprs {
 		cloned = append(cloned, e.Clone())
@@ -36,6 +62,9 @@ func CloneExprs(exprs []expression.Expression) []expression.Expression {
 
 // CloneCols uses (*Column).Clone to clone a slice of *Column.
 func CloneCols(cols []*expression.Column) []*expression.Column {
+	if cols == nil {
+		return nil
+	}
 	cloned := make([]*expression.Column, 0, len(cols))
 	for _, c := range cols {
 		if c == nil {
@@ -49,6 +78,9 @@ func CloneCols(cols []*expression.Column) []*expression.Column {
 
 // CloneColInfos uses (*ColumnInfo).Clone to clone a slice of *ColumnInfo.
 func CloneColInfos(cols []*model.ColumnInfo) []*model.ColumnInfo {
+	if cols == nil {
+		return nil
+	}
 	cloned := make([]*model.ColumnInfo, 0, len(cols))
 	for _, c := range cols {
 		cloned = append(cloned, c.Clone())
@@ -58,6 +90,9 @@ func CloneColInfos(cols []*model.ColumnInfo) []*model.ColumnInfo {
 
 // CloneRanges uses (*Range).Clone to clone a slice of *Range.
 func CloneRanges(ranges []*ranger.Range) []*ranger.Range {
+	if ranges == nil {
+		return nil
+	}
 	cloned := make([]*ranger.Range, 0, len(ranges))
 	for _, r := range ranges {
 		cloned = append(cloned, r.Clone())

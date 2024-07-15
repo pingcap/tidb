@@ -1564,7 +1564,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: false,
 		tblColHists:       ds.TblColHists,
 	}
-	cop.physPlanPartInfo = PhysPlanPartInfo{
+	cop.physPlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
@@ -1583,7 +1583,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		if partPath.IsTablePath() {
 			scan = ds.convertToPartialTableScan(prop, partPath, candidate.isMatchProp, byItems)
 		} else {
-			scan, err = ds.convertToPartialIndexScan(&cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
+			scan, err = ds.convertToPartialIndexScan(cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
 			if err != nil {
 				return base.InvalidTask, err
 			}
@@ -1986,7 +1986,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		tblCols:     ds.TblCols,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
-	cop.physPlanPartInfo = PhysPlanPartInfo{
+	cop.physPlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
@@ -2253,7 +2253,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 
 	// Add a `Selection` for `IndexScan` with global index.
 	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
-	indexConds, err := is.addSelectionConditionForGlobalIndex(p, &copTask.physPlanPartInfo, indexConds)
+	indexConds, err := is.addSelectionConditionForGlobalIndex(p, copTask.physPlanPartInfo, indexConds)
 	if err != nil {
 		return err
 	}
@@ -2490,7 +2490,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp:      property.AnyType,
 			tblColHists: ds.TblColHists,
 		}
-		ts.PlanPartInfo = PhysPlanPartInfo{
+		ts.PlanPartInfo = &PhysPlanPartInfo{
 			PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
 			PartitionNames: ds.PartitionNames,
 			Columns:        ds.TblCols,
@@ -2524,7 +2524,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	copTask.physPlanPartInfo = PhysPlanPartInfo{
+	copTask.physPlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
@@ -2888,7 +2888,7 @@ func findBestTask4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty, cou
 		return base.InvalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
-	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.SCtx(), p.StatsInfo())
+	pcte := PhysicalCTE{SeedPlan: p.Cte.seedPartPhysicalPlan, RecurPlan: p.Cte.recursivePartPhysicalPlan, CTE: p.Cte, cteAsName: p.CteAsName, cteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
 	pcte.SetSchema(p.Schema())
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
 		pcte.readerReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
@@ -2918,7 +2918,7 @@ func findBestTask4LogicalCTETable(p *LogicalCTETable, prop *property.PhysicalPro
 		return nil, 1, nil
 	}
 
-	pcteTable := PhysicalCTETable{IDForStorage: p.idForStorage}.Init(p.SCtx(), p.StatsInfo())
+	pcteTable := PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
 	pcteTable.SetSchema(p.Schema())
 	rt := &RootTask{}
 	rt.SetPlan(pcteTable)

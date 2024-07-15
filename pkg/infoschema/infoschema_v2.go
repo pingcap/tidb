@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -464,6 +465,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
+	start := time.Now()
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
@@ -474,6 +476,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
 	res, found := is.tableCache.Get(oldKey)
 	if found && res != nil {
+		metrics.TableByNameHitDuration.Observe(float64(time.Since(start)))
 		return res, nil
 	}
 
@@ -483,6 +486,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 		return nil, errors.Trace(err)
 	}
 	is.tableCache.Set(oldKey, ret)
+	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
 	return ret, nil
 }
 

@@ -65,7 +65,7 @@ set tidb_opt_limit_push_down_threshold=0;
 drop table if exists t;
 create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));
 insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5);
-analyze table t;
+analyze table t all columns;
 explain format = 'brief' select * from t order by a;
 id	estRows	task	access object	operator info
 Sort	10005.00	root		planner__core__casetest__integration.t.a

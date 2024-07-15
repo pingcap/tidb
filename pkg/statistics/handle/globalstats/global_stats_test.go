@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -147,6 +148,12 @@ func TestBuildGlobalLevelStats(t *testing.T) {
 	testKit.MustExec("insert into t1 values(1),(3),(4),(2),(5);")
 	testKit.MustExec("create index idx_t_ab on t(a, b);")
 	testKit.MustExec("create index idx_t_b on t(b);")
+	testKit.MustExec("select * from t where c = 0")
+	testKit.MustExec("select * from t1 where a = 0")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	statsHandle := do.StatsHandle()
+	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
 	testKit.MustExec("analyze table t, t1;")
 	result := testKit.MustQuery("show stats_meta where table_name = 't';").Sort()
 	require.Len(t, result.Rows(), 3)
@@ -929,7 +936,7 @@ func TestIssues24349(t *testing.T) {
 	testKit.MustExec("set @@tidb_analyze_version=2")
 	defer testKit.MustExec("set @@tidb_analyze_version=1")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	testIssues24349(testKit)
+	testIssues24349(t, testKit, store)
 }
 
 func TestIssues24349WithConcurrency(t *testing.T) {
@@ -942,7 +949,7 @@ func TestIssues24349WithConcurrency(t *testing.T) {
 	defer testKit.MustExec("set @@tidb_analyze_version=1")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
 	defer testKit.MustExec("set global tidb_merge_partition_stats_concurrency=1")
-	testIssues24349(testKit)
+	testIssues24349(t, testKit, store)
 }
 
 func TestGlobalStatsAndSQLBinding(t *testing.T) {
