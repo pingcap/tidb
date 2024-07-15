@@ -129,7 +129,13 @@ func TestEnforceMPPWarning1(t *testing.T) {
 		if strings.HasPrefix(tt, "cmd: create-replica") {
 			// Create virtual tiflash replica info.
 			dom := domain.GetDomain(tk.Session())
-			coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+			is := dom.InfoSchema()
+			tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+			require.NoError(t, err)
+			tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: false,
+			}
 			continue
 		}
 		if strings.HasPrefix(tt, "cmd: enable-replica") {

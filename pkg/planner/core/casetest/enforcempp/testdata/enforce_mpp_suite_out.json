@@ -229,12 +229,14 @@
       {
         "SQL": "explain select count(*) from t where a=1 -- 2. replica not ready",
         "Plan": [
-          "StreamAgg_31 1.00 root  funcs:count(Column#9)->Column#6",
-          "└─IndexReader_32 1.00 root  index:StreamAgg_12",
-          "  └─StreamAgg_12 1.00 cop[tikv]  funcs:count(1)->Column#9",
-          "    └─IndexRangeScan_30 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
+          "StreamAgg_18 1.00 root  funcs:count(Column#8)->Column#6",
+          "└─IndexReader_19 1.00 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─IndexRangeScan_17 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "MPP mode may be blocked because tiflash replicas of table `t` not ready."
+        ]
       },
       {
         "SQL": "cmd: enable-replica",
