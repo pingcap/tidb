@@ -137,11 +137,11 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	disableAutoAnalyzeCase(t, tk, dom)
 }
 
-func TestDisableAutoAnalyzeWithoutAnyPredicateColumns(t *testing.T) {
+func TestDisableAutoAnalyzeWithAnalyzeAllColumnsOptions(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	// Set tidb_analyze_column_options to PREDICATE.
-	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
+	// Set tidb_analyze_column_options to ALL.
+	tk.MustExec("set global tidb_analyze_column_options='ALL'")
 	disableAutoAnalyzeCase(t, tk, dom)
 }
 
