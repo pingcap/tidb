@@ -274,7 +274,9 @@ go_test(
         "stringer_test.go",
         "util_test.go",
     ],
-    data = glob(["testdata/**"]),
+    data = glob([
+        "testdata/**",
+        "*.go"]),
     embed = [":core"],
     flaky = True,
     shard_count = 50,
