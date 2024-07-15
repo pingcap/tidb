@@ -926,8 +926,8 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 		schTbls.tables[t.Name.L] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
-		if len(di.Name2ID) > 0 {
-			delete(di.Name2ID, t.Name.L)
+		if len(di.TableName2ID) > 0 {
+			delete(di.TableName2ID, t.Name.L)
 		}
 
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
@@ -936,7 +936,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	}
 	// Add the rest name to ID mappings.
 	if b.enableV2 {
-		for name, id := range di.Name2ID {
+		for name, id := range di.TableName2ID {
 			item := tableItem{
 				dbName:        di.Name.L,
 				dbID:          di.ID,

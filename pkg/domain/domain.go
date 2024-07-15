@@ -483,7 +483,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 				done <- err
 				return
 			}
-			di.Name2ID = name2ID
+			di.TableName2ID = name2ID
 			tables = specialTableInfos
 		} else {
 			tables, err = m.ListTables(di.ID)

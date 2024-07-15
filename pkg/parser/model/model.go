@@ -1694,7 +1694,7 @@ type DBInfo struct {
 	Tables             []*TableInfo     `json:"-"` // Tables in the DB.
 	State              SchemaState      `json:"state"`
 	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
-	Name2ID            map[string]int64 `json:"-"`
+	TableName2ID       map[string]int64 `json:"-"`
 }
 
 // Clone clones DBInfo.
