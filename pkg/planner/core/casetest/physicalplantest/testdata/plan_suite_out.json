@@ -8064,9 +8064,9 @@
         "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
         "Plan": [
           "HashJoin_14 10000.00 root  CARTESIAN inner join",
-          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#13",
+          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#12",
           "│ └─Limit_22 1.00 root  offset:0, count:1",
-          "│   └─HashAgg_23 1.00 root  group by:1, ",
+          "│   └─HashAgg_23 1.00 root  group by:1, funcs:firstrow(1)->Column#13",
           "│     └─TableDual_24 1.00 root  rows:1",
           "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
           "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -8077,11 +8077,11 @@
         "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;",
         "Plan": [
           "HashJoin_14 10000.00 root  CARTESIAN inner join",
-          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#16",
+          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#15",
           "│ └─Limit_22 1.00 root  offset:0, count:1",
-          "│   └─HashAgg_27 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->test.t.a, funcs:firstrow(Column#19)->test.t.b, funcs:firstrow(Column#20)->test.t._tidb_rowid",
+          "│   └─HashAgg_27 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->Column#16",
           "│     └─TableReader_28 1.00 root  data:HashAgg_23",
-          "│       └─HashAgg_23 1.00 cop[tikv]  group by:1, funcs:firstrow(test.t.a)->Column#18, funcs:firstrow(test.t.b)->Column#19, funcs:firstrow(test.t._tidb_rowid)->Column#20",
+          "│       └─HashAgg_23 1.00 cop[tikv]  group by:1, funcs:firstrow(1)->Column#18",
           "│         └─TableFullScan_26 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
           "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
