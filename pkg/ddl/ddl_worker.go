@@ -1053,6 +1053,11 @@ func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 	if err != nil {
 		return err
 	}
+	// no need to rollback for fast create table now.
+	if job.IsCancelling() {
+		job.State = model.JobStateCancelled
+		job.Error = dbterror.ErrCancelledDDLJob
+	}
 	if job.IsCancelled() {
 		w.sess.Reset()
 		if err = w.HandleJobDone(d, job, t); err != nil {

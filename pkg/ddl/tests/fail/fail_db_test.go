@@ -334,6 +334,22 @@ func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 	})
 }
 
+// TestRunDDLJobPanicEnableFastCreateTable tests recover panic with fast create table when run ddl job panic.
+func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
+	s := createFailDBSuite(t)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob"))
+	}()
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set global tidb_enable_fast_create_table=ON")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`))
+	_, err := tk.Exec("create table t(c1 int, c2 int)")
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
+}
+
 func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
 	if variable.EnableDistTask.Load() {
 		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
