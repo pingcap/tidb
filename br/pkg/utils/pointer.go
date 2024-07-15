@@ -5,9 +5,9 @@ package utils
 // GetOrZero returns the value pointed to by p, or a zero value of
 // its type if p is nil.
 func GetOrZero[T any](p *T) T {
-	var val T
+	var zero T
 	if p == nil {
-		return val
+		return zero
 	}
 	return *p
 }
