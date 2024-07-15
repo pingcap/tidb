@@ -95,7 +95,9 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		// TODO: add context to TableInfoByID and remove this code block?
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 		default:
 		}
 

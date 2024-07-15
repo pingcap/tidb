@@ -62,7 +62,9 @@ func (h *Handle) initStatsMeta4Chunk(ctx context.Context, is infoschema.InfoSche
 		// TODO: add context to TableInfoByID and remove this code block?
 		select {
 		case <-ctx.Done():
-			return
+			if ctx.Err() != nil {
+				return
+			}
 		default:
 		}
 
