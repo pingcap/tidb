@@ -1294,6 +1294,69 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	return ranges, nil
 }
 
+func (local *local) scanRegion(
+	ctxt context.Context,
+	engine *Engine,
+	start, end []byte,
+	regionSplitSize int64,
+	regionSplitKeys int64,
+) ([]*split.RegionInfo, error) {
+	ito := &pebble.IterOptions{
+		LowerBound: start,
+		UpperBound: end,
+	}
+
+	iter := engine.newKVIter(ctxt, ito)
+	//nolint: errcheck
+	defer iter.Close()
+	// Needs seek to first because NewIter returns an iterator that is unpositioned
+	hasKey := iter.First()
+	if iter.Error() != nil {
+		return nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
+	if !hasKey {
+		log.FromContext(ctxt).Info("There is no pairs in iterator",
+			logutil.Key("start", start),
+			logutil.Key("end", end))
+		engine.finishedRanges.add(Range{start: start, end: end})
+		return nil, nil
+	}
+	pairStart := append([]byte{}, iter.Key()...)
+	iter.Last()
+	if iter.Error() != nil {
+		return nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
+	pairEnd := append([]byte{}, iter.Key()...)
+
+	var regions []*split.RegionInfo
+	var err error
+	ctx, cancel := context.WithCancel(ctxt)
+	defer cancel()
+
+WriteAndIngest:
+	for retry := 0; retry < maxRetryTimes; {
+		if retry != 0 {
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		startKey := codec.EncodeBytes([]byte{}, pairStart)
+		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
+		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
+		if err != nil || len(regions) == 0 {
+			log.FromContext(ctx).Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
+				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
+			retry++
+			continue WriteAndIngest
+		}
+		return regions, nil
+	}
+
+	return nil, err
+}
+
 func (local *local) writeAndIngestByRange(
 	ctxt context.Context,
 	engine *Engine,
@@ -1541,53 +1604,89 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	var allErr error
 	var wg sync.WaitGroup
 	metErr := atomic.NewBool(false)
+	storeId2Range := make(map[uint64][]Range)
+	storeId2RangeIndex := make(map[uint64]int)
 
 	for _, r := range ranges {
 		startKey := r.start
 		endKey := r.end
-		w := local.rangeConcurrency.Apply()
-		// if meet error here, skip try more here to allow fail fast.
-		if metErr.Load() {
-			local.rangeConcurrency.Recycle(w)
-			break
+		regions, err := local.scanRegion(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
+		if err != nil {
+			log.FromContext(ctx).Warn("scaen regino failed", zap.Error(err))
+			return err
 		}
-		wg.Add(1)
-		go func(w *worker.Worker) {
-			defer func() {
-				local.rangeConcurrency.Recycle(w)
-				wg.Done()
-			}()
-			var err error
-			// max retry backoff time: 2+4+8+16+30*26=810s
-			backOffTime := time.Second
-			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
-				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
-				if err == nil || common.IsContextCanceledError(err) {
-					return
-				}
-				if !local.isRetryableImportTiKVError(err) {
-					break
-				}
-				log.FromContext(ctx).Warn("write and ingest by range failed",
-					zap.Int("retry time", i+1), log.ShortError(err))
-				backOffTime *= 2
-				if backOffTime > maxRetryBackoffTime {
-					backOffTime = maxRetryBackoffTime
-				}
-				select {
-				case <-time.After(backOffTime):
-				case <-ctx.Done():
-					return
-				}
+		// only take to leader's store id fo the first region
+		if len(regions) > 0 {
+			if val, ok := storeId2Range[regions[0].Leader.StoreId]; ok {
+				storeId2Range[regions[0].Leader.StoreId] = append(val, r)
+			} else {
+				storeId2Range[regions[0].Leader.StoreId] = []Range{r}
 			}
+		}
+	}
 
-			allErrLock.Lock()
-			allErr = multierr.Append(allErr, err)
-			allErrLock.Unlock()
-			if err != nil {
-				metErr.Store(true)
+	for i := range storeId2Range {
+		storeId2RangeIndex[i] = len(storeId2Range[i])
+	}
+
+	finished := 0
+outerLoop:
+	for finished < len(storeId2RangeIndex) {
+		for storeId := range storeId2RangeIndex {
+			if storeId2RangeIndex[storeId] > 0 {
+				dataRange := storeId2Range[storeId][storeId2RangeIndex[storeId]-1]
+				startKey := dataRange.start
+				endKey := dataRange.end
+				w := local.rangeConcurrency.Apply()
+				// if meet error here, skip try more here to allow fail fast.
+				if metErr.Load() {
+					local.rangeConcurrency.Recycle(w)
+					break outerLoop
+				}
+				wg.Add(1)
+				go func(w *worker.Worker) {
+					defer func() {
+						local.rangeConcurrency.Recycle(w)
+						wg.Done()
+					}()
+					var err error
+					// max retry backoff time: 2+4+8+16+30*26=810s
+					backOffTime := time.Second
+					for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
+						err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
+						if err == nil || common.IsContextCanceledError(err) {
+							return
+						}
+						if !local.isRetryableImportTiKVError(err) {
+							break
+						}
+						log.FromContext(ctx).Warn("write and ingest by range failed",
+							zap.Int("retry time", i+1), log.ShortError(err))
+						backOffTime *= 2
+						if backOffTime > maxRetryBackoffTime {
+							backOffTime = maxRetryBackoffTime
+						}
+						select {
+						case <-time.After(backOffTime):
+						case <-ctx.Done():
+							return
+						}
+					}
+
+					allErrLock.Lock()
+					allErr = multierr.Append(allErr, err)
+					allErrLock.Unlock()
+					if err != nil {
+						metErr.Store(true)
+					}
+				}(w)
+				storeId2RangeIndex[storeId] -= 1
+				if storeId2RangeIndex[storeId] == 0 {
+					log.FromContext(ctx).Warn("finished store id", zap.Uint64("store id", storeId))
+					finished += 1
+				}
 			}
-		}(w)
+		}
 	}
 
 	// wait for all sub tasks finish to avoid panic. if we return on the first error,
