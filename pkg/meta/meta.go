@@ -1017,6 +1017,7 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 // CheckSpecialAttributes checks if the special attributes are in the table info.
 // Make it same as hasSpecialAttributes.
 // Exported for testing.
+// It's the regexp version for hasSpecialAttributes(), please keep up-to-date with it.
 func CheckSpecialAttributes(str string) bool {
 	if strings.Contains(str, "\"tiflash_replica\":null") && strings.Contains(str, "\"policy_ref_info\":null") &&
 		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") {
@@ -1036,6 +1037,7 @@ func Unescape(s string) string {
 }
 
 // GetAllNameToIDAndSpecialAttributeInfo gets all the fields and values and table info for special attributes in a hash.
+// It's used to get some infos for information schema cache in a faster way.
 func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
