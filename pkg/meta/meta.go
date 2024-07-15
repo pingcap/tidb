@@ -1062,7 +1062,8 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 			return errors.Trace(err)
 		}
 
-		res[Unescape(nameLMatch[1])] = int64(id)
+		key := Unescape(nameLMatch[1])
+		res[strings.Clone(key)] = int64(id)
 		if CheckSpecialAttributes(string(hack.String(value))) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
