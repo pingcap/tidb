@@ -46,7 +46,7 @@ var (
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]`
 // should be held when you call this.
-// Currently the time complexity is o(n^2).
+// Currently, the time complexity is o(n^2).
 func Selectivity(
 	ctx context.PlanContext,
 	coll *statistics.HistColl,
@@ -67,7 +67,7 @@ func Selectivity(
 			debugtrace.LeaveContextCommon(ctx)
 		}()
 	}
-	// If table's count is zero or conditions are empty, we should return 100% selectivity.
+	// If the table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
 		return 1, nil, nil
 	}
@@ -156,7 +156,7 @@ func Selectivity(
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
 	for _, path := range filledPaths {
-		// Index merge path and table path don't have index.
+		// Index merge path and table path don't have an index.
 		if path.Index == nil {
 			continue
 		}
@@ -167,7 +167,7 @@ func Selectivity(
 		idxIDs = append(idxIDs, id)
 		return false
 	})
-	// Stablize the result.
+	// Stabilize the result.
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.GetIdx(id)
