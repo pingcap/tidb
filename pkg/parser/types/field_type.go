@@ -588,7 +588,7 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset b
 	case mysql.TypeYear:
 		ctx.WriteKeyWord("YEAR")
 	case mysql.TypeTiDBVectorFloat32:
-		ctx.WriteKeyWord("VECTOR")
+		ctx.WriteKeyWord("VECTOR<FLOAT>")
 	}
 	if ft.array {
 		ctx.WritePlain(" ")
