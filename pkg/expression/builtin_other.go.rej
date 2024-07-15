@@ -1,9 +1,0 @@
-@@ -1177,6 +1179,8 @@
- 		sig = &builtinValuesDurationSig{bf, c.offset}
- 	case types.ETJson:
- 		sig = &builtinValuesJSONSig{bf, c.offset}
-+	default:
-+		return nil, errors.Errorf("%s is not supported for VALUES()", c.tp.EvalType())
- 	}
- 	return sig, nil
- }

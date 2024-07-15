@@ -1,9 +1,0 @@
-@@ -406,6 +411,8 @@
- 		res, isNull, err = sf.EvalDuration(sf.GetCtx(), row)
- 	case types.ETJson:
- 		res, isNull, err = sf.EvalJSON(sf.GetCtx(), row)
-+	case types.ETVectorFloat32:
-+		res, isNull, err = sf.EvalVectorFloat32(sf.GetCtx(), row)
- 	case types.ETString:
- 		var str string
- 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
