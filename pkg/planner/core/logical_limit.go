@@ -83,7 +83,7 @@ func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
+	if len(parentUsedCols) == 0 && !p.SCtx().GetSessionVars().StmtCtx.InSelectStmt { // happens when LIMIT appears in UPDATE.
 		return p, nil
 	}
 
