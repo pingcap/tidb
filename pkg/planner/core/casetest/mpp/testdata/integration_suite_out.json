@@ -28,6 +28,7 @@
           "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d3_t.d3_k))",
           "      │     └─TableFullScan 2.00 mpp[tiflash] table:d3_t pushed down filter:empty, keep order:false",
+<<<<<<< HEAD
           "      └─HashJoin(Probe) 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -40,6 +41,22 @@
           "          │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
           "          └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
           "            └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+=======
+          "      └─Projection(Probe) 8.00 mpp[tiflash]  test.fact_t.d3_k",
+          "        └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
+          "          ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "          │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "          │     └─TableFullScan 2.00 mpp[tiflash] table:d2_t pushed down filter:empty, keep order:false",
+          "          └─Projection(Probe) 8.00 mpp[tiflash]  test.fact_t.d2_k, test.fact_t.d3_k",
+          "            └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "              ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "              │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "              │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "              │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "              └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "                └─TableFullScan 8.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+>>>>>>> 9044acbff3a (planner: fix the issue accessing unnecessary table side caused by column pruning (#54609))
         ]
       },
       {
@@ -677,6 +694,7 @@
           "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#18",
+<<<<<<< HEAD
           "      └─HashJoin 128.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d3_t.d3_k, collate: binary]",
@@ -700,6 +718,34 @@
           "                      └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "                        └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
           "                          └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+=======
+          "      └─Projection 128.00 mpp[tiflash]  test.fact_t.d3_k, test.d3_t.d3_k",
+          "        └─HashJoin 128.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
+          "          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d3_t.d3_k, collate: binary]",
+          "          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d3_t.d3_k))",
+          "          │     └─TableFullScan 4.00 mpp[tiflash] table:d3_t pushed down filter:empty, keep order:false",
+          "          └─ExchangeReceiver(Probe) 64.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 64.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d3_k, collate: binary]",
+          "              └─Projection 64.00 mpp[tiflash]  test.fact_t.d3_k, test.fact_t.d2_k",
+          "                └─HashJoin 64.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
+          "                  ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "                  │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d2_t.d2_k, collate: binary]",
+          "                  │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "                  │     └─TableFullScan 4.00 mpp[tiflash] table:d2_t pushed down filter:empty, keep order:false",
+          "                  └─ExchangeReceiver(Probe) 32.00 mpp[tiflash]  ",
+          "                    └─ExchangeSender 32.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d2_k, collate: binary]",
+          "                      └─Projection 32.00 mpp[tiflash]  test.fact_t.d2_k, test.fact_t.d3_k, test.fact_t.d1_k",
+          "                        └─HashJoin 32.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "                          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "                          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "                          │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "                          │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "                          └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "                            └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "                              └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "                                └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+>>>>>>> 9044acbff3a (planner: fix the issue accessing unnecessary table side caused by column pruning (#54609))
         ]
       },
       {
@@ -732,6 +778,7 @@
           "        │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d3_t.value, collate: binary]",
           "        │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d3_t.value))",
           "        │     └─TableFullScan 4.00 mpp[tiflash] table:d3_t pushed down filter:empty, keep order:false",
+<<<<<<< HEAD
           "        └─HashJoin(Probe) 64.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d2_t.value)]",
           "          ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d2_t.value, collate: binary]",
@@ -746,6 +793,24 @@
           "              └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "                └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
           "                  └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+=======
+          "        └─Projection(Probe) 64.00 mpp[tiflash]  test.fact_t.d1_k",
+          "          └─HashJoin 64.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d2_t.value)]",
+          "            ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "            │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d2_t.value, collate: binary]",
+          "            │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d2_t.value))",
+          "            │     └─TableFullScan 4.00 mpp[tiflash] table:d2_t pushed down filter:empty, keep order:false",
+          "            └─Projection(Probe) 32.00 mpp[tiflash]  test.fact_t.d1_k",
+          "              └─HashJoin 32.00 mpp[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "                ├─ExchangeReceiver(Build) 4.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender 4.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "                │   └─Selection 4.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "                │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
+          "                └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "                    └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "                      └─TableFullScan 16.00 mpp[tiflash] table:fact_t pushed down filter:empty, keep order:false"
+>>>>>>> 9044acbff3a (planner: fix the issue accessing unnecessary table side caused by column pruning (#54609))
         ]
       },
       {
@@ -831,6 +896,7 @@
           "        │     └─TableFullScan 4.00 mpp[tiflash] table:d1_t pushed down filter:empty, keep order:false",
           "        └─Projection(Probe) 102.40 mpp[tiflash]  test.fact_t.d1_k",
           "          └─Selection 102.40 mpp[tiflash]  gt(case(isnull(test.fact_t.col1), plus(test.fact_t.col1, 5), 10), 5)",
+<<<<<<< HEAD
           "            └─HashJoin 128.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.fact_t.d1_k)]",
           "              ├─ExchangeReceiver(Build) 16.00 mpp[tiflash]  ",
           "              │ └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
@@ -840,6 +906,18 @@
           "                └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
           "                  └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
           "                    └─TableFullScan 16.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+=======
+          "            └─Projection 128.00 mpp[tiflash]  test.fact_t.col1, test.fact_t.d1_k, test.fact_t.col1",
+          "              └─HashJoin 128.00 mpp[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.fact_t.d1_k)]",
+          "                ├─ExchangeReceiver(Build) 16.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "                │   └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "                │     └─TableFullScan 16.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "                └─ExchangeReceiver(Probe) 16.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.fact_t.d1_k, collate: binary]",
+          "                    └─Selection 16.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "                      └─TableFullScan 16.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+>>>>>>> 9044acbff3a (planner: fix the issue accessing unnecessary table side caused by column pruning (#54609))
         ]
       },
       {
