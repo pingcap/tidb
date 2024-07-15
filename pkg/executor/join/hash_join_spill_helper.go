@@ -42,6 +42,7 @@ type hashJoinSpillHelper struct {
 	buildRowsInDisk []*chunk.DataInDiskByChunks
 	probeRowsInDisk []*chunk.DataInDiskByChunks
 
+	// Avoid data race, because multi threads may use probeRowsInDisk[idx] at the same time
 	probeInDiskLocks []sync.Mutex
 
 	buildSpillChkFieldTypes []*types.FieldType
@@ -49,10 +50,16 @@ type hashJoinSpillHelper struct {
 	tmpSpillBuildSideChunks []*chunk.Chunk
 	tmpSpillProbeSideChunks []*chunk.Chunk
 
+	// When respilling a row, we need to recalculate the row's hash value.
+	// These are auxiliary utility for rehash.
 	hash      hash.Hash64
 	rehashBuf *bytes.Buffer
 
-	stack           restoreStack
+	stack restoreStack
+
+	// inDisk that has been popped from stack should be saved here
+	// so that we can ensure all inDisk will be closed or disk
+	// resource will be leaked.
 	discardedInDisk []*chunk.DataInDiskByChunks
 
 	memTracker  *memory.Tracker
@@ -60,6 +67,11 @@ type hashJoinSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	// The hash value in restored probe row needs to be updated before we respill this row,
+	// and other columns in the row can be directly repilled.
+	// This variable describes which columns can be directed respilled.
+	probeSpilledRowIdx []int
 
 	triggeredInBuildStageForTest bool
 	triggeredInProbeStageForTest bool
@@ -79,6 +91,11 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*typ
 	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)                     // row data
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
+
+	helper.probeSpilledRowIdx = make([]int, 0, len(helper.probeFieldTypes)-1)
+	for i := 1; i < len(helper.probeFieldTypes); i++ {
+		helper.probeSpilledRowIdx = append(helper.probeSpilledRowIdx, i)
+	}
 
 	// hashJoinExec may be nil in test
 	if hashJoinExec != nil {
@@ -340,6 +357,7 @@ func (h *hashJoinSpillHelper) init() {
 		// It's the first time that spill is triggered
 		h.initTmpSpillBuildSideChunks()
 
+		h.probeInDiskLocks = make([]sync.Mutex, h.hashJoinExec.PartitionNumber)
 		h.buildRowsInDisk = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
 		h.probeRowsInDisk = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
 	}
@@ -426,6 +444,12 @@ func (h *hashJoinSpillHelper) prepareForRestoring() error {
 	}
 
 	for i, buildInDisk := range h.buildRowsInDisk {
+		if buildInDisk == nil || h.probeRowsInDisk[i] == nil {
+			if buildInDisk == nil && h.probeRowsInDisk[i] == nil {
+				continue
+			}
+			panic("buildInDisk and probeRowsInDisk should both be nil")
+		}
 		rd := &restorePartition{
 			buildSideChunks: buildInDisk,
 			probeSideChunks: h.probeRowsInDisk[i],
@@ -594,8 +618,7 @@ func (h *hashJoinSpillHelper) respillForProbeData(probeInDisk *chunk.DataInDiskB
 			}
 
 			h.tmpSpillProbeSideChunks[partID].AppendInt64(0, int64(newHashValue))
-			h.tmpSpillProbeSideChunks[partID].AppendBytes(1, row.GetBytes(1))
-			h.tmpSpillProbeSideChunks[partID].AppendBytes(2, row.GetBytes(2))
+			h.tmpSpillProbeSideChunks[partID].AppendPartialRowByColIdxs(1, row, h.probeSpilledRowIdx)
 		}
 	}
 

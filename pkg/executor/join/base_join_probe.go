@@ -135,7 +135,7 @@ type baseJoinProbe struct {
 	rowIndexInfos []*matchedRowInfo
 	selected      []bool
 
-	probeChkFieldTypes []*types.FieldType
+	probeSpillChkFieldTypes []*types.FieldType
 
 	// This marks which columns are probe columns, and it is used only in spill
 	usedColIdx  []int
@@ -228,7 +228,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
 	if j.ctx.spillHelper.isSpillTriggered() && len(j.spillTmpChk) != j.ctx.PartitionNumber {
 		for i := 0; i < j.ctx.PartitionNumber; i++ {
-			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.probeChkFieldTypes, spillChunkSize))
+			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.probeSpillChkFieldTypes, spillChunkSize))
 		}
 	}
 
@@ -589,8 +589,13 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		lUsedInOtherCondition: ctx.LUsedInOtherCondition,
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      rightAsBuildSide,
-		probeChkFieldTypes:    probeChkFieldTypes,
 	}
+	probeSpillChkFieldTypes := make([]*types.FieldType, 0, len(probeChkFieldTypes)+2)
+	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong))
+	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
+	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, probeChkFieldTypes...)
+	base.probeSpillChkFieldTypes = probeSpillChkFieldTypes
+
 	for i := range keyIndex {
 		if !mysql.HasNotNullFlag(base.keyTypes[i].GetFlag()) {
 			base.hasNullableKey = true

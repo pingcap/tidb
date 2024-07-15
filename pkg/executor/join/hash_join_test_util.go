@@ -234,7 +234,7 @@ func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 
-	joinKeyIntDatums := buildJoinKeyIntDatums(5000)
+	joinKeyIntDatums := buildJoinKeyIntDatums(20000)
 	joinKeyStringDatums := buildJoinKeyStringDatums(2)
 	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{0, -1, 0, -1, 0}, Datums: [][]any{nil, joinKeyIntDatums, nil, joinKeyStringDatums, nil}}
 	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, 0, -1, 0, 0}, Datums: [][]any{joinKeyIntDatums, nil, joinKeyStringDatums, nil, nil}}

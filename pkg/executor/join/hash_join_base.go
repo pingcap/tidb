@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -41,9 +40,10 @@ import (
 // and push `chk` into `src` after processing, join worker goroutines get the empty chunk from `src`
 // and push new data into this chunk.
 type hashjoinWorkerResult struct {
-	chk *chunk.Chunk
-	err error
-	src chan<- *chunk.Chunk
+	chk      *chunk.Chunk
+	err      error
+	workerID int
+	src      chan<- *chunk.Chunk
 }
 
 type hashJoinCtxBase struct {
@@ -204,7 +204,7 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 			}
 
 			failpoint.Inject("ConsumeMemAfterBuildFinished", func() {
-				log.Info(fmt.Sprintf("xzxdebug memory consumed %d", hashJoinCtx.memTracker.BytesConsumed()))
+				// TODO enable it
 				// hashJoinCtx.memTracker.Consume()
 			})
 

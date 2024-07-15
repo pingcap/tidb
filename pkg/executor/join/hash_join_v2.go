@@ -17,7 +17,6 @@ package join
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -26,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -289,7 +287,6 @@ type HashJoinV2Exec struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
-	log.Info(fmt.Sprintf("xzxdebug total used memory %d", e.memTracker.BytesConsumed()))
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -551,7 +548,9 @@ func (e *HashJoinV2Exec) probeInSpillMode(probeSideChunks *chunk.DataInDiskByChu
 	for i := 0; i < chunkNum; i++ {
 		if i%20 == 0 {
 			err := checkSQLKiller(&e.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller, "probeInSpillMode")
-			return err
+			if err != nil {
+				return err
+			}
 		}
 
 		// TODO reuse probe chunk
@@ -757,6 +756,8 @@ func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
 		return
 	}
 
+	// TODO restore should be skipped when there is an error
+
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
@@ -769,7 +770,8 @@ func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
 
 func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 	joinResult := &hashjoinWorkerResult{
-		src: w.joinChkResourceCh,
+		workerID: int(w.WorkerID),
+		src:      w.joinChkResourceCh,
 	}
 	ok := true
 	select {
@@ -802,6 +804,11 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	req.Reset()
 
 	result, ok := <-e.joinResultCh
+	if result != nil {
+		req.SwapColumns(result.chk)
+		result.src <- result.chk
+	}
+
 	if !ok {
 		return nil
 	}
@@ -809,8 +816,6 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		e.finished.Store(true)
 		return result.err
 	}
-	req.SwapColumns(result.chk)
-	result.src <- result.chk
 	return nil
 }
 

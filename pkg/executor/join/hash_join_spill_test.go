@@ -17,7 +17,6 @@ package join
 import (
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
 // TODO delete it
@@ -71,12 +69,7 @@ func getExpectedResults(t *testing.T, info *hashJoinInfo, resultTypes []*types.F
 }
 
 func spillOnlyTriggeredInBuildStageCase(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/ConsumeMemAfterBuildFinished", "return"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/ConsumeMemAfterBuildFinished"))
-	}()
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 3000000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 6000000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
