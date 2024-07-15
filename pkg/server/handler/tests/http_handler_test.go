@@ -31,6 +31,7 @@ import (
 	"net/http/httputil"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -956,8 +957,49 @@ func TestGetSchema(t *testing.T) {
 	require.Len(t, simpleTableInfos, 2)
 	require.Equal(t, "t1", simpleTableInfos[0].Name.L)
 	require.Equal(t, "t2", simpleTableInfos[1].Name.L)
-	require.NotZero(t, simpleTableInfos[0].ID)
-	require.NotZero(t, simpleTableInfos[1].ID)
+	id1 := simpleTableInfos[0].ID
+	id2 := simpleTableInfos[1].ID
+	require.NotZero(t, id1)
+	require.NotZero(t, id2)
+
+	// check table_ids=... happy path
+	ids := strings.Join([]string{strconv.FormatInt(id1, 10), strconv.FormatInt(id2, 10)}, ",")
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
+	require.NoError(t, err)
+	var tis map[int]*model.TableInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&tis)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, len(tis))
+	require.Equal(t, "t1", tis[int(id1)].Name.L)
+	require.Equal(t, "t2", tis[int(id2)].Name.L)
+
+	// check table_ids=... partial missing
+	ids = ids + ",99999"
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
+	require.NoError(t, err)
+	clear(tis)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&tis)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, len(tis))
+	require.Equal(t, "t1", tis[int(id1)].Name.L)
+	require.Equal(t, "t2", tis[int(id2)].Name.L)
+
+	// check wrong format in table_ids
+	ids = ids + ",abc"
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
+	require.NoError(t, err)
+	clear(tis)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&tis)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, len(tis))
+	require.Equal(t, "t1", tis[int(id1)].Name.L)
+	require.Equal(t, "t2", tis[int(id2)].Name.L)
 
 	resp, err = ts.FetchStatus("/schema/test/t1")
 	require.NoError(t, err)
