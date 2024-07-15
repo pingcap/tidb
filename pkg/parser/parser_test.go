@@ -635,6 +635,11 @@ func TestDMLStmt(t *testing.T) {
 		{"CREATE VIEW v AS (TABLE t)", true, "CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS (TABLE `t`)"},
 		{"SELECT * FROM t1 WHERE a IN (TABLE t2)", true, "SELECT * FROM `t1` WHERE `a` IN (TABLE `t2`)"},
 
+		// vector type
+		{"CREATE TABLE foo (v VECTOR)", true, "CREATE TABLE `foo` (`v` VECTOR<FLOAT>)"},
+		{"CREATE TABLE foo (v VECTOR<FLOAT>)", true, "CREATE TABLE `foo` (`v` VECTOR<FLOAT>)"},
+		{"CREATE TABLE foo (v VECTOR<DOUBLE>)", false, ""},
+
 		// values statement
 		{"VALUES ROW(1)", true, "VALUES ROW(1)"},
 		{"VALUES ROW()", true, "VALUES ROW()"},

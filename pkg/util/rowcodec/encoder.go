@@ -215,6 +215,9 @@ func encodeValueDatum(loc *time.Location, d *types.Datum, buffer []byte) (nBuffe
 		j := d.GetMysqlJSON()
 		buffer = append(buffer, j.TypeCode)
 		buffer = append(buffer, j.Value...)
+	case types.KindVectorFloat32:
+		v := d.GetVectorFloat32()
+		buffer = v.SerializeTo(buffer)
 	default:
 		err = errors.Errorf("unsupport encode type %d", d.Kind())
 	}

@@ -172,6 +172,12 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		j.TypeCode = colData[0]
 		j.Value = colData[1:]
 		d.SetMysqlJSON(j)
+	case mysql.TypeTiDBVectorFloat32:
+		v, _, err := types.ZeroCopyDeserializeVectorFloat32(colData)
+		if err != nil {
+			return d, err
+		}
+		d.SetVectorFloat32(v)
 	default:
 		return d, errors.Errorf("unknown type %d", col.Ft.GetType())
 	}
@@ -351,6 +357,12 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		j.TypeCode = colData[0]
 		j.Value = colData[1:]
 		chk.AppendJSON(colIdx, j)
+	case mysql.TypeTiDBVectorFloat32:
+		v, _, err := types.ZeroCopyDeserializeVectorFloat32(colData)
+		if err != nil {
+			return err
+		}
+		chk.AppendVectorFloat32(colIdx, v)
 	default:
 		return errors.Errorf("unknown type %d", col.Ft.GetType())
 	}
@@ -511,6 +523,8 @@ func fieldType2Flag(tp byte, signed bool) (flag byte) {
 		flag = UintFlag
 	case mysql.TypeJSON:
 		flag = JSONFlag
+	case mysql.TypeTiDBVectorFloat32:
+		flag = VectorFloat32Flag
 	case mysql.TypeNull:
 		flag = NilFlag
 	default:

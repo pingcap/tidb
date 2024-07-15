@@ -360,6 +360,9 @@ func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	case types.ETJson:
 		sig = &builtinJSONAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JSONAnyValue)
+	case types.ETVectorFloat32:
+		sig = &builtinVectorFloat32AnyValueSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32AnyValue)
 	case types.ETReal:
 		sig = &builtinRealAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_RealAnyValue)
@@ -374,7 +377,7 @@ func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		sig = &builtinTimeAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_TimeAnyValue)
 	default:
-		return nil, errIncorrectArgs.GenWithStackByArgs("ANY_VALUE")
+		return nil, errors.Errorf("%s is not supported for ANY_VALUE()", argTp)
 	}
 	return sig, nil
 }
@@ -441,6 +444,20 @@ func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinJSONAnyValueSig) evalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return b.args[0].EvalJSON(ctx, row)
+}
+
+type builtinVectorFloat32AnyValueSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinVectorFloat32AnyValueSig) Clone() builtinFunc {
+	newSig := &builtinVectorFloat32AnyValueSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinVectorFloat32AnyValueSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	return b.args[0].EvalVectorFloat32(ctx, row)
 }
 
 type builtinRealAnyValueSig struct {
@@ -1162,6 +1179,8 @@ func (c *nameConstFunctionClass) getFunction(ctx BuildContext, args []Expression
 		sig = &builtinNameConstIntSig{bf}
 	case types.ETJson:
 		sig = &builtinNameConstJSONSig{bf}
+	case types.ETVectorFloat32:
+		sig = &builtinNameConstVectorFloat32Sig{bf}
 	case types.ETReal:
 		sig = &builtinNameConstRealSig{bf}
 	case types.ETString:
@@ -1173,7 +1192,7 @@ func (c *nameConstFunctionClass) getFunction(ctx BuildContext, args []Expression
 		bf.tp.SetFlag(0)
 		sig = &builtinNameConstTimeSig{bf}
 	default:
-		return nil, errIncorrectArgs.GenWithStackByArgs("NAME_CONST")
+		return nil, errors.Errorf("%s is not supported for NAME_CONST()", argTp)
 	}
 	return sig, nil
 }
@@ -1246,6 +1265,20 @@ func (b *builtinNameConstJSONSig) Clone() builtinFunc {
 
 func (b *builtinNameConstJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return b.args[1].EvalJSON(ctx, row)
+}
+
+type builtinNameConstVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNameConstVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinNameConstVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNameConstVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	return b.args[1].EvalVectorFloat32(ctx, row)
 }
 
 type builtinNameConstDurationSig struct {

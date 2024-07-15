@@ -121,6 +121,10 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 
 func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreType, canEnumPush bool) bool {
 	pc := ctx.PbConverter()
+	if expr.GetType(ctx.EvalCtx()).GetType() == mysql.TypeTiDBVectorFloat32 {
+		// For both TiKV and TiFlash, currently Vector cannot be pushed.
+		return false
+	}
 	if storeType == kv.TiFlash {
 		switch expr.GetType(ctx.EvalCtx()).GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
@@ -335,6 +339,9 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			return function.GetArgs()[0].GetType(ctx).GetType() != mysql.TypeYear
 		case tipb.ScalarFuncSig_CastTimeAsDuration:
 			return retType.GetType() == mysql.TypeDuration
+		case tipb.ScalarFuncSig_CastVectorFloat32AsString,
+			tipb.ScalarFuncSig_CastVectorFloat32AsVectorFloat32:
+			return true
 		case tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson, tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastStringAsJson,
 			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
 			return true

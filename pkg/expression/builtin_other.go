@@ -153,6 +153,8 @@ func (c *inFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	case types.ETJson:
 		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_InJson)
+	default:
+		return nil, errors.Errorf("%s is not supported for IN()", args[0].GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	return sig, nil
 }
@@ -1265,6 +1267,8 @@ func (c *valuesFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		sig = &builtinValuesDurationSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETJson:
 		sig = &builtinValuesJSONSig{baseBuiltinFunc: bf, offset: c.offset}
+	default:
+		return nil, errors.Errorf("%s is not supported for VALUES()", c.tp.EvalType())
 	}
 	return sig, nil
 }

@@ -204,6 +204,14 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 		return errors.Trace(dbterror.ErrJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 	}
 
+	// Vector column cannot index, for now.
+	if col.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
+		if col.Hidden {
+			return dbterror.ErrFunctionalIndexOnJSONOrGeometryFunction
+		}
+		return errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
+	}
+
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
 	if types.IsTypeBlob(col.FieldType.GetType()) {
 		if indexColumnLen == types.UnspecifiedLength {

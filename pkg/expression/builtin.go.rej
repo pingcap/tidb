@@ -1,0 +1,50 @@
+@@ -223,6 +227,10 @@
+ 		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDurationWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
+ 	case types.ETJson:
+ 		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
++	case types.ETVectorFloat32:
++		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeTiDBVectorFloat32).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).BuildP()
++	default:
++		return baseBuiltinFunc{}, errors.Errorf("%s is not supported", retType)
+ 	}
+ 	if mysql.HasBinaryFlag(fieldType.GetFlag()) && fieldType.GetType() != mysql.TypeJSON {
+ 		fieldType.SetCharset(charset.CharsetBin)
+@@ -301,6 +309,10 @@
+ 	return errors.Errorf("baseBuiltinFunc.vecEvalJSON() should never be called, please contact the TiDB team for help")
+ }
+ 
++func (b *baseBuiltinFunc) vecEvalVectorFloat32(input *chunk.Chunk, result *chunk.Column) error {
++	return errors.Errorf("baseBuiltinFunc.vecEvalVectorFloat32() should never be called, please contact the TiDB team for help")
++}
++
+ func (b *baseBuiltinFunc) evalInt(row chunk.Row) (int64, bool, error) {
+ 	return 0, false, errors.Errorf("baseBuiltinFunc.evalInt() should never be called, please contact the TiDB team for help")
+ }
+@@ -329,6 +341,10 @@
+ 	return types.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
+ }
+ 
++func (b *baseBuiltinFunc) evalVectorFloat32(row chunk.Row) (types.VectorFloat32, bool, error) {
++	return types.ZeroVectorFloat32, false, errors.Errorf("baseBuiltinFunc.evalVectorFloat32() should never be called, please contact the TiDB team for help")
++}
++
+ func (b *baseBuiltinFunc) vectorized() bool {
+ 	return false
+ }
+@@ -475,6 +491,8 @@
+ 
+ 	// vecEvalJSON evaluates this builtin function in a vectorized manner.
+ 	vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error
++
++	vecEvalVectorFloat32(input *chunk.Chunk, result *chunk.Column) error
+ }
+ 
+ // reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
+@@ -508,6 +526,7 @@
+ 	evalDuration(row chunk.Row) (val types.Duration, isNull bool, err error)
+ 	// evalJSON evaluates JSON representation of builtinFunc by given row.
+ 	evalJSON(row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
++	evalVectorFloat32(row chunk.Row) (val types.VectorFloat32, isNull bool, err error)
+ 	// getArgs returns the arguments expressions.
+ 	getArgs() []Expression
+ 	// equal check if this function equals to another function.

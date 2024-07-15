@@ -3254,6 +3254,12 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableVectorType, Value: BoolToOnOff(DefTiDBEnableVectorType), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EnableVectorType.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableVectorType.Load()), nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

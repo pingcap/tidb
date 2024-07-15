@@ -80,7 +80,7 @@ type ExprNode interface {
 	// GetFlag returns the flag of the expression.
 	GetFlag() uint64
 
-	// Format formats the AST into a writer.
+	// Format formats the AST into a writer.ss
 	Format(w io.Writer)
 }
 

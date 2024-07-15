@@ -1458,7 +1458,9 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
 		}
 	case mysql.TypeTiDBVectorFloat32:
-		return errors.Errorf("vector type is not supported")
+		if variable.EnableVectorType.Load() != true {
+			return errors.Errorf("vector type is not supported")
+		}
 	default:
 		// TODO: Add more types.
 	}
