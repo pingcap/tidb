@@ -2362,6 +2362,15 @@ AlterTableSpec:
 			Statistics: statsSpec,
 		}
 	}
+|	"CONVERT" "PARTITION" Identifier "TO" "TABLE" TableName WithValidationOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTableConvertPartitionToTable,
+			PartitionNames: []model.CIStr{model.NewCIStr($3)},
+			NewTable:       $6.(*ast.TableName),
+			WithValidation: $7.(bool),
+		}
+	}
 |	"EXCHANGE" "PARTITION" Identifier "WITH" "TABLE" TableName WithValidationOpt
 	{
 		$$ = &ast.AlterTableSpec{

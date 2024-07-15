@@ -414,6 +414,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AnalyzeTableStmt:
 		p.flag |= inAnalyze
+	case *ast.AlterTableSpec:
+		if node.Tp == ast.AlterTableConvertPartitionToTable {
+			p.flag |= inCreateOrDropTable
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -668,6 +672,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.SetOprSelectList:
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
+		}
+	case *ast.AlterTableSpec:
+		if x.Tp == ast.AlterTableConvertPartitionToTable {
+			p.flag &= ^inCreateOrDropTable
 		}
 	}
 

@@ -2969,6 +2969,7 @@ const (
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
 	AlterTableRemoveTTL
+	AlterTableConvertPartitionToTable
 )
 
 // LockType is the type for AlterTableSpec.

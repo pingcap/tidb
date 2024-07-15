@@ -4074,6 +4074,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			}
 		case ast.AlterTableExchangePartition:
 			err = d.ExchangeTablePartition(sctx, ident, spec)
+		case ast.AlterTableConvertPartitionToTable:
+			err = d.ConvertPartitionToTable(sctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -4359,11 +4361,19 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	return errors.Trace(err)
 }
 
-func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Ident) (dbInfo *model.DBInfo, t table.Table, err error) {
+func (d *ddl) getIsAndSchemaByIdent(ctx sessionctx.Context, tableIdent ast.Ident) (infoschema.InfoSchema, *model.DBInfo, error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
-		return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tableIdent.Schema)
+		return is, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tableIdent.Schema)
+	}
+	return is, schema, nil
+}
+
+func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Ident) (dbInfo *model.DBInfo, t table.Table, err error) {
+	is, schema, err := d.getIsAndSchemaByIdent(ctx, tableIdent)
+	if err != nil {
+		return nil, nil, err
 	}
 	t, err = is.TableByName(d.ctx, tableIdent.Schema, tableIdent.Name)
 	if err != nil {
@@ -5432,6 +5442,54 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 	}
 
 	return nil
+}
+
+func (d *ddl) ConvertPartitionToTable(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ptMeta := pt.Meta()
+
+	partName := spec.PartitionNames[0].L
+
+	defID, err := tables.FindPartitionByName(ptMeta, partName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+	_, ntSchema, err := d.getIsAndSchemaByIdent(ctx, ntIdent)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:       ntSchema.ID,
+		TableID:        defID,
+		SchemaName:     ptSchema.Name.L,
+		TableName:      ptMeta.Name.L,
+		Type:           model.ActionConvertPartitionToTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation, spec.NewTable.Name},
+		CtxVars:        []any{[]int64{ntSchema.ID, ptSchema.ID}, []int64{defID, ptMeta.ID}},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{Database: ptSchema.Name.L, Table: ptMeta.Name.L},
+			{Database: ntIdent.Schema.L, Table: ntIdent.Name.L},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// TODO: Add this to be triggered automatically
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("after the convert partition to table, please analyze related table of the exchange to update statistics"))
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
 }
 
 func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
