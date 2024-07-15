@@ -2115,7 +2115,6 @@ type SlowQueryLogItems struct {
 }
 
 // SlowLogFormat uses for formatting slow log.
-// Note: Please do check slowQueryRetriever::parseLog function if you intend to modify this function
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
