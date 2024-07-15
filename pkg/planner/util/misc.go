@@ -100,6 +100,18 @@ func CloneRanges(ranges []*ranger.Range) []*ranger.Range {
 	return cloned
 }
 
+// CloneByItems uses (*ByItems).Clone to clone a slice of *ByItems.
+func CloneByItems(byItems []*ByItems) []*ByItems {
+	if byItems == nil {
+		return nil
+	}
+	cloned := make([]*ByItems, 0, len(byItems))
+	for _, item := range byItems {
+		cloned = append(cloned, item.Clone())
+	}
+	return cloned
+}
+
 // QueryTimeRange represents a time range specified by TIME_RANGE hint
 type QueryTimeRange struct {
 	From time.Time
