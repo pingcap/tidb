@@ -1365,9 +1365,10 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				}
 				return k
 			},
-			Tbl:  tblInfo,
-			Idx:  w.idxLookup.index,
-			Sctx: w.idxLookup.Ctx(),
+			Tbl:             tblInfo,
+			Idx:             w.idxLookup.index,
+			EnableRedactLog: w.idxLookup.Ctx().GetSessionVars().EnableRedactLog,
+			Storage:         w.idxLookup.Ctx().GetStore(),
 		}
 	}
 
@@ -1553,9 +1554,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				HandleEncode: func(hd kv.Handle) kv.Key {
 					return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), hd)
 				},
-				Tbl:  w.idxLookup.table.Meta(),
-				Idx:  w.idxLookup.index,
-				Sctx: w.idxLookup.Ctx(),
+				Tbl:             w.idxLookup.table.Meta(),
+				Idx:             w.idxLookup.index,
+				EnableRedactLog: w.idxLookup.Ctx().GetSessionVars().EnableRedactLog,
+				Storage:         w.idxLookup.Ctx().GetStore(),
 			}).ReportLookupInconsistent(ctx,
 				handleCnt,
 				len(task.rows),
