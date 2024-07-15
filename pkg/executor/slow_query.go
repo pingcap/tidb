@@ -505,8 +505,8 @@ func getLineIndex(offset offset, index int) int {
 // leftBracketIdx should be valid string index for line
 // Returns -1 if invalid inputs are given
 func findMatchedRightBracket(line string, leftBracketIdx int) int {
-	var leftBracket byte = line[leftBracketIdx]
-	var rightBracket byte = '}'
+	leftBracket := line[leftBracketIdx]
+	rightBracket := byte('}')
 	if leftBracket == '[' {
 		rightBracket = ']'
 	} else if leftBracket != '{' {
