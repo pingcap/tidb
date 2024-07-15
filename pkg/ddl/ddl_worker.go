@@ -515,7 +515,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 // table with retry. job id allocation and job insertion are in the same transaction,
 // as we want to make sure DDL jobs are inserted in id order, then we can query from
 // a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
-// so this function has side effect, it will set the job id of 'tasks'.
+// so this function has side effect, it will set the job id of 'jobs'.
 func GenIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobs []*model.Job) error {
 	return genIDAndCallWithRetry(ctx, ddlSe, len(jobs), func(ids []int64) error {
 		for idx := range jobs {
@@ -591,6 +591,11 @@ func genIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, 
 // https://github.com/pingcap/tidb/issues/27197#issuecomment-2216315057.
 // this part is same as how we implement pessimistic + repeatable read isolation
 // level in SQL executor, see doLockKeys.
+// NextGlobalID is a meta key, so we cannot use "select xx for update", if we store
+// it into a table row or using advisory lock, we will depends on a system table
+// that is created by us, cyclic. although we can create a system table without using
+// DDL logic, we will only consider change it when we have data dictionary and keep
+// it this way now.
 // TODO maybe we can unify the lock mechanism with SQL executor in the future, or
 // implement it inside TiKV client-go.
 func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transaction) (uint64, error) {
