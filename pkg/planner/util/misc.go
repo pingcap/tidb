@@ -17,12 +17,12 @@ package util
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
