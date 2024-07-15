@@ -5650,7 +5650,7 @@ type TblColPosInfo struct {
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
 
-	IndexesForDelete          map[int64][]int
+	IndexesForDelete map[int64][]int
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
