@@ -548,7 +548,7 @@ retry:
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
-	if isSpecialDB(schema.L) {
+	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
 			schTbls := raw.(*schemaTables)
