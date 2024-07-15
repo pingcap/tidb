@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -146,6 +147,7 @@ func TestGCColumnStatsUsage(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "a", "b", "c")
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("3"))
 	testKit.MustExec("alter table t drop column a")

@@ -15,6 +15,7 @@
 package statstest
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,9 +37,10 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1, 2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -80,11 +83,12 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, c3 int)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2", "c3")
 	testKit.MustExec("insert into t values(1, 2, 3)")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -141,9 +145,10 @@ func TestStatsStoreAndLoad(t *testing.T) {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 
@@ -179,7 +184,7 @@ func testInitStatsMemTrace(t *testing.T) {
 
 	var memCostTot int64
 	for i := 1; i < 10; i++ {
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
 		tStats := h.GetTableStats(tbl.Meta())
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
@@ -254,7 +259,7 @@ func TestInitStats(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.
@@ -304,7 +309,7 @@ func TestInitStats51358(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil"))
 	}()
 	require.NoError(t, h.InitStats(is))
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	stats := h.GetTableStats(tbl.Meta())
 	stats.ForEachColumnImmutable(func(_ int64, column *statistics.Column) bool {
@@ -347,11 +352,12 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
 	tk.MustExec("analyze table t with 2 topn, 3 buckets")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.

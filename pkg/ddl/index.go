@@ -1911,12 +1911,12 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			w.ddlCtx.mu.RLock()
 			w.ddlCtx.mu.hook.OnUpdateReorgInfo(reorgInfo.Job, reorgInfo.PhysicalTableID)
 			w.ddlCtx.mu.RUnlock()
-			failpoint.InjectCall("beforeUpdateReorgInfo-addTableIndex", reorgInfo.Job)
 
 			finish, err = updateReorgInfo(w.sessPool, tbl, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			failpoint.InjectCall("afterUpdatePartitionReorgInfo", reorgInfo.Job)
 			// Every time we finish a partition, we update the progress of the job.
 			if rc := w.getReorgCtx(reorgInfo.Job.ID); rc != nil {
 				reorgInfo.Job.SetRowCount(rc.getRowCount())
@@ -2140,7 +2140,7 @@ func estimateTableRowSize(
 func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.Table) (int, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
-		return 0, errors.New("not a helper.Storage")
+		return 0, fmt.Errorf("not a helper.Storage")
 	}
 	h := &helper.Helper{
 		Store:       hStore,
@@ -2175,11 +2175,11 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, err
 	}
 	if len(regionInfos.Regions) != regionLimit {
-		return 0, errors.New("less than 3 regions")
+		return 0, fmt.Errorf("less than 3 regions")
 	}
 	sample := regionInfos.Regions[1]
 	if sample.ApproximateKeys == 0 || sample.ApproximateSize == 0 {
-		return 0, errors.New("zero approximate size")
+		return 0, fmt.Errorf("zero approximate size")
 	}
 	return int(uint64(sample.ApproximateSize)*size.MB) / int(sample.ApproximateKeys), nil
 }

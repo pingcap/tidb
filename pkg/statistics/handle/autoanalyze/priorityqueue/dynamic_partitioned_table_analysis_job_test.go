@@ -15,6 +15,7 @@
 package priorityqueue_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -43,7 +44,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Check the result of analyze.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
@@ -52,7 +53,7 @@ func TestAnalyzeDynamicPartitionedTable(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
@@ -81,7 +82,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Check the result of analyze index.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
@@ -92,7 +93,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze index.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)

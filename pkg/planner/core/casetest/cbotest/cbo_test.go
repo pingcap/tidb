@@ -150,7 +150,7 @@ func TestEstimation(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t all columns")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
@@ -333,7 +333,7 @@ func TestOutdatedAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t all columns")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
@@ -373,7 +373,7 @@ func TestNullCount(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a int, b int, index idx(a))")
 	testKit.MustExec("insert into t values (null, null), (null, null)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t all columns")
 	var input []string
 	var output [][]string
 	analyzeSuiteData := GetAnalyzeSuiteData()
@@ -554,7 +554,7 @@ func TestTiFlashCostModel(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}

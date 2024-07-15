@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -165,21 +164,8 @@ func (*PointGetPlan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executo
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *PointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
-}
-
-// CloneForPlanCache implements PhysicalPlan interface.
-func (p *PointGetPlan) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
-	cloned := new(PointGetPlan)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	cloned.IndexValues = make([]types.Datum, len(p.IndexValues))
-	copy(cloned.IndexValues, p.IndexValues)
-	if p.Handle != nil {
-		cloned.Handle = p.Handle.Copy()
-	}
-	return cloned, true
 }
 
 // ExplainInfo implements Plan interface.
@@ -495,26 +481,8 @@ func (p *BatchPointGetPlan) SetCost(cost float64) {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *BatchPointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
-}
-
-// CloneForPlanCache implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
-	cloned := new(BatchPointGetPlan)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	cloned.Handles = make([]kv.Handle, len(p.Handles))
-	for i, h := range p.Handles {
-		cloned.Handles[i] = h.Copy()
-	}
-	cloned.IndexValues = make([][]types.Datum, len(p.IndexValues))
-	for i, values := range p.IndexValues {
-		cloned.IndexValues[i] = make([]types.Datum, len(values))
-		copy(cloned.IndexValues[i], values)
-	}
-
-	return cloned, true
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

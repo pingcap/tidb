@@ -47,8 +47,12 @@ type Misc interface {
 	AllPlacementBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
+	// ClonePlacementPolicies returns a copy of all placement policies.
+	ClonePlacementPolicies() map[string]*model.PolicyInfo
 	// AllResourceGroups returns all resource groups
 	AllResourceGroups() []*model.ResourceGroupInfo
+	// CloneResourceGroups returns a copy of all resource groups.
+	CloneResourceGroups() map[string]*model.ResourceGroupInfo
 	// HasTemporaryTable returns whether information schema has temporary table
 	HasTemporaryTable() bool
 	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.

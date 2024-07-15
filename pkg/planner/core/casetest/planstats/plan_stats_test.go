@@ -62,8 +62,8 @@ func TestPlanStatsLoad(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
-	tk.MustExec("analyze table pt")
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table pt all columns")
 
 	testCases := []struct {
 		sql   string
@@ -215,7 +215,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		require.NoError(t, err)
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		testCase.check(p, tableInfo)
@@ -264,10 +264,10 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
 	require.NoError(t, dom.StatsHandle().Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
@@ -362,7 +362,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	tblName2TblID := make(map[string]int64)
 	tblID2Tbl := make(map[int64]table.Table)
 	for _, tblName := range tableNames {
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblName2TblID[tblName] = tbl.Meta().ID
 		tblID2Tbl[tbl.Meta().ID] = tbl
@@ -432,9 +432,9 @@ func TestPartialStatsInExplain(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table t2")
-	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table tp all columns")
 	tk.RequireNoError(dom.StatsHandle().Update(dom.InfoSchema()))
 	tk.MustQuery("explain select * from tp where a = 1")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")

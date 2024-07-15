@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
@@ -46,11 +45,8 @@ type PlanCacheKeyTestIssue46760 struct{}
 // PlanCacheKeyTestIssue47133 is only for test.
 type PlanCacheKeyTestIssue47133 struct{}
 
-// PlanCacheKeyTestBeforeAdjust is only for test.
-type PlanCacheKeyTestBeforeAdjust struct{}
-
-// PlanCacheKeyTestAfterAdjust is only for test.
-type PlanCacheKeyTestAfterAdjust struct{}
+// PlanCacheKeyTestClone is only for test.
+type PlanCacheKeyTestClone struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -107,7 +103,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	for i := 0; i < len(stmt.dbName); i++ {
 		tbl, ok := is.TableByID(stmt.tbls[i].Meta().ID)
 		if !ok {
-			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
 			if err != nil {
 				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 			}
@@ -115,7 +111,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			stmt.tbls[i] = tblByName
 			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
 			schemaNotMatch = true
 			continue
@@ -232,14 +228,10 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			isPointPlan, hit = true, true
 		} else {
 			paramTypes = parseParamTypes(sctx, params)
-			cachedVal, hit = lookupPlanCache(sctx, cacheKey, paramTypes)
+			cachedVal, hit = lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		}
 		if hit {
-			if intest.InTest && ctx.Value(PlanCacheKeyTestBeforeAdjust{}) != nil && ctx.Value(PlanCacheKeyTestAfterAdjust{}) != nil {
-				ctx.Value(PlanCacheKeyTestBeforeAdjust{}).(func(cachedVal *PlanCacheValue))(cachedVal)
-				defer ctx.Value(PlanCacheKeyTestAfterAdjust{}).(func(cachedVal *PlanCacheValue))(cachedVal)
-			}
-			if plan, names, ok, err := adjustCachedPlan(sctx, cachedVal, isNonPrepared, isPointPlan, binding, is, stmt); err != nil || ok {
+			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, isPointPlan, binding, is, stmt); err != nil || ok {
 				return plan, names, err
 			}
 		}
@@ -251,11 +243,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
 }
 
-func lookupPlanCache(sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
+func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
 	if sctx.GetSessionVars().EnableInstancePlanCache {
 		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
 			cachedVal = v.(*PlanCacheValue)
-			return cachedVal.CloneForInstancePlanCache(sctx.GetPlanCtx()) // clone the value to solve concurrency problem
+			return cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx()) // clone the value to solve concurrency problem
 		}
 	} else {
 		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, paramTypes); hit {
@@ -265,13 +257,13 @@ func lookupPlanCache(sctx sessionctx.Context, cacheKey string, paramTypes []*typ
 	return nil, false
 }
 
-func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
+func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
 	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	if !isPointPlan { // keep the prior behavior
-		if err := checkPreparedPriv(sctx, stmt, is); err != nil {
+		if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
 			return nil, nil, false, err
 		}
 	}
@@ -337,9 +329,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 }
 
 // checkPreparedPriv checks the privilege of the prepared statement
-func checkPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
+func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := VisitInfo4PrivCheck(is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
+		visitInfo := VisitInfo4PrivCheck(ctx, is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
 		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
 			return err
 		}

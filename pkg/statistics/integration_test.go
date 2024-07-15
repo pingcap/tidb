@@ -15,6 +15,7 @@
 package statistics_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
@@ -44,9 +46,10 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(is))
@@ -133,9 +136,10 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(is))
@@ -262,7 +266,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	)
 	tk.MustExec("analyze table t with 2 topn")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(is))
@@ -342,6 +346,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
@@ -449,9 +454,10 @@ func TestColumnStatsLazyLoad(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	c1 := tblInfo.Columns[0]
@@ -473,7 +479,7 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
@@ -516,7 +522,7 @@ func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
 	tk.MustExec("analyze table t;")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	statsTbl := h.GetTableStats(tblInfo)
@@ -528,7 +534,7 @@ func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	is = dom.InfoSchema()
 	require.NoError(t, h.Update(is))
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	newColA := tblInfo.Columns[0]
@@ -554,7 +560,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl, found := h.Get(tbl.Meta().ID)
 	require.True(t, found)
@@ -563,7 +569,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	// Only alter table should not set the last_analyze_version
 	tk.MustExec("alter table t add column b int default 0")
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.Update(is))
@@ -572,7 +578,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
 	tk.MustExec("alter table t add index idx(a)")
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	// We don't handle the ADD INDEX event in the HandleDDLEvent.
 	require.Equal(t, 0, len(h.DDLEventCh()))
 	require.NoError(t, err)
