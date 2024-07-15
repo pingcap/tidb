@@ -731,6 +731,7 @@ func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema) (e
 	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
 	err = h.initStatsHistogramsLite(ctx, is, cache)
 	if err != nil {
+		cache.Close()
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("complete to load the histogram in the lite mode")
