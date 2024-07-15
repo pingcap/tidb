@@ -262,27 +262,21 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 			return err
 		}
 	}
-
-	e.Ctx().GetTableCtx().ResetExtraInfo()
-
 	return nil
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
 	e.Ctx().GetTableCtx().SetExtraIndexKeyPosInfo(posInfo.IndexesForDelete)
 	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
+	defer e.Ctx().GetTableCtx().ResetExtraInfo()
 	if err != nil {
-		// Don't try to use defer for performance.
-		e.Ctx().GetTableCtx().ResetExtraInfo()
 		return err
 	}
 	tid := t.Meta().ID
 	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid])
 	if err != nil {
-		e.Ctx().GetTableCtx().ResetExtraInfo()
 		return err
 	}
-	e.Ctx().GetTableCtx().ResetExtraInfo()
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
