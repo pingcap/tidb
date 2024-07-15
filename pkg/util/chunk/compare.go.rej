@@ -1,9 +1,0 @@
-@@ -52,6 +52,8 @@
- 		return cmpBit
- 	case mysql.TypeJSON:
- 		return cmpJSON
-+	case mysql.TypeTiDBVectorFloat32:
-+		return cmpVectorFloat32
- 	}
- 	return nil
- }
