@@ -7,9 +7,12 @@ go_library(
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
         "//pkg/config",
+        "//pkg/ddl/util/callback",
+        "//pkg/domain",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/server",
         "//pkg/testkit",
