@@ -32,11 +32,12 @@ func TestPlanClone(t *testing.T) {
 		return
 	}
 	if !bytes.Equal(updatedCode, currentCode) {
-		t.Errorf("plan_clone_generated.go should be updated, please run TestUpdatePlanCloneCode to update it.")
+		t.Errorf("plan_clone_generated.go should be updated, please run TestUpdatePlanCloneCode manually to update it.")
 	}
 }
 
 func TestUpdatePlanCloneCode(t *testing.T) {
+	t.Skip("only run this test manually to update plan_clone_generated.go")
 	updatedCode, err := genPlanCloneForPlanCacheCode()
 	if err != nil {
 		t.Errorf("Generate CloneForPlanCache code error: %v", err)
