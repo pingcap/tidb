@@ -30,7 +30,9 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func genPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{}}
+	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{},
+		PhysicalTableReader{}, PhysicalIndexReader{}, PhysicalIndexLookUpReader{}, PhysicalIndexMergeReader{},
+		PhysicalSort{}, PhysicalTopN{}, PhysicalStreamAgg{}, PhysicalHashAgg{}}
 	c := new(codeGen)
 	c.write(codeGenPrefix)
 	for _, s := range structures {
