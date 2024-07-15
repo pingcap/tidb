@@ -326,6 +326,30 @@ func (*BaseExecutorV2) Detach() (Executor, bool) {
 	return nil, false
 }
 
+// BuildNewBaseExecutorV2 builds a new `BaseExecutorV2` based on the configuration of the current base executor.
+// It's used to build a new sub-executor from an existing executor. For example, the `IndexLookUpExecutor` will use
+// this function to build `TableReaderExecutor`
+func (e *BaseExecutorV2) BuildNewBaseExecutorV2(stmtRuntimeStatsColl *execdetails.RuntimeStatsColl, schema *expression.Schema, id int, children ...Executor) BaseExecutorV2 {
+	newExecutorMeta := newExecutorMeta(schema, id, children...)
+
+	newExecutorStats := e.executorStats
+	if stmtRuntimeStatsColl != nil {
+		if id > 0 {
+			newExecutorStats.runtimeStats = stmtRuntimeStatsColl.GetBasicRuntimeStats(id)
+		}
+	}
+
+	newChunkAllocator := e.executorChunkAllocator
+	newChunkAllocator.retFieldTypes = newExecutorMeta.RetFieldTypes()
+	newE := BaseExecutorV2{
+		executorMeta:           newExecutorMeta,
+		executorStats:          newExecutorStats,
+		executorChunkAllocator: newChunkAllocator,
+		executorKillerHandler:  e.executorKillerHandler,
+	}
+	return newE
+}
+
 // BaseExecutor holds common information for executors.
 type BaseExecutor struct {
 	ctx sessionctx.Context
