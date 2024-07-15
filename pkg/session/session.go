@@ -3426,7 +3426,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	}
 	err = InitTiDBSchemaCacheSize(store)
 	if err != nil {
-		logutil.BgLogger().Fatal("init tidb schema cache size error", zap.Error(err))
+		return nil, err
 	}
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
