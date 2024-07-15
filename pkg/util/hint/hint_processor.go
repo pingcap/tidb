@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
@@ -44,12 +45,30 @@ type HintsSet struct {
 	indexHints [][]*ast.IndexHint          // Slice offset is the traversal order of `TableName` in the ast.
 }
 
-// GetFirstTableHints gets the first table hints.
-func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
+// GetStmtHints gets all statement-level hints.
+func (hs *HintsSet) GetStmtHints() []*ast.TableOptimizerHint {
+	var result []*ast.TableOptimizerHint
 	if len(hs.tableHints) > 0 {
-		return hs.tableHints[0]
+		result = append(result, hs.tableHints[0]...) // keep the same behavior with prior implementation
 	}
-	return nil
+	for _, tHints := range hs.tableHints[1:] {
+		for _, h := range tHints {
+			if isStmtHint(h) {
+				result = append(result, h)
+			}
+		}
+	}
+	return result
+}
+
+// isStmtHint checks whether this hint is a statement-level hint.
+func isStmtHint(h *ast.TableOptimizerHint) bool {
+	switch h.HintName.L {
+	case "max_execution_time", "memory_quota", "resource_group":
+		return true
+	default:
+		return false
+	}
 }
 
 // ContainTableHint checks whether the table hint set contains a hint.
@@ -624,7 +643,9 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 			}
 			continue
 		}
-		p.QbHints[offset] = append(p.QbHints[offset], hint)
+		if !slices.Contains(p.QbHints[offset], hint) {
+			p.QbHints[offset] = append(p.QbHints[offset], hint)
+		}
 	}
 	return p.QbHints[currentOffset]
 }
