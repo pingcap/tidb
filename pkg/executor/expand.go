@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+// ExpandExec is used to execute expand logical plan.
 type ExpandExec struct {
 	exec.BaseExecutor
 
@@ -68,6 +69,7 @@ func (e *ExpandExec) open(_ context.Context) error {
 	return nil
 }
 
+// Next implements the Executor Next interface.
 func (e *ExpandExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.isUnparalleled() {
@@ -106,10 +108,11 @@ func (e *ExpandExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) er
 	return nil
 }
 
-func (e *ExpandExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) error {
+func (*ExpandExec) parallelExecute(_ context.Context, _ *chunk.Chunk) error {
 	return errors.New("parallel expand eval logic not implemented")
 }
 
+// Close implements the Executor Close interface.
 func (e *ExpandExec) Close() error {
 	// if e.BaseExecutor.Open returns error, e.childResult will be nil, see https://github.com/pingcap/tidb/issues/24210
 	// for more information
