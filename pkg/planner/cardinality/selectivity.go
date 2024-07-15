@@ -86,7 +86,6 @@ func Selectivity(
 	}
 
 	var nodes []*StatsNode
-
 	var remainedExprStrs []string
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
 
@@ -650,8 +649,8 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	return
 }
 
-// isColEqCorCol checks if the expression is a eq function that one side is correlated column and another is column.
-// If so, it will return the column's reference. Otherwise return nil instead.
+// isColEqCorCol checks if the expression is an eq function that one side is correlated column and another is column.
+// If so, it will return the column's reference. Otherwise, return nil instead.
 func isColEqCorCol(filter expression.Expression) *expression.Column {
 	f, ok := filter.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {
