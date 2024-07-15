@@ -317,9 +317,25 @@ func (is *infoSchema) FindTableInfoByPartitionID(
 	return getTableInfo(tbl), db, partDef
 }
 
-// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
+// SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	return getTableInfoList(is.SchemaTables(schema))
+}
+
+// SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
+func (is *infoSchema) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil
+	}
+	ret := make([]*model.TableNameInfo, 0, len(schemaTables.tables))
+	for _, t := range schemaTables.tables {
+		ret = append(ret, &model.TableNameInfo{
+			ID:   t.Meta().ID,
+			Name: t.Meta().Name,
+		})
+	}
+	return ret
 }
 
 type tableInfoResult struct {

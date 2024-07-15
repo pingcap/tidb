@@ -58,6 +58,7 @@ const (
 // For query string
 const (
 	TableIDQuery = "table_id"
+	IDNameOnly   = "id_name_only"
 	Limit        = "limit"
 	JobID        = "start_job_id"
 	Operation    = "op"
