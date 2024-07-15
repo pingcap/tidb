@@ -3599,7 +3599,7 @@ func TestRemovePartitioningGlobalIndex(t *testing.T) {
 	tk.MustQuery(`select a from t order by a`).Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery(`select b from t order by b`).Check(testkit.Rows("1", "2", "Hello, World!"))
 
-	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	tk.MustExec(`alter table t partition by key(b) partitions 3 convert to global index`)
 	tt = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo = tt.Meta().FindIndexByName("idx_a")
@@ -3638,13 +3638,17 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	// Clustered table where PKIsHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) clustered)`)
 	tk.MustContainErrMsg(`alter table t drop primary key`, "Unsupported drop primary key when the table is using clustered index")
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `The index needs to be global, but it is not explicitly set as such`)
+	// TODO: get the following error back
+	//, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// Clustered table where IsCommonHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), c int, primary key (a,c) clustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `The index needs to be global, but it is not explicitly set as such`)
+	// TODO: restore this error?
+	//tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// It can be clustered if the PK contains all the partitioning columns.
@@ -3656,20 +3660,20 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	tk.MustExec(`drop table t`)
 
 	// NONCLUSTERED tables can have PK as global index.
-	tk.MustExec(`create table t (a int primary key nonclustered, b varchar(255)) partition by key(b) partitions 3`)
+	tk.MustExec(`create table t (a int primary key nonclustered global, b varchar(255)) partition by key(b) partitions 3`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`alter table t drop primary key`)
-	tk.MustExec(`alter table t add primary key (a)`)
+	tk.MustExec(`alter table t add primary key (a) global`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int primary key nonclustered, b varchar(255))`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
-	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	tk.MustExec(`alter table t partition by key(b) partitions 3 convert to global index`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`alter table t drop primary key`)
-	tk.MustExec(`alter table t add primary key (a)`)
+	tk.MustExec(`alter table t add primary key (a) global`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
-	tk.MustExec(`alter table t partition by hash(a) partitions 3`)
+	tk.MustExec(`alter table t partition by hash(a) partitions 3 convert to global index`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 	tk.MustExec(`alter table t drop primary key`)
 	tk.MustExec(`alter table t add primary key (a)`)
@@ -3677,19 +3681,19 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) nonclustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
-	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	tk.MustExec(`alter table t partition by key(b) partitions 3 convert to global index`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`alter table t drop primary key`)
-	tk.MustExec(`alter table t add primary key (a)`)
+	tk.MustExec(`alter table t add primary key (a) global`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a, b) nonclustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 	tk.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),('Hi','Hi'),('Bye!','Bye!')`)
-	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	tk.MustExec(`alter table t partition by key(b) partitions 3 convert to global index`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 	tk.MustExec(`alter table t drop primary key`)
-	tk.MustExec(`alter table t add primary key (a)`)
+	tk.MustExec(`alter table t add primary key (a) global`)
 }
 
 func TestPrimaryNoGlobalIndex(t *testing.T) {
