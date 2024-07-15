@@ -607,7 +607,7 @@ func splitByColon(line string) (fields []string, values []string) {
 					current++
 				}
 			}
-			values = append(values, line[start:current])
+			values = append(values, line[start:min(current, len(line))])
 			parseKey = true
 		}
 	}
