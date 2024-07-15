@@ -553,13 +553,12 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#7",
           "└─TableReader 2.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 2.00 mpp[tiflash]  1->Column#11",
-          "      └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
-          "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
-          "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
+          "    └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
+          "      └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
         ]
       },
       {
@@ -568,13 +567,12 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#7",
           "└─TableReader 2.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 2.00 mpp[tiflash]  1->Column#11",
-          "      └─HashJoin 2.00 mpp[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
-          "        ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
-          "        │     └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
-          "        └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
+          "    └─HashJoin 2.00 mpp[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─Selection 3.00 mpp[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false",
+          "      └─TableFullScan(Probe) 2.00 mpp[tiflash] table:a keep order:false"
         ]
       }
     ]
