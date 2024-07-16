@@ -267,6 +267,11 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	return ids, nil
 }
 
+// GlobalIDKey returns the key for the global ID.
+func (m *Meta) GlobalIDKey() []byte {
+	return m.txn.EncodeStringDataKey(mNextGlobalIDKey)
+}
+
 // GenPlacementPolicyID generates next placement policy id globally.
 func (m *Meta) GenPlacementPolicyID() (int64, error) {
 	policyIDMutex.Lock()
