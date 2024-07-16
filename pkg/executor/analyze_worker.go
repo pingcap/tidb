@@ -55,7 +55,8 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 			finishJobWithLog(statsHandle, results.Job, err)
 			results.DestroyAndPutToPool()
 			worker.errCh <- err
-			return
+			results.DestroyAndPutToPool()
+			continue
 		}
 		err := statsHandle.SaveTableStatsToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
 		if err != nil {
