@@ -35,7 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getGlobalID(t *testing.T, ctx context.Context, store kv.Storage) int64 {
+func getGlobalID(ctx context.Context, t *testing.T, store kv.Storage) int64 {
 	res := int64(0)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
@@ -70,7 +70,7 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 			Args:       []interface{}{&model.TableInfo{}},
 		},
 	}}
-	initialGID := getGlobalID(t, ctx, store)
+	initialGID := getGlobalID(ctx, t, store)
 	threads, iterations := 10, 500
 	var wg util.WaitGroupWrapper
 	for i := 0; i < threads; i++ {
@@ -88,7 +88,7 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
 	require.NoError(t, err)
 	require.Len(t, gotJobs, jobCount)
-	currGID := getGlobalID(t, ctx, store)
+	currGID := getGlobalID(ctx, t, store)
 	require.Greater(t, currGID-initialGID, int64(jobCount))
 	uniqueJobIDs := make(map[int64]struct{}, jobCount)
 	for _, j := range gotJobs {
@@ -203,9 +203,9 @@ func TestCombinedIDAllocation(t *testing.T) {
 	t.Run("process one by one", func(t *testing.T) {
 		tk.MustExec("delete from mysql.tidb_ddl_job")
 		for _, c := range cases {
-			currentGlobalID := getGlobalID(t, ctx, store)
+			currentGlobalID := getGlobalID(ctx, t, store)
 			require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
-			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(t, ctx, store))
+			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store))
 		}
 		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
 		require.NoError(t, err)
@@ -221,9 +221,9 @@ func TestCombinedIDAllocation(t *testing.T) {
 			totalRequiredCnt += c.requiredIDCount
 			jobWs = append(jobWs, c.jobW)
 		}
-		currentGlobalID := getGlobalID(t, ctx, store)
+		currentGlobalID := getGlobalID(ctx, t, store)
 		require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
-		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(t, ctx, store))
+		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(ctx, t, store))
 
 		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
 		require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 	t.Run("process IDAllocated = false", func(t *testing.T) {
 		tk.MustExec("delete from mysql.tidb_ddl_job")
 
-		initialGlobalID := getGlobalID(t, ctx, store)
+		initialGlobalID := getGlobalID(ctx, t, store)
 		allocIDCaseCount, allocatedIDCount := 0, 0
 		for _, c := range cases {
 			if !c.jobW.IDAllocated {

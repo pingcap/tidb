@@ -279,6 +279,7 @@ type JobWrapper struct {
 	cacheErr error
 }
 
+// NotifyError notifies the error to all error channels.
 func (t *JobWrapper) NotifyError(err error) {
 	for _, errCh := range t.errChs {
 		errCh <- err
