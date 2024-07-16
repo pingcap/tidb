@@ -87,7 +87,7 @@ func Test53726(t *testing.T) {
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
 
-func Test54535(t *testing.T) {
+func TestIssue54535(t *testing.T) {
 	// test for tidb_enable_inl_join_inner_multi_pattern system variable
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
