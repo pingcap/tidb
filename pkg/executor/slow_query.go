@@ -578,7 +578,7 @@ func splitByColon(line string) (fields []string, values []string) {
 			if current < lineLength && (line[current] == '{' || line[current] == '[') {
 				rBraceIdx := findMatchedRightBracket(line, current)
 				if rBraceIdx == -1 {
-					errMsg = "Unmatched braces"
+					errMsg = "Braces matched error"
 					break
 				}
 				current = rBraceIdx + 1
