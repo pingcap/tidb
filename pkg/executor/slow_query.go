@@ -546,7 +546,7 @@ func findMatchedRightBracket(line string, leftBracketIdx int) int {
 			if leftBracketCnt > 0 {
 				current++
 			} else if leftBracketCnt == 0 {
-				if current + 1 < lineLength && line[current + 1] != ' ' {
+				if current+1 < lineLength && line[current+1] != ' ' {
 					return -1
 				}
 				return current
