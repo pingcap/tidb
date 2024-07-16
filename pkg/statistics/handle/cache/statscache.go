@@ -111,7 +111,6 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl.Version = version
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
-		tbl.Name = util.GetFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}

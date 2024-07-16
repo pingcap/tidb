@@ -5,10 +5,12 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -21,6 +23,65 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetKeyRangeByMode(t *testing.T) {
+	file := &backuppb.File{
+		Name:     "file_write.sst",
+		StartKey: []byte("t1a"),
+		EndKey:   []byte("t1ccc"),
+	}
+	endFile := &backuppb.File{
+		Name:     "file_write.sst",
+		StartKey: []byte("t1a"),
+		EndKey:   []byte(""),
+	}
+	rule := &restore.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: []byte("t1"),
+				NewKeyPrefix: []byte("t2"),
+			},
+		},
+	}
+	// raw kv
+	testRawFn := restore.GetKeyRangeByMode(restore.Raw)
+	start, end, err := testRawFn(file, rule)
+	require.NoError(t, err)
+	require.Equal(t, []byte("t1a"), start)
+	require.Equal(t, []byte("t1ccc"), end)
+
+	start, end, err = testRawFn(endFile, rule)
+	require.NoError(t, err)
+	require.Equal(t, []byte("t1a"), start)
+	require.Equal(t, []byte(""), end)
+
+	// txn kv: the keys must be encoded.
+	testTxnFn := restore.GetKeyRangeByMode(restore.Txn)
+	start, end, err = testTxnFn(file, rule)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t1a")), start)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t1ccc")), end)
+
+	start, end, err = testTxnFn(endFile, rule)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t1a")), start)
+	require.Equal(t, []byte(""), end)
+
+	// normal kv: the keys must be encoded.
+	testFn := restore.GetKeyRangeByMode(restore.TiDB)
+	start, end, err = testFn(file, rule)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t2a")), start)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t2ccc")), end)
+
+	// TODO maybe fix later
+	// current restore does not support rewrite empty endkey.
+	// because backup guarantees that the end key is not empty.
+	// start, end, err = testFn(endFile, rule)
+	// require.NoError(t, err)
+	// require.Equal(t, codec.EncodeBytes(nil, []byte("t2a")), start)
+	// require.Equal(t, []byte(""), end)
+}
 
 func TestParseQuoteName(t *testing.T) {
 	schema, table := restore.ParseQuoteName("`a`.`b`")
@@ -195,6 +256,7 @@ func TestPaginateScanRegion(t *testing.T) {
 					Id:    i + 1,
 					Peers: peers,
 				},
+				Leader: peers[0],
 			}
 
 			if i != 0 {
@@ -222,6 +284,7 @@ func TestPaginateScanRegion(t *testing.T) {
 				StartKey: endKey,
 				EndKey:   []byte{},
 			},
+			Leader: peers[0],
 		}
 		regionsMap[num] = ri
 		regions = append(regions, ri)
@@ -292,7 +355,9 @@ func TestPaginateScanRegion(t *testing.T) {
 	tc.InjectTimes = 5
 	_, err = split.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
 	require.Error(t, err)
-	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
+	var perr *errors.Error
+	goerrors.As(err, &perr)
+	require.EqualValues(t, berrors.ErrPDBatchScanRegion.ID(), perr.ID())
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	// region ID is key+1, so region 4 is deleted

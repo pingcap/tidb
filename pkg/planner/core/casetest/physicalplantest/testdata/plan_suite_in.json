@@ -1049,7 +1049,8 @@
       "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down",
       "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1; -- index merge union case, sink limit to table side, because selection exists on table side",
       "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1; -- index merge intersection case, sink limit to table side because selection exists on table side",
-      "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down"
+      "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down",
+      "explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1; -- index merge union and intersection case from issue 48588"
     ]
   },
   {
@@ -1059,6 +1060,23 @@
       "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
       "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
       "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);"
+    ]
+  },
+  {
+    "name": "TestAlwaysTruePredicateWithSubquery",
+    "cases" : [
+      "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
    ]
+  },
+  {
+    "name": "TestIndexMergeIssue52947",
+    "cases": [
+      "explain format = 'brief' select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+      "select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+      "explain format = 'brief' select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+      "select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;"
+    ]
   }
 ]

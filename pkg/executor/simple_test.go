@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -148,6 +149,10 @@ func TestSetResourceGroup(t *testing.T) {
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
+
+	tk.MustExec("CREATE ROLE role_for_resource_group")
+	tk.MustGetDBError("ALTER USER role_for_resource_group RESOURCE GROUP `rg1`", infoschema.ErrResourceGroupInvalidForRole)
+	tk.MustExec("DROP ROLE role_for_resource_group")
 
 	tk.MustExec("CREATE RESOURCE GROUP rg2 ru_per_sec = 200")
 	tk.MustExec("SET RESOURCE GROUP `rg2`")

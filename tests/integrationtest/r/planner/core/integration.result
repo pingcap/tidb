@@ -3952,3 +3952,10 @@ p	o	v	a
 3	5	5	3
 3	9	9	9
 set @@tidb_enable_pipelined_window_function=DEFAULT;
+drop table if exists t;
+create table t (col TEXT);
+select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
+case when (
+t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
+) then 1 else 2 end;
+1

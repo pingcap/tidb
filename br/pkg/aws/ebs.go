@@ -251,6 +251,9 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 			if *s.State == ec2.SnapshotStateCompleted {
 				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
 				totalVolumeSize += *s.VolumeSize
+			} else if *s.State == ec2.SnapshotStateError {
+				log.Error("snapshot failed", zap.String("id", *s.SnapshotId), zap.String("error", (*s.StateMessage)))
+				return 0, errors.Errorf("snapshot %s failed", *s.SnapshotId)
 			} else {
 				log.Debug("snapshot creating...", zap.Stringer("snap", s))
 				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
@@ -592,10 +595,12 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 					return errors.Errorf("specified snapshot [%s] is not found", oldVol.SnapshotID)
 				}
 
-				// Copy tags from source snapshots
+				// Copy tags from source snapshots, but avoid recursive tagging
 				for j := range resp.Snapshots[0].Tags {
-					tags = append(tags,
-						ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+					if !strings.HasPrefix(aws.StringValue(resp.Snapshots[0].Tags[j].Key), "snapshot/") {
+						tags = append(tags,
+							ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+					}
 				}
 
 				req.SetTagSpecifications([]*ec2.TagSpecification{

@@ -139,7 +139,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	return errors.Trace(v.err)
 }
 
-type preprocessorFlag uint8
+type preprocessorFlag uint64
 
 const (
 	// inPrepare is set when visiting in prepare statement.
@@ -159,6 +159,8 @@ const (
 	initTxnContextProvider
 	// inImportInto is set when visiting an import into statement.
 	inImportInto
+	// inAnalyze is set when visiting an analyze statement.
+	inAnalyze
 )
 
 // Make linter happy.
@@ -401,6 +403,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			p.IsStaleness = true
 		}
+	case *ast.AnalyzeTableStmt:
+		p.flag |= inAnalyze
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -528,7 +532,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	tblNames := extractTableList(originNode, nil, false)
+	tblNames := ExtractTableList(originNode, false)
 	for _, tn := range tblNames {
 		tbl, err := p.tableByName(tn)
 		if err != nil {
@@ -1807,6 +1811,16 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	var err error
+	defer func() {
+		if err == nil && !skipLock {
+			dbID, ok := is.SchemaByName(dbName)
+			if !ok {
+				return
+			}
+			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[tbl.Meta().ID] = dbID.ID
+		}
+	}()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -1825,7 +1839,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			if !skipLock {
@@ -1911,5 +1924,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 func (p *preprocessor) skipLockMDL() bool {
 	// skip lock mdl for IMPORT INTO statement,
 	// because it's a batch process and will do both DML and DDL.
-	return p.flag&inImportInto > 0
+	// skip lock mdl for ANALYZE statement.
+	return p.flag&inImportInto > 0 || p.flag&inAnalyze > 0
 }

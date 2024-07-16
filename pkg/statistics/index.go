@@ -208,7 +208,7 @@ func (idx *Index) CheckStats() {
 	if idx.IsFullLoad() || idx.PhysicalID <= 0 {
 		return
 	}
-	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
+	HistogramNeededItems.Insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.

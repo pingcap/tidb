@@ -11,6 +11,7 @@ go_library(
         "engine.go",
         "engine_mgr.go",
         "env.go",
+        "flush.go",
         "mem_root.go",
         "message.go",
         "mock.go",

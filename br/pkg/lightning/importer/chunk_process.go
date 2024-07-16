@@ -724,7 +724,7 @@ func (cr *chunkProcessor) deliverLoop(
 					rc.status.FinishedFileSize.Add(delta)
 				}
 			} else {
-				deliverLogger.Warn("offset go back", zap.Int64("curr", highOffset),
+				deliverLogger.Error("offset go back", zap.Int64("curr", highOffset),
 					zap.Int64("start", lowOffset))
 			}
 		}

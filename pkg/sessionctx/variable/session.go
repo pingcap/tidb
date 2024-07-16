@@ -1309,7 +1309,7 @@ type SessionVars struct {
 	ReadConsistency ReadConsistencyLevel
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
-	StatsLoadSyncWait int64
+	StatsLoadSyncWait atomic.Int64
 
 	// SysdateIsNow indicates whether Sysdate is an alias of Now function
 	SysdateIsNow bool
@@ -1481,7 +1481,8 @@ type SessionVars struct {
 	shardRand *rand.Rand
 
 	// Resource group name
-	// NOTE: all statement relate opeartion should use StmtCtx.ResourceGroupName instead.
+	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
+	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -2003,7 +2004,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
-		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
@@ -2067,6 +2067,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
+	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2685,7 +2686,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
-	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.SetResourceGroupName(sessionStates.ResourceGroupName)
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
@@ -2694,6 +2695,15 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
+}
+
+// SetResourceGroupName changes the resource group name and inc/dec the metrics accordingly.
+func (s *SessionVars) SetResourceGroupName(groupName string) {
+	if s.ResourceGroupName != groupName {
+		metrics.ConnGauge.WithLabelValues(s.ResourceGroupName).Dec()
+		metrics.ConnGauge.WithLabelValues(groupName).Inc()
+	}
+	s.ResourceGroupName = groupName
 }
 
 // TableDelta stands for the changed count for one table or partition.
@@ -3566,6 +3576,14 @@ func (s *SessionVars) GetRuntimeFilterTypes() []RuntimeFilterType {
 // GetRuntimeFilterMode return the session variable runtimeFilterMode
 func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
+}
+
+// GetMaxExecutionTime get the max execution timeout value.
+func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	if s.StmtCtx.HasMaxExecutionTime {
+		return s.StmtCtx.MaxExecutionTime
+	}
+	return s.MaxExecutionTime
 }
 
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable

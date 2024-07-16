@@ -1961,18 +1961,20 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		if partInfo.DDLType != model.PartitionTypeNone {
+		// ALTER TABLE ... PARTITION BY
+		if partInfo.Type != model.PartitionTypeNone {
 			// Also remove anything with the new table id
-			physicalTableIDs = append(physicalTableIDs, tblInfo.Partition.NewTableID)
+			physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
 			// Reset if it was normal table before
-			if tblInfo.Partition.Type == model.PartitionTypeNone {
+			if tblInfo.Partition.Type == model.PartitionTypeNone ||
+				tblInfo.Partition.DDLType == model.PartitionTypeNone {
 				tblInfo.Partition = nil
 			} else {
-				tblInfo.Partition.NewTableID = 0
-				tblInfo.Partition.DDLExpr = ""
-				tblInfo.Partition.DDLColumns = nil
-				tblInfo.Partition.DDLType = model.PartitionTypeNone
+				tblInfo.Partition.ClearReorgIntermediateInfo()
 			}
+		} else {
+			// REMOVE PARTITIONING
+			tblInfo.Partition.ClearReorgIntermediateInfo()
 		}
 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -2607,6 +2609,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	})
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
+	// TODO: Fix the issue of big transactions during EXCHANGE PARTITION with AutoID.
+	// Similar to https://github.com/pingcap/tidb/issues/46904
 	newAutoIDs := meta.AutoIDGroup{
 		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
 		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
@@ -3017,10 +3021,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				tblInfo.Partition = nil
 			} else {
 				// ALTER TABLE ... PARTITION BY
-				tblInfo.Partition.DDLType = model.PartitionTypeNone
-				tblInfo.Partition.DDLExpr = ""
-				tblInfo.Partition.DDLColumns = nil
-				tblInfo.Partition.NewTableID = 0
+				tblInfo.Partition.ClearReorgIntermediateInfo()
 			}
 			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
 			if err != nil {
@@ -3251,9 +3252,31 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			pid := p.GetPhysicalID()
-			newKey := tablecodec.EncodeTablePrefix(pid)
-			newKey = append(newKey, recordKey[len(newKey):]...)
+			var newKey kv.Key
+			if w.reorgedTbl.Meta().PKIsHandle || w.reorgedTbl.Meta().IsCommonHandle {
+				pid := p.GetPhysicalID()
+				newKey = tablecodec.EncodeTablePrefix(pid)
+				newKey = append(newKey, recordKey[len(newKey):]...)
+			} else {
+				// Non-clustered table / not unique _tidb_rowid for the whole table
+				// Generate new _tidb_rowid if exists.
+				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
+				stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
+				if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
+					// TODO: Which autoid allocator to use?
+					ids := uint64(max(1, w.batchCnt-len(w.rowRecords)))
+					// Keep using the original table's allocator
+					stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = tables.AllocHandleIDs(w.ctx, w.sessCtx, w.reorgedTbl, ids)
+					if err != nil {
+						return false, errors.Trace(err)
+					}
+				}
+				recordID, err := tables.AllocHandle(w.ctx, w.sessCtx, w.reorgedTbl)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				newKey = tablecodec.EncodeRecordKey(p.RecordPrefix(), recordID)
+			}
 			w.rowRecords = append(w.rowRecords, &rowRecord{
 				key: newKey, vals: rawRow,
 			})

@@ -752,6 +752,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+		d.runningJobs.clear()
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
@@ -790,12 +791,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	defer d.sessPool.Put(ctx)
 
 	ingest.InitGlobalLightningEnv()
-	d.ownerManager.SetRetireOwnerHook(func() {
-		// Since this instance is not DDL owner anymore, we clean up the processing job info.
-		if ingest.LitBackCtxMgr != nil {
-			ingest.LitBackCtxMgr.MarkJobFinish()
-		}
-	})
 
 	return nil
 }
@@ -1304,9 +1299,13 @@ type RecoverInfo struct {
 type RecoverSchemaInfo struct {
 	*model.DBInfo
 	RecoverTabsInfo []*RecoverInfo
-	DropJobID       int64
-	SnapshotTS      uint64
-	OldSchemaName   model.CIStr
+	// LoadTablesOnExecute is the new logic to avoid a large RecoverTabsInfo can't be
+	// persisted. If it's true, DDL owner will recover RecoverTabsInfo instead of the
+	// job submit node.
+	LoadTablesOnExecute bool
+	DropJobID           int64
+	SnapshotTS          uint64
+	OldSchemaName       model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

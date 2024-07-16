@@ -67,13 +67,14 @@ go_test(
     name = "infoschema_test",
     timeout = "short",
     srcs = [
+        "builder_test.go",
         "infoschema_test.go",
         "main_test.go",
         "metrics_schema_test.go",
     ],
     embed = [":infoschema"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",

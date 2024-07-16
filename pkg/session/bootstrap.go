@@ -571,7 +571,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
@@ -588,7 +588,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
@@ -602,7 +602,7 @@ const (
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
-        host VARCHAR(100) NOT NULL PRIMARY KEY,
+        host VARCHAR(261) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         keyspace_id bigint(8) NOT NULL DEFAULT -1);`
 
@@ -1024,11 +1024,19 @@ const (
 	// vresion 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
+
+	// version 180
+	//   modify `mysql.dist_framework_meta` host from VARCHAR(100) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask_history` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task` dispatcher_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task_history` dispatcher_id from varchar(256) to VARCHAR(261)
+	version180 = 180
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version179
+var currentBootstrapVersion int64 = version180
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1183,6 +1191,7 @@ var (
 		upgradeToVer177,
 		upgradeToVer178,
 		upgradeToVer179,
+		upgradeToVer180,
 	}
 )
 
@@ -2895,6 +2904,18 @@ func upgradeToVer179(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
+}
+
+func upgradeToVer180(s Session, ver int64) {
+	if ver >= version180 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta MODIFY COLUMN `host` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
 }
 
 func writeOOMAction(s Session) {

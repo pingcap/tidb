@@ -1450,9 +1450,14 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-	default:
-		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
+	case *PointGetExecutor, *BatchPointGetExec, // PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+		*TableDualExec,       // If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+		*TableSampleExecutor: // TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		return originReader
+	default:
+		// TODO: consider more operators like Projection.
+		b.err = errors.NewNoStackErrorf("unexpected operator %T under UnionScan", reader)
+		return nil
 	}
 	return us
 }
@@ -2097,14 +2102,18 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.TableResourceGroups),
 			strings.ToLower(infoschema.TableRunawayWatches),
-			strings.ToLower(infoschema.TableCheckConstraints):
+			strings.ToLower(infoschema.TableCheckConstraints),
+			strings.ToLower(infoschema.TableKeywords):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor,
+					table:      v.Table,
+					columns:    v.Columns,
+					extractor:  v.Extractor,
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),
@@ -2958,6 +2967,12 @@ func (*executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool 
 					return true
 				}
 			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
+					return true
+				}
+			}
 		case *plannercore.PhysicalTableScan:
 			for _, cond := range x.LateMaterializationFilterCondition {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
@@ -3406,6 +3421,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 			failpoint.Return(nil)
 		}
 	})
+	// https://github.com/pingcap/tidb/issues/50358
+	if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
+		v.SetSchema(v.GetTablePlan().Schema())
+	}
 	useMPP := useMPPExecution(b.ctx, v)
 	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
 	useTiFlash := useMPP || useTiFlashBatchCop
@@ -4132,6 +4151,9 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	}
 
 	ret := builder.buildUnionScanFromReader(reader, v)
+	if builder.err != nil {
+		return nil, builder.err
+	}
 	if us, ok := ret.(*UnionScanExec); ok {
 		err = us.open(ctx)
 	}

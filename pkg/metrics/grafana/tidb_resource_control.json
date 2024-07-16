@@ -183,6 +183,96 @@
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
+      "description": "The max request unit cost per second for all resource groups.",
+      "editable": true,
+      "error": false,
+      "fill": 1,
+      "fillGradient": 0,
+      "grid": {},
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "hiddenSeries": false,
+      "id": 40,
+      "legend": {
+        "alignAsTable": true,
+        "current": true,
+        "rightSide": true,
+        "show": true,
+        "sort": "max",
+        "sortDesc": true,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 2,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.5.27",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster.*\"}) by (resource_group)",
+          "hide": false,
+          "legendFormat": "{{resource_group}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "thresholds": [],
+      "timeRegions": [],
+      "title": "RU (max)",
+      "tooltip": {
+        "msResolution": true,
+        "shared": true,
+        "sort": 0,
+        "value_type": "cumulative"
+      },
+      "type": "graph",
+      "xaxis": {
+        "mode": "time",
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:37",
+          "format": "short",
+          "logBase": 10,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:38",
+          "format": "short",
+          "logBase": 1,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
       "description": "",
       "editable": true,
       "error": false,
@@ -196,7 +286,7 @@
       "gridPos": {
         "h": 7,
         "w": 12,
-        "x": 12,
+        "x": 0,
         "y": 1
       },
       "hiddenSeries": false,
@@ -312,7 +402,7 @@
       "gridPos": {
         "h": 7,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 8
       },
       "hiddenSeries": false,
@@ -427,8 +517,8 @@
       "gridPos": {
         "h": 7,
         "w": 12,
-        "x": 12,
-        "y": 8
+        "x": 0,
+        "y": 15
       },
       "hiddenSeries": false,
       "id": 15,
@@ -541,9 +631,9 @@
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 8,
+        "h": 7,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 15
       },
       "hiddenSeries": false,
@@ -659,7 +749,7 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
+        "x": 0,
         "y": 15
       },
       "hiddenSeries": false,

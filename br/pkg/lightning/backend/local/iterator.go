@@ -25,9 +25,6 @@ import (
 // Iter abstract iterator method for Ingester.
 type Iter interface {
 	common.ForwardIter
-	// Seek seek to specify position.
-	// if key not found, seeks next key position in iter.
-	Seek(key []byte) bool
 	// Last moves this iter to the last key.
 	Last() bool
 	// OpType represents operations of pair. currently we have two types.
@@ -58,15 +55,6 @@ type dupDetectIter struct {
 
 	curKey, curVal []byte
 	logger         log.Logger
-}
-
-func (d *dupDetectIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, common.ZeroRowID)
-	if d.err != nil || !d.iter.SeekGE(rawKey) {
-		return false
-	}
-	d.fill()
-	return d.err == nil
 }
 
 func (d *dupDetectIter) First() bool {
@@ -166,15 +154,6 @@ type dupDBIter struct {
 	keyAdapter common.KeyAdapter
 	curKey     []byte
 	err        error
-}
-
-func (d *dupDBIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, common.ZeroRowID)
-	if d.err != nil || !d.iter.SeekGE(rawKey) {
-		return false
-	}
-	d.curKey, d.err = d.keyAdapter.Decode(d.curKey[:0], d.iter.Key())
-	return d.err == nil
 }
 
 func (d *dupDBIter) Error() error {

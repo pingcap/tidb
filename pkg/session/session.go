@@ -352,7 +352,7 @@ func (s *session) cleanRetryInfo() {
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := plannercore.GetBindSQL4PlanCache(s, preparedObj)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
-					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -975,7 +975,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	if !kv.ErrWriteConflict.Equal(oldErr) {
 		return nil
 	}
-	if errors.RedactLogEnabled.Load() {
+	if errors.RedactLogEnabled.Load() == errors.RedactLogEnable {
 		return nil
 	}
 	originErr := errors.Cause(oldErr)
@@ -2718,7 +2718,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 	}
 
 	if variable.EnableResourceControl.Load() && info.ResourceGroupName != "" {
-		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
+		s.sessionVars.SetResourceGroupName(info.ResourceGroupName)
 	}
 
 	if info.InSandBoxMode {

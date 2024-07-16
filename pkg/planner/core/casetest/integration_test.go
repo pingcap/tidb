@@ -404,6 +404,38 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	}
 }
 
+func TestIssue51873(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE h1 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  position_date date NOT NULL,
+  asset_id varchar(32) DEFAULT NULL,
+  portfolio_code varchar(50) DEFAULT NULL,
+  PRIMARY KEY (id,position_date) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY uidx_posi_asset_balance_key (position_date,portfolio_code,asset_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002
+PARTITION BY RANGE COLUMNS(position_date)
+(PARTITION p202401 VALUES LESS THAN ('2024-02-01'))`)
+	tk.MustExec(`create table h2 like h1`)
+	tk.MustExec(`insert into h1 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`insert into h2 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`analyze table h1`)
+	tk.MustExec(`set @@tidb_skip_missing_partition_stats=0`)
+	tk.MustQuery(`with assetBalance AS
+    (SELECT asset_id, portfolio_code FROM h1 pab WHERE pab.position_date = '2024-01-01' ),
+cashBalance AS (SELECT portfolio_code, asset_id
+    FROM h2 pcb WHERE pcb.position_date = '2024-01-01' ),
+assetIdList AS (SELECT DISTINCT asset_id AS assetId
+    FROM assetBalance )
+SELECT main.portfolioCode
+FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
+    FROM assetBalance balance
+    LEFT JOIN assetIdList
+        ON balance.asset_id = assetIdList.assetId ) main`).Check(testkit.Rows("1"))
+}
+
 func TestIssue50926(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -440,6 +472,15 @@ func TestFixControl45132(t *testing.T) {
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
 	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+}
+
+func TestIssue49438(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists tx`)
+	tk.MustExec(`create table tx (a int, b json, key k(a, (cast(b as date array))))`)
+	tk.MustExec(`select 1 from tx where a in (1)`) // no error
 }
 
 func TestIssue41957(t *testing.T) {

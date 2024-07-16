@@ -32,7 +32,7 @@ tidb_background_subtask_history	CREATE TABLE `tidb_background_subtask_history` (
   `task_key` varchar(256) DEFAULT NULL,
   `ddl_physical_tid` bigint(20) DEFAULT NULL,
   `type` int(11) DEFAULT NULL,
-  `exec_id` varchar(256) DEFAULT NULL,
+  `exec_id` varchar(261) DEFAULT NULL,
   `exec_expired` timestamp NULL DEFAULT NULL,
   `state` varchar(64) NOT NULL,
   `checkpoint` longblob NOT NULL,

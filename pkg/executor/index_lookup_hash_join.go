@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -735,7 +734,7 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 		return nil, nil, nil
 	}
 	joinType := JoinerType(iw.joiner)
-	isSemiJoin := joinType == plannercore.SemiJoin || joinType == plannercore.LeftOuterSemiJoin
+	isSemiJoin := joinType.IsSemiJoin()
 	matchedRows = make([]chunk.Row, 0, len(iw.matchedOuterPtrs))
 	matchedRowPtr = make([]chunk.RowPtr, 0, len(iw.matchedOuterPtrs))
 	for _, ptr := range iw.matchedOuterPtrs {

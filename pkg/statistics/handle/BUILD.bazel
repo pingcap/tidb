@@ -36,7 +36,9 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tiancaiamao_gp//:gp",
@@ -57,7 +59,7 @@ go_test(
     embed = [":handle"],
     flaky = True,
     race = "on",
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/config",
         "//pkg/parser/model",
