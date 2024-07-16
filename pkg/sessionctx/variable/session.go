@@ -1485,12 +1485,8 @@ type SessionVars struct {
 	shardRand *rand.Rand
 
 	// Resource group name
-<<<<<<< HEAD
-	// NOTE: all statement relate opeartion should use StmtCtx.ResourceGroupName instead.
-=======
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
->>>>>>> ac786cb1a38 (server: refine the connection counter logic (#54546))
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
