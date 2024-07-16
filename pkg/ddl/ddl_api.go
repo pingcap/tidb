@@ -406,7 +406,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	tbls := is.SchemaTables(dbInfo.Name)
+	tbls := is.SchemaTableInfos(context.Background(), dbInfo.Name)
 	total := len(tbls)
 	succ := 0
 	skip := 0
@@ -429,7 +429,6 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
 
 	for _, tbl := range tbls {
-		tbl := tbl.Meta()
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
@@ -674,7 +673,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
-	err = checkDatabaseHasForeignKeyReferred(is, old.Name, fkCheck)
+	err = checkDatabaseHasForeignKeyReferred(d.ctx, is, old.Name, fkCheck)
 	if err != nil {
 		return err
 	}
@@ -708,11 +707,11 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		return nil
 	}
 	// Clear table locks hold by the session.
-	tbs := is.SchemaTables(stmt.Name)
+	tbs := is.SchemaTableInfos(d.ctx, stmt.Name)
 	lockTableIDs := make([]int64, 0)
 	for _, tb := range tbs {
-		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-			lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+		if ok, _ := ctx.CheckTableLocked(tb.ID); ok {
+			lockTableIDs = append(lockTableIDs, tb.ID)
 		}
 	}
 	ctx.ReleaseTableLockByTableIDs(lockTableIDs)

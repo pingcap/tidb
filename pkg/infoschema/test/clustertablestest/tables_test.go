@@ -622,17 +622,17 @@ func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, d
 	require.True(t, ok)
 	require.Equal(t, dbID, db.ID)
 	// Test for information_schema table id.
-	tables := is.SchemaTables(model.NewCIStr(dbName))
+	tables := is.SchemaTableInfos(context.Background(), model.NewCIStr(dbName))
 	require.Greater(t, len(tables), 0)
 	for _, tbl := range tables {
-		tid := tbl.Meta().ID
-		require.Greaterf(t, tid&autoid.SystemSchemaIDFlag, int64(0), "table name is %v", tbl.Meta().Name)
-		require.Greaterf(t, tid&^autoid.SystemSchemaIDFlag, start, "table name is %v", tbl.Meta().Name)
-		require.Lessf(t, tid&^autoid.SystemSchemaIDFlag, end, "table name is %v", tbl.Meta().Name)
+		tid := tbl.ID
+		require.Greaterf(t, tid&autoid.SystemSchemaIDFlag, int64(0), "table name is %v", tbl.Name)
+		require.Greaterf(t, tid&^autoid.SystemSchemaIDFlag, start, "table name is %v", tbl.Name)
+		require.Lessf(t, tid&^autoid.SystemSchemaIDFlag, end, "table name is %v", tbl.Name)
 
 		name, ok := uniqueIDMap[tid]
-		require.Falsef(t, ok, "schema id of %v is duplicate with %v, both is %v", name, tbl.Meta().Name, tid)
-		uniqueIDMap[tid] = tbl.Meta().Name.O
+		require.Falsef(t, ok, "schema id of %v is duplicate with %v, both is %v", name, tbl.Name, tid)
+		uniqueIDMap[tid] = tbl.Name.O
 	}
 }
 

@@ -182,8 +182,7 @@ func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, 
 	expectTiFlashStoreCount := uint64(0)
 	needTiFlash := false
 	for _, s := range allSchemaName {
-		for _, t := range info.SchemaTables(s) {
-			t := t.Meta()
+		for _, t := range info.SchemaTableInfos(ctx, s) {
 			if t.TiFlashReplica != nil {
 				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
 				recorder.AddTable(t.ID, *t.TiFlashReplica)

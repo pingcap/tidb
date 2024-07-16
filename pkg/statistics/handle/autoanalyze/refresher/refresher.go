@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -180,15 +181,14 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 					continue
 				}
 
-				tbls := is.SchemaTables(db)
+				tbls := is.SchemaTableInfos(context.Background(), db)
 				// We need to check every partition of every table to see if it needs to be analyzed.
-				for _, tbl := range tbls {
+				for _, tblInfo := range tbls {
 					// If table locked, skip analyze all partitions of the table.
-					if _, ok := lockedTables[tbl.Meta().ID]; ok {
+					if _, ok := lockedTables[tblInfo.ID]; ok {
 						continue
 					}
 
-					tblInfo := tbl.Meta()
 					if tblInfo.IsView() {
 						continue
 					}

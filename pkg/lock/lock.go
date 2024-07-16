@@ -141,9 +141,9 @@ func (c *Checker) CheckLockInDB(db string, privilege mysql.PrivilegeType) error 
 	if privilege == mysql.CreatePriv {
 		return nil
 	}
-	tables := c.is.SchemaTables(model.NewCIStr(db))
+	tables := c.is.SchemaTableInfos(stdctx.Background(), model.NewCIStr(db))
 	for _, tbl := range tables {
-		err := c.CheckTableLock(db, tbl.Meta().Name.L, privilege, false)
+		err := c.CheckTableLock(db, tbl.Name.L, privilege, false)
 		if err != nil {
 			return err
 		}

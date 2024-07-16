@@ -643,13 +643,13 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	allDBs := schema.AllSchemaNames()
-	for _, db := range allDBs {
-		tbls := schema.SchemaTables(db)
-		for _, tbl := range tbls {
-			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
+	tableInfoRes := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, res := range tableInfoRes {
+		for _, tbl := range res.TableInfos {
+			replicaInfos = h.getTiFlashReplicaInfo(tbl, replicaInfos)
 		}
 	}
+
 	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
 	if err != nil {
 		handler.WriteError(w, err)
@@ -987,7 +987,7 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
-			tbs := schema.SchemaTableInfos(cDBName)
+			tbs := schema.SchemaTableInfos(context.Background(), cDBName)
 			WriteDBTablesData(w, tbs)
 			return
 		}
@@ -1481,9 +1481,9 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if util.IsMemDB(dbName.L) {
 			continue
 		}
-		tables := schema.SchemaTables(dbName)
+		tables := schema.SchemaTableInfos(context.Background(), dbName)
 		for _, tableVal := range tables {
-			regionDetail.addTableInRange(dbName.String(), tableVal.Meta(), frameRange)
+			regionDetail.addTableInRange(dbName.String(), tableVal, frameRange)
 		}
 	}
 	handler.WriteData(w, regionDetail)

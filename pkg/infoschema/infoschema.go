@@ -318,8 +318,16 @@ func (is *infoSchema) FindTableInfoByPartitionID(
 }
 
 // SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
-func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
-	return getTableInfoList(is.SchemaTables(schema))
+func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) []*model.TableInfo {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil
+	}
+	tables := make([]*model.TableInfo, 0, len(schemaTables.tables))
+	for _, tbl := range schemaTables.tables {
+		tables = append(tables, tbl.Meta())
+	}
+	return tables
 }
 
 type tableInfoResult struct {
@@ -331,7 +339,7 @@ func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilt
 	ret := make([]tableInfoResult, 0, 10)
 	for _, dbName := range is.AllSchemaNames() {
 		res := tableInfoResult{DBName: dbName.O}
-		for _, tblInfo := range is.SchemaTableInfos(dbName) {
+		for _, tblInfo := range is.SchemaTableInfos(stdctx.Background(), dbName) {
 			if !filter(tblInfo) {
 				continue
 			}
@@ -364,18 +372,6 @@ func (is *infoSchema) AllSchemaNames() (schemas []model.CIStr) {
 		rs = append(rs, v.dbInfo.Name)
 	}
 	return rs
-}
-
-func (is *infoSchema) SchemaTables(schema model.CIStr) []table.Table {
-	schemaTables, ok := is.schemaMap[schema.L]
-	if !ok {
-		return nil
-	}
-	tables := make([]table.Table, 0, len(schemaTables.tables))
-	for _, tbl := range schemaTables.tables {
-		tables = append(tables, tbl)
-	}
-	return tables
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.

@@ -353,7 +353,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			continue
 		}
 
-		tbls := is.SchemaTables(model.NewCIStr(db))
+		tbls := is.SchemaTableInfos(context.Background(), model.NewCIStr(db))
 		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
 		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
 		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
@@ -363,7 +363,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
-		for _, tbl := range tbls {
+		for _, tblInfo := range tbls {
 			// Sometimes the tables are too many. Auto-analyze will take too much time on it.
 			// so we need to check the available time.
 			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
@@ -371,11 +371,10 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			}
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
-			if _, ok := lockedTables[tbl.Meta().ID]; ok {
+			if _, ok := lockedTables[tblInfo.ID]; ok {
 				continue
 			}
 
-			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
 				continue
 			}
