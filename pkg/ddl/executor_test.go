@@ -67,7 +67,7 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []interface{}{&model.TableInfo{}},
+			Args:       []any{&model.TableInfo{}},
 		},
 	}}
 	initialGID := getGlobalID(ctx, t, store)
@@ -130,7 +130,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 	genCreateTblJob := func(tp model.ActionType, partitionCnt int) *model.Job {
 		return &model.Job{
 			Type: tp,
-			Args: []interface{}{genTblInfo(partitionCnt)},
+			Args: []any{genTblInfo(partitionCnt)},
 		}
 	}
 
@@ -141,7 +141,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 		}
 		return &model.Job{
 			Type: model.ActionCreateTables,
-			Args: []interface{}{infos},
+			Args: []any{infos},
 		}
 	}
 
@@ -149,7 +149,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 		info := &model.DBInfo{}
 		return &model.Job{
 			Type: model.ActionCreateSchema,
-			Args: []interface{}{info},
+			Args: []any{info},
 		}
 	}
 
@@ -307,7 +307,7 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []interface{}{&model.TableInfo{Comment: payload}},
+			Args:       []any{&model.TableInfo{Comment: payload}},
 		},
 	}}
 	counters := make([]atomic.Int64, thread+1)
