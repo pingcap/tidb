@@ -525,17 +525,18 @@ func getLineIndex(offset offset, index int) int {
 // findMatchedRightBracket returns the rightBracket index which matchs line[leftBracketIdx]
 // leftBracketIdx should be valid string index for line
 // Returns -1 if invalid inputs are given
-func findMatchedRightBracket(line []rune, leftBracketIdx int) int {
+func findMatchedRightBracket(line string, leftBracketIdx int) int {
 	leftBracket := line[leftBracketIdx]
-	rightBracket := '}'
+	rightBracket := byte('}')
 	if leftBracket == '[' {
 		rightBracket = ']'
 	} else if leftBracket != '{' {
 		return -1
 	}
+	lineLength := len(line)
 	current := leftBracketIdx
 	leftBracketCnt := 0
-	for current < len(line) {
+	for current < lineLength {
 		b := line[current]
 		if b == leftBracket {
 			leftBracketCnt++
@@ -556,55 +557,55 @@ func findMatchedRightBracket(line []rune, leftBracketIdx int) int {
 	return -1
 }
 
-func isLetterOrNumeric(r rune) bool {
-	return ('A' <= r && r <= 'Z') || ('a' <= r && r <= 'z') || ('0' <= r && r <= '9')
+func isLetterOrNumeric(b byte) bool {
+	return ('A' <= b && b <= 'Z') || ('a' <= b && b <= 'z') || ('0' <= b && b <= '9')
 }
 
 // splitByColon split a line like "field: value field: value..."
 // Note:
-// 1. value string may be surrounded by brackets, allowed brackets includes "[]" and "{}",  like {key: value,{key: value}}
+// 1. field string contains only ASCII characters
+// 2. value string may be surrounded by brackets, allowed brackets includes "[]" and "{}",  like {key: value,{key: value}}
 // "[]" can only be nested inside "[]"; "{}" can only be nested inside "{}"
-// 2. value string can't contain ' ' character unless it is inside brackets
+// 3. value string can't contain ' ' character unless it is inside brackets
 func splitByColon(line string) (fields []string, values []string) {
 	fields = make([]string, 0, 1)
 	values = make([]string, 0, 1)
 
-	lineInRune := []rune(line)
-	runeCnt := len(lineInRune)
+	lineLength := len(line)
 	parseKey := true
 	start := 0
 	errMsg := ""
-	for current := 0; current < runeCnt; {
+	for current := 0; current < lineLength; {
 		if parseKey {
 			// Find key start
-			for current < runeCnt && !isLetterOrNumeric(lineInRune[current]) {
+			for current < lineLength && !isLetterOrNumeric(line[current]) {
 				current++
 			}
 			start = current
-			if current >= runeCnt {
+			if current >= lineLength {
 				break
 			}
-			for current < runeCnt && lineInRune[current] != ':' {
+			for current < lineLength && line[current] != ':' {
 				current++
 			}
-			fields = append(fields, string(lineInRune[start:current]))
+			fields = append(fields, line[start:current])
 			parseKey = false
 			current += 2 // bypass ": "
 		} else {
 			start = current
-			if current < runeCnt && (lineInRune[current] == '{' || lineInRune[current] == '[') {
-				rBraceIdx := findMatchedRightBracket(lineInRune, current)
+			if current < lineLength && (line[current] == '{' || line[current] == '[') {
+				rBraceIdx := findMatchedRightBracket(line, current)
 				if rBraceIdx == -1 {
 					errMsg = "Unmatched left brace"
 					break
 				}
 				current = rBraceIdx + 1
 			} else {
-				for current < runeCnt && lineInRune[current] != ' ' {
+				for current < lineLength && line[current] != ' ' {
 					current++
 				}
 			}
-			values = append(values, string(lineInRune[start:min(current, len(line))]))
+			values = append(values, line[start:min(current, len(line))])
 			parseKey = true
 		}
 	}
