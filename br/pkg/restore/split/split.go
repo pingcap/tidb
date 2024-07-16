@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	goerrors "errors"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -121,7 +122,7 @@ func PaginateScanRegion(
 			var batch []*RegionInfo
 			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			if err != nil {
-				err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
+				err = errors.Annotatef(berrors.ErrPDBatchScanRegion.Wrap(err), "scan regions from start-key:%s, err: %s",
 					redact.Key(scanStartKey), err.Error())
 				return err
 			}
@@ -235,7 +236,9 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
-	if berrors.ErrPDBatchScanRegion.Equal(err) {
+	// TODO(lance6716): why we only backoff when the error is ErrPDBatchScanRegion?
+	var perr *errors.Error
+	if goerrors.As(err, &perr) && berrors.ErrPDBatchScanRegion.ID() == perr.ID() {
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
 		delayTime := b.Stat.ExponentialBackoff()
