@@ -208,9 +208,11 @@ func TestBasic(t *testing.T) {
 
 	tblInfos := is.SchemaTableInfos(context.Background(), dbName)
 	require.Len(t, tblInfos, 1)
-	require.Same(t, tbs[0].Meta(), tblInfos[0])
+	tbl, ok := is.TableByID(tblInfos[0].ID)
+	require.True(t, ok)
+	require.Same(t, tbl.Meta(), tblInfos[0])
 
-	tblInfos = is.SchemaTableInfos(noexist)
+	tblInfos = is.SchemaTableInfos(context.Background(), noexist)
 	require.Len(t, tblInfos, 0)
 
 	// Make sure partitions table exists
@@ -438,7 +440,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	// full load
 	data = infoschema.NewData()
 	newDB, ok := newIS.SchemaByName(model.NewCIStr("test"))
-	tables := newIS.SchemaTableInfos(newDB.Name)
+	tables := newIS.SchemaTableInfos(context.Background(), newDB.Name)
 	tblInfos := make([]*model.TableInfo, 0, len(tables))
 	for _, table := range tables {
 		tblInfos = append(tblInfos, table)
