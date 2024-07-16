@@ -74,7 +74,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		rows, _, err = util.ExecRows(
 			sctx,
-			"SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version",
+			"SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? order by version",
 			lastVersion,
 		)
 		return err
@@ -90,6 +90,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
+		snapshot := row.GetUint64(4)
 
 		// Detect the context cancel signal, since it may take a long time for the loop.
 		// TODO: add context to TableInfoByID and remove this code block?
@@ -136,6 +137,16 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
+		// It only occurs in the following situations:
+		// 1. The table has already been analyzed,
+		//	but because the predicate columns feature is turned on, and it doesn't have any columns or indexes analyzed,
+		//	it only analyzes _row_id and refreshes stats_meta, in which case the snapshot is not zero.
+		// 2. LastAnalyzeVersion is 0 because it has never been loaded.
+		// In this case, we can initialize LastAnalyzeVersion to the snapshot,
+		//	otherwise auto-analyze will assume that the table has never been analyzed and try to analyze it again.
+		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
+			tbl.LastAnalyzeVersion = snapshot
+		}
 		tables = append(tables, tbl)
 	}
 
