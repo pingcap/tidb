@@ -102,7 +102,6 @@ const (
 	defaultFlagDdlBatchSize   = 128
 	resetSpeedLimitRetryTimes = 3
 	maxRestoreBatchSizeLimit  = 10240
-	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
 )
 
 const (
@@ -1311,7 +1310,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 
 	// We won't need to restore more than 1800 PB data at one time, right?
 	preserve := func(base uint64, ratio float32) uint64 {
-		if base > 1000*pb {
+		if base > 1000*units.PB {
 			return base
 		}
 		return base * uint64(ratio*10) / 10
