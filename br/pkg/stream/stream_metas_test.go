@@ -4,11 +4,14 @@ package stream
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/crc64"
 	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 
@@ -532,6 +535,99 @@ func m(storeId int64, minTS, maxTS uint64) *backuppb.Metadata {
 		MaxTs:       maxTS,
 		MetaVersion: backuppb.MetaVersion_V2,
 	}
+}
+
+type migOp func(*backuppb.Migration)
+
+func mDel(mPath string, files ...string) migOp {
+	return func(m *backuppb.Migration) {
+		idx := slices.IndexFunc(m.EditMeta, func(m *backuppb.MetaEdit) bool { return m.Path == mPath })
+		var meta *backuppb.MetaEdit
+		if idx < 0 {
+			meta = &backuppb.MetaEdit{
+				Path: mPath,
+			}
+			m.EditMeta = append(m.EditMeta, meta)
+		} else {
+			meta = m.EditMeta[idx]
+		}
+		meta.DeletePhysicalFiles = append(meta.DeletePhysicalFiles, files...)
+	}
+}
+
+func sp(off, len uint64) *backuppb.Span {
+	return &backuppb.Span{
+		Offset: off,
+		Length: len,
+	}
+}
+
+func spans(lPath string, total uint64, spans ...*backuppb.Span) *backuppb.DeleteSpansOfFile {
+	return &backuppb.DeleteSpansOfFile{
+		Path:            lPath,
+		Spans:           spans,
+		WholeFileLength: total,
+	}
+}
+
+func mLogDel(mPath string, logFiles ...*backuppb.DeleteSpansOfFile) migOp {
+	return func(m *backuppb.Migration) {
+		idx := slices.IndexFunc(m.EditMeta, func(m *backuppb.MetaEdit) bool { return m.Path == mPath })
+		var meta *backuppb.MetaEdit
+		if idx < 0 {
+			meta = &backuppb.MetaEdit{
+				Path: mPath,
+			}
+			m.EditMeta = append(m.EditMeta, meta)
+		} else {
+			meta = m.EditMeta[idx]
+		}
+		meta.DeleteLogicalFiles = append(meta.DeleteLogicalFiles, logFiles...)
+	}
+}
+
+func mig(ops ...migOp) *backuppb.Migration {
+	mig := &backuppb.Migration{}
+	for _, op := range ops {
+		op(mig)
+	}
+	return mig
+}
+
+func hashMigration(m *backuppb.Migration) uint64 {
+	var crc64 uint64 = 0
+	for _, compaction := range m.Compactions {
+		crc64 ^= compaction.ArtifactesHash
+	}
+	for _, metaEdit := range m.EditMeta {
+		crc64 ^= hashMetaEdit(metaEdit)
+	}
+	return crc64 ^ m.TruncatedTo
+}
+
+func hashMetaEdit(metaEdit *backuppb.MetaEdit) uint64 {
+	var res uint64 = 0
+	for _, df := range metaEdit.DeletePhysicalFiles {
+		digest := crc64.New(crc64.MakeTable(crc64.ISO))
+		digest.Write([]byte(df))
+		res ^= digest.Sum64()
+	}
+	for _, spans := range metaEdit.DeleteLogicalFiles {
+		for _, span := range spans.GetSpans() {
+			crc := crc64.New(crc64.MakeTable(crc64.ISO))
+			crc.Write([]byte(spans.GetPath()))
+			crc.Write(binary.LittleEndian.AppendUint64(nil, span.GetOffset()))
+			crc.Write(binary.LittleEndian.AppendUint64(nil, span.GetLength()))
+			res ^= crc.Sum64()
+		}
+	}
+	crc := crc64.New(crc64.MakeTable(crc64.ISO))
+	if metaEdit.DestructSelf {
+		crc.Write([]byte{1})
+	} else {
+		crc.Write([]byte{0})
+	}
+	return res ^ crc.Sum64()
 }
 
 func f(storeId int64, minTS, maxTS uint64, cf string, defaultTS uint64) *backuppb.DataFileGroup {
@@ -2314,4 +2410,37 @@ func TestCalculateShiftTS(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestBasicMigration(t *testing.T) {
+	mig1 := mig(
+		mDel("00001.meta", "foo.log"),
+		mLogDel("00002.meta",
+			spans("00001.log", 1024, sp(0, 42), sp(42, 18)),
+			spans("00002.log", 96, sp(42, 54)),
+		),
+	)
+	mig2 := mig(
+		mDel("00001.meta", "bar.log"),
+		mLogDel("00002.meta",
+			spans("00002.log", 96, sp(0, 42)),
+		),
+	)
+
+	ds := storage.DryRun(nil)
+	est := MigerationExtension(ds)
+	res := est.merge(mig1, mig2)
+
+	resE := mig(
+		mDel("00001.meta", "bar.log"),
+		mLogDel("00002.meta",
+			spans("00002.log", 96, sp(0, 42)),
+		),
+		mDel("00001.meta", "foo.log"),
+		mLogDel("00002.meta",
+			spans("00001.log", 1024, sp(0, 42), sp(42, 18)),
+			spans("00002.log", 96, sp(42, 54)),
+		),
+	)
+	require.Equal(t, hashMigration(resE), hashMigration(res), "%v %v", resE, res)
 }
