@@ -567,7 +567,7 @@ func isLetterOrNumeric(b byte) bool {
 
 // splitByColon split a line like "field: value field: value..."
 // Note:
-// 1. field string contains only ASCII characters
+// 1. field string's first character can only be ASCII letters or digits, and can't contain ':'
 // 2. value string may be surrounded by brackets, allowed brackets includes "[]" and "{}",  like {key: value,{key: value}}
 // "[]" can only be nested inside "[]"; "{}" can only be nested inside "{}"
 // 3. value string can't contain ' ' character unless it is inside brackets
