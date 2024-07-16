@@ -252,11 +252,11 @@ func (d *ddl) startLocalWorkerLoop() {
 		select {
 		case <-d.ctx.Done():
 			return
-		case task, ok := <-d.localJobCh:
+		case jobW, ok := <-d.localJobCh:
 			if !ok {
 				return
 			}
-			d.delivery2LocalWorker(d.localWorkerPool, task)
+			d.delivery2LocalWorker(d.localWorkerPool, jobW)
 		}
 	}
 }
@@ -469,11 +469,11 @@ func (s *jobScheduler) mustReloadSchemas() {
 // delivery2LocalWorker runs the DDL job of v2 in local.
 // send the result to the error channels in the task.
 // delivery2Localworker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2LocalWorker(pool *workerPool, task *JobWrapper) {
-	job := task.Job
+func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
+	job := jobW.Job
 	wk, err := pool.get()
 	if err != nil {
-		task.NotifyError(err)
+		jobW.NotifyError(err)
 		return
 	}
 	for wk == nil {
@@ -484,7 +484,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *JobWrapper) {
 		}
 		wk, err = pool.get()
 		if err != nil {
-			task.NotifyError(err)
+			jobW.NotifyError(err)
 			return
 		}
 	}
@@ -507,7 +507,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *JobWrapper) {
 		if err != nil {
 			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		}
-		task.NotifyError(err)
+		jobW.NotifyError(err)
 	})
 }
 

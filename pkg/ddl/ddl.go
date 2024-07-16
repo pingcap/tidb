@@ -268,9 +268,7 @@ type DDL interface {
 // exported for testing.
 type JobWrapper struct {
 	*model.Job
-	// see CreateTableConfig.
-	// TODO this param only affects create-table/db now, will extend
-	// to other type of DDL later.
+	// IDAllocated see config of same name in CreateTableConfig.
 	// exported for test.
 	IDAllocated bool
 	// when we combine multiple jobs into one task,
@@ -1198,15 +1196,15 @@ func (d *ddl) doDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 		if val.(bool) {
 			<-jobW.errChs[0]
 			// The same job will be put to the DDL queue twice.
-			newJob := job.Clone()
-			task1 := &JobWrapper{
-				Job:         newJob,
+			job = job.Clone()
+			newJobW := &JobWrapper{
+				Job:         job,
 				IDAllocated: jobW.IDAllocated,
 				errChs:      []chan error{make(chan error)},
 			}
-			d.deliverJobTask(task1)
+			d.deliverJobTask(newJobW)
 			// The second job result is used for test.
-			jobW = task1
+			jobW = newJobW
 		}
 	})
 

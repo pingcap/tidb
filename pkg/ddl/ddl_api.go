@@ -2987,7 +2987,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	})
 	c := GetCreateTableConfig(cs)
 
-	theJob := &JobWrapper{
+	jobW := &JobWrapper{
 		Job: &model.Job{
 			BinlogInfo:     &model.HistoryInfo{},
 			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
@@ -3027,12 +3027,12 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			continue
 		}
 
-		// if theJob.Type == model.ActionCreateTables, it is initialized
-		// if not, initialize theJob by job.XXXX
-		if theJob.Type != model.ActionCreateTables {
-			theJob.Type = model.ActionCreateTables
-			theJob.SchemaID = job.SchemaID
-			theJob.SchemaName = job.SchemaName
+		// if jobW.Type == model.ActionCreateTables, it is initialized
+		// if not, initialize jobW by job.XXXX
+		if jobW.Type != model.ActionCreateTables {
+			jobW.Type = model.ActionCreateTables
+			jobW.SchemaID = job.SchemaID
+			jobW.SchemaName = job.SchemaName
 		}
 
 		// append table job args
@@ -3041,37 +3041,37 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			return errors.Trace(fmt.Errorf("except table info"))
 		}
 		args = append(args, info)
-		theJob.InvolvingSchemaInfo = append(theJob.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
+		jobW.InvolvingSchemaInfo = append(jobW.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 			Database: dbName.L,
 			Table:    info.Name.L,
 		})
 		if sharedInv := getSharedInvolvingSchemaInfo(info); len(sharedInv) > 0 {
-			theJob.InvolvingSchemaInfo = append(theJob.InvolvingSchemaInfo, sharedInv...)
+			jobW.InvolvingSchemaInfo = append(jobW.InvolvingSchemaInfo, sharedInv...)
 		}
 	}
 	if len(args) == 0 {
 		return nil
 	}
-	theJob.Args = append(theJob.Args, args)
-	theJob.Args = append(theJob.Args, ctx.GetSessionVars().ForeignKeyChecks)
+	jobW.Args = append(jobW.Args, args)
+	jobW.Args = append(jobW.Args, ctx.GetSessionVars().ForeignKeyChecks)
 
-	err = d.doDDLJobWrapper(ctx, theJob)
+	err = d.doDDLJobWrapper(ctx, jobW)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
-		return errors.Trace(d.callHookOnChanged(theJob.Job, err))
+		return errors.Trace(d.callHookOnChanged(jobW.Job, err))
 	}
 
 	for j := range args {
-		if err = d.createTableWithInfoPost(ctx, args[j], theJob.SchemaID); err != nil {
-			return errors.Trace(d.callHookOnChanged(theJob.Job, err))
+		if err = d.createTableWithInfoPost(ctx, args[j], jobW.SchemaID); err != nil {
+			return errors.Trace(d.callHookOnChanged(jobW.Job, err))
 		}
 	}
 
-	return d.callHookOnChanged(theJob.Job, err)
+	return d.callHookOnChanged(jobW.Job, err)
 }
 
 // BuildQueryStringFromJobs takes a slice of Jobs and concatenates their
