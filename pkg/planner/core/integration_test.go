@@ -2167,7 +2167,7 @@ func TestIssue48257(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t all columns")
 	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 		"TableReader 1.00 root  data:TableFullScan",
@@ -2175,7 +2175,7 @@ func TestIssue48257(t *testing.T) {
 	))
 	tk.MustExec("insert into t value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 		"TableReader 2.00 root  data:TableFullScan",
 		"└─TableFullScan 2.00 cop[tikv] table:t keep order:false",
@@ -2192,7 +2192,7 @@ func TestIssue48257(t *testing.T) {
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("insert into t1 value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t1 all columns")
 	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 		"TableReader 1.00 root  data:TableFullScan",
@@ -2200,7 +2200,7 @@ func TestIssue48257(t *testing.T) {
 	))
 	tk.MustExec("insert into t1 value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 		"TableReader 2.00 root  data:TableFullScan",
 		"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -2215,6 +2215,26 @@ func TestIssue48257(t *testing.T) {
 		"TableReader 1.00 root  data:TableFullScan",
 		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
 	))
+}
+
+func TestIssue54213(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE tb (
+  object_id bigint(20),
+  a bigint(20) ,
+  b bigint(20) ,
+  c bigint(20) ,
+  PRIMARY KEY (object_id),
+  KEY ab (a,b))`)
+	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
+			"└─Limit_12 0.10 root  offset:0, count:100",
+			"  └─IndexReader_16 0.10 root  index:Limit_15",
+			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
+			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }
 
 func TestIssue52472(t *testing.T) {

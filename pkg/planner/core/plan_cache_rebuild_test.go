@@ -153,7 +153,7 @@ func TestCheckPlanClone(t *testing.T) {
 
 	// test tag
 	type S struct {
-		p1 *int `plan-cache-shallow-clone:"true"`
+		p1 *int `plan-cache-clone:"shallow"`
 		p2 *int
 	}
 	s1 := new(S)
@@ -255,8 +255,8 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), path, visited)
 	case reflect.Struct:
 		for i, n := 0, v1.NumField(); i < n; i++ {
-			tag := v1.Type().Field(i).Tag.Get("plan-cache-shallow-clone")
-			if tag == "true" {
+			tag := v1.Type().Field(i).Tag.Get("plan-cache-clone")
+			if tag == "shallow" {
 				continue
 			}
 			fieldName := v1.Type().Field(i).Name
