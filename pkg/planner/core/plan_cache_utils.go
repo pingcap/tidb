@@ -527,7 +527,7 @@ type PointGetExecutorCache struct {
 	columnNames    types.NameSlice
 
 	// the cache key for this statement, have to check whether the cache key changes before reusing this plan for safety.
-	planCacheKey   string
+	planCacheKey string
 
 	ColumnInfos any
 	// Executor is only used for point get scene.
