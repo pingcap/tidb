@@ -41,11 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/metrics"
-=======
-	"github.com/pingcap/tidb/pkg/meta"
->>>>>>> ac786cb1a38 (server: refine the connection counter logic (#54546))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"

@@ -53,11 +53,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
->>>>>>> ac786cb1a38 (server: refine the connection counter logic (#54546))
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
