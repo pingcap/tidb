@@ -550,6 +550,9 @@ func findMatchedRightBracket(line string, leftBracketIdx int) int {
 			if leftBracketCnt > 0 {
 				current++
 			} else if leftBracketCnt == 0 {
+				if current + 1 < lineLength && line[current + 1] != ' ' {
+					return -1
+				}
 				return current
 			} else {
 				return -1
@@ -600,7 +603,7 @@ func splitByColon(line string) (fields []string, values []string) {
 			if current < lineLength && (line[current] == '{' || line[current] == '[') {
 				rBraceIdx := findMatchedRightBracket(line, current)
 				if rBraceIdx == -1 {
-					errMsg = "Unmatched left brace"
+					errMsg = "Unmatched braces"
 					break
 				}
 				current = rBraceIdx + 1
