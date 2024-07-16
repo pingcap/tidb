@@ -144,8 +144,6 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	var affectedRows any
 	if pi.StmtCtx != nil {
 		affectedRows = pi.StmtCtx.AffectedRows()
-	} else {
-		affectedRows = nil
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
 		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows)
