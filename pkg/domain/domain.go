@@ -453,6 +453,10 @@ const fetchSchemaConcurrency = 1
 
 func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
+	if variable.SchemaCacheSize.Load() > 0 && len(schemas) > 1000 {
+		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
+		groupSize = 8
+	}
 	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
 	schemaCnt := len(schemas)
 	for i := 0; i < schemaCnt; i += groupSize {
@@ -471,10 +475,22 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 			// schema is not public, can't be used outside.
 			continue
 		}
-		tables, err := m.ListTables(di.ID)
-		if err != nil {
-			done <- err
-			return
+		var tables []*model.TableInfo
+		var err error
+		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndSpecialAttributeInfo(m, di.ID)
+			if err != nil {
+				done <- err
+				return
+			}
+			di.TableName2ID = name2ID
+			tables = specialTableInfos
+		} else {
+			tables, err = m.ListTables(di.ID)
+			if err != nil {
+				done <- err
+				return
+			}
 		}
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
 		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
@@ -586,9 +602,9 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 }
 
 // GetSnapshotMeta gets a new snapshot meta at startTS.
-func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
+func (do *Domain) GetSnapshotMeta(startTS uint64) *meta.Meta {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
-	return meta.NewSnapshotMeta(snapshot), nil
+	return meta.NewSnapshotMeta(snapshot)
 }
 
 // ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
@@ -983,6 +999,9 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
+			failpoint.Inject("disableOnTickReload", func() {
+				failpoint.Continue()
+			})
 			err := do.Reload()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
@@ -1341,25 +1360,27 @@ func (do *Domain) Init(
 		return err
 	}
 
-	// Only when the store is local that the lease value is 0.
-	// If the store is local, it doesn't need loadSchemaInLoop.
-	if ddlLease > 0 {
-		sub := time.Since(startReloadTime)
-		// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
-		// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
-		if sub > (ddlLease / 2) {
-			logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
-			err = do.Reload()
-			if err != nil {
-				return err
-			}
-		}
-
-		// Local store needs to get the change information for every DDL state in each session.
-		do.wg.Run(func() {
-			do.loadSchemaInLoop(ctx, ddlLease)
-		}, "loadSchemaInLoop")
+	// TODO there are many place set ddlLease to 0, remove them completely, we want
+	//  UT and even local uni-store to run similar code path as normal.
+	if ddlLease == 0 {
+		ddlLease = time.Second
 	}
+
+	sub := time.Since(startReloadTime)
+	// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
+	// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
+	if sub > (ddlLease / 2) {
+		logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
+		err = do.Reload()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Local store needs to get the change information for every DDL state in each session.
+	do.wg.Run(func() {
+		do.loadSchemaInLoop(ctx, ddlLease)
+	}, "loadSchemaInLoop")
 	do.wg.Run(do.mdlCheckLoop, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
@@ -2313,14 +2334,22 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(
 		func() {
-			<-do.StatsHandle().InitStatsDone
+			select {
+			case <-do.StatsHandle().InitStatsDone:
+			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+				return
+			}
 			do.autoAnalyzeWorker(owner)
 		},
 		"autoAnalyzeWorker",
 	)
 	do.wg.Run(
 		func() {
-			<-do.StatsHandle().InitStatsDone
+			select {
+			case <-do.StatsHandle().InitStatsDone:
+			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+				return
+			}
 			do.analyzeJobsCleanupWorker(owner)
 		},
 		"analyzeJobsCleanupWorker",
@@ -2339,7 +2368,11 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 				case <-waitRetry:
 				}
 			}
-			<-do.StatsHandle().InitStatsDone
+			select {
+			case <-do.StatsHandle().InitStatsDone:
+			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+				return
+			}
 			infosync.DeleteInternalSession(initStatsCtx)
 		},
 		"RemoveInitStatsFromInternalSessions",
@@ -2378,7 +2411,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) initStats() {
+func (do *Domain) initStats(ctx context.Context) {
 	statsHandle := do.StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
@@ -2391,9 +2424,9 @@ func (do *Domain) initStats() {
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStatsLite(do.InfoSchema())
+		err = statsHandle.InitStatsLite(ctx, do.InfoSchema())
 	} else {
-		err = statsHandle.InitStats(do.InfoSchema())
+		err = statsHandle.InitStats(ctx, do.InfoSchema())
 	}
 	if err != nil {
 		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
@@ -2415,13 +2448,17 @@ func (do *Domain) loadStatsWorker() {
 		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
-	do.initStats()
+
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	do.cancelFns = append(do.cancelFns, cancelFunc)
+
+	do.initStats(ctx)
 	statsHandle := do.StatsHandle()
 	var err error
 	for {
 		select {
 		case <-loadTicker.C:
-			err = statsHandle.Update(do.InfoSchema())
+			err = statsHandle.Update(ctx, do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
 			}

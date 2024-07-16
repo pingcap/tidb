@@ -556,7 +556,7 @@ func TestDropStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -568,7 +568,7 @@ func TestDropStats(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
 
@@ -578,7 +578,7 @@ func TestDropStats(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
 	h.SetLease(0)
@@ -588,8 +588,8 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t1 (c1 int, c2 int)")
-	testKit.MustExec("create table t2 (c1 int, c2 int)")
+	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1, c2))")
+	testKit.MustExec("create table t2 (c1 int, c2 int, index idx(c1, c2))")
 
 	is := dom.InfoSchema()
 	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -609,7 +609,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	require.False(t, statsTbl2.Pseudo)
 
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.True(t, statsTbl1.Pseudo)
 	statsTbl2 = h.GetTableStats(tableInfo2)
@@ -623,7 +623,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.True(t, statsTbl1.Pseudo)
 	statsTbl2 = h.GetTableStats(tableInfo2)

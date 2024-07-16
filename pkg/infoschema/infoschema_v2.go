@@ -437,7 +437,8 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	return ret, true
 }
 
-func isSpecialDB(dbName string) bool {
+// IsSpecialDB tells whether the database is a special database.
+func IsSpecialDB(dbName string) bool {
 	return dbName == util.InformationSchemaName.L ||
 		dbName == util.PerformanceSchemaName.L ||
 		dbName == util.MetricSchemaName.L
@@ -455,7 +456,7 @@ func (is *infoschemaV2) EvictTable(schema, tbl string) {
 }
 
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
-	if isSpecialDB(schema.L) {
+	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
 			tbNames := raw.(*schemaTables)
 			if t, ok = tbNames.tables[tbl.L]; ok {
@@ -504,7 +505,7 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 
 // SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
 func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
-	if isSpecialDB(schema.L) {
+	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
 			schTbls := raw.(*schemaTables)
@@ -554,7 +555,7 @@ func (is *infoschemaV2) FindTableInfoByPartitionID(
 }
 
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	if isSpecialDB(schema.L) {
+	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if !ok {
 			return nil, false
@@ -727,7 +728,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	if isSpecialDB(schema.L) {
+	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
 			schTbls := raw.(*schemaTables)
