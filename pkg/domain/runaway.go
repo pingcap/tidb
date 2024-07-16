@@ -545,15 +545,15 @@ func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTab
 		return nil, err
 	}
 	ret := make([]*resourcegroup.QuarantineRecord, 0, len(rs))
-	now := time.Now().UTC()
+	now := time.Now().Local()
 	for _, r := range rs {
-		startTime, err := r.GetTime(2).GoTime(time.UTC)
+		startTime, err := r.GetTime(2).GoTime(time.Local)
 		if err != nil {
 			continue
 		}
 		var endTime time.Time
 		if !r.IsNull(3) {
-			endTime, err = r.GetTime(3).GoTime(time.UTC)
+			endTime, err = r.GetTime(3).GoTime(time.Local)
 			if err != nil {
 				continue
 			}
@@ -585,15 +585,15 @@ func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 	}
 	length := len(rs)
 	ret := make([]*resourcegroup.QuarantineRecord, 0, length)
-	now := time.Now().UTC()
+	now := time.Now().Local()
 	for _, r := range rs {
-		startTime, err := r.GetTime(3).GoTime(time.UTC)
+		startTime, err := r.GetTime(3).GoTime(time.Local)
 		if err != nil {
 			continue
 		}
 		var endTime time.Time
 		if !r.IsNull(4) {
-			endTime, err = r.GetTime(4).GoTime(time.UTC)
+			endTime, err = r.GetTime(4).GoTime(time.Local)
 			if err != nil {
 				continue
 			}
@@ -645,7 +645,7 @@ func (r *SystemTableReader) genSelectStmt() (string, []any) {
 	builder.WriteString(r.KeyCol)
 	builder.WriteString(" > %? order by ")
 	builder.WriteString(r.KeyCol)
-	params = append(params, r.CheckPoint)
+	params = append(params, r.CheckPoint.Local())
 	return builder.String(), params
 }
 

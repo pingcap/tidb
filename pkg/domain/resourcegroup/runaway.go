@@ -24,6 +24,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -134,13 +135,13 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 6)
 	writeInsert(&builder, RunawayWatchTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
-	params = append(params, r.StartTime)
+	params = append(params, r.StartTime.UTC().Format(types.TimeFormat))
 	if r.EndTime.Equal(NullTime) {
 		params = append(params, nil)
 	} else {
-		params = append(params, r.EndTime)
+		params = append(params, r.EndTime.UTC().Format(types.TimeFormat))
 	}
 	params = append(params, r.Watch)
 	params = append(params, r.WatchText)
@@ -154,20 +155,21 @@ func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
 	writeInsert(&builder, RunawayWatchDoneTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), " +
+		"%?, %?, %?, %?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
-	params = append(params, r.StartTime)
+	params = append(params, r.StartTime.UTC().Format(types.TimeFormat))
 	if r.EndTime.Equal(NullTime) {
 		params = append(params, nil)
 	} else {
-		params = append(params, r.EndTime)
+		params = append(params, r.EndTime.UTC().Format(types.TimeFormat))
 	}
 	params = append(params, r.Watch)
 	params = append(params, r.WatchText)
 	params = append(params, r.Source)
 	params = append(params, r.Action)
-	params = append(params, time.Now().UTC())
+	params = append(params, time.Now().UTC().Format(types.TimeFormat))
 	return builder.String(), params
 }
 
