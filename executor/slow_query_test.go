@@ -537,6 +537,16 @@ func TestSplitbyColon(t *testing.T) {
 			[]string{"{2b,{3c: 3cc}}", "5e"},
 		},
 		{
+			"1a: {{{2b,{3c: 3cc}} 4d: 5e",
+			nil,
+			nil,
+		},
+		{
+			"1a: [2b,[3c: 3cc]]]] 4d: 5e",
+			nil,
+			nil,
+		},
+		{
 
 			"Time: 2021-09-08T14:39:54.506967433+08:00",
 			[]string{"Time"},
