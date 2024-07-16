@@ -135,6 +135,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
 		stmt.PointGet.pointPlan = nil
+		stmt.PointGet.planCacheKey = ""
 		stmt.PointGet.columnNames = nil
 		stmt.PointGet.pointPlanHints = nil
 		stmt.PointGet.Executor = nil
