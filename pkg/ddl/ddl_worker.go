@@ -490,7 +490,7 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 	ddlSe := sess.NewSession(se)
 	localMode := jobWs[0].Job.LocalMode
 	if localMode {
-		if err = fillJobIDs(ctx, ddlSe, jobWs); err != nil {
+		if err = fillJobRelatedIDs(ctx, ddlSe, jobWs); err != nil {
 			return err
 		}
 		for _, jobW := range jobWs {
@@ -502,18 +502,18 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 	if err = GenIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
 		return errors.Trace(err)
 	}
-	for _, job := range jobWs {
-		d.initJobDoneCh(job.ID)
+	for _, jobW := range jobWs {
+		d.initJobDoneCh(jobW.ID)
 	}
 
 	return nil
 }
 
-// GenIDAndInsertJobsWithRetry generate job ID and inserts DDL jobs to the DDL job
+// GenIDAndInsertJobsWithRetry generate job related ID and inserts DDL jobs to the DDL job
 // table with retry. job id allocation and job insertion are in the same transaction,
 // as we want to make sure DDL jobs are inserted in id order, then we can query from
 // a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
-// so this function has side effect, it will set the job id of 'jobs'.
+// so this function has side effect, it will set table/db/job id of 'jobs'.
 func GenIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
 	count := getRequiredIDCount(jobWs)
 	return genIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
@@ -522,7 +522,8 @@ func GenIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs
 	})
 }
 
-func fillJobIDs(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+// fillJobRelatedIDs similar to GenIDAndInsertJobsWithRetry, but only fill job related IDs.
+func fillJobRelatedIDs(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
 	var allocatedIDs []int64
 	count := getRequiredIDCount(jobWs)
 	if err := genIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
@@ -568,7 +569,8 @@ func getRequiredIDCount(jobWs []*JobWrapper) int {
 	return count
 }
 
-// assignIDsForJobs assigns IDs for the jobs which do NOT have pre-allocated ID.
+// assignIDsForJobs should be used with getRequiredIDCount, and len(ids) must equal
+// what getRequiredIDCount returns.
 func assignIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 	idx := 0
 
