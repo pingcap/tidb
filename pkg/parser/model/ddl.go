@@ -1199,6 +1199,9 @@ type SchemaDiff struct {
 	OldSchemaID int64 `json:"old_schema_id"`
 	// RegenerateSchemaMap means whether to rebuild the schema map when applying to the schema diff.
 	RegenerateSchemaMap bool `json:"regenerate_schema_map"`
+	// RecoverSnapshotTS is set when the diff is too large to be saved in SchemaDiff.
+	// infoschema should use this TS to read meta directly.
+	RecoverSnapshotTS uint64 `json:"recover_snapshot_ts,omitempty"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

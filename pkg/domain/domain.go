@@ -547,7 +547,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	builder.SetDeltaUpdateBundles()
+	builder.WithStore(do.store).SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
