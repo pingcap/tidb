@@ -668,7 +668,7 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 
 	tk.MustExec("flashback database many_tables")
 
-	tk.MustQuery(fmt.Sprintf("select count(*) from many_tables.t0")).Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from many_tables.t0").Check(testkit.Rows("0"))
 }
 
 // MockGC is used to make GC work in the test environment.
