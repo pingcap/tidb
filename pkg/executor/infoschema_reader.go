@@ -1767,10 +1767,7 @@ func ensureSchemaTables(ctx context.Context, is infoschema.InfoSchema, schemaNam
 		dbInfoRaw, _ := is.SchemaByName(dbName)
 		dbInfo := dbInfoRaw.Clone()
 		dbInfo.Tables = dbInfo.Tables[:0]
-		tbls := is.SchemaTableInfos(ctx, dbName)
-		for _, tbl := range tbls {
-			dbInfo.Tables = append(dbInfo.Tables, tbl)
-		}
+		dbInfo.Tables = is.SchemaTableInfos(ctx, dbName)
 		res = append(res, dbInfo)
 	}
 	return res
@@ -2463,7 +2460,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) {
+func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionctx.Context, schemas []model.CIStr) {
 	var (
 		checker       = privilege.GetPrivilegeManager(sctx)
 		rows          [][]types.Datum
