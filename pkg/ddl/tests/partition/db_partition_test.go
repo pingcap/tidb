@@ -3764,3 +3764,27 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.True(t, idxInfo.Primary)
 	}
 }
+
+func TestExchangePartitionGlobalIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=ON")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	tk.MustExec(`create table t (a int, b int, primary key (a) nonclustered) partition by hash (b) partitions 3`)
+	tk.MustExec(`create table t2 (a int, b int, primary key (a) nonclustered)`)
+	tk.MustExec(`insert into t values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5)`)
+	tk.MustExec(`insert into t2 values (6,6),(9,9)`)
+	tk.MustExec(`alter table t exchange partition p0 with table t2 without validation`)
+	tk.MustQuery(`select * from t where a = 6`).Check(testkit.Rows("6 6"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "2 2", "4 4", "5 5", "6 6", "9 9"))
+	tk.MustQuery(`select * from t2 where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`select * from t2`).Check(testkit.Rows("0 0", "3 3"))
+	tk.MustExec(`alter table t exchange partition p0 with table t2 with validation`)
+	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`select * from t2 where a = 6`).Check(testkit.Rows("6 6"))
+	// TODO: Check all valid entries in both table and indexes!
+}

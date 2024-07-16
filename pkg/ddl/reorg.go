@@ -483,6 +483,8 @@ type reorgInfo struct {
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PhysicalTableID would be TableID.
+	// For Exchange Partition, it will point either to the exchanged table
+	// or the partition, depending on state in reorg.
 	PhysicalTableID int64
 	dbInfo          *model.DBInfo
 	elements        []*meta.Element
@@ -803,7 +805,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, firstPartID int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -820,7 +822,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pid = partitionIDs[0]
+		pid = firstPartID
 		physTbl := tbl.GetPartition(pid)
 
 		start, end, err = getTableRange(ctx, d, physTbl, ver.Ver, job.Priority)

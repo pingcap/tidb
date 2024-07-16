@@ -1,0 +1,17 @@
+set tidb_enable_global_index = 1;
+create table t (a int, b int, primary key (a) nonclustered) partition by hash (b) partitions 3;
+create table t2 (a int, b int, primary key (a) nonclustered);
+alter table t exchange partition p2 with table t2;
+Error 1731 (HY000): Non matching attribute 'global index: PRIMARY' between partition and table
+drop table t, t2;
+create table t (a int, b int, unique key (a)) partition by hash (b) partitions 3;
+create table t2 (a int, b int, unique key (a));
+alter table t exchange partition p2 with table t2;
+Error 1731 (HY000): Non matching attribute 'global index: a' between partition and table
+drop table t, t2;
+create table t (a varchar(255), b varchar(255), primary key (a,b) clustered, unique key (a)) partition by key (b) partitions 3;
+create table t2 (a varchar(255), b varchar(255), primary key (a,b) clustered, unique key (a));
+alter table t exchange partition p2 with table t2;
+Error 1731 (HY000): Non matching attribute 'global index: a_2' between partition and table
+drop table t, t2;
+set tidb_enable_global_index = default;

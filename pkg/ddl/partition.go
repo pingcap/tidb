@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2116,7 +2117,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			}
 			defer w.sessPool.Put(sctx)
 			rh := newReorgHandler(sess.NewSession(sctx))
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, pt, physicalTableIDs[0], elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
@@ -2314,7 +2315,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			defer w.sessPool.Put(sctx)
 			rh := newReorgHandler(sess.NewSession(sctx))
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, pt, physicalTableIDs[0], elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
@@ -2542,7 +2543,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 
-		err = checkTableDefCompatible(pt, nt)
+		var globalIndex bool
+		globalIndex, err = checkTableDefCompatible(pt, nt)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -2564,8 +2566,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				return ver, errors.Trace(err)
 			}
 		}
+		// TODO: If not Global Index and WITHOUT VALIDATION, just do a quick swap!
 		var ptInfo []schemaIDAndTableInfo
-		if len(nt.Constraints) > 0 {
+		if len(nt.Constraints) > 0 || globalIndex {
 			pt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
 				ExchangePartitionTableID: nt.ID,
 				ExchangePartitionDefID:   defID,
@@ -2579,11 +2582,59 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			ExchangePartitionTableID: ptID,
 			ExchangePartitionDefID:   defID,
 		}
+		if globalIndex {
+			// How to handle new Unique index for the partition->table?
+			// - Somehow have a flag to say that a specific partition should have the extra index?
+			// How to handle the current Global Index?
+			// - Add the table->partition entries
+			// - Somehow have a flag to say that the table also needs to update the global index?
+			//  How to handle duplicate entries?
+			//  - if during reorganize -> fail and rollback
+			//  - if user DML -> OK to return duplicate error? (hard to fail and rollback?)
+			var ptUniqueIndexes []*model.IndexInfo
+			var ntGlobalIndexes []*model.IndexInfo
+			for _, idx := range pt.Indices {
+				if idx.Global {
+					ptUnique := idx.Clone()
+					ptUnique.Global = false
+					ptUnique.State = model.StateDeleteOnly
+					ptUniqueIndexes = append(ptUniqueIndexes, ptUnique)
+					// TODO:
+					// How to flag that it should only be used for a single partition?
+					found := false
+					for _, ntIdx := range nt.Indices {
+						// For now, the IDs must match!
+						if ntIdx.ID == idx.ID {
+							ntGlobal := idx.Clone()
+							// TODO: how will this work?!?
+							// It should only Delete entries from the same table/partition ID
+							// otherwise it should ignore them!
+							ntGlobal.State = model.StateDeleteOnly
+							ntGlobalIndexes = append(ntGlobalIndexes, ntGlobal)
+							found = true
+						}
+					}
+					if !found {
+						job.State = model.JobStateCancelled
+						return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
+					}
+				}
+			}
+			pt.Indices = append(pt.Indices, ptUniqueIndexes...)
+			nt.Indices = append(nt.Indices, ntGlobalIndexes...)
+			//pt.Partition.DroppingDefinitions = []model.PartitionDefinition{partDef.Clone()}
+			// Also set AddingDefinitions, to block out new global index entries until public!
+			// Should give duplicate error still.
+			addingDef := partDef.Clone()
+			addingDef.ID = nt.ID
+			pt.Partition.AddingDefinitions = []model.PartitionDefinition{addingDef}
+		}
+
 		// We need an interim schema version,
 		// so there are no non-matching rows inserted
 		// into the table using the schema version
 		// before the exchange is made.
-		job.SchemaState = model.StateWriteOnly
+		job.SchemaState = model.StateDeleteOnly
 		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true, ptInfo...)
 	}
 	// From now on, nt (the non-partitioned table) has
@@ -2607,23 +2658,160 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 	}
+	globalIndex := hasGlobalIndex(pt)
 
-	if withValidation {
+	switch job.SchemaState {
+	case model.StateDeleteOnly:
+		// Just move to StateWriteOnly, to be sure new conditions and indexes are used in all sessions
+		if globalIndex {
+			idxBalance := 0
+			for _, idx := range pt.Indices {
+				if idx.State == model.StateDeleteOnly {
+					idx.State = model.StateWriteOnly
+					idxBalance++
+				}
+			}
+			for _, idx := range nt.Indices {
+				if idx.State == model.StateDeleteOnly {
+					idx.State = model.StateWriteOnly
+					idxBalance--
+				}
+			}
+			if idxBalance != 0 {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
+			}
+		}
+		job.SchemaState = model.StateWriteOnly
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true, schemaIDAndTableInfo{
+			schemaID: ptSchemaID,
+			tblInfo:  pt,
+		})
+	case model.StateWriteOnly:
+		if withValidation {
+			ntbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, nt)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			ptbl, err := getTable((*asAutoIDRequirement)(d), ptSchemaID, pt)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			err = checkExchangePartitionRecordValidation(w, ptbl, ntbl, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
+			if err != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(err)
+			}
+		}
+
+		if globalIndex {
+			idxBalance := 0
+			for _, idx := range pt.Indices {
+				if idx.State == model.StateWriteOnly {
+					idx.State = model.StateWriteReorganization
+					idxBalance++
+				}
+			}
+			for _, idx := range nt.Indices {
+				if idx.State == model.StateWriteOnly {
+					idx.State = model.StateWriteReorganization
+					idxBalance--
+				}
+			}
+			if idxBalance != 0 {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
+			}
+			job.SchemaState = model.StateWriteReorganization
+			return updateVersionAndTableInfoWithCheck(d, t, job, nt, true, schemaIDAndTableInfo{
+				schemaID: ptSchemaID,
+				tblInfo:  pt,
+			})
+		}
+		// else Done, complete the exchange!
+	case model.StateWriteReorganization:
+		// TODO:
+		// Fill in the global index with the table->partition entries
+		// Fill in the new unique index with the partition->table entries
 		ntbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, nt)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		ptbl, err := getTable((*asAutoIDRequirement)(d), ptSchemaID, pt)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		err = checkExchangePartitionRecordValidation(w, ptbl, ntbl, ptDbInfo.Name.L, ntDbInfo.Name.L, partName)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
+		nPhysTbl, ok := ntbl.(table.PhysicalTable)
+		if !ok {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		}
+		ptbl, err := getTable((*asAutoIDRequirement)(d), ptSchemaID, pt)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+		partTbl, ok := ptbl.(table.PartitionedTable)
+		if !ok {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		}
+		var done bool
+		done, ver, err = doPartitionExchangeIndexReorgWork(w, d, t, job, partTbl, nPhysTbl)
+		if !done {
+			return ver, err
+		}
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		}
+		idxBalance := 0
+		for _, idx := range pt.Indices {
+			if idx.State == model.StateWriteReorganization {
+				idx.State = model.StateDeleteReorganization
+				idxBalance++
+			}
+		}
+		for _, idx := range nt.Indices {
+			if idx.State == model.StateWriteReorganization {
+				idx.State = model.StateDeleteReorganization
+				idxBalance--
+			}
+		}
+		if idxBalance != 0 {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		}
+		job.SchemaState = model.StateDeleteReorganization
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true, schemaIDAndTableInfo{
+			schemaID: ptSchemaID,
+			tblInfo:  pt,
+		})
+	case model.StateDeleteReorganization:
+		indexesToDrop := make([]*model.IndexInfo, 0)
+		idxBalance := 0
+		for _, idx := range pt.Indices {
+			if idx.State == model.StateDeleteReorganization {
+				indexesToDrop = append(indexesToDrop, idx)
+				idxBalance++
+			}
+		}
+		for _, idx := range indexesToDrop {
+			removeIndexInfo(pt, idx)
+		}
+		indexesToDrop = indexesToDrop[:0]
+		for _, idx := range nt.Indices {
+			if idx.State == model.StateDeleteReorganization {
+				indexesToDrop = append(indexesToDrop, idx)
+				idxBalance--
+			}
+		}
+		for _, idx := range indexesToDrop {
+			removeIndexInfo(nt, idx)
+		}
+		if idxBalance != 0 {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		}
+		pt.Partition.AddingDefinitions = nil
 	}
-
 	// partition table auto IDs.
 	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
@@ -3315,6 +3503,66 @@ func newStatsDDLEventForJob(
 	return event, nil
 }
 
+// doPartitionExchangeIndexReorgWork add the exchanged tables entries
+// to the global index and creates the missing unique index on the old partition
+func doPartitionExchangeIndexReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, pt table.PartitionedTable, nt table.PhysicalTable) (done bool, ver int64, err error) {
+	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	sctx, err1 := w.sessPool.Get()
+	if err1 != nil {
+		return done, ver, err1
+	}
+	defer w.sessPool.Put(sctx)
+	rh := newReorgHandler(sess.NewSession(sctx))
+	// update the global indexes with entries from table->partition (nt)
+	elements := make([]*meta.Element, 0)
+	for _, index := range pt.Meta().Indices {
+		if index.Global {
+			elements = append(elements, &meta.Element{ID: index.ID, TypeKey: meta.IndexElementKey})
+		}
+	}
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, nt, elements, false)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+
+	// create a new unique index for partition->table
+	// How to use reorgInfo for this? I.e. how can we resume/continue on errors/timeout
+	// between Adding to Global Index and creating the unique local index?
+	err = w.runReorgJob(reorgInfo, nt.Meta(), d.lease, func() (reorgErr error) {
+		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
+			func() {
+				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", nt.Meta().Name)
+			}, false)
+		return w.reorgExchangeIndexes(d, pt, nt, reorgInfo)
+	})
+	if err != nil {
+		if dbterror.ErrPausedDDLJob.Equal(err) {
+			return false, ver, nil
+		}
+
+		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			// If timeout, we should return, check for the owner and re-wait job done.
+			return false, ver, nil
+		}
+		if kv.IsTxnRetryableError(err) {
+			return false, ver, errors.Trace(err)
+		}
+		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			logutil.DDLLogger().Warn("reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+				zap.Stringer("job", job), zap.Error(err1))
+		}
+		logutil.DDLLogger().Warn("reorg partition job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+		// TODO: rollback new global indexes! TODO: How to handle new index ids?
+		ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, pt.Meta())
+		return false, ver, errors.Trace(err)
+	}
+	return true, ver, err
+}
+
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
@@ -3340,7 +3588,8 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, partTbl, physTblIDs, elements)
+	// TODO: just use firstPartID instead of a slice.
+	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, partTbl, physTblIDs[0], elements)
 	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
@@ -3582,6 +3831,83 @@ func (*reorgPartitionWorker) String() string {
 
 func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
+}
+
+func (w *worker) reorgExchangeIndexes(d *ddlCtx, pt table.PartitionedTable, nt table.PhysicalTable, reorgInfo *reorgInfo) (err error) {
+	// Now add to all the global indexes from the old table
+
+	if reorgInfo.PhysicalTableID == nt.Meta().ID {
+		err = w.addTableIndex(pt, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		createUniqueIndexes := false
+		for _, indexInfo := range nt.Meta().Indices {
+			if indexInfo.Global && indexInfo.State == model.StateWriteReorganization {
+				createUniqueIndexes = true
+				break
+			}
+		}
+		if createUniqueIndexes {
+			reorgInfo.PhysicalTableID = pt.Meta().ExchangePartitionInfo.ExchangePartitionDefID
+		}
+		// Currently the indexes must have the same IDs, so OK to reuse!
+		reorgInfo.currElement = reorgInfo.elements[0]
+		// Get the original start handle and end handle.
+		currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		physTbl := pt.GetPartition(pt.Meta().ExchangePartitionInfo.ExchangePartitionDefID)
+		startHandle, endHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// Always (re)start with the full PhysicalTable range
+		reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
+
+		// Write the reorg info to store so the whole reorganize process can recover from panic.
+		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
+		logutil.DDLLogger().Info("update column and indexes",
+			zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.Int64("partitionTableId", physTbl.GetPhysicalID()),
+			zap.String("startHandle", hex.EncodeToString(reorgInfo.StartKey)),
+			zap.String("endHandle", hex.EncodeToString(reorgInfo.EndKey)))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if reorgInfo.PhysicalTableID == nt.Meta().ID {
+		return nil
+	}
+	// We want to use a table.PhysicalTable that looks like the new table,
+	// I.e. it should have both TableID and PhysicalID set to the exchanged partition ID.
+	// And the indexes should be set correctly, with the same IDs as both the partitioned table and
+	// the exchanged table.
+	tblInfo := pt.Meta().Clone()
+	tblInfo.Partition = nil
+	tblInfo.ID = pt.Meta().ExchangePartitionInfo.ExchangePartitionDefID
+	newIdxs := make([]*model.IndexInfo, 0)
+IDX:
+	for _, idx := range tblInfo.Indices {
+		for _, element := range reorgInfo.elements {
+			if bytes.Equal(element.TypeKey, meta.IndexElementKey) {
+				if element.ID == idx.ID && idx.State == model.StateWriteReorganization {
+					newIdxs = append(newIdxs, idx.Clone())
+					continue IDX
+				}
+			}
+		}
+	}
+	tblInfo.Indices = newIdxs
+	allocs := autoid.NewAllocatorsFromTblInfo((*asAutoIDRequirement)(d), reorgInfo.Job.SchemaID, nt.Meta())
+	physTbl, err := table.TableFromMeta(allocs, tblInfo)
+	// Make sure to use the correct index and table, to populate the LOCAL UNIQUE partition index,
+	// which will be the new table's UNIQUE (possible PK) index.
+	return w.addTableIndex(physTbl, reorgInfo)
 }
 
 func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo) (err error) {
