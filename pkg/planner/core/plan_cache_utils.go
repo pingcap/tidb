@@ -17,7 +17,6 @@ package core
 import (
 	"cmp"
 	"context"
-	"github.com/pingcap/tidb/pkg/config"
 	"math"
 	"slices"
 	"sort"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -525,6 +525,8 @@ type PointGetExecutorCache struct {
 	pointPlan      base.Plan
 	pointPlanHints *hint.StmtHints
 	columnNames    types.NameSlice
+
+	// the cache key for this statement, have to check whether the cache key changes before reusing this plan for safety.
 	planCacheKey   string
 
 	ColumnInfos any
