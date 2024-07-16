@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -151,6 +152,7 @@ func buildHist(
 	memTracker *memory.Tracker,
 ) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
+	allowAutoCount := variable.EnableAnalyzeAutoCount.Load()
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
@@ -165,7 +167,10 @@ func buildHist(
 	// Since bucket count is increased by sampleFactor, so the actual max values per bucket are
 	// ceil(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
-	valuesPerBucket := math.Ceil(float64(count)/float64(numBuckets) + sampleFactor)
+	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
+	if allowAutoCount {
+		valuesPerBucket = math.Ceil(valuesPerBucket)
+	}
 
 	bucketIdx := 0
 	lastRepeat := int64(ndvFactor)
@@ -223,7 +228,8 @@ func buildHist(
 			}
 			// If all values in the bucket have the same repeat - allow the bucket size to double. Anything greater than the
 			// original average NDV should be the last value in this bucket since the repeat is used similar to a topN
-		} else if (lastRepeat == hg.Buckets[bucketIdx].Repeat && currentCount <= valuesPerBucket*2) ||
+		} else if (!allowAutoCount && currentCount <= valuesPerBucket) ||
+			(lastRepeat == hg.Buckets[bucketIdx].Repeat && currentCount <= valuesPerBucket*2) ||
 			(currentCount <= valuesPerBucket && hg.Buckets[bucketIdx].Repeat < origNdvFactor) {
 			// The bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
