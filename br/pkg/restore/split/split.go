@@ -236,13 +236,9 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
-<<<<<<< HEAD
-	if berrors.ErrPDBatchScanRegion.Equal(err) {
-=======
 	// TODO(lance6716): why we only backoff when the error is ErrPDBatchScanRegion?
 	var perr *errors.Error
 	if goerrors.As(err, &perr) && berrors.ErrPDBatchScanRegion.ID() == perr.ID() {
->>>>>>> 29bf0083a6b (localbackend: fix resource leak when err on new local backend (#53664))
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
 		delayTime := b.Stat.ExponentialBackoff()

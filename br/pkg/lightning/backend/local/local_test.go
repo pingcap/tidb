@@ -1071,7 +1071,7 @@ func TestMultiIngest(t *testing.T) {
 				},
 			},
 		}
-		supportMultiIngest, err := checkMultiIngestSupport(context.Background(), local.pdCli, local.importClientFactory)
+		supportMultiIngest, err := checkMultiIngestSupport(context.Background(), local.pdCtl, local.importClientFactory)
 		if err != nil {
 			require.Contains(t, err.Error(), testCase.retErr)
 		} else {

@@ -541,7 +541,6 @@ func NewBackend(
 	config BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
 ) (b *Backend, err error) {
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local.go
 	var duplicateDB *pebble.DB
 	defer func() {
 		if err != nil && duplicateDB != nil {
@@ -549,15 +548,12 @@ func NewBackend(
 		}
 	}()
 	config.adjust()
-	pdCtl, err := pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
-=======
 	var (
-		pdCli                pd.Client
+		pdCtl                *pdutil.PdController
 		spkv                 *tikvclient.EtcdSafePointKV
 		pdCliForTiKV         *tikvclient.CodecPDClient
 		rpcCli               tikvclient.Client
 		tikvCli              *tikvclient.KVStore
-		pdHTTPCli            pdhttp.Client
 		importClientFactory  *importClientFactoryImpl
 		multiIngestSupported bool
 	)
@@ -567,9 +563,6 @@ func NewBackend(
 		}
 		if importClientFactory != nil {
 			importClientFactory.Close()
-		}
-		if pdHTTPCli != nil {
-			pdHTTPCli.Close()
 		}
 		if tikvCli != nil {
 			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
@@ -582,29 +575,13 @@ func NewBackend(
 			if spkv != nil {
 				_ = spkv.Close()
 			}
-			// pdCliForTiKV wraps pdCli, so we only need close pdCli
-			if pdCli != nil {
-				pdCli.Close()
+			// pdCliForTiKV wraps pdCli, so we only need close pdCtl
+			if pdCtl != nil {
+				pdCtl.Close()
 			}
 		}
 	}()
-	config.adjust()
-	var pdAddrs []string
-	if pdSvcDiscovery != nil {
-		pdAddrs = pdSvcDiscovery.GetServiceURLs()
-		// TODO(lance6716): if PD client can support creating a client with external
-		// service discovery, we can directly pass pdSvcDiscovery.
-	} else {
-		pdAddrs = strings.Split(config.PDAddr, ",")
-	}
-	pdCli, err = pd.NewClientWithContext(
-		ctx, pdAddrs, tls.ToPDSecurityOption(),
-		pd.WithGRPCDialOptions(maxCallMsgSize...),
-		// If the time too short, we may scatter a region many times, because
-		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
-	)
->>>>>>> 29bf0083a6b (localbackend: fix resource leak when err on new local backend (#53664)):pkg/lightning/backend/local/local.go
+	pdCtl, err = pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
@@ -656,27 +633,15 @@ func NewBackend(
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local.go
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCtl, importClientFactory)
+	if err != nil {
+		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-=======
-	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
-		"lightning",
-		pdCli.GetServiceDiscovery(),
-		pdhttp.WithTLSConfig(tls.TLSConfig()),
-	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
-	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
-
-	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
-	if err != nil {
-		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
-	}
-
->>>>>>> 29bf0083a6b (localbackend: fix resource leak when err on new local backend (#53664)):pkg/lightning/backend/local/local.go
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
 		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
@@ -700,53 +665,16 @@ func NewBackend(
 
 		BackendConfig: config,
 
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local.go
+		supportMultiIngest:  multiIngestSupported,
 		duplicateDB:         duplicateDB,
 		keyAdapter:          keyAdapter,
-=======
-		supportMultiIngest:  multiIngestSupported,
->>>>>>> 29bf0083a6b (localbackend: fix resource leak when err on new local backend (#53664)):pkg/lightning/backend/local/local.go
 		importClientFactory: importClientFactory,
 		bufferPool:          membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
 	}
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local.go
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
-	}
-	if err = local.checkMultiIngestSupport(ctx); err != nil {
-		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
-=======
-	local.engineMgr, err = newEngineManager(config, local, local.logger)
-	if err != nil {
-		return nil, err
-	}
-	if m, ok := metric.GetCommonMetric(ctx); ok {
-		local.metrics = m
-	}
-	local.tikvSideCheckFreeSpace(ctx)
-
-	return local, nil
-}
-
-// NewBackendForTest creates a new Backend for test.
-func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper StoreHelper) (*Backend, error) {
-	config.adjust()
-
-	logger := log.FromContext(ctx)
-	engineMgr, err := newEngineManager(config, storeHelper, logger)
-	if err != nil {
-		return nil, err
-	}
-	local := &Backend{
-		BackendConfig: config,
-		logger:        logger,
-		engineMgr:     engineMgr,
-	}
-	if m, ok := metric.GetCommonMetric(ctx); ok {
-		local.metrics = m
->>>>>>> 29bf0083a6b (localbackend: fix resource leak when err on new local backend (#53664)):pkg/lightning/backend/local/local.go
 	}
 
 	return local, nil
@@ -765,13 +693,8 @@ func (local *Backend) TotalMemoryConsume() int64 {
 	return memConsume + local.bufferPool.TotalSize()
 }
 
-<<<<<<< HEAD:br/pkg/lightning/backend/local/local.go
-func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
-	stores, err := local.pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
-=======
-func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientFactory ImportClientFactory) (bool, error) {
-	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
->>>>>>> 29bf0083a6b (localbackend: fix resource leak when err on new local backend (#53664)):pkg/lightning/backend/local/local.go
+func checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.PdController, importClientFactory ImportClientFactory) (bool, error) {
+	stores, err := pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
