@@ -190,7 +190,7 @@ func (rc *SnapClient) Close() {
 		log.Warn("failed to close file improter")
 	}
 
-	log.Info("Restore client closed")
+	//log.Info("Restore client closed")
 }
 
 func (rc *SnapClient) SetRateLimit(rateLimit uint64) {
