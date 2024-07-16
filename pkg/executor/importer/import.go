@@ -1363,7 +1363,7 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 type JobImportResult struct {
 	Affected   uint64
 	Warnings   []contextutil.SQLWarn
-	ColSizeMap map[int64]int64
+	ColSizeMap variable.DeltaColsMap
 }
 
 // GetMsgFromBRError get msg from BR error.

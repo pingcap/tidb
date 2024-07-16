@@ -130,17 +130,16 @@
       {
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "StreamAgg_15 1.00 62049.70 root  funcs:count(1)->Column#7",
-          "└─TableReader_46 3.00 61900.00 root  MppVersion: 2, data:ExchangeSender_45",
-          "  └─ExchangeSender_45 3.00 928447.21 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection_44 3.00 928447.21 mpp[tiflash]  1->Column#11",
-          "      └─HashJoin_41 3.00 928447.20 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "        ├─ExchangeReceiver_22(Build) 3.00 464290.40 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_21 3.00 464146.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection_20 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
-          "        │     └─TableFullScan_19 3.00 464139.20 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
-          "        └─Selection_24(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "          └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "StreamAgg_15 1.00 62053.22 root  funcs:count(1)->Column#7",
+          "└─TableReader_43 3.00 61903.52 root  MppVersion: 2, data:ExchangeSender_42",
+          "  └─ExchangeSender_42 3.00 928447.20 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin_39 3.00 928447.20 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─ExchangeReceiver_22(Build) 3.00 464290.40 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_21 3.00 464146.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─Selection_20 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan_19 3.00 464139.20 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
+          "      └─Selection_24(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
+          "        └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
         ]
       },
       {
@@ -1242,18 +1241,17 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t1 ta, t1 tb where ta.c1 * ta.c1 > ta.c2 + 10;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#11)->Column#7",
+          "HashAgg 1.00 root  funcs:count(Column#9)->Column#7",
           "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#11",
-          "      └─Projection 80000000.00 mpp[tiflash]  1->Column#10",
-          "        └─HashJoin 80000000.00 mpp[tiflash]  CARTESIAN inner join",
-          "          ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
-          "          │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "          │   └─Projection 8000.00 mpp[tiflash]  1->Column#8",
-          "          │     └─Selection 8000.00 mpp[tiflash]  gt(mul(test.t1.c1, test.t1.c1), plus(test.t1.c2, 10))",
-          "          │       └─TableFullScan 10000.00 mpp[tiflash] table:ta pushed down filter:empty, keep order:false, stats:pseudo",
-          "          └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:tb keep order:false, stats:pseudo"
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#9",
+          "      └─HashJoin 80000000.00 mpp[tiflash]  CARTESIAN inner join",
+          "        ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "        │   └─Projection 8000.00 mpp[tiflash]  1->Column#8",
+          "        │     └─Selection 8000.00 mpp[tiflash]  gt(mul(test.t1.c1, test.t1.c1), plus(test.t1.c2, 10))",
+          "        │       └─TableFullScan 10000.00 mpp[tiflash] table:ta pushed down filter:empty, keep order:false, stats:pseudo",
+          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:tb keep order:false, stats:pseudo"
         ]
       }
     ]

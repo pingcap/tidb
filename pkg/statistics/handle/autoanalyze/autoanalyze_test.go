@@ -15,6 +15,7 @@
 package autoanalyze_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -55,7 +56,7 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
 		exec.AutoAnalyzeMinCnt = 1000
@@ -76,7 +77,7 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	// Lock the table.
 	tk.MustExec("lock stats t")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
 		exec.AutoAnalyzeMinCnt = 1000
@@ -104,7 +105,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
 		exec.AutoAnalyzeMinCnt = 1000
@@ -133,14 +134,14 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, index idx(a))")
 	tk.MustExec("insert into t values (1)")
 	h := dom.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
 	exec.AutoAnalyzeMinCnt = 0
@@ -149,7 +150,7 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	}()
 	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	// Try again, it should not analyze the table because it's already analyzed and auto analyze ratio is 0.
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
@@ -177,11 +178,11 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := do.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	// Auto analyze when global ver is 1.
 	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, h.Update(context.Background(), is))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
@@ -197,10 +198,10 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	// Auto analyze t whose version is 1 after setting global ver to 2.
 	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
 	// All of its statistics should still be version 1.
@@ -220,11 +221,11 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tt"))
 	require.NoError(t, err)
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
 	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -243,21 +244,21 @@ func TestTableAnalyzed(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a int)")
+	testKit.MustExec("create table t (a int, index idx(a))")
 	testKit.MustExec("insert into t values (1)")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.LastAnalyzeVersion > 0)
 
 	testKit.MustExec("analyze table t")
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 
@@ -268,7 +269,7 @@ func TestTableAnalyzed(t *testing.T) {
 	defer func() {
 		h.SetLease(oriLease)
 	}()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 }
@@ -331,9 +332,11 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
 	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
+	tk.MustExec("select * from t where a = 1 and b = 1 and c = '1'")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
 
 	originalVal := exec.AutoAnalyzeMinCnt
@@ -370,7 +373,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(exec.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	// test if it will be limited by the time range
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
@@ -405,7 +408,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(exec.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
 	tk.MustExec("analyze table t")

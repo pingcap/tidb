@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
@@ -63,7 +64,7 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (
@@ -89,6 +90,13 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
+
+		// Detect the context cancel signal, since it may take a long time for the loop.
+		// TODO: add context to TableInfoByID and remove this code block?
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug(

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 var _ context.MutateContext = &TableContextImpl{}
@@ -29,7 +30,6 @@ var _ context.AllocatorContext = &TableContextImpl{}
 // TableContextImpl is used to provide context for table operations.
 type TableContextImpl struct {
 	sessionctx.Context
-	exprCtx exprctx.ExprContext
 	// mutateBuffers is a memory pool for table related memory allocation that aims to reuse memory
 	// and saves allocation
 	// The buffers are supposed to be used inside AddRecord/UpdateRecord/RemoveRecord.
@@ -37,10 +37,9 @@ type TableContextImpl struct {
 }
 
 // NewTableContextImpl creates a new TableContextImpl.
-func NewTableContextImpl(sctx sessionctx.Context, exprCtx exprctx.ExprContext) *TableContextImpl {
+func NewTableContextImpl(sctx sessionctx.Context) *TableContextImpl {
 	return &TableContextImpl{
 		Context:       sctx,
-		exprCtx:       exprCtx,
 		mutateBuffers: context.NewMutateBuffers(sctx.GetSessionVars().GetWriteStmtBufs()),
 	}
 }
@@ -53,7 +52,22 @@ func (ctx *TableContextImpl) TxnRecordTempTable(tbl *model.TableInfo) tableutil.
 
 // GetExprCtx returns the ExprContext
 func (ctx *TableContextImpl) GetExprCtx() exprctx.ExprContext {
-	return ctx.exprCtx
+	return ctx.Context.GetExprCtx()
+}
+
+// InRestrictedSQL returns whether the current context is used in restricted SQL.
+func (ctx *TableContextImpl) InRestrictedSQL() bool {
+	return ctx.vars().StmtCtx.InRestrictedSQL
+}
+
+// BinlogEnabled returns whether the binlog is enabled.
+func (ctx *TableContextImpl) BinlogEnabled() bool {
+	return ctx.vars().BinlogClient != nil
+}
+
+// GetBinlogMutation returns a `binlog.TableMutation` object for a table.
+func (ctx *TableContextImpl) GetBinlogMutation(tblID int64) *binlog.TableMutation {
+	return ctx.Context.StmtGetMutation(tblID)
 }
 
 // GetRowEncodingConfig returns the RowEncodingConfig.

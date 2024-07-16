@@ -327,7 +327,7 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
 			if db == "MySQL" || db == "SYS" {
-				tbl, err1 := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(one))
+				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(one))
 				require.NoError(t, err1)
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
@@ -666,18 +666,16 @@ func TestSnapshotVersion(t *testing.T) {
 	dbInfo, ok := currSnapIs.SchemaByName(model.NewCIStr("test2"))
 	require.True(t, ok)
 
-	tbl, err := currSnapIs.TableByName(model.NewCIStr("test2"), model.NewCIStr("t"))
+	tbl, err := currSnapIs.TableByName(context.Background(), model.NewCIStr("test2"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	m, err := dom.GetSnapshotMeta(snapTS)
-	require.NoError(t, err)
+	m := dom.GetSnapshotMeta(snapTS)
 
 	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
 	require.True(t, meta.ErrDBNotExists.Equal(err))
 	require.Nil(t, tblInfo1)
 
-	m, err = dom.GetSnapshotMeta(currSnapTS)
-	require.NoError(t, err)
+	m = dom.GetSnapshotMeta(currSnapTS)
 
 	tblInfo2, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
 	require.NoError(t, err)

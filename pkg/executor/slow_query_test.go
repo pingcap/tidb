@@ -64,7 +64,7 @@ func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 		return nil, err
 	}
 	is := newISBuilder.Build(math.MaxUint64)
-	tbl, err := is.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
+	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}

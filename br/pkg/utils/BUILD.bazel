@@ -33,6 +33,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/sessionctx",
         "//pkg/util",
+        "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "@com_github_cheggaaa_pb_v3//:pb",
         "@com_github_docker_go_units//:go-units",

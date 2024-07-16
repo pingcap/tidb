@@ -51,8 +51,8 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert into s values(%d)", i*100))
 		}
 	}
-	tk.MustExec("analyze table t")
-	tk.MustExec("analyze table s")
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table s all columns")
 	// Test IndexNestedLoopHashJoin keepOrder.
 	tk.MustQuery("explain format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
 		"IndexHashJoin 100.00 root  left outer join, inner:TableReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
@@ -83,7 +83,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec(`insert into t values(2,1,0,1);`)
 	tk.MustExec(`insert into t values(2,2,0,0);`)
 
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 
 	// test semi join
 	tk.Session().GetSessionVars().InitChunkSize = 2
