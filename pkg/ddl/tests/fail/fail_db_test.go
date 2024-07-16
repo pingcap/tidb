@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.opencensus.io/stats/view"
@@ -337,13 +338,11 @@ func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 // TestRunDDLJobPanicEnableFastCreateTable tests recover panic with fast create table when run ddl job panic.
 func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
 	s := createFailDBSuite(t)
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob"))
-	}()
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set global tidb_enable_fast_create_table=ON")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`))
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
 	require.Error(t, err)
