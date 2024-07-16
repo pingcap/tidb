@@ -17,6 +17,7 @@ package join
 import (
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -120,6 +121,8 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 	}
 
 	expectedResult := getExpectedResults(t, info, retTypes, leftDataSource, rightDataSource)
+
+	log.Info("xzxdebug -----------------------") // TODO remove it
 
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100

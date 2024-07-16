@@ -472,41 +472,35 @@ func (h *hashJoinSpillHelper) appendSegment(seg *rowTableSegment, row chunk.Row)
 	}
 	seg.hashValues = append(seg.hashValues, uint64(hashValue))
 
-	rawDataLen := len(seg.rawData)
+	seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
 	seg.rawData = append(seg.rawData, rawData...)
-	seg.rowStartOffset = append(seg.rowStartOffset, uint64(seg.rawData[rawDataLen]))
 }
 
-func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments []*rowTableSegment) {
+func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments []*rowTableSegment) []*rowTableSegment {
 	var seg *rowTableSegment
 	segLen := len(segments)
 	if segLen > 0 && !segments[segLen-1].finalized {
 		seg = segments[segLen-1]
 	} else {
 		seg = newRowTableSegment()
+		segments = append(segments, seg)
 	}
-
-	newSegCreated := false
-	defer func() {
-		if newSegCreated {
-			segments = append(segments, seg)
-		}
-	}()
 
 	rowNum := chunk.NumRows()
 	for i := 0; i < rowNum; i++ {
 		if seg.getRowNum() >= int(maxRowTableSegmentSize) {
 			// rowLocations's initialization has been done, so it's ok to set `finalized` to true
 			seg.finalized = true
-			segments = append(segments, seg)
 			h.memTracker.Consume(seg.totalUsedBytes())
 			seg = newRowTableSegment()
-			newSegCreated = true
+			segments = append(segments, seg)
 		}
 
 		row := chunk.GetRow(i)
 		h.appendSegment(seg, row)
 	}
+
+	return segments
 }
 
 func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, buildInDisk *chunk.DataInDiskByChunks, chunkIdx int) ([]*chunk.DataInDiskByChunks, error) {
@@ -688,7 +682,7 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 		}
 
 		// TODO test re-spill case
-		h.appendChunkToSegments(chunk, segments)
+		segments = h.appendChunkToSegments(chunk, segments)
 		if h.isSpillNeeded() {
 			idx++
 			break

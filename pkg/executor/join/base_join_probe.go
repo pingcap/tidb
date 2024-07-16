@@ -295,6 +295,19 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk, hashTable *ha
 	logicalRows := chk.NumRows()
 	j.chunkRows = logicalRows
 
+	j.usedRows = chk.Sel()
+	if j.usedRows == nil {
+		if cap(j.selRows) >= logicalRows {
+			j.selRows = j.selRows[:logicalRows]
+		} else {
+			j.selRows = make([]int, 0, logicalRows)
+			for i := 0; i < logicalRows; i++ {
+				j.selRows = append(j.selRows, i)
+			}
+		}
+		j.usedRows = j.selRows
+	}
+
 	if cap(j.matchedRowsHeaders) >= logicalRows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
 	} else {

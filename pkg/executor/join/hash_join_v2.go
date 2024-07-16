@@ -539,6 +539,7 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndRestore() {
 
 func (e *HashJoinV2Exec) probeInSpillMode(probeSideChunks *chunk.DataInDiskByChunks, hashTable *hashTableV2) error {
 	chunkNum := probeSideChunks.NumChunks()
+	// TODO when error happened before channel may have no chunk, do not forget this situation
 	ok, joinResult := e.ProbeWorkers[0].getNewJoinResult()
 	if !ok {
 		return nil
@@ -804,7 +805,7 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	req.Reset()
 
 	result, ok := <-e.joinResultCh
-	if result != nil {
+	if result != nil && result.chk != nil {
 		req.SwapColumns(result.chk)
 		result.src <- result.chk
 	}
