@@ -165,12 +165,34 @@
     curl http://{TiDBIP}:10080/schema/{db}
     ```
 
+    ```shell
+    curl http://{TiDBIP}:10080/schema/{db}?id_name_only=true
+    [
+    {
+     "id": 119,
+     "name": {
+      "O": "t1",
+      "L": "t1"
+     }
+    },
+    {
+     "id": 125,
+     "name": {
+      "O": "t2",
+      "L": "t2"
+     }
+    }
+    ]
+    ```
+
 9. Get schema Information about db.table, and you can get schema info by tableID (tableID is the **unique** identifier of table in TiDB)
 
     ```shell
     curl http://{TiDBIP}:10080/schema/{db}/{table}
 
     curl http://{TiDBIP}:10080/schema?table_id={tableID}
+
+    curl http://{TiDBIP}:10080/schema?table_ids={tableID,...}
     ```
 
 10. Get database information, table information and tidb info schema version by tableID.

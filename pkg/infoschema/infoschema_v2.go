@@ -503,7 +503,7 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return getTableInfo(tbl), ok
 }
 
-// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
+// SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
@@ -529,6 +529,52 @@ retry:
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewSnapshotMeta(snapshot)
 	tblInfos, err := m.ListTables(dbInfo.ID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return nil
+		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
+		}
+		// TODO: error could happen, so do not panic!
+		panic(err)
+	}
+	return tblInfos
+}
+
+// SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
+func (is *infoschemaV2) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
+	if IsSpecialDB(schema.L) {
+		raw, ok := is.Data.specials.Load(schema.L)
+		if ok {
+			schTbls := raw.(*schemaTables)
+			ret := make([]*model.TableNameInfo, 0, len(schTbls.tables))
+			for _, tbl := range schTbls.tables {
+				ret = append(ret, &model.TableNameInfo{
+					ID:   tbl.Meta().ID,
+					Name: tbl.Meta().Name,
+				})
+			}
+			return ret
+		}
+		return nil // something wrong?
+	}
+
+retry:
+	dbInfo, ok := is.SchemaByName(schema)
+	if !ok {
+		return nil
+	}
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	m := meta.NewSnapshotMeta(snapshot)
+	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil

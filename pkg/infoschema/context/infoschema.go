@@ -34,6 +34,7 @@ type MetaOnlyInfoSchema interface {
 	AllSchemas() []*model.DBInfo
 	AllSchemaNames() []model.CIStr
 	SchemaTableInfos(schema model.CIStr) []*model.TableInfo
+	SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo
 	Misc
 }
 
