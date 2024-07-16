@@ -2785,7 +2785,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 	}
 
 	if variable.EnableResourceControl.Load() && info.ResourceGroupName != "" {
-		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
+		s.sessionVars.SetResourceGroupName(info.ResourceGroupName)
 	}
 
 	if info.InSandBoxMode {

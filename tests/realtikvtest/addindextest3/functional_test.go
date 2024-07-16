@@ -48,13 +48,13 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 
 	size := ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 0, size) // No data in information_schema.columns.
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 16, size)
 
 	tk.MustExec("alter table t add column c varchar(255);")
 	tk.MustExec("update t set c = repeat('a', 50) where a = 1;")
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 67, size)
 
@@ -66,7 +66,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	}
 	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
 	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
-	tk.MustExec("analyze table t;")
+	tk.MustExec("analyze table t all columns;")
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)

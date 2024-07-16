@@ -916,14 +916,26 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 }
 
-// WriteDBTablesData writes all the table data in a database. The format is the marshal result of []*model.TableInfo, you can
-// unmarshal it to []*model.TableInfo. In this function, we manually construct the marshal result so that the memory
-// can be deallocated quickly.
-// For every table in the input, we marshal them. The result such as {tb1} {tb2} {tb3}.
-// Then we add some bytes to make it become [{tb1}, {tb2}, {tb3}], so we can unmarshal it to []*model.TableInfo.
-// Note: It would return StatusOK even if errors occur. But if errors occur, there must be some bugs.
+// WriteDBTablesData writes all the table data in a database. The format is the
+// marshal result of []*model.TableInfo, you can unmarshal it to
+// []*model.TableInfo.
+//
+// Note: It would return StatusOK even if errors occur. But if errors occur,
+// there must be some bugs.
 func WriteDBTablesData(w http.ResponseWriter, tbs []*model.TableInfo) {
-	if len(tbs) == 0 {
+	a := make([]any, 0, len(tbs))
+	for _, tb := range tbs {
+		a = append(a, tb)
+	}
+	manualWriteJSONArray(w, a)
+}
+
+// manualWriteJSONArray manually construct the marshal result so that the memory
+// can be deallocated quickly. For every item in the input, we marshal them. The
+// result such as {tb1} {tb2} {tb3}. Then we add some bytes to make it become
+// [{tb1}, {tb2}, {tb3}] to build a valid JSON array.
+func manualWriteJSONArray(w http.ResponseWriter, array []any) {
+	if len(array) == 0 {
 		handler.WriteData(w, []*model.TableInfo{})
 		return
 	}
@@ -936,7 +948,7 @@ func WriteDBTablesData(w http.ResponseWriter, tbs []*model.TableInfo) {
 		return
 	}
 	init := false
-	for _, tb := range tbs {
+	for _, item := range array {
 		if init {
 			_, err = w.Write(hack.Slice(",\n"))
 			if err != nil {
@@ -946,7 +958,7 @@ func WriteDBTablesData(w http.ResponseWriter, tbs []*model.TableInfo) {
 		} else {
 			init = true
 		}
-		js, err := json.MarshalIndent(tb, "", " ")
+		js, err := json.MarshalIndent(item, "", " ")
 		if err != nil {
 			terror.Log(errors.Trace(err))
 			return
@@ -959,6 +971,14 @@ func WriteDBTablesData(w http.ResponseWriter, tbs []*model.TableInfo) {
 	}
 	_, err = w.Write(hack.Slice("\n]"))
 	terror.Log(errors.Trace(err))
+}
+
+func writeDBSimpleTablesData(w http.ResponseWriter, tbs []*model.TableNameInfo) {
+	a := make([]any, 0, len(tbs))
+	for _, tb := range tbs {
+		a = append(a, tb)
+	}
+	manualWriteJSONArray(w, a)
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -987,6 +1007,11 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
+			if a := req.FormValue(handler.IDNameOnly); a == "true" {
+				tbs := schema.SchemaSimpleTableInfos(cDBName)
+				writeDBSimpleTablesData(w, tbs)
+				return
+			}
 			tbs := schema.SchemaTableInfos(cDBName)
 			WriteDBTablesData(w, tbs)
 			return
@@ -997,31 +1022,53 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if tableID := req.FormValue(handler.TableIDQuery); len(tableID) > 0 {
 		// table schema of a specified tableID
-		tid, err := strconv.Atoi(tableID)
+		data, err := getTableByIDStr(schema, tableID)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		if tid < 0 {
-			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-			return
+		handler.WriteData(w, data)
+		return
+	}
+
+	if tableIDsStr := req.FormValue(handler.TableIDsQuery); len(tableIDsStr) > 0 {
+		tableIDs := strings.Split(tableIDsStr, ",")
+		data := make(map[int64]*model.TableInfo, len(tableIDs))
+		for _, tableID := range tableIDs {
+			tbl, err := getTableByIDStr(schema, tableID)
+			if err == nil {
+				data[tbl.ID] = tbl
+			}
 		}
-		if data, ok := schema.TableByID(int64(tid)); ok {
-			handler.WriteData(w, data.Meta())
-			return
+		if len(data) > 0 {
+			handler.WriteData(w, data)
+		} else {
+			handler.WriteError(w, errors.New("All tables are not found"))
 		}
-		// The tid maybe a partition ID of the partition-table.
-		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
-		if tbl == nil {
-			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-			return
-		}
-		handler.WriteData(w, tbl)
 		return
 	}
 
 	// all databases' schemas
 	handler.WriteData(w, schema.AllSchemas())
+}
+
+func getTableByIDStr(schema infoschema.InfoSchema, tableID string) (*model.TableInfo, error) {
+	tid, err := strconv.Atoi(tableID)
+	if err != nil {
+		return nil, err
+	}
+	if tid < 0 {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
+	}
+	if data, ok := schema.TableByID(int64(tid)); ok {
+		return data.Meta(), nil
+	}
+	// The tid maybe a partition ID of the partition-table.
+	tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+	if tbl == nil {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
+	}
+	return tbl.Meta(), nil
 }
 
 // ServeHTTP handles table related requests, such as table's region information, disk usage.

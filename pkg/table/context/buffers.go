@@ -112,6 +112,9 @@ func (b *CheckRowBuffer) Reset(capacity int) {
 	b.rowToCheck = ensureCapacityAndReset(b.rowToCheck, 0, capacity)
 }
 
+// ColSizeDeltaBuffer implements variable.DeltaCols
+var _ variable.DeltaCols = &ColSizeDeltaBuffer{}
+
 // ColSizeDeltaBuffer is a buffer to store the change of column size.
 type ColSizeDeltaBuffer struct {
 	delta []variable.ColSize
@@ -127,10 +130,15 @@ func (b *ColSizeDeltaBuffer) AddColSizeDelta(colID int64, size int64) {
 	b.delta = append(b.delta, variable.ColSize{ColID: colID, Size: size})
 }
 
-// GetColSizeDelta gets the column size delta.
-// TODO: make sure the inner buffer is not used outside directly.
-func (b *ColSizeDeltaBuffer) GetColSizeDelta() []variable.ColSize {
-	return b.delta
+// UpdateColSizeMap updates the column size map which uses columID as the map key and column size as the value.
+func (b *ColSizeDeltaBuffer) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
+	if m == nil && len(b.delta) > 0 {
+		m = make(map[int64]int64, len(b.delta))
+	}
+	for _, delta := range b.delta {
+		m[delta.ColID] += delta.Size
+	}
+	return m
 }
 
 // MutateBuffers is a memory pool for table related memory allocation that aims to reuse memory
@@ -187,7 +195,7 @@ func (b *MutateBuffers) GetCheckRowBufferWithCap(capacity int) *CheckRowBuffer {
 // Usage:
 // 1. Call `GetColSizeDeltaBufferWithCap` to get the buffer.
 // 2. Call `ColSizeDeltaBuffer.AddColSizeDelta` for every column to add column size delta.
-// 3. Call `ColSizeDeltaBuffer.ColSizeDeltaBuffer` to get deltas for all columns.
+// 3. Call `ColSizeDeltaBuffer.UpdateColSizeMap` to update a column size map.
 // Because the inner slices are reused, you should not call this method again before finishing the previous usage.
 // Otherwise, the previous data will be overwritten.
 func (b *MutateBuffers) GetColSizeDeltaBufferWithCap(capacity int) *ColSizeDeltaBuffer {

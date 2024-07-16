@@ -577,21 +577,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 	sessVars := sctx.GetSessionVars()
 	// rebuild index
-	if !sessVars.InTxn() {
-		savePresumeKeyNotExist := sessVars.PresumeKeyNotExists
-		if !sessVars.ConstraintCheckInPlace && sessVars.TxnCtx.IsPessimistic {
-			sessVars.PresumeKeyNotExists = true
-		}
-		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-		sessVars.PresumeKeyNotExists = savePresumeKeyNotExist
-		if err != nil {
-			return err
-		}
-	} else {
-		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-		if err != nil {
-			return err
-		}
+	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+	if err != nil {
+		return err
 	}
 
 	key := t.RecordKey(h)
@@ -657,7 +645,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		oldLen := size - 1
 		colSizeBuffer.AddColSizeDelta(col.ID, int64(newLen-oldLen))
 	}
-	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 0, 1, colSizeBuffer.GetColSizeDelta())
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSizeBuffer)
 	return nil
 }
 
@@ -1073,7 +1061,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 		colSizeBuffer.AddColSizeDelta(col.ID, int64(size-1))
 	}
-	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, colSizeBuffer.GetColSizeDelta())
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSizeBuffer)
 	return recordID, nil
 }
 
@@ -1352,8 +1340,8 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		}
 		colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(
-		t.physicalTableID, -1, 1, colSizeBuffer.GetColSizeDelta(),
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(
+		t.physicalTableID, -1, 1, colSizeBuffer,
 	)
 	return err
 }

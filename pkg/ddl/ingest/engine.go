@@ -110,6 +110,12 @@ func (ei *engineInfo) Clean() {
 	if ei.openedEngine == nil {
 		return
 	}
+	err := ei.closeWriters()
+	if err != nil {
+		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	}
+
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.ctx)
 	if err != nil {
@@ -118,11 +124,6 @@ func (ei *engineInfo) Clean() {
 		return
 	}
 	ei.openedEngine = nil
-	err = ei.closeWriters()
-	if err != nil {
-		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
-			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-	}
 	// Here the local intermediate files will be removed.
 	err = closedEngine.Cleanup(ei.ctx)
 	if err != nil {

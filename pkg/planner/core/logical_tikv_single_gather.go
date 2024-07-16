@@ -128,7 +128,7 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.PlanPartInfo = PhysPlanPartInfo{
+	reader.PlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   sg.Source.AllConds,
 		PartitionNames: sg.Source.PartitionNames,
 		Columns:        sg.Source.TblCols,

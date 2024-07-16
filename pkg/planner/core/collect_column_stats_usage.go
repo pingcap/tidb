@@ -294,16 +294,16 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 		case *LogicalCTE:
 			// Visit seedPartLogicalPlan and recursivePartLogicalPlan first.
-			c.collectFromPlan(x.cte.seedPartLogicalPlan)
-			if x.cte.recursivePartLogicalPlan != nil {
-				c.collectFromPlan(x.cte.recursivePartLogicalPlan)
+			c.collectFromPlan(x.Cte.seedPartLogicalPlan)
+			if x.Cte.recursivePartLogicalPlan != nil {
+				c.collectFromPlan(x.Cte.recursivePartLogicalPlan)
 			}
 			// Schema change from seedPlan/recursivePlan to self.
 			columns := x.Schema().Columns
-			seedColumns := x.cte.seedPartLogicalPlan.Schema().Columns
+			seedColumns := x.Cte.seedPartLogicalPlan.Schema().Columns
 			var recursiveColumns []*expression.Column
-			if x.cte.recursivePartLogicalPlan != nil {
-				recursiveColumns = x.cte.recursivePartLogicalPlan.Schema().Columns
+			if x.Cte.recursivePartLogicalPlan != nil {
+				recursiveColumns = x.Cte.recursivePartLogicalPlan.Schema().Columns
 			}
 			relatedCols := make([]*expression.Column, 0, 2)
 			for i, col := range columns {
@@ -315,7 +315,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			}
 			// If IsDistinct is true, then we use getColsNDV to calculate row count(see (*LogicalCTE).DeriveStat). In this case
 			// statistics of all the columns are needed.
-			if x.cte.IsDistinct {
+			if x.Cte.IsDistinct {
 				for _, col := range columns {
 					c.addPredicateColumn(col)
 				}
@@ -323,7 +323,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		case *LogicalCTETable:
 			// Schema change from seedPlan to self.
 			for i, col := range x.Schema().Columns {
-				c.updateColMap(col, []*expression.Column{x.seedSchema.Columns[i]})
+				c.updateColMap(col, []*expression.Column{x.SeedSchema.Columns[i]})
 			}
 		}
 	}
