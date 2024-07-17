@@ -3903,9 +3903,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			}
 			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tName.TableInfo.ID] = struct{}{}
 		}
-		p, err = b.buildSelectLock(p, l)
-		if err != nil {
-			return nil, err
+		lock, _ := getLockWaitTime(b.ctx, l)
+		if lock {
+			p, err = b.buildSelectLock(p, l)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	b.handleHelper.popMap()

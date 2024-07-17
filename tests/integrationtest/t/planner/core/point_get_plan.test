@@ -12,6 +12,9 @@ insert into t values (1, 1);
 explain format='brief' select t.*, _tidb_rowid from t where a = 1;
 commit;
 explain format='brief' select count(_tidb_rowid) from t where a=1;
+begin;
+explain format='brief' select *, date_format(b, "") from t where a =1 for update;
+rollback;
 explain format='brief' select *, date_format(b, "") from t where a =1 for update;
 create table t1 (pk int, a int, b int, primary key(pk), unique key(a));
 -- error 1054

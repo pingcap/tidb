@@ -118,8 +118,12 @@ update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_mer
 select * from t1;
 
 --echo ///// FOR UPDATE
+begin;
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
-select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update; 
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
+rollback;
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
 
 --echo ///// TEMPORARY Table. Not support for now.
 drop table if exists t1;

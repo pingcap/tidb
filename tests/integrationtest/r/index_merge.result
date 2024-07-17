@@ -419,6 +419,7 @@ update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_mer
 select * from t1;
 c1	c2	c3
 ///// FOR UPDATE
+begin;
 explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
 id	estRows	task	access object	operator info
 Sort_6	4060.74	root		index_merge.t1.c1
@@ -429,6 +430,17 @@ Sort_6	4060.74	root		index_merge.t1.c1
       ├─IndexRangeScan_11(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
       └─Selection_13(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
         └─TableRowIDScan_12	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
+c1	c2	c3
+rollback;
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
+id	estRows	task	access object	operator info
+Sort_5	4060.74	root		index_merge.t1.c1
+└─IndexMerge_12	2250.55	root		type: union
+  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection_11(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
 c1	c2	c3
 ///// TEMPORARY Table. Not support for now.

@@ -694,6 +694,7 @@ CTE_0	2.00	root		Recursive CTE
 ├─Projection(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual	1.00	root		rows:1
 └─CTETable(Recursive Part)	1.00	root		Scan on CTE_0
+begin;
 explain format='brief' with x as (select * from (select a from t for update) s) select * from x where a = 1;
 id	estRows	task	access object	operator info
 Projection	10.00	root		planner__core__casetest__physicalplantest__physical_plan.t.a
@@ -701,6 +702,12 @@ Projection	10.00	root		planner__core__casetest__physicalplantest__physical_plan.
   └─TableReader	10.00	root		data:Selection
     └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+rollback;
+explain format='brief' with x as (select * from (select a from t for update) s) select * from x where a = 1;
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 set tidb_opt_force_inline_cte=1; -- enable force inline CTE;
 explain format='brief' with cte as (select 1) select * from cte union select * from cte; -- force inline cte while multi-consumer;
 id	estRows	task	access object	operator info
