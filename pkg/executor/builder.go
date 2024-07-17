@@ -1975,10 +1975,11 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 		return nil
 	}
 	e := &ProjectionExec{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay: v.CalculateNoDelay,
+		projectionExecutorContext: newProjectionExecutorContext(b.ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		numWorkers:                int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
+		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		calculateNoDelay:          v.CalculateNoDelay,
 	}
 
 	// If the calculation row count for this Projection operator is smaller
@@ -4732,10 +4733,11 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	}()
 
 	e := &ProjectionExec{
-		BaseExecutor:     exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay: v.CalculateNoDelay,
+		projectionExecutorContext: newProjectionExecutorContext(builder.ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		numWorkers:                int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
+		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		calculateNoDelay:          v.CalculateNoDelay,
 	}
 
 	// If the calculation row count for this Projection operator is smaller
