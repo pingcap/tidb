@@ -171,7 +171,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 			return
 		}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) {
 		if job.Type == model.ActionCreateView {
 			counter--
 		}

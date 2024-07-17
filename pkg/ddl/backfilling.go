@@ -55,12 +55,19 @@ import (
 type backfillerType byte
 
 const (
-	typeAddIndexWorker         backfillerType = 0
-	typeUpdateColumnWorker     backfillerType = 1
-	typeCleanUpIndexWorker     backfillerType = 2
-	typeAddIndexMergeTmpWorker backfillerType = 3
-	typeReorgPartitionWorker   backfillerType = 4
+	typeAddIndexWorker backfillerType = iota
+	typeUpdateColumnWorker
+	typeCleanUpIndexWorker
+	typeAddIndexMergeTmpWorker
+	typeReorgPartitionWorker
+
+	typeCount
 )
+
+// BackupFillerTypeCount represents the count of ddl jobs that need to do backfill.
+func BackupFillerTypeCount() int {
+	return int(typeCount)
+}
 
 func (bT backfillerType) String() string {
 	switch bT {
@@ -660,15 +667,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 	defer ingest.LitBackCtxMgr.Unregister(job.ID)
-	engines, err := bcCtx.Register(indexIDs, uniques, t.Meta())
-	if err != nil {
-		logutil.DDLIngestLogger().Error("cannot register new engine",
-			zap.Int64("jobID", job.ID),
-			zap.Error(err),
-			zap.Int64s("index IDs", indexIDs))
-		return errors.Trace(err)
-	}
-	defer bcCtx.UnregisterEngines()
 	sctx, err := sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -677,11 +675,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	cpMgr, err := ingest.NewCheckpointManager(
 		ctx,
-		bcCtx,
 		sessPool,
 		job.ID,
 		indexIDs,
-		bcCtx.GetLocalBackend().LocalStoreDir,
+		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
 		dc.store.(kv.StorageWithPD).GetPDClient(),
 	)
 	if err != nil {
@@ -704,6 +701,19 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
 	concurrency := int(variable.GetDDLReorgWorkerCounter())
+
+	engines, err := bcCtx.Register(indexIDs, uniques, t)
+	if err != nil {
+		logutil.DDLIngestLogger().Error("cannot register new engine",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err),
+			zap.Int64s("index IDs", indexIDs))
+		return errors.Trace(err)
+	}
+	// in happy path FinishAndUnregisterEngines will be called in pipe.Close. We can
+	// ignore the error here.
+	//nolint: errcheck
+	defer bcCtx.FinishAndUnregisterEngines()
 
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
@@ -733,18 +743,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if opCtx.OperatorErr() != nil {
 		return opCtx.OperatorErr()
 	}
-	if err != nil {
-		return err
-	}
-	for i, isUK := range uniques {
-		if isUK {
-			err := bcCtx.CollectRemoteDuplicateRows(indexIDs[i], t)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return err
 }
 
 type localRowCntListener struct {

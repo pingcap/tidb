@@ -57,7 +57,7 @@ func GetTableSchema(
 	tableName model.CIStr,
 ) (*model.TableInfo, error) {
 	info := dom.InfoSchema()
-	table, err := info.TableByName(dbName, tableName)
+	table, err := info.TableByName(context.Background(), dbName, tableName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

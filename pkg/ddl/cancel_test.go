@@ -207,8 +207,8 @@ func cancelSuccess(rs *testkit.Result) bool {
 
 func TestCancel(t *testing.T) {
 	var enterCnt, exitCnt atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDelivery2Worker", func(job *model.Job) { enterCnt.Add(1) })
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) { exitCnt.Add(1) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) { exitCnt.Add(1) })
 	waitDDLWorkerExited := func() {
 		require.Eventually(t, func() bool {
 			return enterCnt.Load() == exitCnt.Load()

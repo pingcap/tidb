@@ -79,13 +79,13 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx
 }
 
 // Get tries to find the corresponding value according to the given key.
-func (l *LRUPlanCache) Get(key string, opts any) (value any, ok bool) {
+func (l *LRUPlanCache) Get(key string, paramTypes any) (value any, ok bool) {
 	l.lock.RLock()
 	defer l.lock.RUnlock()
 
 	bucket, bucketExist := l.buckets[key]
 	if bucketExist {
-		if element, exist := l.pickFromBucket(bucket, opts); exist {
+		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.lruList.MoveToFront(element)
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
@@ -94,13 +94,13 @@ func (l *LRUPlanCache) Get(key string, opts any) (value any, ok bool) {
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-func (l *LRUPlanCache) Put(key string, value, opts any) {
+func (l *LRUPlanCache) Put(key string, value, paramTypes any) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
 	bucket, bucketExist := l.buckets[key]
 	if bucketExist {
-		if element, exist := l.pickFromBucket(bucket, opts); exist {
+		if element, exist := l.pickFromBucket(bucket, paramTypes); exist {
 			l.updateInstanceMetric(&planCacheEntry{PlanKey: key, PlanValue: value}, element.Value.(*planCacheEntry))
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
@@ -239,13 +239,9 @@ func (l *LRUPlanCache) memoryControl() {
 }
 
 // PickPlanFromBucket pick one plan from bucket
-func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, opts any) (*list.Element, bool) {
-	var matchOpts *PlanCacheMatchOpts
-	if opts != nil {
-		matchOpts = opts.(*PlanCacheMatchOpts)
-	}
+func (*LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, paramTypes any) (*list.Element, bool) {
 	for k := range bucket {
-		if matchCachedPlan(l.sctx, k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue), matchOpts) {
+		if checkTypesCompatibility4PC(k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).paramTypes, paramTypes) {
 			return k, true
 		}
 	}

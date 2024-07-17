@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextsession"
@@ -79,6 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/session/types"
@@ -217,6 +219,8 @@ type session struct {
 	extensions *extension.SessionExtensions
 
 	sandBoxMode bool
+
+	cursorTracker cursor.Tracker
 }
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
@@ -292,19 +296,15 @@ func (s *session) cleanRetryInfo() {
 	}
 
 	planCacheEnabled := s.GetSessionVars().EnablePreparedPlanCache
-	var cacheKey, bindSQL string
+	var cacheKey string
 	var err error
 	var preparedObj *plannercore.PlanCacheStmt
-	var stmtText, stmtDB string
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
 			preparedObj, ok = preparedPointer.(*plannercore.PlanCacheStmt)
 			if ok {
-				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
-				bindSQL, _ = bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
-				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
-					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -315,8 +315,7 @@ func (s *session) cleanRetryInfo() {
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedObj != nil {
-				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
-					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -443,7 +442,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 			return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
 		}
 	}
-	table, err := is.TableByName(dbName, tName)
+	table, err := is.TableByName(context.Background(), dbName, tName)
 	if err != nil {
 		return nil, err
 	}
@@ -1447,6 +1446,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
+		CursorTracker:         s.cursorTracker,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -2399,9 +2399,10 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 	if !ok || err != nil {
 		return nil, ok, err
 	}
-
-	// FIXME: block the min-start-ts. Now the `min-start-ts` will advance and exceed the `startTS` used by
-	// this detached record set, and may cause an error if `GC` runs.
+	cursorHandle := rs.se.GetCursorTracker().NewCursor(
+		cursor.State{StartTS: rs.se.GetSessionVars().TxnCtx.StartTS},
+	)
+	crs := staticrecordset.WrapRecordSetWithCursor(cursorHandle, detachedRS)
 
 	// Now, a transaction is not needed for the detached record set, so we commit the transaction and cleanup
 	// the session state.
@@ -2414,7 +2415,7 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 		return nil, false, err
 	}
 
-	return detachedRS, true, nil
+	return crs, true, nil
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -2784,7 +2785,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 	}
 
 	if variable.EnableResourceControl.Load() && info.ResourceGroupName != "" {
-		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
+		s.sessionVars.SetResourceGroupName(info.ResourceGroupName)
 	}
 
 	if info.InSandBoxMode {
@@ -3147,6 +3148,8 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 		}
 	}
 
+	s.cursorTracker = cursor.NewTracker()
+
 	return s, nil
 }
 
@@ -3214,7 +3217,12 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 		targetTables = BackfillTables
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		var t *meta.Meta
+		if variable.EnableFastCreateTable.Load() {
+			t = meta.NewMeta(txn, meta.WithUpdateTableName())
+		} else {
+			t = meta.NewMeta(txn)
+		}
 		tableVer, err := t.CheckDDLTableVersion()
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
@@ -3260,7 +3268,12 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		var t *meta.Meta
+		if variable.EnableFastCreateTable.Load() {
+			t = meta.NewMeta(txn, meta.WithUpdateTableName())
+		} else {
+			t = meta.NewMeta(txn)
+		}
 		ver, err := t.CheckDDLTableVersion()
 		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
@@ -3688,7 +3701,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars = variable.NewSessionVars(s)
 	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
@@ -3751,7 +3764,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
@@ -3905,7 +3918,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future:    future,
 		store:     s.store,
 		txnScope:  scope,
-		pipelined: s.usePipelinedDmlOrWarn(),
+		pipelined: s.usePipelinedDmlOrWarn(ctx),
 	})
 	return nil
 }
@@ -4385,7 +4398,7 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 }
 
 // usePipelinedDmlOrWarn returns the current statement can be executed as a pipelined DML.
-func (s *session) usePipelinedDmlOrWarn() bool {
+func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	if !s.sessionVars.BulkDMLEnabled {
 		return false
 	}
@@ -4448,7 +4461,7 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 	}
 	for _, t := range stmtCtx.Tables {
 		// get table schema from current infoschema
-		tbl, err := is.TableByName(model.NewCIStr(t.DB), model.NewCIStr(t.Table))
+		tbl, err := is.TableByName(ctx, model.NewCIStr(t.DB), model.NewCIStr(t.Table))
 		if err != nil {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get table schema. Fallback to standard mode"))
 			return false
@@ -4548,4 +4561,9 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 		ns = append(ns, n)
 	}
 	return ns
+}
+
+// GetCursorTracker returns the internal `cursor.Tracker`
+func (s *session) GetCursorTracker() cursor.Tracker {
+	return s.cursorTracker
 }

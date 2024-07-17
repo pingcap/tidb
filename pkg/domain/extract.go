@@ -211,7 +211,7 @@ func (w *extractWorker) handleTableNames(tableNames string, record *stmtSummaryH
 		if !exists {
 			return false, nil
 		}
-		t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+		t, err := is.TableByName(w.ctx, model.NewCIStr(dbName), model.NewCIStr(tblName))
 		if err != nil {
 			return false, err
 		}
@@ -270,7 +270,7 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 	}
 	for v := range p.tables {
 		if v.IsView {
-			v, err := is.TableByName(model.NewCIStr(v.DBName), model.NewCIStr(v.TableName))
+			v, err := is.TableByName(w.ctx, model.NewCIStr(v.DBName), model.NewCIStr(v.TableName))
 			if err != nil {
 				return err
 			}

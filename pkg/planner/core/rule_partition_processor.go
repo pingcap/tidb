@@ -87,8 +87,8 @@ func (s *partitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 			children := make([]base.LogicalPlan, 0, len(ua.Children()))
 			for _, child := range ua.Children() {
 				us := LogicalUnionScan{
-					conditions: p.conditions,
-					handleCols: p.handleCols,
+					Conditions: p.Conditions,
+					HandleCols: p.HandleCols,
 				}.Init(ua.SCtx(), ua.QueryBlockOffset())
 				us.SetChildren(child)
 				children = append(children, us)
@@ -490,7 +490,9 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 			})
 			continue
 		}
-		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
+
+		ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.StringWithCtx(ectx)))
 	}
 	return names, nil
 }

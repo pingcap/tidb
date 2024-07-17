@@ -15,6 +15,7 @@
 package schematracker
 
 import (
+	"context"
 	"sort"
 	"testing"
 
@@ -44,13 +45,13 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 	err = is.PutTable(dbName, tableInfo)
 	require.NoError(t, err)
-	got2, err := is.TableByName(dbName, tableName)
+	got2, err := is.TableByName(context.Background(), dbName, tableName)
 	require.NoError(t, err)
 	require.NotNil(t, got2)
-	got2, err = is.TableByName(lowerTableName, tableName)
+	got2, err = is.TableByName(context.Background(), lowerTableName, tableName)
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 	require.Nil(t, got2)
-	got2, err = is.TableByName(dbName, lowerTableName)
+	got2, err = is.TableByName(context.Background(), dbName, lowerTableName)
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	require.Nil(t, got2)
 
@@ -74,10 +75,10 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 
 	err = is.PutTable(lowerDBName, tableInfo)
 	require.NoError(t, err)
-	got2, err = is.TableByName(dbName, tableName)
+	got2, err = is.TableByName(context.Background(), dbName, tableName)
 	require.NoError(t, err)
 	require.NotNil(t, got2)
-	got2, err = is.TableByName(dbName, lowerTableName)
+	got2, err = is.TableByName(context.Background(), dbName, lowerTableName)
 	require.NoError(t, err)
 	require.NotNil(t, got2)
 	require.Equal(t, tableName, got2.Name)
@@ -146,7 +147,7 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	// delete db will remove its tables
 	ok = is.DeleteSchema(dbName1)
 	require.True(t, ok)
-	_, err = is.TableByName(dbName1, tableName1)
+	_, err = is.TableByName(context.Background(), dbName1, tableName1)
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 
 	schemaNames = is.AllSchemaNames()

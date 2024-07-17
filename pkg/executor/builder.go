@@ -589,7 +589,7 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 
 func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Executor {
 	tblInfo := v.Table.TableInfo
-	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	t, err := b.is.TableByName(context.Background(), v.Table.Schema, tblInfo.Name)
 	if err != nil {
 		b.err = err
 		return nil
@@ -651,7 +651,7 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 
 func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Executor {
 	tblInfo := v.Table.TableInfo
-	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	t, err := b.is.TableByName(context.Background(), v.Table.Schema, tblInfo.Name)
 	if err != nil {
 		b.err = err
 		return nil
@@ -689,7 +689,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 }
 
 func (b *executorBuilder) buildCheckIndexRange(v *plannercore.CheckIndexRange) exec.Executor {
-	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name)
+	tb, err := b.is.TableByName(context.Background(), v.Table.Schema, v.Table.Name)
 	if err != nil {
 		b.err = err
 		return nil
@@ -1672,7 +1672,7 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 }
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
-	if join.EnableHashJoinV2.Load() && v.CanUseHashJoinV2() {
+	if join.IsHashJoinV2Enabled() && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}
 	leftExec := b.build(v.Children()[0])
@@ -1975,10 +1975,11 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 		return nil
 	}
 	e := &ProjectionExec{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay: v.CalculateNoDelay,
+		projectionExecutorContext: newProjectionExecutorContext(b.ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		numWorkers:                int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
+		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		calculateNoDelay:          v.CalculateNoDelay,
 	}
 
 	// If the calculation row count for this Projection operator is smaller
@@ -2436,7 +2437,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
 		joiners := make([]join.Joiner, 0, v.Concurrency)
 		for i := 0; i < v.Concurrency; i++ {
-			clonedInnerPlan, err := plannercore.SafeClone(innerPlan)
+			clonedInnerPlan, err := plannercore.SafeClone(v.SCtx(), innerPlan)
 			if err != nil {
 				b.err = nil
 				return serialExec
@@ -3609,7 +3610,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3627,7 +3628,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
-		sctx:       b.ctx,
 		partitions: partitions,
 	}
 
@@ -3841,7 +3841,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 	}
 
 	if is.Index.Global {
-		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), &v.PlanPartInfo)
+		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -3851,7 +3851,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 
 	tmp, _ := b.is.TableByID(is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4026,7 +4026,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	if is.Index.Global {
-		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), &v.PlanPartInfo)
+		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -4041,7 +4041,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 	tmp, _ := b.is.TableByID(is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4196,7 +4196,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	}
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
-	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), &v.PlanPartInfo)
+	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4342,7 +4342,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
-	usedPartitionList, err := builder.partitionPruning(pt, &v.PlanPartInfo)
+	usedPartitionList, err := builder.partitionPruning(pt, v.PlanPartInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4464,11 +4464,10 @@ func dedupHandles(lookUpContents []*join.IndexJoinLookUpContent) ([]kv.Handle, [
 }
 
 type kvRangeBuilderFromRangeAndPartition struct {
-	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
 	ret := make([][]kv.KeyRange, len(h.partitions))
 	pids := make([]int64, 0, len(h.partitions))
 	for i, p := range h.partitions {
@@ -4478,7 +4477,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 		if len(ranges) == 0 {
 			continue
 		}
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetDistSQLCtx(), []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -4487,7 +4486,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 	return pids, ret, nil
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range) ([][]kv.KeyRange, error) {
 	ret := make([][]kv.KeyRange, len(h.partitions))
 	if len(ranges) == 0 {
 		return ret, nil
@@ -4495,7 +4494,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Rang
 	for i, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetDistSQLCtx(), []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
 		if err != nil {
 			return nil, err
 		}
@@ -4600,7 +4599,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	if is.Index.Global {
-		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), &v.PlanPartInfo)
+		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4614,7 +4613,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PlanPartInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4662,7 +4661,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	if is.Index.Global {
-		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), &v.PlanPartInfo)
+		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4677,7 +4676,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PlanPartInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4734,10 +4733,11 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	}()
 
 	e := &ProjectionExec{
-		BaseExecutor:     exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay: v.CalculateNoDelay,
+		projectionExecutorContext: newProjectionExecutorContext(builder.ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		numWorkers:                int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
+		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		calculateNoDelay:          v.CalculateNoDelay,
 	}
 
 	// If the calculation row count for this Projection operator is smaller
@@ -5292,7 +5292,17 @@ func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, p
 }
 
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
-	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, planPartInfo.PruningConds, planPartInfo.PartitionNames, planPartInfo.Columns, planPartInfo.ColumnNames)
+	var pruningConds []expression.Expression
+	var partitionNames []model.CIStr
+	var columns []*expression.Column
+	var columnNames types.NameSlice
+	if planPartInfo != nil {
+		pruningConds = planPartInfo.PruningConds
+		partitionNames = planPartInfo.PartitionNames
+		columns = planPartInfo.Columns
+		columnNames = planPartInfo.ColumnNames
+	}
+	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, pruningConds, partitionNames, columns, columnNames)
 	if err != nil {
 		return nil, err
 	}

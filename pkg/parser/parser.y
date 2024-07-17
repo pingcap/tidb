@@ -678,6 +678,7 @@ import (
 	validation            "VALIDATION"
 	value                 "VALUE"
 	variables             "VARIABLES"
+	vectorType            "VECTOR"
 	view                  "VIEW"
 	visible               "VISIBLE"
 	wait                  "WAIT"
@@ -1445,6 +1446,7 @@ import (
 	OptBinary                              "Optional BINARY"
 	OptBinMod                              "Optional BINARY mode"
 	OptCharsetWithOptBinary                "Optional BINARY or ASCII or UNICODE or BYTE"
+	OptVectorElementType                   "Optional vector element type setting"
 	IgnoreLines                            "Ignore num(int) lines"
 	Int64Num                               "a number that can be safely converted to int64"
 	NUM                                    "A number"
@@ -6941,6 +6943,7 @@ UnReservedKeyword:
 |	"OLTP_READ_WRITE"
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
+|	"VECTOR"
 |	"TPCH_10"
 |	"WITH_SYS_TABLE"
 |	"WAIT_TIFLASH_READY"
@@ -8812,6 +8815,19 @@ CastType:
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
 	}
+|	"VECTOR" OptVectorElementType OptFieldLen
+	{
+		elementType := $2.(*ast.VectorElementType)
+		if elementType.Tp != mysql.TypeFloat {
+			yylex.AppendError(yylex.Errorf("Only VECTOR is supported for now"))
+		}
+		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
+		tp.SetFlen($3.(int))
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
 
 Priority:
 	"LOW_PRIORITY"
@@ -9847,6 +9863,10 @@ JoinTable:
 	{
 		on := &ast.OnCondition{Expr: $5}
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, On: on}
+	}
+|	TableRef "STRAIGHT_JOIN" TableRef "USING" '(' ColumnNameList ')'
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, Using: $6.([]*ast.ColumnName)}
 	}
 
 JoinType:
@@ -12960,6 +12980,19 @@ StringType:
 		}
 		$$ = tp
 	}
+|	"VECTOR" OptVectorElementType OptFieldLen
+	{
+		elementType := $2.(*ast.VectorElementType)
+		if elementType.Tp != mysql.TypeFloat {
+			yylex.AppendError(yylex.Errorf("Only VECTOR is supported for now"))
+		}
+		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
+		tp.SetFlen($3.(int))
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
 
 Char:
 	"CHARACTER"
@@ -13175,6 +13208,25 @@ OptBinMod:
 |	"BINARY"
 	{
 		$$ = true
+	}
+
+OptVectorElementType:
+	{
+		$$ = &ast.VectorElementType{
+			Tp: mysql.TypeFloat,
+		}
+	}
+|	'<' "FLOAT" '>'
+	{
+		$$ = &ast.VectorElementType{
+			Tp: mysql.TypeFloat,
+		}
+	}
+|	'<' "DOUBLE" '>'
+	{
+		$$ = &ast.VectorElementType{
+			Tp: mysql.TypeDouble,
+		}
 	}
 
 OptBinary:

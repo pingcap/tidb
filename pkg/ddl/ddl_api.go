@@ -328,18 +328,18 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
 func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := d.GetInfoSchemaWithInterceptor(sctx)
-	dbNames := is.AllSchemaNames()
 	// If there are no schema change since last time(can be weird).
 	if is.SchemaMetaVersion() == originVersion {
 		return originVersion, pendingCount
 	}
 	cnt := uint32(0)
-	for _, dbName := range dbNames {
-		if util.IsMemOrSysDB(dbName.L) {
+	dbs := is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, db := range dbs {
+		if util.IsMemOrSysDB(db.DBName) {
 			continue
 		}
-		for _, tbl := range is.SchemaTables(dbName) {
-			if tbl.Meta().TiFlashReplica != nil && !tbl.Meta().TiFlashReplica.Available {
+		for _, tbl := range db.TableInfos {
+			if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
 				cnt++
 			}
 		}
@@ -518,7 +518,7 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(ident.Schema, ident.Name)
+	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -1477,6 +1477,17 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		}
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
 			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
+	case ast.JSONObject, ast.JSONArray, ast.JSONQuote: // JSON_OBJECT(), JSON_ARRAY(), JSON_QUOTE()
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		str, err := restoreFuncCall(expr)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		return str, false, nil
+
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -2633,7 +2644,7 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 		if !ok {
 			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
-		referTbl, err = is.TableByName(referIdent.Schema, referIdent.Name)
+		referTbl, err = is.TableByName(context.Background(), referIdent.Schema, referIdent.Name)
 		if err != nil {
 			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
@@ -2743,7 +2754,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		if !ok {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
-		referTbl, err = is.TableByName(referIdent.Schema, referIdent.Name)
+		referTbl, err = is.TableByName(d.ctx, referIdent.Schema, referIdent.Name)
 		if err != nil {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
@@ -2819,7 +2830,7 @@ func (d *ddl) createTableWithInfoJob(
 	}
 
 	var oldViewTblID int64
-	if oldTable, err := is.TableByName(schema.Name, tbInfo.Name); err == nil {
+	if oldTable, err := is.TableByName(d.ctx, schema.Name, tbInfo.Name); err == nil {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
 		switch onExist {
 		case OnExistIgnore:
@@ -3420,7 +3431,7 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 
 func isValidKeyPartitionColType(fieldType types.FieldType) bool {
 	switch fieldType.GetType() {
-	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry:
+	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry, mysql.TypeTiDBVectorFloat32:
 		return false
 	default:
 		return true
@@ -3972,7 +3983,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	}
 
 	is := d.infoCache.GetLatest()
-	tb, err := is.TableByName(ident.Schema, ident.Name)
+	tb, err := is.TableByName(ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4354,7 +4365,7 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 	if !ok {
 		return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tableIdent.Schema)
 	}
-	t, err = is.TableByName(tableIdent.Schema, tableIdent.Name)
+	t, err = is.TableByName(d.ctx, tableIdent.Schema, tableIdent.Name)
 	if err != nil {
 		return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableIdent.Schema, tableIdent.Name)
 	}
@@ -4553,7 +4564,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
+	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -5044,7 +5055,7 @@ func (d *ddl) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec 
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
+	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -5113,7 +5124,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
+	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -5185,7 +5196,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
+	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -5434,7 +5445,7 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 
 	// We should check local temporary here using session's info schema because the local temporary tables are only stored in session.
-	ntLocalTempTable, err := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().TableByName(ntIdent.Schema, ntIdent.Name)
+	ntLocalTempTable, err := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().TableByName(context.Background(), ntIdent.Schema, ntIdent.Name)
 	if err == nil && ntLocalTempTable.Meta().TempTableType == model.TempTableLocal {
 		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(ntLocalTempTable.Meta().Name))
 	}
@@ -5839,7 +5850,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	if !ok {
 		return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
+	t, err := is.TableByName(ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -6470,7 +6481,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
+	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
@@ -6530,7 +6541,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(ident.Schema, ident.Name)
+	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -6598,7 +6609,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(ident.Schema, ident.Name)
+	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -6725,7 +6736,7 @@ func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident,
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(ident.Schema, ident.Name)
+	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -6777,7 +6788,7 @@ func (d *ddl) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(ident.Schema, ident.Name)
+	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -7014,7 +7025,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(ident.Schema, ident.Name)
+	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -7119,7 +7130,7 @@ func (d *ddl) dropTableObject(
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		}
-		tableInfo, err := is.TableByName(tn.Schema, tn.Name)
+		tableInfo, err := is.TableByName(d.ctx, tn.Schema, tn.Name)
 		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 			continue
@@ -7480,7 +7491,7 @@ func getTableID(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int
 	identKey := getIdentKey(ident)
 	tableID, ok := tables[identKey]
 	if !ok {
-		oldTbl, err := is.TableByName(ident.Schema, ident.Name)
+		oldTbl, err := is.TableByName(context.Background(), ident.Schema, ident.Name)
 		if err != nil {
 			return tableNotExist
 		}
@@ -8012,7 +8023,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 
-	t, err := is.TableByName(ti.Schema, ti.Name)
+	t, err := is.TableByName(context.Background(), ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
@@ -8090,7 +8101,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 
-	t, err := is.TableByName(ti.Schema, ti.Name)
+	t, err := is.TableByName(context.Background(), ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
@@ -8146,7 +8157,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-	t, err := is.TableByName(ti.Schema, ti.Name)
+	t, err := is.TableByName(context.Background(), ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
@@ -8770,7 +8781,7 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	// Check table existence.
-	tbl, err := is.TableByName(ident.Schema, ident.Name)
+	tbl, err := is.TableByName(context.Background(), ident.Schema, ident.Name)
 	if err != nil {
 		if stmt.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -9604,7 +9615,7 @@ func (d *ddl) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrNa
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-	t, err := is.TableByName(ti.Schema, ti.Name)
+	t, err := is.TableByName(context.Background(), ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
@@ -9638,7 +9649,7 @@ func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrN
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-	t, err := is.TableByName(ti.Schema, ti.Name)
+	t, err := is.TableByName(context.Background(), ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}

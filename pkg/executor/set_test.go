@@ -682,11 +682,11 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 
 	// test for tidb_analyze_column_options
-	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
-	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
-	tk.MustExec("set global tidb_analyze_column_options = 'all'")
+	tk.MustExec("set global tidb_analyze_column_options = 'ALL'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
+	tk.MustExec("set global tidb_analyze_column_options = 'predicate'")
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
 	require.Error(t, tk.ExecToErr("set global tidb_analyze_column_options = 'UNKNOWN'"))
 
 	// test for tidb_ignore_prepared_cache_close_stmt
@@ -825,8 +825,9 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_force_inline_cte").Check(testkit.Rows("1"))
 
 	// test tidb_auto_analyze_partition_batch_size
-	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("128")) // default value is 128
+	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("8192")) // default value is 8192
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 2")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1681 Updating 'tidb_auto_analyze_partition_batch_size' is deprecated. It will be made read-only in a future release."))
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("2"))
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 0")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1")) // min value is 1

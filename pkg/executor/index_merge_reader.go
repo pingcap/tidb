@@ -522,7 +522,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 					})
 					partialTableReader.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
-						sctx:       e.Ctx(),
 						partitions: worker.prunedPartitions,
 					}
 				}

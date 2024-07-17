@@ -130,6 +130,7 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expression) (base.LogicalPlan, []expression.Expression, error) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	b.optFlag |= flagResolveExpand
 
 	// Rollup syntax require expand OP to do the data expansion, different data replica supply the different grouping layout.
@@ -151,9 +152,9 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 		// add the newly appended names.
 		var name *types.FieldName
 		if c, ok := expr.(*expression.Column); ok {
-			name = buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], "")
+			name = buildExpandFieldName(ectx, c, names[p.Schema().ColumnIndex(c)], "")
 		} else {
-			name = buildExpandFieldName(expr, nil, "")
+			name = buildExpandFieldName(ectx, expr, nil, "")
 		}
 		names = append(names, name)
 		distinctGbyColNames = append(distinctGbyColNames, name)
@@ -215,7 +216,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	expand.GID = gid
 	expandSchema.Append(gid)
 	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
-	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
+	names = append(names, buildExpandFieldName(ectx, gid, nil, "gid_"))
 	expand.GIDName = names[len(names)-1]
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
@@ -227,7 +228,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 		expand.GPos = gpos
 		expandSchema.Append(gpos)
 		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
-		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
+		names = append(names, buildExpandFieldName(ectx, gpos, nil, "gpos_"))
 		expand.GPosName = names[len(names)-1]
 	}
 	expand.SetChildren(proj)
@@ -952,7 +953,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
 	if lc, ok := rightPlan.(*LogicalCTETable); ok && joinNode.Tp == ast.LeftJoin {
-		return nil, plannererrors.ErrCTERecursiveForbiddenJoinOrder.GenWithStackByArgs(lc.name)
+		return nil, plannererrors.ErrCTERecursiveForbiddenJoinOrder.GenWithStackByArgs(lc.Name)
 	}
 
 	handleMap1 := b.handleHelper.popMap()
@@ -1440,12 +1441,12 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 	}
 }
 
-func buildExpandFieldName(expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
+func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
 	_, isCol := expr.(*expression.Column)
 	var origTblName, origColName, dbName, colName, tblName model.CIStr
 	if genName != "" {
 		// for case like: gid_, gpos_
-		colName = model.NewCIStr(expr.String())
+		colName = model.NewCIStr(expr.StringWithCtx(ctx))
 	} else if isCol {
 		// col ref to original col, while its nullability may be changed.
 		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
@@ -1453,7 +1454,7 @@ func buildExpandFieldName(expr expression.Expression, name *types.FieldName, gen
 		tblName = model.NewCIStr("ex_" + name.TblName.O)
 	} else {
 		// Other: complicated expression.
-		colName = model.NewCIStr("ex_" + expr.String())
+		colName = model.NewCIStr("ex_" + expr.StringWithCtx(ctx))
 	}
 	newName := &types.FieldName{
 		TblName:     tblName,
@@ -4349,11 +4350,11 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p base.LogicalPlan) ba
 	lctes := make([]base.LogicalPlan, 0, len(ctes)+1)
 	for _, cte := range ctes {
 		lcte := LogicalCTE{
-			cte:               cte.cteClass,
-			cteAsName:         cte.def.Name,
-			cteName:           cte.def.Name,
-			seedStat:          cte.seedStat,
-			onlyUsedAsStorage: true,
+			Cte:               cte.cteClass,
+			CteAsName:         cte.def.Name,
+			CteName:           cte.def.Name,
+			SeedStat:          cte.seedStat,
+			OnlyUsedAsStorage: true,
 		}.Init(b.ctx, b.getSelectOffset())
 		lcte.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 		lctes = append(lctes, lcte)
@@ -4529,12 +4530,15 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	}
 
 	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
-	for _, col := range statsTbl.Columns {
+	// return statsTbl.LastAnalyzeVersion
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		version = max(version, col.LastUpdateVersion)
-	}
-	for _, idx := range statsTbl.Indices {
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		version = max(version, idx.LastUpdateVersion)
-	}
+		return false
+	})
 	return version
 }
 
@@ -4559,7 +4563,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 
 				cte.recursiveRef = true
-				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat, seedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
+				p := LogicalCTETable{Name: cte.def.Name.String(), IDForStorage: cte.storageID, SeedStat: cte.seedStat, SeedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				return p, nil
@@ -4598,7 +4602,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 			}
 			var p base.LogicalPlan
-			lp := LogicalCTE{cteAsName: tn.Name, cteName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+			lp := LogicalCTE{CteAsName: tn.Name, CteName: tn.Name, Cte: cte.cteClass, SeedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
@@ -4624,12 +4628,12 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 
 			for i, col := range lp.Schema().Columns {
-				lp.cte.ColumnMap[string(col.HashCode())] = prevSchema.Columns[i]
+				lp.Cte.ColumnMap[string(col.HashCode())] = prevSchema.Columns[i]
 			}
 			p = lp
 			p.SetOutputNames(cte.seedLP.OutputNames())
 			if len(asName.String()) > 0 {
-				lp.cteAsName = *asName
+				lp.CteAsName = *asName
 				var on types.NameSlice
 				for _, name := range p.OutputNames() {
 					cpOn := *name
@@ -4721,12 +4725,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
-	tbl, err := is.TableByName(dbName, tn.Name)
+	tbl, err := is.TableByName(ctx, dbName, tn.Name)
 	if err != nil {
 		return nil, err
 	}
 
-	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(b.ctx, dbName, tbl, b.is)
+	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, b.ctx, dbName, tbl, b.is)
 	if err != nil {
 		return nil, err
 	}
@@ -5060,7 +5064,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var result base.LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+		us := LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		if tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
@@ -5161,13 +5165,13 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
 		if len(ds.AllConds) != 0 {
 			// extract the not null attributes from selection conditions.
-			notnullColsUniqueIDs := extractNotNullFromConds(ds.AllConds, ds)
+			notnullColsUniqueIDs := ExtractNotNullFromConds(ds.AllConds, ds)
 
 			// extract the constant cols from selection conditions.
-			constUniqueIDs := extractConstantCols(ds.AllConds, ds.SCtx(), fds)
+			constUniqueIDs := ExtractConstantCols(ds.AllConds, ds.SCtx(), fds)
 
 			// extract equivalence cols.
-			equivUniqueIDs := extractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
+			equivUniqueIDs := ExtractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
 
 			// apply conditions to FD.
 			fds.MakeNotNull(notnullColsUniqueIDs)
@@ -5569,11 +5573,11 @@ func setIsInApplyForCTE(p base.LogicalPlan, apSchema *expression.Schema) {
 	switch x := p.(type) {
 	case *LogicalCTE:
 		if len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(p, apSchema)) > 0 {
-			x.cte.IsInApply = true
+			x.Cte.IsInApply = true
 		}
-		setIsInApplyForCTE(x.cte.seedPartLogicalPlan, apSchema)
-		if x.cte.recursivePartLogicalPlan != nil {
-			setIsInApplyForCTE(x.cte.recursivePartLogicalPlan, apSchema)
+		setIsInApplyForCTE(x.Cte.seedPartLogicalPlan, apSchema)
+		if x.Cte.recursivePartLogicalPlan != nil {
+			setIsInApplyForCTE(x.Cte.recursivePartLogicalPlan, apSchema)
 		}
 	default:
 		for _, child := range p.Children() {

@@ -436,7 +436,7 @@ func checkTimersNotChange(t *testing.T, cli timerapi.TimerClient, timers ...*tim
 
 func getPhysicalTableInfo(t *testing.T, do *domain.Domain, db, table, partition string) (string, *cache.PhysicalTable) {
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(table))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	physical, err := cache.NewPhysicalTable(model.NewCIStr(db), tblInfo, model.NewCIStr(partition))

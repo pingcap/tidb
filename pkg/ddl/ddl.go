@@ -1145,6 +1145,8 @@ func setDDLJobMode(job *model.Job) {
 			job.LocalMode = true
 			return
 		}
+	case model.ActionCreateSchema:
+		job.LocalMode = true
 	default:
 	}
 	job.LocalMode = false
@@ -1156,11 +1158,6 @@ func (d *ddl) deliverJobTask(task *limitJobTask) {
 	} else {
 		d.limitJobCh <- task
 	}
-}
-
-func (*ddl) shouldCheckHistoryJob(job *model.Job) bool {
-	// for local mode job, we add the history job directly now, so no need to check it.
-	return !job.LocalMode
 }
 
 // DoDDLJob will return
@@ -1210,8 +1207,12 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Notice worker that we push a new job and wait the job done.
 	d.notifyNewJobSubmitted(d.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
 	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
-	if !d.shouldCheckHistoryJob(job) {
-		return nil
+
+	// for local mode job, we add the history job directly now, so no need to check it.
+	// fast-create doesn't wait schema version synced, we must reload info-schema
+	// here to make sure later statements can see the created table/database.
+	if job.LocalMode {
+		return d.schemaLoader.Reload()
 	}
 
 	var historyJob *model.Job
@@ -1474,30 +1475,35 @@ func (d *ddl) SwitchFastCreateTable(val bool) error {
 
 // disableFastCreateTable disable fast create table feature.
 func (*ddl) disableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ddlV2Initialized {
+	if !fastCreateTableInitialized {
 		return nil
 	}
-	// clear all table names when we switch to v1.
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(m.SetDDLV2Initialized(false))
+	return errors.Trace(m.SetFastCreateTableInitialized(false))
 }
 
 // enableFastCreateTable enable fast create table feature.
 func (*ddl) enableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ddlV2Initialized {
+	if fastCreateTableInitialized {
 		return nil
 	}
 
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
@@ -1505,6 +1511,12 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	for _, dbInfo := range dbs {
+		if err := m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for _, dbInfo := range dbs {
@@ -1519,7 +1531,7 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 		}
 	}
 
-	return errors.Trace(m.SetDDLV2Initialized(true))
+	return errors.Trace(m.SetFastCreateTableInitialized(true))
 }
 
 func (d *ddl) switchFastCreateTable(val bool) (err error) {
@@ -1550,9 +1562,13 @@ type RecoverInfo struct {
 type RecoverSchemaInfo struct {
 	*model.DBInfo
 	RecoverTabsInfo []*RecoverInfo
-	DropJobID       int64
-	SnapshotTS      uint64
-	OldSchemaName   model.CIStr
+	// LoadTablesOnExecute is the new logic to avoid a large RecoverTabsInfo can't be
+	// persisted. If it's true, DDL owner will recover RecoverTabsInfo instead of the
+	// job submit node.
+	LoadTablesOnExecute bool
+	DropJobID           int64
+	SnapshotTS          uint64
+	OldSchemaName       model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

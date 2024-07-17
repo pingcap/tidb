@@ -1108,12 +1108,25 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 
 	// consider hypo-indexes
-	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes // session level hypo-indexes
 	if ctx.GetSessionVars().StmtCtx.InExplainStmt && hypoIndexes != nil {
 		originalTableName := tblInfo.Name.L
 		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][originalTableName] != nil {
 			for _, index := range hypoIndexes[dbName.L][originalTableName] {
 				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			}
+		}
+	}
+	if len(ctx.GetSessionVars().StmtCtx.HintedHypoIndexes) > 0 { // statement-level hypo-indexes from hints
+		if !ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("can only use HYPO_INDEX hint in explain-statements"))
+		} else {
+			hintedHypoIndexes := ctx.GetSessionVars().StmtCtx.HintedHypoIndexes
+			originalTableName := tblInfo.Name.L
+			if hintedHypoIndexes[dbName.L] != nil && hintedHypoIndexes[dbName.L][originalTableName] != nil {
+				for _, index := range hintedHypoIndexes[dbName.L][originalTableName] {
+					publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+				}
 			}
 		}
 	}
@@ -1962,6 +1975,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 	return cols.data, nil
 }
 
+// getPredicateColumns gets the columns used in predicates.
 func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap) (map[int64]struct{}, error) {
 	// Already calculated in the previous call.
 	if cols.calculated {
@@ -1976,10 +1990,13 @@ func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap)
 		return nil, err
 	}
 	if len(colList) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
-		for _, colInfo := range tblInfo.Columns {
-			cols.data[colInfo.ID] = struct{}{}
-		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+			errors.NewNoStackErrorf(
+				"No predicate column has been collected yet for table %s.%s, so only indexes and the columns composing the indexes will be analyzed",
+				tbl.Schema.L,
+				tbl.Name.L,
+			),
+		)
 	} else {
 		for _, id := range colList {
 			cols.data[id] = struct{}{}
@@ -2017,22 +2034,40 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	}
 
 	switch columnChoice {
-	case model.DefaultChoice, model.AllColumns:
-		return tbl.TableInfo.Columns, nil, nil
-	case model.PredicateColumns:
-		if mustAllColumns {
+	case model.DefaultChoice:
+		columnOptions := variable.AnalyzeColumnOptions.Load()
+		switch columnOptions {
+		case model.AllColumns.String():
+			return tbl.TableInfo.Columns, nil, nil
+		case model.PredicateColumns.String():
+			columns, err := b.getColumnsBasedOnPredicateColumns(
+				tbl,
+				predicateCols,
+				mustAnalyzedCols,
+				mustAllColumns,
+			)
+			if err != nil {
+				return nil, nil, err
+			}
+			return columns, nil, nil
+		default:
+			// Usually, this won't happen.
+			logutil.BgLogger().Warn("Unknown default column choice, analyze all columns", zap.String("choice", columnOptions))
 			return tbl.TableInfo.Columns, nil, nil
 		}
-		predicate, err := b.getPredicateColumns(tbl, predicateCols)
+	case model.AllColumns:
+		return tbl.TableInfo.Columns, nil, nil
+	case model.PredicateColumns:
+		columns, err := b.getColumnsBasedOnPredicateColumns(
+			tbl,
+			predicateCols,
+			mustAnalyzedCols,
+			mustAllColumns,
+		)
 		if err != nil {
 			return nil, nil, err
 		}
-		mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
-		if err != nil {
-			return nil, nil, err
-		}
-		colSet := combineColumnSets(predicate, mustAnalyzed)
-		return getColumnListFromSet(tbl.TableInfo.Columns, colSet), nil, nil
+		return columns, nil, nil
 	case model.ColumnList:
 		colSet := getColumnSetFromSpecifiedCols(specifiedCols)
 		mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
@@ -2056,6 +2091,26 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	}
 
 	return nil, nil, nil
+}
+
+func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
+	tbl *ast.TableName,
+	predicateCols, mustAnalyzedCols *calcOnceMap,
+	rewriteAllStatsNeeded bool,
+) ([]*model.ColumnInfo, error) {
+	if rewriteAllStatsNeeded {
+		return tbl.TableInfo.Columns, nil
+	}
+	predicate, err := b.getPredicateColumns(tbl, predicateCols)
+	if err != nil {
+		return nil, err
+	}
+	mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
+	if err != nil {
+		return nil, err
+	}
+	colSet := combineColumnSets(predicate, mustAnalyzed)
+	return getColumnListFromSet(tbl.TableInfo.Columns, colSet), nil
 }
 
 // Helper function to combine two column sets.
@@ -3151,7 +3206,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
-		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}
@@ -3211,7 +3266,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	case ast.ShowRegions:
-		tableInfo, err := b.is.TableByName(show.Table.Schema, show.Table.Name)
+		tableInfo, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -4251,7 +4306,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, err2
 		}
 	} else {
-		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
+		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes, []uint{})
 		p.setSchemaAndNames(outputSchema, outputFields)
 	}
 	return p, nil
@@ -5102,6 +5157,8 @@ func buildShowWarningsSchema() (*expression.Schema, types.NameSlice) {
 func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *expression.Schema, outputNames []*types.FieldName) {
 	var names []string
 	var ftypes []byte
+	var flags []uint
+
 	switch s.Tp {
 	case ast.ShowBinlogStatus:
 		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
@@ -5160,9 +5217,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowVariables, ast.ShowStatus:
 		names = []string{"Variable_name", "Value"}
 	case ast.ShowCollation:
-		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
+		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen", "Pad_attribute"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
+		flags = []uint{0, 0, mysql.UnsignedFlag | mysql.NotNullFlag, 0, 0, 0, 0}
 	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		if isSequence {
 			names = []string{"Sequence", "Create Sequence"}
@@ -5284,10 +5342,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = importIntoSchemaNames
 		ftypes = importIntoSchemaFTypes
 	}
-	return convert2OutputSchemasAndNames(names, ftypes)
+	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }
 
-func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expression.Schema, outputNames []*types.FieldName) {
+func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) (schema *expression.Schema, outputNames []*types.FieldName) {
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	outputNames = make([]*types.FieldName, 0, len(names))
 	for i := range names {
@@ -5305,6 +5363,9 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expre
 		charset, collate := types.DefaultCharsetForType(tp)
 		fieldType.SetCharset(charset)
 		fieldType.SetCollate(collate)
+		if len(flags) > 0 {
+			fieldType.SetFlag(flags[i])
+		}
 		col.RetType = fieldType
 		schema.Append(col)
 	}

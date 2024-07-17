@@ -16,6 +16,7 @@ package infoschema
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -224,9 +225,9 @@ func (is *InfoschemaV3) TableByID(id int64) (val table.Table, ok bool) {
 	return tbl2, ok1
 }
 
-func (is *InfoschemaV3) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
-	tbl1, err1 := is.infoV1.TableByName(schema, tbl)
-	tbl2, err2 := is.infoV2.TableByName(schema, tbl)
+func (is *InfoschemaV3) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
+	tbl1, err1 := is.infoV1.TableByName(ctx, schema, tbl)
+	tbl2, err2 := is.infoV2.TableByName(ctx, schema, tbl)
 	if !errors.ErrorEqual(err2, err1) {
 		panic("inconsistent infoschema")
 	}
@@ -567,6 +568,25 @@ func (is *InfoschemaV3) ListTablesWithSpecialAttribute(filter specialAttributeFi
 		panic("inconsistent infoschema")
 	}
 	return rs2
+}
+
+func (is *InfoschemaV3) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
+	tbl1 := is.infoV1.SchemaSimpleTableInfos(schema)
+	tbl2 := is.infoV2.SchemaSimpleTableInfos(schema)
+	if len(tbl1) != len(tbl2) {
+		panic("inconsistent infoschema")
+	}
+	return tbl2
+}
+
+func (is *InfoschemaV3) CloneResourceGroups() map[string]*model.ResourceGroupInfo {
+	is.infoV1.CloneResourceGroups()
+	return is.infoV2.CloneResourceGroups()
+}
+
+func (is *InfoschemaV3) ClonePlacementPolicies() map[string]*model.PolicyInfo {
+	is.infoV1.ClonePlacementPolicies()
+	return is.infoV2.ClonePlacementPolicies()
 }
 
 func (is *InfoschemaV3) SchemaMetaVersion() int64 {

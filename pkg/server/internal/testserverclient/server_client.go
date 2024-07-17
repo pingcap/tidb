@@ -17,6 +17,7 @@ package testserverclient
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	mysqlcursor "github.com/YangKeao/go-mysql-driver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -45,8 +47,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -117,6 +121,18 @@ func (cli *TestServerClient) GetDSN(overriders ...configOverrider) string {
 			overrider(config)
 		}
 	}
+	return config.FormatDSN()
+}
+
+// GetDSN generates a DSN string for MySQL connection.
+func (cli *TestServerClient) GetDSNWithCursor(fetchSize uint32) string {
+	config := mysqlcursor.NewConfig()
+	config.User = "root"
+	config.Net = "tcp"
+	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.Port)
+	config.DBName = "test"
+	config.Params = make(map[string]string)
+	config.FetchSize = fetchSize
 	return config.FormatDSN()
 }
 
@@ -2729,6 +2745,98 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 		resourceGroupConnCountReached(t, "default", 0.0)
 		resourceGroupConnCountReached(t, "test", 0.0)
 	})
+
+	// The connection closed before handshake will not decrease the count below 0.
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.User = "randomusername"
+	}, func(dbt *testkit.DBTestKit) {
+		_, err := dbt.GetDB().Conn(context.Background())
+		require.NotNil(t, err)
+		resourceGroupConnCountReached(t, "default", 0.0)
+	})
+
+	// The resource group set by user authantication info is tracked by the count
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		// Create a user with resource group
+		_, err := dbt.GetDB().Exec("CREATE USER 'testuser'@'%' RESOURCE GROUP test;")
+		require.NoError(t, err)
+	})
+	cli.RunTests(t, func(c *mysql.Config) {
+		c.User = "testuser"
+		c.DBName = ""
+	}, func(dbt *testkit.DBTestKit) {
+		// By default, the resource group is set to `test`
+		ctx := context.Background()
+		dbt.GetDB().SetMaxIdleConns(0)
+
+		// start 100 connections
+		conns := make([]*sql.Conn, 100)
+		for i := 0; i < 100; i++ {
+			conn, err := dbt.GetDB().Conn(ctx)
+			require.NoError(t, err)
+			conns[i] = conn
+		}
+		resourceGroupConnCountReached(t, "test", 100.0)
+
+		// close 25 connections
+		for i := 75; i < 100; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "test", 75.0)
+
+		// close the rest of them
+		for i := 0; i < 75; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "test", 0.0)
+	})
+
+	// The resource group set by `SET SESSION_STATE` will be tracked by the counter
+	// At first, create a new cert/key pair to encode session state
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.pem")
+	keyPath := filepath.Join(tempDir, "key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 1024, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
+
+	sessionstates.SetCertPath(certPath)
+	sessionstates.SetKeyPath(keyPath)
+	sessionstates.ReloadSigningCert()
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		resourceGroupConnCountReached(t, "default", 1.0)
+		// Now set the resource group to `test`
+		_, err = conn.ExecContext(ctx, "set resource group test")
+		require.NoError(t, err)
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 1.0)
+
+		// Encode the session state
+		rows, err := conn.QueryContext(ctx, "show session_states")
+		require.NoError(t, err)
+		var sessionStates, signInfo string
+		rows.Next()
+		err = rows.Scan(&sessionStates, &signInfo)
+		require.NoError(t, err)
+		require.NoError(t, rows.Close())
+
+		// Now reset the resource group to `default`
+		_, err = conn.ExecContext(ctx, "set resource group default")
+		require.NoError(t, err)
+		resourceGroupConnCountReached(t, "default", 1.0)
+		resourceGroupConnCountReached(t, "test", 0.0)
+		// Set the session state
+		sessionStates = strings.ReplaceAll(sessionStates, "\\", "\\\\")
+		sessionStates = strings.ReplaceAll(sessionStates, "'", "\\'")
+		_, err = conn.ExecContext(ctx, fmt.Sprintf("set session_states '%s'", sessionStates))
+		require.NoError(t, err)
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 1.0)
+	})
 }
 
 func (cli *TestServerClient) RunTestTypeAndCharsetOfSendLongData(t *testing.T) {
@@ -2855,6 +2963,39 @@ func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain)
 		dropColumnSQL := "alter table stock drop column cct_1"
 		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
 		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
+	})
+}
+
+func (cli *TestServerClient) RunTestIssue54254(t *testing.T, dom *domain.Domain) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		MustExec(ctx, t, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
+		MustExec(ctx, t, conn, "use test_db_state")
+		MustExec(ctx, t, conn, `CREATE TABLE stock (
+  a int NOT NULL,
+  b char(30) NOT NULL,
+  c int,
+  d char(64),
+  PRIMARY KEY(a,b)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+		MustExec(ctx, t, conn, "insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
+		defer MustExec(ctx, t, conn, "drop database test_db_state")
+
+		sqls := make([]sqlWithErr, 5)
+		sqls[0] = sqlWithErr{nil, "begin"}
+		sqls[1] = sqlWithErr{nil, "SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE"}
+		sqls[2] = sqlWithErr{nil, "UPDATE stock SET c = ? WHERE a= ? AND b = 'a'"}
+		sqls[3] = sqlWithErr{nil, "UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'"}
+		sqls[4] = sqlWithErr{nil, "commit"}
+		addColumnSQL := "alter table stock add column cct_1 int"
+		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
+		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
 	})
 }
 

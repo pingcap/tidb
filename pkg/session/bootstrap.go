@@ -1098,14 +1098,20 @@ const (
 	//   add column `owner_id` for `mysql.tidb_mdl_info` table
 	version198 = 198
 
-	// version 199
+	// ...
+	// [version199, version208] is the version range reserved for patches of 8.1.x
+	// ...
+
+	// version 209
 	//   sets `tidb_resource_control_strict_mode` to off when a cluster upgrades from some version lower than v8.2.
-	version199 = 199
+	version209 = 209
+	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
+	version210 = 210
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version199
+var currentBootstrapVersion int64 = version210
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1269,7 +1275,8 @@ var (
 		upgradeToVer196,
 		upgradeToVer197,
 		upgradeToVer198,
-		upgradeToVer199,
+		upgradeToVer209,
+		upgradeToVer210,
 	}
 )
 
@@ -3038,12 +3045,22 @@ func upgradeToVer198(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer199(s sessiontypes.Session, ver int64) {
-	if ver >= version199 {
+func upgradeToVer209(s sessiontypes.Session, ver int64) {
+	if ver >= version209 {
 		return
 	}
 
 	initGlobalVariableIfNotExists(s, variable.TiDBResourceControlStrictMode, variable.Off)
+}
+
+func upgradeToVer210(s sessiontypes.Session, ver int64) {
+	if ver >= version210 {
+		return
+	}
+
+	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
+	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3341,14 +3358,16 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	for _, dbName := range is.AllSchemaNames() {
-		for _, t := range is.SchemaTables(dbName) {
-			pi := t.Meta().GetPartitionInfo()
+	dbs := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	for _, db := range dbs {
+		for _, t := range db.TableInfos {
+			pi := t.GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-
-			pe := t.(partitionExpr).PartitionExpr()
+			tbl, ok := is.TableByID(t.ID)
+			intest.Assert(ok, "table not found in infoschema")
+			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
 				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
 					logutil.BgLogger().Warn("build list column partition value map and sorted failed")

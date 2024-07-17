@@ -10,6 +10,8 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/parser/model",
+        "//pkg/statistics/asyncload",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
