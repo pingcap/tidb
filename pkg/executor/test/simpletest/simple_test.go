@@ -479,7 +479,7 @@ func TestSetPwd(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
 	// Should have the correct error message saying u2 does not have enough privileges.
-	tk2.MustContainErrMsg("set password for 'u1'='randompassword'", "[executor:1044]Access denied for user 'u2'@'%' to database 'mysql'")
+	tk2.MustContainErrMsg("set password for 'u1'='randompassword'", "[executor:1044]Access denied for user 'u2'@'localhost' to database 'mysql'")
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {
