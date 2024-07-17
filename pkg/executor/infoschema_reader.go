@@ -2474,7 +2474,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []model.CIStr) {
+func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, _ []model.CIStr) {
 	var (
 		checker       = privilege.GetPrivilegeManager(ctx)
 		rows          [][]types.Datum
