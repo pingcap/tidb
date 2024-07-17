@@ -623,11 +623,7 @@ func (*firstRow4VectorFloat32) MergePartialResult(_ AggFuncUpdateContext, src, d
 	return memDelta, nil
 }
 
-<<<<<<< HEAD
 func (e *firstRow4VectorFloat32) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
-=======
-func (e *firstRow4VectorFloat32) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
->>>>>>> 98b15cfcfc (Add Vector data type)
 	p := (*partialResult4FirstRowVectorFloat32)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)

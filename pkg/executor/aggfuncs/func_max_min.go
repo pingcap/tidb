@@ -1643,18 +1643,18 @@ type maxMin4VectorFloat32 struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinVectorFloat32)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinVectorFloat32Size
 }
 
-func (e *maxMin4VectorFloat32) ResetPartialResult(pr PartialResult) {
+func (*maxMin4VectorFloat32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinVectorFloat32)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4VectorFloat32) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4VectorFloat32) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinVectorFloat32)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
