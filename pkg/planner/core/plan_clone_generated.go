@@ -100,3 +100,83 @@ func (op *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.P
 	cloned.Exprs = util.CloneExprs(op.Exprs)
 	return cloned, true
 }
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalSort)
+	*cloned = *op
+	basePlan, baseOK := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.basePhysicalPlan = *basePlan
+	cloned.ByItems = util.CloneByItems(op.ByItems)
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalTopN)
+	*cloned = *op
+	basePlan, baseOK := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.basePhysicalPlan = *basePlan
+	cloned.ByItems = util.CloneByItems(op.ByItems)
+	cloned.PartitionBy = util.CloneSortItem(op.PartitionBy)
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalStreamAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalStreamAgg)
+	*cloned = *op
+	basePlan, baseOK := op.basePhysicalAgg.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.basePhysicalAgg = *basePlan
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalHashAgg)
+	*cloned = *op
+	basePlan, baseOK := op.basePhysicalAgg.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.basePhysicalAgg = *basePlan
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalHashJoin)
+	*cloned = *op
+	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.basePhysicalJoin = *basePlan
+	cloned.EqualConditions = util.CloneScalarFunctions(op.EqualConditions)
+	cloned.NAEqualConditions = util.CloneScalarFunctions(op.NAEqualConditions)
+	if op.runtimeFilterList != nil {
+		return nil, false
+	}
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalMergeJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalMergeJoin)
+	*cloned = *op
+	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.basePhysicalJoin = *basePlan
+	return cloned, true
+}

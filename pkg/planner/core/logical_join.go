@@ -481,3 +481,13 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	}
 	return expression.NewSchema(joinKeys...)
 }
+
+// PreferAny checks whether the join type prefers any of the join types specified in the joinFlags.
+func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
+	for _, flag := range joinFlags {
+		if p.PreferJoinType&flag > 0 {
+			return true
+		}
+	}
+	return false
+}

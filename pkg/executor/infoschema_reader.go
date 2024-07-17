@@ -169,7 +169,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
-			e.dataForTableTiFlashReplica(ctx, sctx, dbs)
+			e.dataForTableTiFlashReplica(sctx, dbs)
 		case infoschema.TableTiKVStoreStatus:
 			err = e.dataForTiKVStoreStatus(ctx, sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
@@ -2459,8 +2459,17 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 	e.rows = rows
 }
 
+func schemasContain(schemas []model.CIStr, schema string) bool {
+	for _, s := range schemas {
+		if s.L == schema {
+			return true
+		}
+	}
+	return false
+}
+
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionctx.Context, schemas []model.CIStr) {
+func (e *memtableRetriever) dataForTableTiFlashReplica(sctx sessionctx.Context, schemas []model.CIStr) {
 	var (
 		checker       = privilege.GetPrivilegeManager(sctx)
 		rows          [][]types.Datum
@@ -2469,6 +2478,10 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 	tableInfoResult := e.is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
 	for _, res := range tableInfoResult {
 		schema := res.DBName
+		if !schemasContain(schemas, schema) {
+			continue
+		}
+
 		for _, tbl := range res.TableInfos {
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue

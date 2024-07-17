@@ -1255,6 +1255,32 @@ func (p *basePhysicalJoin) getInnerChildIdx() int {
 	return p.InnerChildIdx
 }
 
+func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, bool) {
+	cloned := new(basePhysicalJoin)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
+	if err != nil {
+		return nil, false
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.JoinType = p.JoinType
+	cloned.LeftConditions = util.CloneExprs(p.LeftConditions)
+	cloned.RightConditions = util.CloneExprs(p.RightConditions)
+	cloned.OtherConditions = util.CloneExprs(p.OtherConditions)
+	cloned.InnerChildIdx = p.InnerChildIdx
+	cloned.OuterJoinKeys = util.CloneCols(p.OuterJoinKeys)
+	cloned.InnerJoinKeys = util.CloneCols(p.InnerJoinKeys)
+	cloned.LeftJoinKeys = util.CloneCols(p.LeftJoinKeys)
+	cloned.RightJoinKeys = util.CloneCols(p.RightJoinKeys)
+	cloned.IsNullEQ = make([]bool, len(p.IsNullEQ))
+	copy(cloned.IsNullEQ, p.IsNullEQ)
+	for _, d := range p.DefaultValues {
+		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
+	}
+	cloned.LeftNAJoinKeys = util.CloneCols(p.LeftNAJoinKeys)
+	cloned.RightNAJoinKeys = util.CloneCols(p.RightNAJoinKeys)
+	return cloned, true
+}
+
 func (p *basePhysicalJoin) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, error) {
 	cloned := new(basePhysicalJoin)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
@@ -1358,7 +1384,7 @@ type PhysicalHashJoin struct {
 	mppShuffleJoin bool
 
 	// for runtime filter
-	runtimeFilterList []*RuntimeFilter
+	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 }
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
@@ -1582,7 +1608,7 @@ func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
 type PhysicalMergeJoin struct {
 	basePhysicalJoin
 
-	CompareFuncs []expression.CompareFunc
+	CompareFuncs []expression.CompareFunc `plan-cache-clone:"shallow"`
 	// Desc means whether inner child keep desc order.
 	Desc bool
 }
@@ -1913,6 +1939,24 @@ func (p *basePhysicalAgg) IsFinalAgg() bool {
 		}
 	}
 	return false
+}
+
+func (p *basePhysicalAgg) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, bool) {
+	cloned := new(basePhysicalAgg)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
+	if err != nil {
+		return nil, false
+	}
+	cloned.physicalSchemaProducer = *base
+	for _, aggDesc := range p.AggFuncs {
+		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
+	}
+	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
+	cloned.MppRunMode = p.MppRunMode
+	for _, p := range p.MppPartitionCols {
+		cloned.MppPartitionCols = append(cloned.MppPartitionCols, p.Clone())
+	}
+	return cloned, true
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, error) {
