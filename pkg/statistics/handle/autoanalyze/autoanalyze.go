@@ -626,44 +626,74 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		if idx.State != model.StatePublic {
 			continue
 		}
-		// Collect all the partition names that need to analyze.
-		for _, def := range partitionDefs {
-			partitionStats := partitionStats[def.ID]
-			// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
-			//    Pseudo statistics can be created by the optimizer, so we need to double check it.
-			if partitionStats == nil || partitionStats.Pseudo {
-				continue
+		if !idx.Global {
+			// Collect all the partition names that need to analyze.
+			for _, def := range partitionDefs {
+				partitionStats := partitionStats[def.ID]
+				// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+				//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+				if partitionStats == nil || partitionStats.Pseudo {
+					continue
+				}
+				// 2. If the index is not analyzed, we need to analyze it.
+				if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
+					needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
+					statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
+				}
 			}
-			// 2. If the index is not analyzed, we need to analyze it.
-			if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
-				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
-			}
-		}
-		if len(needAnalyzePartitionNames) > 0 {
-			statsTbl := statsHandle.GetTableStats(tblInfo)
-			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			if len(needAnalyzePartitionNames) > 0 {
+				statsTbl := statsHandle.GetTableStats(tblInfo)
+				statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 
-			for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
-				start := i
-				end := start + analyzePartitionBatchSize
-				if end >= len(needAnalyzePartitionNames) {
-					end = len(needAnalyzePartitionNames)
+				for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
+					start := i
+					end := start + analyzePartitionBatchSize
+					if end >= len(needAnalyzePartitionNames) {
+						end = len(needAnalyzePartitionNames)
+					}
+
+					sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
+					params := append([]any{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
+					params = append(params, idx.Name.O)
+					statslogutil.StatsLogger().Info("auto analyze for unanalyzed",
+						zap.String("database", db),
+						zap.String("table", tblInfo.Name.String()),
+						zap.String("index", idx.Name.String()),
+						zap.Any("partitions", needAnalyzePartitionNames[start:end]),
+					)
+					exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 				}
 
-				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
-				params := append([]any{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
-				params = append(params, idx.Name.O)
-				statslogutil.StatsLogger().Info("auto analyze for unanalyzed",
+				return true
+			}
+		} else {
+			modifyCount, tblCnt := 0.0, 0.0
+			for _, def := range partitionDefs {
+				partitionStats := partitionStats[def.ID]
+				if partitionStats == nil || partitionStats.Pseudo || !partitionStats.IsAnalyzed() {
+					continue
+				}
+				partitionCnt := float64(partitionStats.RealtimeCount)
+				if histCnt := partitionStats.GetAnalyzeRowCount(); histCnt > 0 {
+					partitionCnt = histCnt
+				}
+				modifyCount += float64(partitionStats.ModifyCount)
+				tblCnt += partitionCnt
+			}
+			statsTbl := statsHandle.GetTableStats(tblInfo)
+			// Need analyze global index when modify count greater than threshold and analyzed before.
+			// Or no stats with this global index.
+			if  !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) || (modifyCount/tblCnt > ratio && tblCnt >= float64(exec.AutoAnalyzeMinCnt)) {
+				statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+				sql := "analyze table %n.%n index %n"
+				params := append([]any{db, tblInfo.Name.O}, idx.Name.O)
+				statslogutil.StatsLogger().Info("auto analyze for global index",
 					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
-					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
 				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 			}
-
-			return true
 		}
 	}
 

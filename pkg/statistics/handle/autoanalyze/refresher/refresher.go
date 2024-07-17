@@ -453,6 +453,41 @@ func CheckIndexesNeedAnalyze(
 	return indexes
 }
 
+func CheckGlobalIndex(
+	tblInfo *model.TableInfo,
+	tblStats *statistics.Table,
+	partitionStats map[PartitionIDAndName]*statistics.Table,
+	autoAnalyzeRatio float64,
+) []string {
+	globalIndexes := make([]string, 0)
+	needAnalyzeGlobalIndex := false
+	modifyCount, tblCnt := 0.0, 0.0
+	for _, pStats := range partitionStats {
+		if pStats == nil || pStats.Pseudo || !pStats.IsAnalyzed() {
+			continue
+		}
+		partitionCnt := float64(pStats.RealtimeCount)
+		if histCnt := pStats.GetAnalyzeRowCount(); histCnt > 0 {
+			partitionCnt = histCnt
+		}
+		modifyCount += float64(pStats.ModifyCount)
+		tblCnt += partitionCnt
+	}
+	if modifyCount/tblCnt > autoAnalyzeRatio && tblCnt >= float64(exec.AutoAnalyzeMinCnt) {
+		needAnalyzeGlobalIndex = true
+	}
+	for _, idx := range tblInfo.Indices {
+		if !idx.Global {
+			continue
+		}
+		if !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) || needAnalyzeGlobalIndex {
+			globalIndexes = append(globalIndexes, idx.Name.O)
+			continue
+		}
+	}
+	return globalIndexes
+}
+
 func createTableAnalysisJobForPartitions(
 	sctx sessionctx.Context,
 	tableSchema string,
@@ -480,10 +515,17 @@ func createTableAnalysisJobForPartitions(
 		tblInfo,
 		partitionStats,
 	)
+	globalIndexes := CheckGlobalIndex(
+		tblInfo,
+		tblStats,
+		partitionStats,
+		autoAnalyzeRatio,
+	)
+
 	// No need to analyze.
 	// We perform a separate check because users may set the auto analyze ratio to 0,
 	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
-	if len(partitionNames) == 0 && len(partitionIndexes) == 0 {
+	if len(partitionNames) == 0 && len(partitionIndexes) == 0 && len(globalIndexes) == 0 {
 		return nil
 	}
 
@@ -493,6 +535,7 @@ func createTableAnalysisJobForPartitions(
 		tblInfo.ID,
 		partitionNames,
 		partitionIndexes,
+		globalIndexes,
 		tableStatsVer,
 		averageChangePercentage,
 		avgSize,
@@ -562,8 +605,9 @@ func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 	partitionIndexes := make(map[string][]string, len(tblInfo.Indices))
 
 	for _, idx := range tblInfo.Indices {
-		// No need to analyze the index if it's not public.
-		if idx.State != model.StatePublic {
+		// No need to analyze the index if it's not public
+		// or index is a global index.
+		if idx.State != model.StatePublic || idx.Global {
 			continue
 		}
 

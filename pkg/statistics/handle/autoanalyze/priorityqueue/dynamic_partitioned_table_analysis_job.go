@@ -44,6 +44,8 @@ type DynamicPartitionedTableAnalysisJob struct {
 	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
 	PartitionIndexes map[string][]string
 
+	GlobalIndexes []string
+
 	TableSchema     string
 	GlobalTableName string
 	// This will analyze all indexes and columns of the specified partitions.
@@ -64,6 +66,7 @@ func NewDynamicPartitionedTableAnalysisJob(
 	tableID int64,
 	partitions []string,
 	partitionIndexes map[string][]string,
+	globalIndexes []string,
 	tableStatsVer int,
 	changePercentage float64,
 	tableSize float64,
@@ -75,6 +78,7 @@ func NewDynamicPartitionedTableAnalysisJob(
 		GlobalTableName:  tableName,
 		Partitions:       partitions,
 		PartitionIndexes: partitionIndexes,
+		GlobalIndexes:    globalIndexes,
 		TableStatsVer:    tableStatsVer,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,

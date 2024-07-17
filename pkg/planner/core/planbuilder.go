@@ -2278,7 +2278,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
 		}
 		if idx.Global {
-			if !isAnalyzeTable && isAnalyzeIndex {
+			if !isAnalyzeTable {
 				return errors.NewNoStackErrorf("Analyze global index %s can't work with analyze partition", idxName.O)
 			}
 		} else {
