@@ -17,6 +17,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/tablecodec",
         "//pkg/types",
+        "//pkg/util/chunk",
         "//pkg/util/rowcodec",
         "//pkg/util/tableutil",
         "@com_github_pingcap_tipb//go-binlog",

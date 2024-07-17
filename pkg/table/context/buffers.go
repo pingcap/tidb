@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
@@ -97,9 +98,8 @@ type CheckRowBuffer struct {
 }
 
 // GetRowToCheck gets the row data for constraint check.
-// TODO: make sure the inner buffer is not used outside directly.
-func (b *CheckRowBuffer) GetRowToCheck() []types.Datum {
-	return b.rowToCheck
+func (b *CheckRowBuffer) GetRowToCheck() chunk.Row {
+	return chunk.MutRowFromDatums(b.rowToCheck).ToRow()
 }
 
 // AddColVal adds a column value to the buffer for checking.
