@@ -254,7 +254,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
 
 			if j.spillTmpChk[partIndex].IsFull() {
-				err := j.ctx.spillHelper.spillProbeChk(int(partIndex), j.spillTmpChk[partIndex])
+				err := j.ctx.spillHelper.spillProbeChk(int(j.workID), int(partIndex), j.spillTmpChk[partIndex])
 				if err != nil {
 					return err
 				}
@@ -335,7 +335,7 @@ func (j *baseJoinProbe) SpillRemainingProbeChunks() error {
 
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		if j.spillTmpChk[i].NumRows() > 0 {
-			err := j.ctx.spillHelper.spillProbeChk(i, j.spillTmpChk[i])
+			err := j.ctx.spillHelper.spillProbeChk(int(j.workID), i, j.spillTmpChk[i])
 			if err != nil {
 				return err
 			}
