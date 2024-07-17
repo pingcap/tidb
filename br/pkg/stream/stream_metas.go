@@ -718,6 +718,11 @@ func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdi
 		}
 	}
 
+	if isEmptyMetadata(&metadata) {
+		// As it is empty, even no hint to destruct self, we can safely delete it.
+		return m.s.DeleteFile(ctx, medit.Path)
+	}
+
 	updateMetadataInternalStat(&metadata)
 	newContent, err := metadata.Marshal()
 	if err != nil {
@@ -867,4 +872,8 @@ func isInsane(pfx string) bool {
 	}
 
 	return strings.HasPrefix(pfx, "..")
+}
+
+func isEmptyMetadata(md *pb.Metadata) bool {
+	return len(md.FileGroups) == 0 && len(md.Files) == 0
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc64"
+	"math"
 	"math/rand"
 	"os"
 	"path"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 func fakeDataFiles(s storage.ExternalStorage, base, item int) (result []*backuppb.DataFileInfo) {
@@ -584,6 +586,73 @@ func mLogDel(mPath string, logFiles ...*backuppb.DeleteSpansOfFile) migOp {
 		}
 		meta.DeleteLogicalFiles = append(meta.DeleteLogicalFiles, logFiles...)
 	}
+}
+
+type metaOp func(*backuppb.Metadata)
+
+func mtGroup(tpath string, files ...*backuppb.DataFileInfo) metaOp {
+	return func(m *backuppb.Metadata) {
+		grp := tGroup(tpath, files...)
+		if m.MaxTs < grp.MaxTs {
+			m.MaxTs = grp.MaxTs
+		}
+		if m.MinTs > grp.MinTs {
+			m.MinTs = grp.MinTs
+		}
+		m.FileGroups = append(m.FileGroups, grp)
+	}
+}
+
+func tGroup(tPath string, files ...*backuppb.DataFileInfo) *backuppb.DataFileGroup {
+	grp := &backuppb.DataFileGroup{}
+	grp.Path = tPath
+	grp.MinTs = math.MaxUint64
+	for _, f := range files {
+		grp.DataFilesInfo = append(grp.DataFilesInfo, f)
+		if f.MaxTs > grp.MaxTs {
+			grp.MaxTs = f.MaxTs
+		}
+		if f.MinTs < grp.MinTs {
+			grp.MinTs = f.MinTs
+		}
+	}
+	return grp
+}
+
+func dFile(sp *backuppb.Span) *backuppb.DataFileInfo {
+	return &backuppb.DataFileInfo{
+		RangeOffset: sp.GetOffset(),
+		RangeLength: sp.GetLength(),
+	}
+}
+
+// mt is abbrev. of meta.
+func mt(ops ...metaOp) *backuppb.Metadata {
+	m := &backuppb.Metadata{}
+	for _, op := range ops {
+		op(m)
+	}
+	return m
+}
+
+// pmt is abbrev. of persisted meta.
+func pmt(s storage.ExternalStorage, path string, mt *backuppb.Metadata) {
+	data, err := mt.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	err = s.WriteFile(context.Background(), path, data)
+	if err != nil {
+		panic(err)
+	}
+}
+
+// tmp creates a temporary storage.
+func tmp(t *testing.T) *storage.LocalStorage {
+	tmpDir := t.TempDir()
+	s, err := storage.NewLocalStorage(tmpDir)
+	require.NoError(t, err)
+	return s
 }
 
 func mig(ops ...migOp) *backuppb.Migration {
@@ -2413,6 +2482,15 @@ func TestCalculateShiftTS(t *testing.T) {
 }
 
 func TestBasicMigration(t *testing.T) {
+	s := tmp(t)
+	dsp := func(off, len uint64) *backuppb.DataFileInfo { return dFile(sp(off, len)) }
+
+	pmt(s, "00001.meta", mt(mtGroup("foo.log"), mtGroup("bar.log")))
+	pmt(s, "00002.meta", mt(
+		mtGroup("00001.log", dsp(0, 42), dsp(42, 18), dsp(60, 1024-60)),
+		mtGroup("00002.log", dsp(0, 42), dsp(42, 54)),
+	))
+
 	mig1 := mig(
 		mDel("00001.meta", "foo.log"),
 		mLogDel("00002.meta",
@@ -2427,7 +2505,7 @@ func TestBasicMigration(t *testing.T) {
 		),
 	)
 
-	ds := storage.DryRun(nil)
+	ds := storage.DryRun(s)
 	est := MigerationExtension(ds)
 	res := est.merge(mig1, mig2)
 
@@ -2443,4 +2521,48 @@ func TestBasicMigration(t *testing.T) {
 		),
 	)
 	require.Equal(t, hashMigration(resE), hashMigration(res), "%v %v", resE, res)
+
+	ctx := context.Background()
+	mg := est.MigrateTo(ctx, res)
+
+	newBaseE := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(0, 42), sp(42, 18))))
+	require.Empty(t, mg.Warnings)
+	require.Equal(t, hashMigration(newBaseE), hashMigration(mg.NewBase), "%v %v", newBaseE, mg.NewBase)
+
+	ops := ds.Effects()
+	type Effects struct {
+		Renames   map[string]string
+		Deletions map[string]struct{}
+		Edits     map[string][]byte
+	}
+	writes := func(efs []storage.Effect) Effects {
+		out := Effects{Renames: map[string]string{}, Deletions: map[string]struct{}{}, Edits: map[string][]byte{}}
+		for _, ef := range efs {
+			switch e := ef.(type) {
+			case storage.EffDeleteFile:
+				out.Deletions[string(e)] = struct{}{}
+			case storage.EffDeleteFiles:
+				for _, f := range e.Files {
+					out.Deletions[f] = struct{}{}
+				}
+			case storage.EffPut:
+				out.Edits[e.File] = e.Content
+			case storage.EffRename:
+				out.Renames[e.From] = e.To
+			default:
+				panic(fmt.Sprintf("unknown effect %T", ef))
+			}
+		}
+		return out
+	}
+	efs := writes(ops)
+	require.ElementsMatch(t, maps.Keys(efs.Deletions), []string{"foo.log", "bar.log", "00002.log", "00001.meta"})
+	newWritten, err := mt(mtGroup("00001.log", dsp(60, 1024-60))).Marshal()
+	require.NoError(t, err)
+	fmt.Printf("ops: %#v\n", efs)
+	var meta backuppb.Metadata
+	require.NoError(t, meta.Unmarshal(efs.Edits["00002.meta"]))
+	fmt.Printf("meta: %v\n", meta)
+	fmt.Printf("newWritten: %v\n", newWritten)
+	require.Equal(t, newWritten, efs.Edits["00002.meta"])
 }
