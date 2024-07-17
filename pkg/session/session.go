@@ -3527,6 +3527,11 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	dom.StartHistoricalStatsWorker()
 	failToLoadOrParseSQLFile := false // only used for unit test
 	if runBootstrapSQLFile {
+		extensions, err := extension.GetExtensions()
+		if err != nil {
+			return nil, err
+		}
+		ses[9].SetExtensions(extensions.NewSessionExtensions())
 		pm := &privileges.UserPrivileges{
 			Handle: dom.PrivilegeHandle(),
 		}
