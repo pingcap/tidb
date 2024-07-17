@@ -340,7 +340,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		return false
 	}
 	// _tidb_rowid + specify a partition
-	if p.IndexInfo == nil && p.HandleColOffset == -1 && len(p.PartitionNames) == 1 {
+	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
 		for i, def := range pi.Definitions {
 			if def.Name.L == p.PartitionNames[0].L {
 				idx := i

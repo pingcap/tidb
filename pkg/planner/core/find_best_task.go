@@ -2628,11 +2628,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		found := false
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
-				if ds.HandleCols.GetCol(0).ID == model.ExtraHandleID {
-					pointGetPlan.HandleColOffset = -1
-				} else {
-					pointGetPlan.HandleColOffset = ds.Columns[i].Offset
-				}
+				pointGetPlan.HandleColOffset = ds.Columns[i].Offset
 				found = true
 				break
 			}
