@@ -348,7 +348,6 @@ func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 			if job.MayNeedReorg() {
 				jobListKey = meta.AddIndexJobListKey
 			}
-			injectModifyJobArgFailPoint(job)
 			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
 				return errors.Trace(err)
 			}
@@ -375,16 +374,21 @@ func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
 	return nil
 }
 
-func injectModifyJobArgFailPoint(job *model.Job) {
+// TODO this failpoint is only checking how job scheduler handle
+// corrupted job args, we should test it there by UT, not here.
+func injectModifyJobArgFailPoint(jobWs []*JobWrapper) {
 	failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
 		if val.(bool) {
-			// Corrupt the DDL job argument.
-			if job.Type == model.ActionMultiSchemaChange {
-				if len(job.MultiSchemaInfo.SubJobs) > 0 && len(job.MultiSchemaInfo.SubJobs[0].Args) > 0 {
-					job.MultiSchemaInfo.SubJobs[0].Args[0] = 1
+			for _, jobW := range jobWs {
+				job := jobW.Job
+				// Corrupt the DDL job argument.
+				if job.Type == model.ActionMultiSchemaChange {
+					if len(job.MultiSchemaInfo.SubJobs) > 0 && len(job.MultiSchemaInfo.SubJobs[0].Args) > 0 {
+						job.MultiSchemaInfo.SubJobs[0].Args[0] = 1
+					}
+				} else if len(job.Args) > 0 {
+					job.Args[0] = 1
 				}
-			} else if len(job.Args) > 0 {
-				job.Args[0] = 1
 			}
 		}
 	})
@@ -482,8 +486,6 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 		if _, err := job.Encode(true); err != nil {
 			return err
 		}
-
-		injectModifyJobArgFailPoint(job)
 	}
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -518,6 +520,7 @@ func GenIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs
 	count := getRequiredIDCount(jobWs)
 	return genIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
 		assignIDsForJobs(jobWs, ids)
+		injectModifyJobArgFailPoint(jobWs)
 		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
 	})
 }
