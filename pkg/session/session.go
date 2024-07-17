@@ -3434,7 +3434,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		concurrency = 0
 	}
 
-	ses, err := createSessionsImpl(store, 10)
+	ses, err := createSessionsImpl(store, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -3530,8 +3530,19 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		pm := &privileges.UserPrivileges{
 			Handle: dom.PrivilegeHandle(),
 		}
-		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
+		// Create a specific session for bootstrapping.
+		boostrapSession, err := createSessionsImpl(store, 1)
+		if err != nil {
+			return nil, err
+		}
+		privilege.BindPrivilegeManager(boostrapSession[0], pm)
+		// Load and bind the extensions to the session so that they can be used in the bootstrap SQL file.
+		extensions, err := extension.GetExtensions()
+		if err != nil {
+			return nil, err
+		}
+		boostrapSession[0].SetExtensions(extensions.NewSessionExtensions())
+		if err := doBootstrapSQLFile(boostrapSession[0]); err != nil && intest.InTest {
 			failToLoadOrParseSQLFile = true
 		}
 	}
