@@ -73,6 +73,7 @@ func (g inGener) gen() any {
 	default:
 		panic("invalid eval type")
 	}
+	return randNum
 }
 
 var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
