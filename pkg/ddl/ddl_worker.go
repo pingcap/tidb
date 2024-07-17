@@ -482,10 +482,6 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 			}
 			logutil.DDLUpgradingLogger().Info("pause user DDL by system successful", zap.Stringer("job", job))
 		}
-
-		if _, err := job.Encode(true); err != nil {
-			return err
-		}
 	}
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -496,6 +492,9 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 			return err
 		}
 		for _, jobW := range jobWs {
+			if _, err := jobW.Encode(true); err != nil {
+				return err
+			}
 			d.localJobCh <- jobW
 		}
 		return nil
@@ -519,6 +518,11 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
 	count := getRequiredGIDCount(jobWs)
 	return genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
+			}
+		})
 		assignGIDsForJobs(jobWs, ids)
 		injectModifyJobArgFailPoint(jobWs)
 		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
@@ -588,8 +592,6 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 		}
 	}
 	for _, jobW := range jobWs {
-		jobW.ID = ids[idx]
-		idx++
 		switch jobW.Type {
 		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
 			info := jobW.Args[0].(*model.TableInfo)
@@ -613,6 +615,8 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 			jobW.SchemaID = dbInfo.ID
 		}
 		// TODO support other type of jobs
+		jobW.ID = ids[idx]
+		idx++
 	}
 }
 

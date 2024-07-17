@@ -1023,12 +1023,6 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	d.globalIDLock.Lock()
 	defer d.globalIDLock.Unlock()
 	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
-		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(errors.New("gofail genGlobalIDs error"))
-			}
-		})
-
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
