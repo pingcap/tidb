@@ -476,7 +476,7 @@ func (h *hashJoinSpillHelper) appendSegment(seg *rowTableSegment, row chunk.Row)
 	seg.rawData = append(seg.rawData, rawData...)
 }
 
-func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments []*rowTableSegment) []*rowTableSegment {
+func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments []*rowTableSegment) ([]*rowTableSegment, int64) {
 	var seg *rowTableSegment
 	segLen := len(segments)
 	if segLen > 0 && !segments[segLen-1].finalized {
@@ -486,12 +486,16 @@ func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments
 		segments = append(segments, seg)
 	}
 
+	totalMemoryUsage := int64(0)
 	rowNum := chunk.NumRows()
 	for i := 0; i < rowNum; i++ {
 		if seg.getRowNum() >= int(maxRowTableSegmentSize) {
 			// rowLocations's initialization has been done, so it's ok to set `finalized` to true
 			seg.finalized = true
-			h.memTracker.Consume(seg.totalUsedBytes())
+
+			memoryUsage := seg.totalUsedBytes()
+			h.memTracker.Consume(memoryUsage)
+			totalMemoryUsage += memoryUsage
 			seg = newRowTableSegment()
 			segments = append(segments, seg)
 		}
@@ -500,14 +504,15 @@ func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments
 		h.appendSegment(seg, row)
 	}
 
-	return segments
+	return segments, totalMemoryUsage
 }
 
-func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, buildInDisk *chunk.DataInDiskByChunks, chunkIdx int) ([]*chunk.DataInDiskByChunks, error) {
-	segNum := len(segments)
-	if segNum > 0 && !segments[segNum-1].finalized {
-		h.memTracker.Consume(segments[segNum-1].totalUsedBytes())
-	}
+func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, releasedMemoryUsage int64, buildInDisk *chunk.DataInDiskByChunks, chunkIdx int) ([]*chunk.DataInDiskByChunks, error) {
+	h.setInSpilling()
+	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
+
+	defer h.setNotSpilled()
+	defer h.memTracker.Consume(-releasedMemoryUsage)
 
 	newBuildInDisk := h.createNewDiskForBuild()
 	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
@@ -666,9 +671,12 @@ func (h *hashJoinSpillHelper) initTmpSpillProbeSideChunks() {
 	}
 }
 
-func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hashTableV2, bool, error) {
+// TODO we need to refactor this function after applied concurrent restoring
+func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hashTableV2, bool, int64, error) {
 	rowTb := &rowTable{}
 	segments := make([]*rowTableSegment, 0, 10)
+	memoryUsage := int64(0)
+	totalMemoryUsage := int64(0)
 
 	spillTriggered := false
 	buildInDisk := partition.buildSideChunks
@@ -678,11 +686,12 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 		// TODO maybe we can reuse a chunk
 		chunk, err := buildInDisk.GetChunk(idx)
 		if err != nil {
-			return nil, spillTriggered, err
+			return nil, spillTriggered, 0, err
 		}
 
 		// TODO test re-spill case
-		segments = h.appendChunkToSegments(chunk, segments)
+		segments, memoryUsage = h.appendChunkToSegments(chunk, segments)
+		totalMemoryUsage += memoryUsage
 		if h.isSpillNeeded() {
 			idx++
 			break
@@ -691,7 +700,9 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 
 	if len(segments) > 0 && !segments[len(segments)-1].finalized {
 		segments[len(segments)-1].finalized = true
-		h.memTracker.Consume(segments[len(segments)-1].totalUsedBytes())
+		memoryUsage := segments[len(segments)-1].totalUsedBytes()
+		h.memTracker.Consume(memoryUsage)
+		totalMemoryUsage += memoryUsage
 	}
 
 	rowTb.segments = segments
@@ -700,17 +711,17 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 	if h.isSpillNeeded() {
 		spillTriggered = true
 		if partition.round >= h.hashJoinExec.maxSpillRound {
-			return nil, spillTriggered, errors.Errorf("Exceed max hash join spill round. max round: %d", h.hashJoinExec.maxSpillRound)
+			return nil, spillTriggered, 0, errors.Errorf("Exceed max hash join spill round. max round: %d", h.hashJoinExec.maxSpillRound)
 		}
 
-		newBuildInDisks, err := h.respillForBuildData(subTb.rowData.getSegments(), buildInDisk, idx)
+		newBuildInDisks, err := h.respillForBuildData(subTb.rowData.getSegments(), totalMemoryUsage, buildInDisk, idx)
 		if err != nil {
-			return nil, spillTriggered, err
+			return nil, spillTriggered, 0, err
 		}
 
 		newProbeInDisks, err := h.respillForProbeData(partition.probeSideChunks)
 		if err != nil {
-			return nil, spillTriggered, err
+			return nil, spillTriggered, 0, err
 		}
 
 		if len(newBuildInDisks) != len(newProbeInDisks) {
@@ -727,7 +738,7 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 		}
 		h.spillRoundForTest = max(h.spillRoundForTest, newRound)
 
-		return nil, spillTriggered, nil
+		return nil, spillTriggered, totalMemoryUsage, nil
 	} else {
 		subTb.build(0, len(subTb.rowData.segments))
 	}
@@ -736,7 +747,7 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 	hashTable.tables = append(hashTable.tables, subTb)
 	hashTable.partitionNumber = 1
 
-	return hashTable, spillTriggered, nil
+	return hashTable, spillTriggered, totalMemoryUsage, nil
 }
 
 func (h *hashJoinSpillHelper) isSpillTriggeredInBuildStageForTest() bool {

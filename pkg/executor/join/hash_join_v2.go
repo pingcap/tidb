@@ -603,7 +603,7 @@ func (e *HashJoinV2Exec) restore() error {
 			return err
 		}
 
-		hashTable, spillTriggered, err := e.spillHelper.buildHashTable(restoredPartition)
+		hashTable, spillTriggered, totalBuildMemUsage, err := e.spillHelper.buildHashTable(restoredPartition)
 		if err != nil {
 			return err
 		}
@@ -622,9 +622,13 @@ func (e *HashJoinV2Exec) restore() error {
 			e.hashTableContext.hashTable = hashTable
 			err := e.ProbeWorkers[0].scanRowTableAfterProbeDone(true)
 			if err != nil {
-				return nil
+				return err
 			}
 		}
+
+		// Clear the memory that allocated by restored data
+		hashTable = nil
+		e.spillHelper.memTracker.Consume(-totalBuildMemUsage)
 	}
 
 	return nil
