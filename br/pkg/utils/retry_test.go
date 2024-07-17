@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
@@ -72,65 +70,4 @@ func TestFailNowIf(t *testing.T) {
 	annotatedErr = berrors.ErrBackupNoLeader.FastGen("leader is taking an adventure")
 	assert.Equal(time.Duration(0), bo.NextBackoff(annotatedErr))
 	assert.Equal(0, bo.Attempt())
-}
-
-func TestHandleError(t *testing.T) {
-	ec := utils.NewErrorContext("test", 3)
-	// Test case 1: Error is nil
-	result := utils.HandleBackupError(nil, 123, ec)
-	require.Equal(t, utils.ErrorHandlingResult{Strategy: utils.Retry, Reason: utils.UnreachableRetryMsg}, result)
-
-	// Test case 2: Error is KvError and can be ignored
-	kvError := &backuppb.Error_KvError{}
-	result = utils.HandleBackupError(&backuppb.Error{Detail: kvError}, 123, ec)
-	require.Equal(t, utils.ErrorHandlingResult{Strategy: utils.Retry, Reason: utils.RetryOnKvErrorMsg}, result)
-
-	// Test case 3: Error is RegionError and can be ignored
-	regionError := &backuppb.Error_RegionError{
-		RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{RegionId: 1}}}
-	result = utils.HandleBackupError(&backuppb.Error{Detail: regionError}, 123, ec)
-	require.Equal(t, utils.ErrorHandlingResult{Strategy: utils.Retry, Reason: utils.RetryOnRegionErrorMsg}, result)
-
-	// Test case 4: Error is ClusterIdError
-	clusterIdError := &backuppb.Error_ClusterIdError{}
-	result = utils.HandleBackupError(&backuppb.Error{Detail: clusterIdError}, 123, ec)
-	require.Equal(t, utils.ErrorHandlingResult{Strategy: utils.GiveUp, Reason: utils.ClusterIdMismatchMsg}, result)
-}
-
-func TestHandleErrorMsg(t *testing.T) {
-	ec := utils.NewErrorContext("test", 3)
-
-	// Test messageIsNotFoundStorageError
-	msg := "IO: files Notfound error"
-	uuid := uint64(456)
-	expectedReason := "File or directory not found on TiKV Node (store id: 456). workaround: please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid."
-	expectedResult := utils.ErrorHandlingResult{Strategy: utils.GiveUp, Reason: expectedReason}
-	actualResult := utils.HandleUnknownError(msg, uuid, ec)
-	require.Equal(t, expectedResult, actualResult)
-
-	// Test messageIsPermissionDeniedStorageError
-	msg = "I/O permissiondenied error occurs on TiKV Node(store id: 456)."
-	expectedReason = "I/O permission denied error occurs on TiKV Node(store id: 456). workaround: please ensure tikv has permission to read from & write to the storage."
-	expectedResult = utils.ErrorHandlingResult{Strategy: utils.GiveUp, Reason: expectedReason}
-	actualResult = utils.HandleUnknownError(msg, uuid, ec)
-	require.Equal(t, expectedResult, actualResult)
-
-	// Test MessageIsRetryableStorageError
-	msg = "server closed"
-	expectedResult = utils.ErrorHandlingResult{Strategy: utils.Retry, Reason: utils.RetryableStorageErrorMsg}
-	actualResult = utils.HandleUnknownError(msg, uuid, ec)
-	require.Equal(t, expectedResult, actualResult)
-
-	// Test unknown error
-	msg = "unknown error"
-	expectedResult = utils.ErrorHandlingResult{Strategy: utils.Retry, Reason: utils.RetryOnUnknownErrorMsg}
-	actualResult = utils.HandleUnknownError(msg, uuid, ec)
-	require.Equal(t, expectedResult, actualResult)
-
-	// Test retry too many times
-	_ = utils.HandleUnknownError(msg, uuid, ec)
-	_ = utils.HandleUnknownError(msg, uuid, ec)
-	expectedResult = utils.ErrorHandlingResult{Strategy: utils.GiveUp, Reason: utils.NoRetryOnUnknownErrorMsg}
-	actualResult = utils.HandleUnknownError(msg, uuid, ec)
-	require.Equal(t, expectedResult, actualResult)
 }

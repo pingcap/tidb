@@ -30,23 +30,23 @@ var retryableErrorMsg = []string{
 
 // non-retryable error messages
 // TODO: remove and mapped all to an error type
-var (
+const (
 	ioMsg               = "io"
 	notFoundMsg         = "notfound"
 	permissionDeniedMsg = "permissiondenied"
 )
 
 // error messages
-var (
-	UnreachableRetryMsg      = "unreachable retry"
-	RetryOnKvErrorMsg        = "retry on kv error"
-	RetryOnRegionErrorMsg    = "retry on region error"
-	ClusterIdMismatchMsg     = "cluster id mismatch"
-	UnknownErrorMsg          = "unknown error"
-	ContextCancelledMsg      = "context canceled"
-	RetryOnUnknownErrorMsg   = "unknown error, retry it for a few times"
-	NoRetryOnUnknownErrorMsg = "unknown error, retried too many times, give up"
-	RetryableStorageErrorMsg = "retryable storage error"
+const (
+	unreachableRetryMsg      = "unreachable retry"
+	retryOnKvErrorMsg        = "retry on kv error"
+	retryOnRegionErrorMsg    = "retry on region error"
+	clusterIdMismatchMsg     = "cluster id mismatch"
+	unknownErrorMsg          = "unknown error"
+	contextCancelledMsg      = "context canceled"
+	retryOnUnknownErrorMsg   = "unknown error, retry it for a few times"
+	noRetryOnUnknownErrorMsg = "unknown error, retried too many times, give up"
+	retryableStorageErrorMsg = "retryable storage error"
 )
 
 type ErrorHandlingResult struct {
@@ -98,12 +98,12 @@ func NewDefaultContext() *ErrorContext {
 
 func HandleBackupError(err *backuppb.Error, storeId uint64, ec *ErrorContext) ErrorHandlingResult {
 	if err == nil {
-		return ErrorHandlingResult{Retry, UnreachableRetryMsg}
+		return ErrorHandlingResult{Retry, unreachableRetryMsg}
 	}
 	res := handleBackupProtoError(err)
 	// try the best effort handle unknown error based on their error message
 	if res.Strategy == Unknown && len(err.Msg) != 0 {
-		return HandleUnknownError(err.Msg, storeId, ec)
+		return HandleUnknownBackupError(err.Msg, storeId, ec)
 	}
 	return res
 }
@@ -111,17 +111,17 @@ func HandleBackupError(err *backuppb.Error, storeId uint64, ec *ErrorContext) Er
 func handleBackupProtoError(e *backuppb.Error) ErrorHandlingResult {
 	switch e.Detail.(type) {
 	case *backuppb.Error_KvError:
-		return ErrorHandlingResult{Retry, RetryOnKvErrorMsg}
+		return ErrorHandlingResult{Retry, retryOnKvErrorMsg}
 	case *backuppb.Error_RegionError:
-		return ErrorHandlingResult{Retry, RetryOnRegionErrorMsg}
+		return ErrorHandlingResult{Retry, retryOnRegionErrorMsg}
 	case *backuppb.Error_ClusterIdError:
-		return ErrorHandlingResult{GiveUp, ClusterIdMismatchMsg}
+		return ErrorHandlingResult{GiveUp, clusterIdMismatchMsg}
 	}
-	return ErrorHandlingResult{Unknown, UnknownErrorMsg}
+	return ErrorHandlingResult{Unknown, unknownErrorMsg}
 }
 
-// HandleUnknownError TODO: remove this method and map all the current unknown errors to an error type
-func HandleUnknownError(msg string, uuid uint64, ec *ErrorContext) ErrorHandlingResult {
+// HandleUnknownBackupError TODO: remove this method and map all the current unknown errors to an error type
+func HandleUnknownBackupError(msg string, uuid uint64, ec *ErrorContext) ErrorHandlingResult {
 	// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
 	logger := log.L().With(zap.String("description", ec.description))
 	if messageIsNotFoundStorageError(msg) {
@@ -137,13 +137,13 @@ func HandleUnknownError(msg string, uuid uint64, ec *ErrorContext) ErrorHandling
 		return ErrorHandlingResult{GiveUp, reason}
 	}
 	msgLower := strings.ToLower(msg)
-	if strings.Contains(msgLower, ContextCancelledMsg) {
-		return ErrorHandlingResult{GiveUp, ContextCancelledMsg}
+	if strings.Contains(msgLower, contextCancelledMsg) {
+		return ErrorHandlingResult{GiveUp, contextCancelledMsg}
 	}
 
 	if MessageIsRetryableStorageError(msg) {
-		logger.Warn(RetryableStorageErrorMsg, zap.String("error", msg))
-		return ErrorHandlingResult{Retry, RetryableStorageErrorMsg}
+		logger.Warn(retryableStorageErrorMsg, zap.String("error", msg))
+		return ErrorHandlingResult{Retry, retryableStorageErrorMsg}
 	}
 
 	// retry enough on same store
@@ -151,9 +151,9 @@ func HandleUnknownError(msg string, uuid uint64, ec *ErrorContext) ErrorHandling
 	defer ec.mu.Unlock()
 	ec.encounterTimes[uuid]++
 	if ec.encounterTimes[uuid] <= ec.encounterTimesLimitation {
-		return ErrorHandlingResult{Retry, RetryOnUnknownErrorMsg}
+		return ErrorHandlingResult{Retry, retryOnUnknownErrorMsg}
 	}
-	return ErrorHandlingResult{GiveUp, NoRetryOnUnknownErrorMsg}
+	return ErrorHandlingResult{GiveUp, noRetryOnUnknownErrorMsg}
 }
 
 // messageIsNotFoundStorageError checks whether the message returning from TiKV is "NotFound" storage I/O error

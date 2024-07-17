@@ -172,7 +172,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
 	errs := multierr.Errors(err)
 	lastErr := errs[len(errs)-1]
-	res := HandleUnknownError(lastErr.Error(), 0, bo.errContext)
+	res := HandleUnknownBackupError(lastErr.Error(), 0, bo.errContext)
 	if res.Strategy == Retry {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
