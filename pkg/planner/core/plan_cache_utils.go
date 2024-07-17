@@ -26,6 +26,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
+>>>>>>> e1626a9c5b7 (planner: fix the issue of reusing wrong point-plan for "select ... for update" (#54661))
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -387,7 +392,97 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	for k, v := range relatedSchemaVersion {
 		key.tblVersionMap[k] = v
 	}
+<<<<<<< HEAD
 	return key, nil
+=======
+	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
+	hash = append(hash, hack.Slice(binding)...)
+	hash = append(hash, hack.Slice(connCollation)...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(vars.InRestrictedSQL))...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(variable.RestrictedReadOnly.Load()))...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load()))...)
+	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
+	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+
+	// whether this query has sub-query
+	if stmt.hasSubquery {
+		if !vars.EnablePlanCacheForSubquery {
+			return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
+		}
+		hash = append(hash, '1')
+	} else {
+		hash = append(hash, '0')
+	}
+
+	// this variable might affect the plan
+	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
+
+	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
+	if len(stmt.limits) > 0 {
+		if !vars.EnablePlanCacheForParamLimit {
+			return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
+		}
+		hash = append(hash, '|')
+		for _, node := range stmt.limits {
+			for _, valNode := range []ast.ExprNode{node.Count, node.Offset} {
+				if valNode == nil {
+					continue
+				}
+				if param, isParam := valNode.(*driver.ParamMarkerExpr); isParam {
+					typeExpected, val := CheckParamTypeInt64orUint64(param)
+					if !typeExpected {
+						return "", "", false, "unexpected value after LIMIT", nil
+					}
+					if val > MaxCacheableLimitCount {
+						return "", "", false, "limit count is too large", nil
+					}
+					hash = codec.EncodeUint(hash, val)
+				}
+			}
+		}
+		hash = append(hash, '|')
+	}
+
+	// stats ver can affect cached plan
+	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats {
+		var statsVerHash uint64
+		for _, t := range stmt.tables {
+			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
+		}
+		hash = codec.EncodeUint(hash, statsVerHash)
+	}
+
+	// handle dirty tables
+	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
+	if len(dirtyTables) > 0 {
+		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
+		for t, dirty := range dirtyTables {
+			if !dirty {
+				continue
+			}
+			dirtyTableIDs = append(dirtyTableIDs, t.ID)
+		}
+		sort.Slice(dirtyTableIDs, func(i, j int) bool { return dirtyTableIDs[i] < dirtyTableIDs[j] })
+		for _, id := range dirtyTableIDs {
+			hash = codec.EncodeInt(hash, id)
+		}
+	}
+
+	// txn status
+	hash = append(hash, '|')
+	hash = append(hash, bool2Byte(vars.InTxn()))
+	hash = append(hash, bool2Byte(vars.IsAutocommit()))
+	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
+
+	return string(hash), binding, true, "", nil
+>>>>>>> e1626a9c5b7 (planner: fix the issue of reusing wrong point-plan for "select ... for update" (#54661))
+}
+
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
+	}
+	return '0'
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
@@ -490,6 +585,29 @@ func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
+<<<<<<< HEAD
+=======
+// PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
+// Don't forget to reset this executor when the prior plan is invalid.
+type PointGetExecutorCache struct {
+	// Special (or tricky) optimization for PointGet Plan.
+	// Store the PointGet Plan in PlanCacheStmt directly to bypass the LRU Cache to gain some performance improvement.
+	// There is around 3% improvement, BenchmarkPreparedPointGet: 6450 ns/op --> 6250 ns/op.
+	pointPlan      base.Plan
+	pointPlanHints *hint.StmtHints
+	columnNames    types.NameSlice
+
+	// the cache key for this statement, have to check whether the cache key changes before reusing this plan for safety.
+	planCacheKey string
+
+	ColumnInfos any
+	// Executor is only used for point get scene.
+	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+	Executor any
+}
+
+>>>>>>> e1626a9c5b7 (planner: fix the issue of reusing wrong point-plan for "select ... for update" (#54661))
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared

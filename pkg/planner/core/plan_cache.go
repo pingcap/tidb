@@ -135,7 +135,14 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
+<<<<<<< HEAD
 		stmt.PointGet.Plan = nil
+=======
+		stmt.PointGet.pointPlan = nil
+		stmt.PointGet.planCacheKey = ""
+		stmt.PointGet.columnNames = nil
+		stmt.PointGet.pointPlanHints = nil
+>>>>>>> e1626a9c5b7 (planner: fix the issue of reusing wrong point-plan for "select ... for update" (#54661))
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
@@ -226,9 +233,32 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
+<<<<<<< HEAD
 	matchOpts, err := GetMatchOpts(sctx, is, stmt, params)
 	if err != nil {
 		return nil, nil, err
+=======
+	var paramTypes []*types.FieldType
+	if stmtCtx.UseCache() {
+		var cachedVal *PlanCacheValue
+		var hit, isPointPlan bool
+		if stmt.PointGet.pointPlan != nil && stmt.PointGet.planCacheKey == cacheKey { // if it's PointGet Plan, no need to use paramTypes
+			cachedVal = &PlanCacheValue{
+				Plan:          stmt.PointGet.pointPlan,
+				OutputColumns: stmt.PointGet.columnNames,
+				stmtHints:     stmt.PointGet.pointPlanHints,
+			}
+			isPointPlan, hit = true, true
+		} else {
+			paramTypes = parseParamTypes(sctx, params)
+			cachedVal, hit = lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		}
+		if hit {
+			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, isPointPlan, binding, is, stmt); err != nil || ok {
+				return plan, names, err
+			}
+		}
+>>>>>>> e1626a9c5b7 (planner: fix the issue of reusing wrong point-plan for "select ... for update" (#54661))
 	}
 	if stmtCtx.UseCache { // for non-point plans
 		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
@@ -369,7 +399,21 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+<<<<<<< HEAD
 		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
+=======
+		if sessVars.EnableInstancePlanCache {
+			domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, paramTypes)
+		} else {
+			sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
+		}
+		if _, ok := p.(*PointGetPlan); ok {
+			stmt.PointGet.pointPlan = p
+			stmt.PointGet.columnNames = names
+			stmt.PointGet.pointPlanHints = stmtCtx.StmtHints.Clone()
+			stmt.PointGet.planCacheKey = cacheKey
+		}
+>>>>>>> e1626a9c5b7 (planner: fix the issue of reusing wrong point-plan for "select ... for update" (#54661))
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
