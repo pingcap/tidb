@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-// TODO: remove and mapped all to an error type
+// UNSAFE! TODO: remove and map them to error types
 var retryableErrorMsg = []string{
 	"server closed",
 	"connection refused",
@@ -29,7 +29,7 @@ var retryableErrorMsg = []string{
 }
 
 // non-retryable error messages
-// TODO: remove and mapped all to an error type
+// UNSAFE! TODO: remove and map them to error types
 const (
 	ioMsg               = "io"
 	notFoundMsg         = "notfound"
@@ -120,7 +120,7 @@ func handleBackupProtoError(e *backuppb.Error) ErrorHandlingResult {
 	return ErrorHandlingResult{Unknown, unknownErrorMsg}
 }
 
-// HandleUnknownBackupError TODO: remove this method and map all the current unknown errors to an error type
+// HandleUnknownBackupError UNSAFE! TODO: remove this method and map all the current unknown errors to error types
 func HandleUnknownBackupError(msg string, uuid uint64, ec *ErrorContext) ErrorHandlingResult {
 	// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
 	logger := log.L().With(zap.String("description", ec.description))
