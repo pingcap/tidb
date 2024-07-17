@@ -591,11 +591,11 @@ type firstRow4VectorFloat32 struct {
 	baseAggFunc
 }
 
-func (e *firstRow4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowVectorFloat32)), DefPartialResult4FirstRowVectorFloat32Size
 }
 
-func (e *firstRow4VectorFloat32) ResetPartialResult(pr PartialResult) {
+func (*firstRow4VectorFloat32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowVectorFloat32)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -623,7 +623,7 @@ func (*firstRow4VectorFloat32) MergePartialResult(_ AggFuncUpdateContext, src, d
 	return memDelta, nil
 }
 
-func (e *firstRow4VectorFloat32) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4VectorFloat32) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowVectorFloat32)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)

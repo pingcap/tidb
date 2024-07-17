@@ -1643,18 +1643,18 @@ type maxMin4VectorFloat32 struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinVectorFloat32)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinVectorFloat32Size
 }
 
-func (e *maxMin4VectorFloat32) ResetPartialResult(pr PartialResult) {
+func (*maxMin4VectorFloat32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinVectorFloat32)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4VectorFloat32) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4VectorFloat32) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinVectorFloat32)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -1691,7 +1691,7 @@ func (e *maxMin4VectorFloat32) UpdatePartialResult(sctx AggFuncUpdateContext, ro
 	return memDelta, nil
 }
 
-func (e *maxMin4VectorFloat32) MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4VectorFloat32) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinVectorFloat32)(src), (*partialResult4MaxMinVectorFloat32)(dst)
 	if p1.isNull {
 		return 0, nil
