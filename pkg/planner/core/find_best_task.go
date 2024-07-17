@@ -183,9 +183,11 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
+
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
+
 		childTasks, curCntPlan, childCnts, err = iteration(p, pp, childTasks, childCnts, prop, opt)
 		if err != nil {
 			return nil, 0, err
@@ -195,6 +197,7 @@ func enumeratePhysicalPlans4Task(
 		if len(childTasks) != p.ChildLen() {
 			continue
 		}
+
 		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
 			p.SCtx().GetSessionVars().PlanID.Store(savedPlanID)
@@ -271,6 +274,7 @@ func iteratePhysicalPlan4BaseLogical(
 		}
 		childTasks = append(childTasks, childTask)
 	}
+
 	// This check makes sure that there is no invalid child task.
 	if len(childTasks) != p.ChildLen() {
 		return nil, 0, childCnts, nil
