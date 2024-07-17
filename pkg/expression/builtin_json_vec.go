@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -570,7 +569,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 				}
 				pathExpr, err := types.ParseJSONPathExpr(pathBufs[j].GetString(i))
 				if err != nil {
-					return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+					return err
 				}
 				pathExprs = append(pathExprs, pathExpr)
 			}
@@ -651,8 +650,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 			var value types.BinaryJSON
 			for j := 0; j < nr; j++ {
 				if keyCol.IsNull(j) {
-					err := errors.New("JSON documents may not contain NULL member names")
-					return err
+					return types.ErrJSONDocumentNULLKey
 				}
 				key = keyCol.GetString(j)
 				if valueCol.IsNull(j) {
@@ -730,7 +728,7 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(input *chunk.Chunk, result *chun
 			}
 			pathExpr, err = types.ParseJSONPathExpr(pathBufs[j].GetString(i))
 			if err != nil {
-				return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+				return err
 			}
 			if pathExpr.CouldMatchMultipleValues() {
 				return types.ErrInvalidJSONPathMultipleSelection
@@ -1161,7 +1159,7 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 		}
 		containType := strings.ToLower(typeBuf.GetString(i))
 		if containType != types.JSONContainsPathAll && containType != types.JSONContainsPathOne {
-			return types.ErrInvalidJSONContainsPathType
+			return types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains_path")
 		}
 		obj := jsonBuf.GetJSON(i)
 		contains := int64(1)

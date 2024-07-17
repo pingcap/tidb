@@ -68,11 +68,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 24,
-=======
-    shard_count = 32,
->>>>>>> 64f5427448b (br: fix Log Backup unexpected paused when adding a already long-running task (#53695))
+    shard_count = 28,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
@@ -93,8 +89,10 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/logbackuppb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//kv",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",

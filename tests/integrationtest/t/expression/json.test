@@ -371,3 +371,46 @@ select 1 from t where cast(vc as json) = '1';
 select 1 from t where cast(c as json) = '1';
 select 1 from t where cast(BINARY vc as json) = '1';
 select 1 from t where cast(BINARY c as json) = '1';
+
+# Test argment errors
+# https://github.com/pingcap/tidb/issues/53799
+-- error 3146
+SELECT JSON_CONTAINS(123, '');
+-- error 3146
+SELECT JSON_CONTAINS('{}', 123);
+-- error 3146
+SELECT JSON_OVERLAPS(123, '');
+-- error 3146
+SELECT JSON_OVERLAPS('{}', 123);
+-- error 3146
+SELECT 'abc' MEMBER OF(123);
+-- error 3154
+SELECT JSON_SEARCH('{}',3,4);
+-- error 3143
+SELECT JSON_ARRAY_APPEND('[]','abc','def');
+-- error 3143
+SELECT JSON_ARRAY_INSERT('{}','abc','def');
+-- error 3153
+SELECT JSON_REMOVE('{}','$');
+-- error 3149
+SELECT JSON_REMOVE('{}','$.*');
+-- error 3149
+SELECT JSON_SET('{}','$.*','');
+-- error 3154
+SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
+-- error 3154
+SELECT JSON_SEARCH('{}', 'on', '$.a');
+-- error 3158
+SELECT JSON_OBJECT(NULL,'abc');
+-- error 3146
+SELECT JSON_SCHEMA_VALID(1, '{}');
+-- error 3146
+SELECT JSON_SCHEMA_VALID('{}', 1);
+-- error 3141
+SELECT JSON_SCHEMA_VALID('','{}');
+-- error 3141
+SELECT JSON_SCHEMA_VALID('{}','');
+-- error 3141
+SELECT JSON_SCHEMA_VALID('', NULL);
+-- error 3853
+SELECT JSON_SCHEMA_VALID('1','{}');

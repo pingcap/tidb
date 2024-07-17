@@ -71,3 +71,11 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 	require.Equal(t, types.NewStringDatum("t2_c1"), mt.rows[0][2])
 	require.Equal(t, types.NewStringDatum("(id<10)"), mt.rows[0][3])
 }
+
+func TestSetDataFromKeywords(t *testing.T) {
+	mt := memtableRetriever{}
+	err := mt.setDataFromKeywords()
+	require.NoError(t, err)
+	require.Equal(t, types.NewStringDatum("ADD"), mt.rows[0][0]) // Keyword: ADD
+	require.Equal(t, types.NewIntDatum(1), mt.rows[0][1])        // Reserved: true(1)
+}

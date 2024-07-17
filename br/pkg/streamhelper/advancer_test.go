@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -468,8 +469,6 @@ func TestRemoveTaskAndFlush(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
-<<<<<<< HEAD
-=======
 func TestEnableCheckPointLimit(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
@@ -494,11 +493,11 @@ func TestEnableCheckPointLimit(t *testing.T) {
 		Ranges: rngs,
 	}
 	log.Info("Start Time:", zap.Uint64("StartTs", env.task.Info.StartTs))
-
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
+
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	adv.StartTaskListener(ctx)
@@ -517,7 +516,6 @@ func TestCheckPointLagged(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	env := newTestEnv(c, t)
 	rngs := env.ranges
 	if len(rngs) == 0 {
@@ -772,7 +770,6 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 	}, 5*time.Second, 300*time.Millisecond)
 }
 
->>>>>>> 64f5427448b (br: fix Log Backup unexpected paused when adding a already long-running task (#53695))
 func TestOwnershipLost(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	c.splitAndScatter(manyRegions(0, 10240)...)
