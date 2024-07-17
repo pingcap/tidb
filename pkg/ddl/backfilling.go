@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -37,8 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -427,77 +426,79 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	}
 }
 
-func splitAndValidateTableRanges(
+// loadTableRanges load table key ranges from PD between given start key and end key.
+// It returns up to `limit` ranges.
+func loadTableRanges(
 	ctx context.Context,
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
-	ranges, err := splitTableRanges(ctx, t, store, startKey, endKey, limit)
-	if err != nil {
-		return nil, err
-	}
-	return validateTableRanges(ranges, startKey, endKey)
-}
-
-func validateTableRanges(ranges []kv.KeyRange, start, end kv.Key) ([]kv.KeyRange, error) {
-	for i, r := range ranges {
-		if len(r.StartKey) == 0 {
-			if i != 0 {
-				return nil, errors.Errorf("get empty start key in the middle of ranges")
-			}
-			r.StartKey = start
-		}
-		if len(r.EndKey) == 0 {
-			if i != len(ranges)-1 {
-				return nil, errors.Errorf("get empty end key in the middle of ranges")
-			}
-			r.EndKey = end
-		}
-	}
-	return ranges, nil
-}
-
-// splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
-// to speed up backfilling data in table with disperse handle.
-// The `t` should be a non-partitioned table or a partition.
-func splitTableRanges(
-	ctx context.Context,
-	t table.PhysicalTable,
-	store kv.Storage,
-	startKey, endKey kv.Key,
-	limit int,
-) ([]kv.KeyRange, error) {
-	logutil.DDLLogger().Info("split table range from PD",
+	logutil.DDLLogger().Info("load table ranges from PD",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("start key", hex.EncodeToString(startKey)),
 		zap.String("end key", hex.EncodeToString(endKey)))
 	if len(startKey) == 0 && len(endKey) == 0 {
-		logutil.DDLLogger().Info("split table range from PD, get noop table range",
+		logutil.DDLLogger().Info("load table range from PD, get noop table range",
 			zap.Int64("physicalTableID", t.GetPhysicalID()))
 		return []kv.KeyRange{}, nil
 	}
 
-	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
 		// Only support split ranges in tikv.Storage now.
-		return []kv.KeyRange{kvRange}, nil
+		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 	}
 
+	rc := s.GetRegionCache()
 	maxSleep := 10000 // ms
-	bo := backoff.NewBackofferWithVars(ctx, maxSleep, nil)
-	rc := copr.NewRegionCache(s.GetRegionCache())
-	ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange}, limit)
+	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
+	rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(ranges) == 0 {
-		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
+	if len(rs) == 0 {
+		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
+			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
+
+	ranges := make([]kv.KeyRange, 0, len(rs))
+	for _, r := range rs {
+		ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
+	}
+	err = validateAndFillRanges(ranges, startKey, endKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	logutil.DDLLogger().Info("load table ranges from PD done",
+		zap.Int64("physicalTableID", t.GetPhysicalID()),
+		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
+		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
+		zap.Int("range count", len(ranges)))
 	return ranges, nil
+}
+
+func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	for i, r := range ranges {
+		s, e := r.StartKey, r.EndKey
+		switch i {
+		case 0:
+			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
+				ranges[i].StartKey = startKey
+			}
+		case len(ranges) - 1:
+			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
+				ranges[i].EndKey = endKey
+			}
+		default:
+			if len(s) == 0 || len(e) == 0 {
+				return errors.Errorf("get empty start key in the middle of ranges")
+			}
+		}
+	}
+	return nil
 }
 
 func getBatchTasks(
@@ -885,7 +886,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := splitAndValidateTableRanges(egCtx, t, reorgInfo.d.store, start, end, backfillTaskChanSize)
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
