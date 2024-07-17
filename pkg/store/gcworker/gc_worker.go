@@ -46,6 +46,7 @@ import (
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -824,22 +825,19 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		zap.Int("ranges", len(ranges)))
 	startTime := time.Now()
 
-	var wg sync.WaitGroup
 	if concurrency < 1 {
 		concurrency = 1
 	}
 	concurrencyLimiter := make(chan struct{}, concurrency)
 	var cacheMu sync.Mutex
 
+	var wg util2.WaitGroupWrapper
 	for _, r := range ranges {
 		concurrencyLimiter <- struct{}{}
-		wg.Add(1)
-
-		go func(r util.DelRangeTask) {
+		f := func(r util.DelRangeTask) {
 			var err error
 			defer func() {
 				<-concurrencyLimiter
-				wg.Done()
 			}()
 			se := createSession(w.store)
 			defer se.Close()
@@ -891,7 +889,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 					zap.Error(err))
 				metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 			}
-		}(r)
+		}
+		wg.Run(func() {f(r)})
 	}
 	wg.Wait()
 

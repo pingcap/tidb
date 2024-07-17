@@ -819,7 +819,7 @@ func TestConcurrentDeleteRanges(t *testing.T) {
 	}
 	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
 
-	err = s.gcWorker.deleteRanges(gcContext(), 20, 10)
+	err = s.gcWorker.deleteRanges(gcContext(), 20, 3)
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
