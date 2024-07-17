@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/keydecoder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -3778,13 +3779,70 @@ func TestExchangePartitionGlobalIndex(t *testing.T) {
 	tk.MustExec(`create table t2 (a int, b int, primary key (a) nonclustered)`)
 	tk.MustExec(`insert into t values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5)`)
 	tk.MustExec(`insert into t2 values (6,6),(9,9)`)
+	tOrigin := external.GetTableByName(t, tk, "test", "t").Meta()
+	t2Origin := external.GetTableByName(t, tk, "test", "t2").Meta()
 	tk.MustExec(`alter table t exchange partition p0 with table t2 without validation`)
 	tk.MustQuery(`select * from t where a = 6`).Check(testkit.Rows("6 6"))
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "2 2", "4 4", "5 5", "6 6", "9 9"))
 	tk.MustQuery(`select * from t2 where a = 3`).Check(testkit.Rows("3 3"))
 	tk.MustQuery(`select * from t2`).Check(testkit.Rows("0 0", "3 3"))
-	tk.MustExec(`alter table t exchange partition p0 with table t2 with validation`)
-	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
-	tk.MustQuery(`select * from t2 where a = 6`).Check(testkit.Rows("6 6"))
+	tNew := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.NotEqual(t, tOrigin.UpdateTS, tNew.UpdateTS)
+	tOrigin.UpdateTS = tNew.UpdateTS
+	require.Less(t, tOrigin.Revision, tNew.Revision)
+	tOrigin.Revision = tNew.Revision
+	require.Less(t, tOrigin.Partition.Definitions[0].ID, tNew.Partition.Definitions[0].ID)
+	tOrigin.Partition.Definitions[0].ID = tNew.Partition.Definitions[0].ID
+	require.Equal(t, tOrigin, tNew)
+	t2New := external.GetTableByName(t, tk, "test", "t2").Meta()
+	require.NotEqual(t, t2Origin.UpdateTS, t2New.UpdateTS)
+	t2Origin.UpdateTS = t2New.UpdateTS
+	require.Less(t, t2Origin.Revision, t2New.Revision)
+	t2Origin.Revision = t2New.Revision
+	require.Greater(t, t2Origin.ID, t2New.ID)
+	t2Origin.ID = t2New.ID
+	require.Equal(t, t2Origin, t2New)
+	// TODO: Check that the index is cleaned up!
+	//tk.MustExec(`insert into t values (0,0)`)
+	tk.MustExec(`begin`)
+	// TODO: Do we need to trigger GC? IIRC we use UniStore, which does it directly?
+	/*
+			res := getAllKVsForTableID(t, tk.Session(), tNew.ID)
+			globalIndexEntries := []string{"0", "1", "2", "4", "5", "6", "9"}
+			for i, entry := range res {
+				if i < len(globalIndexEntries) {
+					require.Equal(t, globalIndexEntries[i], entry.IndexValues[0])
+					require.Equal(t, tNew.Indices[0].ID, entry.IndexID)
+				}
+			}
+		tk.MustExec(`alter table t exchange partition p0 with table t2 with validation`)
+		tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+		tk.MustQuery(`select * from t2 where a = 6`).Check(testkit.Rows("6 6"))
+	*/
 	// TODO: Check all valid entries in both table and indexes!
+}
+
+// func DecodeKey(key []byte, is infoschema.InfoSchema) (DecodedKey, error) {
+func getAllKVsForTableID(t *testing.T, ctx sessionctx.Context, tblID int64) []keydecoder.DecodedKey {
+	is := domain.GetDomain(ctx).InfoSchema()
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	defer func() {
+		err := txn.Rollback()
+		require.NoError(t, err)
+	}()
+
+	prefix := tablecodec.EncodeTablePrefix(tblID)
+	end := tablecodec.EncodeTablePrefix(tblID + 1)
+	it, err := txn.Iter(prefix, end)
+	res := make([]keydecoder.DecodedKey, 0)
+	require.NoError(t, err)
+	for it.Valid() {
+		key, err := keydecoder.DecodeKey(it.Key(), is)
+		require.NoError(t, err)
+		res = append(res, key)
+		err = it.Next()
+		require.NoError(t, err)
+	}
+	return res
 }

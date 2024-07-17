@@ -2785,27 +2785,25 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			tblInfo:  pt,
 		})
 	case model.StateDeleteReorganization:
-		indexesToDrop := make([]*model.IndexInfo, 0)
+		newIdxs := make([]*model.IndexInfo, 0)
 		idxBalance := 0
 		for _, idx := range pt.Indices {
 			if idx.State == model.StateDeleteReorganization {
-				indexesToDrop = append(indexesToDrop, idx)
 				idxBalance++
+			} else {
+				newIdxs = append(newIdxs, idx)
 			}
 		}
-		for _, idx := range indexesToDrop {
-			removeIndexInfo(pt, idx)
-		}
-		indexesToDrop = indexesToDrop[:0]
+		pt.Indices = newIdxs
+		newIdxs = make([]*model.IndexInfo, 0)
 		for _, idx := range nt.Indices {
 			if idx.State == model.StateDeleteReorganization {
-				indexesToDrop = append(indexesToDrop, idx)
 				idxBalance--
+			} else {
+				newIdxs = append(newIdxs, idx)
 			}
 		}
-		for _, idx := range indexesToDrop {
-			removeIndexInfo(nt, idx)
-		}
+		nt.Indices = newIdxs
 		if idxBalance != 0 {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(dbterror.ErrTablesDifferentMetadata)
@@ -2943,7 +2941,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	job.SchemaState = model.StatePublic
 	nt.ExchangePartitionInfo = nil
-	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true, schemaIDAndTableInfo{
+		schemaID: ptSchemaID,
+		tblInfo:  pt,
+	})
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
