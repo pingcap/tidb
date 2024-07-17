@@ -78,7 +78,7 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 			kit := testkit.NewTestKit(t, store)
 			ddlSe := sess.NewSession(kit.Session())
 			for j := 0; j < iterations; j++ {
-				require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
+				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
 			}
 		})
 	}
@@ -204,7 +204,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 		tk.MustExec("delete from mysql.tidb_ddl_job")
 		for _, c := range cases {
 			currentGlobalID := getGlobalID(ctx, t, store)
-			require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
+			require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store))
 		}
 		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
@@ -222,7 +222,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			jobWs = append(jobWs, c.jobW)
 		}
 		currentGlobalID := getGlobalID(ctx, t, store)
-		require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
+		require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
 		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(ctx, t, store))
 
 		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
@@ -239,7 +239,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			if !c.jobW.IDAllocated {
 				allocIDCaseCount++
 				allocatedIDCount += c.requiredIDCount
-				require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
+				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			}
 		}
 		require.EqualValues(t, 6, allocIDCaseCount)
@@ -318,7 +318,7 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 			kit := testkit.NewTestKit(t, store)
 			ddlSe := sess.NewSession(kit.Session())
 			for i := 0; i < iterationPerThread; i++ {
-				require.NoError(t, ddl.GenIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
+				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
 
 				counters[0].Add(1)
 				counters[index+1].Add(1)

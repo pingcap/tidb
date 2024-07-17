@@ -492,7 +492,7 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 	ddlSe := sess.NewSession(se)
 	localMode := jobWs[0].Job.LocalMode
 	if localMode {
-		if err = fillJobRelatedIDs(ctx, ddlSe, jobWs); err != nil {
+		if err = fillJobRelatedGIDs(ctx, ddlSe, jobWs); err != nil {
 			return err
 		}
 		for _, jobW := range jobWs {
@@ -501,7 +501,7 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 		return nil
 	}
 
-	if err = GenIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
+	if err = GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
 		return errors.Trace(err)
 	}
 	for _, jobW := range jobWs {
@@ -511,38 +511,38 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 	return nil
 }
 
-// GenIDAndInsertJobsWithRetry generate job related ID and inserts DDL jobs to the DDL job
+// GenGIDAndInsertJobsWithRetry generate job related global ID and inserts DDL jobs to the DDL job
 // table with retry. job id allocation and job insertion are in the same transaction,
 // as we want to make sure DDL jobs are inserted in id order, then we can query from
 // a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
 // so this function has side effect, it will set table/db/job id of 'jobs'.
-func GenIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
-	count := getRequiredIDCount(jobWs)
-	return genIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
-		assignIDsForJobs(jobWs, ids)
+func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+	count := getRequiredGIDCount(jobWs)
+	return genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
+		assignGIDsForJobs(jobWs, ids)
 		injectModifyJobArgFailPoint(jobWs)
 		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
 	})
 }
 
-// fillJobRelatedIDs similar to GenIDAndInsertJobsWithRetry, but only fill job related IDs.
-func fillJobRelatedIDs(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+// fillJobRelatedGIDs similar to GenGIDAndInsertJobsWithRetry, but only fill job related global IDs.
+func fillJobRelatedGIDs(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
 	var allocatedIDs []int64
-	count := getRequiredIDCount(jobWs)
-	if err := genIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
+	count := getRequiredGIDCount(jobWs)
+	if err := genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
 		allocatedIDs = ids
 		return nil
 	}); err != nil {
 		return errors.Trace(err)
 	}
 
-	assignIDsForJobs(jobWs, allocatedIDs)
+	assignGIDsForJobs(jobWs, allocatedIDs)
 	return nil
 }
 
-// getRequiredIDCount returns the count of required IDs for the jobs. it's calculated
+// getRequiredGIDCount returns the count of required global IDs for the jobs. it's calculated
 // as: the count of jobs + the count of IDs for the jobs which do NOT have pre-allocated ID.
-func getRequiredIDCount(jobWs []*JobWrapper) int {
+func getRequiredGIDCount(jobWs []*JobWrapper) int {
 	count := len(jobWs)
 	idCountForTable := func(info *model.TableInfo) int {
 		c := 1
@@ -572,9 +572,9 @@ func getRequiredIDCount(jobWs []*JobWrapper) int {
 	return count
 }
 
-// assignIDsForJobs should be used with getRequiredIDCount, and len(ids) must equal
-// what getRequiredIDCount returns.
-func assignIDsForJobs(jobWs []*JobWrapper, ids []int64) {
+// assignGIDsForJobs should be used with getRequiredGIDCount, and len(ids) must equal
+// what getRequiredGIDCount returns.
+func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 	idx := 0
 
 	assignIDsForTable := func(info *model.TableInfo) {
@@ -616,9 +616,9 @@ func assignIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 	}
 }
 
-// genIDAndCallWithRetry generates global IDs and calls the function with retry.
+// genGIDAndCallWithRetry generates global IDs and calls the function with retry.
 // generate ID and call function runs in the same transaction.
-func genIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, fn func(ids []int64) error) error {
+func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, fn func(ids []int64) error) error {
 	var resErr error
 	for i := uint(0); i < kv.MaxRetryCnt; i++ {
 		resErr = func() (err error) {
