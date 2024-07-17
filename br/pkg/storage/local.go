@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -49,6 +50,10 @@ func (l *LocalStorage) DeleteFiles(ctx context.Context, names []string) error {
 
 // WriteFile writes data to a file to storage.
 func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) error {
+	failpoint.Inject("local_write_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
+
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file
 	// to an empty file if write is not finished.
 	tmpPath := filepath.Join(l.base, name) + ".tmp." + uuid.NewString()

@@ -10,7 +10,7 @@ import (
 
 func TestDryRun(t *testing.T) {
 	ctx := context.Background()
-	dry := DryRun(nil) // Passing nil as we don't need actual storage operations
+	dry := Batch(nil) // Passing nil as we don't need actual storage operations
 
 	// Test operations
 	operations := []struct {

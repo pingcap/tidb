@@ -553,11 +553,11 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 
 func (m MigrationExt) EstimateEffectFor(ctx context.Context, mig *pb.Migration) (MigratedTo, []storage.Effect) {
 	drySelf := MigrationExt{
-		s:      storage.DryRun(m.s),
+		s:      storage.Batch(m.s),
 		prefix: m.prefix,
 	}
 	res := drySelf.MigrateTo(ctx, mig)
-	return res, drySelf.s.(*storage.Dry).Effects()
+	return res, drySelf.s.(*storage.Batched).Effects()
 }
 
 func (m MigrationExt) MergeTo(migs Migrations, version int) *pb.Migration {
@@ -717,6 +717,10 @@ func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdi
 			}
 		}
 	}
+	metadata.FileGroups = slices.DeleteFunc(metadata.FileGroups, func(dfg *pb.DataFileGroup) bool {
+		// As all spans in the physical data file has been deleted, it will be soonly removed.
+		return len(dfg.DataFilesInfo) == 0
+	})
 
 	if isEmptyMetadata(&metadata) {
 		// As it is empty, even no hint to destruct self, we can safely delete it.

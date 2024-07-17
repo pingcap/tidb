@@ -9,6 +9,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"go.uber.org/multierr"
 )
 
 type Effect any
@@ -46,7 +47,7 @@ func JSONEffects(es []Effect, output io.Writer) error {
 	return json.NewEncoder(output).Encode(out)
 }
 
-type Dry struct {
+type Batched struct {
 	ExternalStorage
 	effectsMu sync.Mutex
 	// It will be one of:
@@ -54,48 +55,74 @@ type Dry struct {
 	effects []Effect
 }
 
-func DryRun(s ExternalStorage) *Dry {
-	return &Dry{ExternalStorage: s}
+func Batch(s ExternalStorage) *Batched {
+	return &Batched{ExternalStorage: s}
 }
 
-func (d *Dry) Effects() []Effect {
+func (d *Batched) Effects() []Effect {
 	return d.effects
 }
 
-func (d *Dry) CleanEffects() {
+func (d *Batched) CleanEffects() {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
 	d.effects = nil
 }
 
-func (d *Dry) DeleteFiles(ctx context.Context, names []string) error {
+func (d *Batched) DeleteFiles(ctx context.Context, names []string) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
 	d.effects = append(d.effects, EffDeleteFiles{Files: names})
 	return nil
 }
 
-func (d *Dry) DeleteFile(ctx context.Context, name string) error {
+func (d *Batched) DeleteFile(ctx context.Context, name string) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
 	d.effects = append(d.effects, EffDeleteFile(name))
 	return nil
 }
 
-func (d *Dry) WriteFile(ctx context.Context, name string, data []byte) error {
+func (d *Batched) WriteFile(ctx context.Context, name string, data []byte) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
 	d.effects = append(d.effects, EffPut{File: name, Content: data})
 	return nil
 }
 
-func (d *Dry) Rename(ctx context.Context, oldName, newName string) error {
+func (d *Batched) Rename(ctx context.Context, oldName, newName string) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
 	d.effects = append(d.effects, EffRename{From: oldName, To: newName})
 	return nil
 }
 
-func (d *Dry) Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error) {
-	return nil, errors.Annotatef(berrors.ErrStorageUnknown, "ExternalStorage.Create isn't allowed in dry run mode for now.")
+func (d *Batched) Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error) {
+	return nil, errors.Annotatef(berrors.ErrStorageUnknown, "ExternalStorage.Create isn't allowed in batch mode for now.")
+}
+
+// Commit performs all effects recorded so long in the REAL external storage.
+func (d *Batched) Commit(ctx context.Context) error {
+	d.effectsMu.Lock()
+	defer d.effectsMu.Unlock()
+
+	var err error
+	for _, eff := range d.effects {
+		switch e := eff.(type) {
+		case EffPut:
+			err = multierr.Combine(d.ExternalStorage.WriteFile(ctx, e.File, e.Content), err)
+		case EffDeleteFiles:
+			err = multierr.Combine(d.ExternalStorage.DeleteFiles(ctx, e.Files), err)
+		case EffDeleteFile:
+			err = multierr.Combine(d.ExternalStorage.DeleteFile(ctx, string(e)), err)
+		case EffRename:
+			err = multierr.Combine(d.ExternalStorage.Rename(ctx, e.From, e.To), err)
+		default:
+			return errors.Annotatef(berrors.ErrStorageUnknown, "Unknown effect type %T", eff)
+		}
+	}
+
+	d.effects = nil
+
+	return nil
 }

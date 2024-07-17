@@ -18,6 +18,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -26,6 +27,37 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
+
+func requireMigrationsEqual(t *testing.T, miga, migb *backuppb.Migration) {
+	require.Equal(t, hashMigration(miga), hashMigration(migb), "\n%s\n%s", miga, migb)
+}
+
+type effects struct {
+	Renames   map[string]string
+	Deletions map[string]struct{}
+	Edits     map[string][]byte
+}
+
+func effectsOf(efs []storage.Effect) effects {
+	out := effects{Renames: map[string]string{}, Deletions: map[string]struct{}{}, Edits: map[string][]byte{}}
+	for _, ef := range efs {
+		switch e := ef.(type) {
+		case storage.EffDeleteFile:
+			out.Deletions[string(e)] = struct{}{}
+		case storage.EffDeleteFiles:
+			for _, f := range e.Files {
+				out.Deletions[f] = struct{}{}
+			}
+		case storage.EffPut:
+			out.Edits[e.File] = e.Content
+		case storage.EffRename:
+			out.Renames[e.From] = e.To
+		default:
+			panic(fmt.Sprintf("unknown effect %T", ef))
+		}
+	}
+	return out
+}
 
 func fakeDataFiles(s storage.ExternalStorage, base, item int) (result []*backuppb.DataFileInfo) {
 	ctx := context.Background()
@@ -541,6 +573,17 @@ func m(storeId int64, minTS, maxTS uint64) *backuppb.Metadata {
 
 type migOp func(*backuppb.Migration)
 
+func mCompaction(cPath, aPath string, fromTs, untilTs uint64) migOp {
+	return func(m *backuppb.Migration) {
+		c := &backuppb.LogFileCompaction{}
+		c.GeneratedFiles = cPath
+		c.Artifactes = aPath
+		c.CompactionFromTs = fromTs
+		c.CompactionUntilTs = untilTs
+		m.Compactions = append(m.Compactions, c)
+	}
+}
+
 func mDel(mPath string, files ...string) migOp {
 	return func(m *backuppb.Migration) {
 		idx := slices.IndexFunc(m.EditMeta, func(m *backuppb.MetaEdit) bool { return m.Path == mPath })
@@ -647,10 +690,36 @@ func pmt(s storage.ExternalStorage, path string, mt *backuppb.Metadata) {
 	}
 }
 
+func pmig(s storage.ExternalStorage, num uint64, mt *backuppb.Migration) string {
+	numS := fmt.Sprintf("%08d", num)
+	if num == baseMigrationID {
+		numS = baseMigrationName
+	}
+	name := fmt.Sprintf("%s_%08X.mgrt", numS, hashMigration(mt))
+	p := path.Join(migrationPrefix, name)
+
+	data, err := mt.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	err = s.WriteFile(context.Background(), p, data)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
+func mTruncatedTo(to uint64) migOp {
+	return func(m *backuppb.Migration) {
+		m.TruncatedTo = to
+	}
+}
+
 // tmp creates a temporary storage.
 func tmp(t *testing.T) *storage.LocalStorage {
 	tmpDir := t.TempDir()
 	s, err := storage.NewLocalStorage(tmpDir)
+	require.NoError(t, os.MkdirAll(path.Join(tmpDir, migrationPrefix), 0644))
 	require.NoError(t, err)
 	return s
 }
@@ -2505,7 +2574,7 @@ func TestBasicMigration(t *testing.T) {
 		),
 	)
 
-	ds := storage.DryRun(s)
+	ds := storage.Batch(s)
 	est := MigerationExtension(ds)
 	res := est.merge(mig1, mig2)
 
@@ -2520,49 +2589,150 @@ func TestBasicMigration(t *testing.T) {
 			spans("00002.log", 96, sp(42, 54)),
 		),
 	)
-	require.Equal(t, hashMigration(resE), hashMigration(res), "%v %v", resE, res)
+	requireMigrationsEqual(t, resE, res)
 
 	ctx := context.Background()
 	mg := est.MigrateTo(ctx, res)
 
 	newBaseE := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(0, 42), sp(42, 18))))
 	require.Empty(t, mg.Warnings)
-	require.Equal(t, hashMigration(newBaseE), hashMigration(mg.NewBase), "%v %v", newBaseE, mg.NewBase)
+	requireMigrationsEqual(t, newBaseE, mg.NewBase)
 
-	ops := ds.Effects()
-	type Effects struct {
-		Renames   map[string]string
-		Deletions map[string]struct{}
-		Edits     map[string][]byte
-	}
-	writes := func(efs []storage.Effect) Effects {
-		out := Effects{Renames: map[string]string{}, Deletions: map[string]struct{}{}, Edits: map[string][]byte{}}
-		for _, ef := range efs {
-			switch e := ef.(type) {
-			case storage.EffDeleteFile:
-				out.Deletions[string(e)] = struct{}{}
-			case storage.EffDeleteFiles:
-				for _, f := range e.Files {
-					out.Deletions[f] = struct{}{}
-				}
-			case storage.EffPut:
-				out.Edits[e.File] = e.Content
-			case storage.EffRename:
-				out.Renames[e.From] = e.To
-			default:
-				panic(fmt.Sprintf("unknown effect %T", ef))
-			}
-		}
-		return out
-	}
-	efs := writes(ops)
+	efs := effectsOf(ds.Effects())
 	require.ElementsMatch(t, maps.Keys(efs.Deletions), []string{"foo.log", "bar.log", "00002.log", "00001.meta"})
-	newWritten, err := mt(mtGroup("00001.log", dsp(60, 1024-60))).Marshal()
-	require.NoError(t, err)
-	fmt.Printf("ops: %#v\n", efs)
 	var meta backuppb.Metadata
 	require.NoError(t, meta.Unmarshal(efs.Edits["00002.meta"]))
-	fmt.Printf("meta: %v\n", meta)
-	fmt.Printf("newWritten: %v\n", newWritten)
-	require.Equal(t, newWritten, efs.Edits["00002.meta"])
+	require.Equal(t, &meta, mt(mtGroup("00001.log", dsp(60, 1024-60))))
+
+	// FIXME: LocalStorage will report error when deleting a not-existing file...
+	_ = ds.Commit(ctx)
+
+	delRem := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(60, 1024-60))))
+	newNewBase := est.merge(mg.NewBase, delRem)
+	mg = est.MigrateTo(ctx, newNewBase)
+	require.Empty(t, mg.Warnings)
+	requireMigrationsEqual(t, mg.NewBase, mig())
+}
+
+func TestMergeAndMigrateTo(t *testing.T) {
+	s := tmp(t)
+	dfi := func(off, len uint64) *backuppb.DataFileInfo { return dFile(sp(off, len)) }
+	lN := func(n uint64) string { return fmt.Sprintf("%05d.log", n) }
+	mN := func(n uint64) string { return fmt.Sprintf("%05d.meta", n) }
+
+	pmt(s, mN(1), mt(
+		mtGroup(lN(1)), mtGroup(lN(2)),
+		mtGroup(lN(3), dfi(0, 42), dfi(42, 18), dfi(60, 40)),
+		mtGroup(lN(4), dfi(0, 42), dfi(42, 58))),
+	)
+
+	mig1p := pmig(s, 1, mig(
+		mDel(mN(1), lN(2)),
+		mLogDel(mN(1), spans(lN(3), 100, sp(0, 42), sp(42, 18))),
+		mLogDel(mN(1), spans(lN(4), 100, sp(42, 58))),
+	))
+	mig2p := pmig(s, 2, mig(
+		mLogDel(mN(1), spans(lN(3), 100, sp(60, 40))),
+	))
+	mig3 := mig(
+		mDel(mN(1), lN(1)),
+		mLogDel(mN(1), spans(lN(4), 100, sp(0, 42))),
+	)
+	mig3p := pmig(s, 3, mig3)
+
+	bs := storage.Batch(s)
+	est := MigerationExtension(bs)
+
+	ctx := context.Background()
+	mg := est.MergeAndMigrateTo(ctx, 2)
+
+	require.Len(t, mg.Source, 2)
+	require.Empty(t, mg.Warnings)
+	requireMigrationsEqual(t, mg.NewBase, mig(mLogDel(mN(1), spans(lN(4), 100, sp(42, 58)))))
+
+	effs := effectsOf(bs.Effects())
+	require.ElementsMatch(t, maps.Keys(effs.Deletions), []string{lN(2), lN(3), mig1p, mig2p})
+	// FIXME: LocalStorage will report error when deleting a not-existing file...
+	_ = bs.Commit(ctx)
+
+	migs, err := est.Load(ctx)
+	require.NoError(t, err)
+
+	for _, mig := range migs.Layers {
+		fmt.Printf("mig: %v\n", mig)
+	}
+	requireMigrationsEqual(t, migs.Base, mg.NewBase)
+	require.Len(t, migs.Layers, 1)
+	requireMigrationsEqual(t, &migs.Layers[0].Content, mig3)
+	require.EqualValues(t, migs.Layers[0].ID, 3)
+
+	mg = est.MergeAndMigrateTo(ctx, 3)
+	require.Empty(t, mg.Warnings)
+	requireMigrationsEqual(t, mg.NewBase, mig())
+	effs = effectsOf(bs.Effects())
+	require.ElementsMatch(t, maps.Keys(effs.Deletions), []string{mN(1), lN(1), lN(4), mig3p})
+}
+
+func TestRemoveCompaction(t *testing.T) {
+	s := tmp(t)
+	ctx := context.Background()
+	placeholder := func(pfx string) string {
+		path := path.Join(pfx, "monolith")
+		require.NoError(t, s.WriteFile(ctx, path, []byte("🪨")))
+		return path
+	}
+	cDir := func(n uint64) string { return fmt.Sprintf("%05d/output", n) }
+	aDir := func(n uint64) string { return fmt.Sprintf("%05d/metas", n) }
+
+	var (
+		ap []string
+		cp []string
+	)
+	for i := 1; i <= 4; i++ {
+		ap = append(ap, placeholder(aDir(uint64(i))))
+		cp = append(cp, placeholder(cDir(uint64(i))))
+	}
+	mig1 := mig(
+		mCompaction(cDir(1), aDir(1), 10, 40),
+		mCompaction(cDir(2), aDir(2), 35, 50),
+		mCompaction(cDir(3), aDir(3), 5, 29),
+		// Should not truncate the full dir...
+		mCompaction("", aDir(4), 15, 25),
+		mTruncatedTo(30),
+	)
+
+	bs := storage.Batch(s)
+	est := MigerationExtension(bs)
+	mg := est.MigrateTo(ctx, mig1)
+	requireMigrationsEqual(t, mg.NewBase, mig(
+		mCompaction(cDir(1), aDir(1), 10, 40),
+		mCompaction(cDir(2), aDir(2), 35, 50),
+		mTruncatedTo(30),
+	))
+
+	ops := effectsOf(bs.Effects())
+	require.ElementsMatch(t, maps.Keys(ops.Deletions), []string{ap[2], cp[2], ap[3]})
+}
+
+func TestRetry(t *testing.T) {
+	s := tmp(t)
+	failpoint.Inject("github.com/pingcap/tidb/br/pkg/storage/local_write_file_err", `return("this disk remembers nothing")`)
+	lN := func(n uint64) string { return fmt.Sprintf("%05d.log", n) }
+	mN := func(n uint64) string { return fmt.Sprintf("%05d.meta", n) }
+
+	pmt(s, mN(1), mt(
+		mtGroup(lN(1)), mtGroup(lN(2)), mtGroup(lN(3))))
+
+	mig1 := mig(mDel(lN(1)))
+	mig1p := pmig(s, 1, mig1)
+	mig2 := mig(mDel(lN(2)))
+	mig2p := pmig(s, 2, mig2)
+
+	ctx := context.Background()
+	est := MigerationExtension(s)
+	mg := est.MergeAndMigrateTo(ctx, 2)
+	require.Len(t, mg.Warnings, 1)
+	require.Error(t, mg.Warnings[0], "this disk remembers nothing")
+
+	_, _ = mig1p, mig2p
 }
