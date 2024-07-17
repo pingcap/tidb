@@ -70,6 +70,8 @@ func (g inGener) gen() any {
 		return *j
 	case types.ETString:
 		return strconv.FormatInt(randNum, 10)
+	default:
+		panic("invalid eval type")
 	}
 	return randNum
 }
