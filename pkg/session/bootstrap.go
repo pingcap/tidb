@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -3216,6 +3217,13 @@ func doDDLWorks(s sessiontypes.Session) {
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
 // It is useful for setting the initial value of GLOBAL variables.
 func doBootstrapSQLFile(s sessiontypes.Session) error {
+	if s.GetExtensions() == nil {
+		extensions, err := extension.GetExtensions()
+		if err != nil {
+			return err
+		}
+		s.SetExtensions(extensions.NewSessionExtensions())
+	}
 	sqlFile := config.GetGlobalConfig().InitializeSQLFile
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if sqlFile == "" {
