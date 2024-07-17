@@ -1025,7 +1025,8 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 // It's the regexp version for hasSpecialAttributes(), please keep up-to-date with it.
 func CheckSpecialAttributes(str string) bool {
 	if strings.Contains(str, "\"tiflash_replica\":null") && strings.Contains(str, "\"policy_ref_info\":null") &&
-		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") {
+		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") &&
+		strings.Contains(str, "\"Lock\":null") && strings.Contains(str, "\"fk_info\":null") {
 		return false
 	}
 	return true

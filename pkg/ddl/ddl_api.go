@@ -406,7 +406,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	tbls := is.SchemaTables(dbInfo.Name)
+	tbls := is.SchemaSimpleTableInfos(dbInfo.Name)
 	total := len(tbls)
 	succ := 0
 	skip := 0
@@ -708,11 +708,11 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		return nil
 	}
 	// Clear table locks hold by the session.
-	tbs := is.SchemaTables(stmt.Name)
+	tbs := is.SchemaSimpleTableInfos(stmt.Name)
 	lockTableIDs := make([]int64, 0)
 	for _, tb := range tbs {
-		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-			lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+		if ok, _ := ctx.CheckTableLocked(tb.ID); ok {
+			lockTableIDs = append(lockTableIDs, tb.ID)
 		}
 	}
 	ctx.ReleaseTableLockByTableIDs(lockTableIDs)

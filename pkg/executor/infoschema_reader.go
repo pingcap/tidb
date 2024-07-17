@@ -2480,14 +2480,10 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 		rows          [][]types.Datum
 		tiFlashStores map[int64]pd.StoreInfo
 	)
-	for _, schema := range schemas {
-		tables := e.is.SchemaTables(schema)
-		for _, tbl := range tables {
-			tbl := tbl.Meta()
-			if tbl.TiFlashReplica == nil {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+	rs := e.is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, schema := range rs {
+		for _, tbl := range schema.TableInfos {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.DBName, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			var progress float64
@@ -2510,7 +2506,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			progressString := types.TruncateFloatToString(progress, 2)
 			progress, _ = strconv.ParseFloat(progressString, 64)
 			record := types.MakeDatums(
-				schema.O,                        // TABLE_SCHEMA
+				schema.DBName,                   // TABLE_SCHEMA
 				tbl.Name.O,                      // TABLE_NAME
 				tbl.ID,                          // TABLE_ID
 				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
