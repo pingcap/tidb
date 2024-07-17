@@ -590,7 +590,7 @@ func TestUnregisterAfterPause(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
