@@ -622,4 +622,3 @@ func TestSubscriptionPanic(t *testing.T) {
 	cancel()
 	wg.Wait()
 }
-
