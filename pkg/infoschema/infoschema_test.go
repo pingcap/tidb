@@ -440,11 +440,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	// full load
 	data = infoschema.NewData()
 	newDB, ok := newIS.SchemaByName(model.NewCIStr("test"))
-	tables := newIS.SchemaTableInfos(context.Background(), newDB.Name)
-	tblInfos := make([]*model.TableInfo, 0, len(tables))
-	for _, table := range tables {
-		tblInfos = append(tblInfos, table)
-	}
+	tblInfos := newIS.SchemaTableInfos(context.Background(), newDB.Name)
 	newDB.Tables = tblInfos
 	require.True(t, ok)
 	builder, err = infoschema.NewBuilder(re, nil, data).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
@@ -573,10 +569,7 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is, p1.ID, p1Bundle)
 
 	if len(db.Tables) == 0 {
-		tbls := is.SchemaTableInfos(context.Background(), db.Name)
-		for _, tbl := range tbls {
-			db.Tables = append(db.Tables, tbl)
-		}
+		db.Tables = is.SchemaTableInfos(context.Background(), db.Name)
 	}
 	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
 	require.NoError(t, err)
