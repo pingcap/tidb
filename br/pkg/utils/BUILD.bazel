@@ -7,7 +7,7 @@ go_library(
         "db.go",
         "dyn_pprof_other.go",
         "dyn_pprof_unix.go",
-        "error_handling.go"
+        "error_handling.go",
         "json.go",
         "key.go",
         "misc.go",
@@ -68,7 +68,7 @@ go_test(
     srcs = [
         "backoff_test.go",
         "db_test.go",
-        "error_handling_test.go"
+        "error_handling_test.go",
         "json_test.go",
         "key_test.go",
         "main_test.go",
