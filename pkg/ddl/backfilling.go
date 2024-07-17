@@ -482,20 +482,20 @@ func loadTableRanges(
 
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
 	for i, r := range ranges {
-		s, e := r.StartKey, r.EndKey
-		switch i {
-		case 0:
+		if i == 0 {
+			s := r.StartKey
 			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
 				ranges[i].StartKey = startKey
 			}
-		case len(ranges) - 1:
+		}
+		if i == len(ranges)-1 {
+			e := r.EndKey
 			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
 				ranges[i].EndKey = endKey
 			}
-		default:
-			if len(s) == 0 || len(e) == 0 {
-				return errors.Errorf("get empty start key in the middle of ranges")
-			}
+		}
+		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
+			return errors.Errorf("get empty start key in the middle of ranges")
 		}
 	}
 	return nil
