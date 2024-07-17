@@ -406,7 +406,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	tbls := is.SchemaSimpleTableInfos(dbInfo.Name)
+	tbls := is.SchemaTableInfos(dbInfo.Name)
 	total := len(tbls)
 	succ := 0
 	skip := 0
