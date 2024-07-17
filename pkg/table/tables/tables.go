@@ -89,14 +89,39 @@ type TableCommon struct {
 	indexPrefix  kv.Key
 }
 
-// ClearColumnsCache implements testingKnob interface.
-func (t *TableCommon) ClearColumnsCache() {
-	t.publicColumns = nil
-	t.visibleColumns = nil
-	t.hiddenColumns = nil
-	t.writableColumns = nil
-	t.fullHiddenColsAndVisibleColumns = nil
-	t.writableConstraints = nil
+// ResetColumnsCache implements testingKnob interface.
+func (t *TableCommon) ResetColumnsCache() {
+	t.publicColumns = t.getCols(full)
+	t.visibleColumns = t.getCols(visible)
+	t.hiddenColumns = t.getCols(hidden)
+
+	t.writableColumns = make([]*table.Column, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+			continue
+		}
+		t.writableColumns = append(t.writableColumns, col)
+	}
+
+	t.fullHiddenColsAndVisibleColumns = make([]*table.Column, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.Hidden || col.State == model.StatePublic {
+			t.fullHiddenColsAndVisibleColumns = append(t.fullHiddenColsAndVisibleColumns, col)
+		}
+	}
+
+	if t.Constraints != nil {
+		t.writableConstraints = make([]*table.Constraint, 0, len(t.Constraints))
+		for _, con := range t.Constraints {
+			if !con.Enforced {
+				continue
+			}
+			if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
+				continue
+			}
+			t.writableConstraints = append(t.writableConstraints, con)
+		}
+	}
 }
 
 // Copy copies a TableCommon struct, and reset its column cache. This is not a deep copy.
@@ -236,37 +261,7 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
 		}
 	}
-	t.publicColumns = t.getCols(full)
-	t.visibleColumns = t.getCols(visible)
-	t.hiddenColumns = t.getCols(hidden)
-
-	t.writableColumns = make([]*table.Column, 0, len(t.Columns))
-	for _, col := range t.Columns {
-		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
-			continue
-		}
-		t.writableColumns = append(t.writableColumns, col)
-	}
-
-	t.fullHiddenColsAndVisibleColumns = make([]*table.Column, 0, len(t.Columns))
-	for _, col := range t.Columns {
-		if col.Hidden || col.State == model.StatePublic {
-			t.fullHiddenColsAndVisibleColumns = append(t.fullHiddenColsAndVisibleColumns, col)
-		}
-	}
-
-	if t.Constraints != nil {
-		t.writableConstraints = make([]*table.Constraint, 0, len(t.Constraints))
-		for _, con := range t.Constraints {
-			if !con.Enforced {
-				continue
-			}
-			if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
-				continue
-			}
-			t.writableConstraints = append(t.writableConstraints, con)
-		}
-	}
+	t.ResetColumnsCache()
 }
 
 // initTableIndices initializes the indices of the TableCommon.
