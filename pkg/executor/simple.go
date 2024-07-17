@@ -1913,7 +1913,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 
 		if plOptions.passwordRequireCurrentChange {
-			switch(plOptions.passwordRequireCurrent) {
+			switch plOptions.passwordRequireCurrent {
 			case "Y":
 				fields = append(fields, alterField{"Password_require_current = 'Y'", ""})
 			case "N":
