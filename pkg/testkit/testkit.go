@@ -191,7 +191,7 @@ func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []any,
 }
 
 // MustQueryToErr query the sql statement and must return Error.
-func (tk *TestKit) MustQueryToErr(sql string, args ...interface{}) {
+func (tk *TestKit) MustQueryToErr(sql string, args ...any) {
 	err := tk.QueryToErr(sql, args...)
 	tk.require.Error(err)
 }
