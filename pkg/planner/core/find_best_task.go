@@ -1420,7 +1420,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 			// Partition table can't use `_tidb_rowid` to generate PointGet Plan unless one partition is explicitly specified.
-			if canConvertPointGet && path.IsIntHandlePath && ds.HandleCols != nil && ds.HandleCols.GetCol(0).ID == model.ExtraHandleID && len(ds.PartitionNames) != 1 {
+			if canConvertPointGet && path.IsIntHandlePath && !ds.table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
 				canConvertPointGet = false
 			}
 			if canConvertPointGet {
