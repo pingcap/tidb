@@ -343,7 +343,6 @@ func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set global tidb_enable_fast_create_table=ON")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`))
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
