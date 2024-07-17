@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -1274,6 +1275,11 @@ func (SchemaTracker) GetInfoSchemaWithInterceptor(_ sessionctx.Context) infosche
 // DoDDLJob implements the DDL interface, it's no-op in DM's case.
 func (SchemaTracker) DoDDLJob(_ sessionctx.Context, _ *model.Job) error {
 	return nil
+}
+
+// GetMinJobIDRefresher implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
+	panic("not implemented")
 }
 
 // DoDDLJobWrapper implements the DDL interface, it's no-op in DM's case.

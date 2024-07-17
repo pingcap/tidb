@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -558,6 +559,11 @@ func (d *Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschem
 // DoDDLJob implements the DDL interface.
 func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return d.realDDL.DoDDLJob(ctx, job)
+}
+
+// GetMinJobIDRefresher implements the DDL interface.
+func (d *Checker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
+	return d.realDDL.GetMinJobIDRefresher()
 }
 
 // DoDDLJobWrapper implements the DDL interface.
