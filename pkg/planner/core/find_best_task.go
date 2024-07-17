@@ -256,9 +256,6 @@ func iteratePhysicalPlan4BaseLogical(
 ) ([]base.Task, int64, []int64, error) {
 	// Find best child tasks firstly.
 	childTasks = childTasks[:0]
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("check")
-	}
 	// The curCntPlan records the number of possible plans for pp
 	curCntPlan := int64(1)
 	for j, child := range p.Children() {
@@ -268,17 +265,11 @@ func iteratePhysicalPlan4BaseLogical(
 		if err != nil {
 			return nil, 0, childCnts, err
 		}
-		if childTask == nil {
-			fmt.Println("???????")
-		}
 		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
 			return nil, 0, childCnts, nil
 		}
 		childTasks = append(childTasks, childTask)
-	}
-	if len(childTasks) == 1 && childTasks[0] == nil {
-		logutil.BgLogger().Info("iteratePhysicalPlan4BaseLogical meet bug")
 	}
 	// This check makes sure that there is no invalid child task.
 	if len(childTasks) != p.ChildLen() {
@@ -531,9 +522,6 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
-	if !lp.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("here")
-	}
 	plansFitsProp, hintWorksWithProp, err = p.Self().ExhaustPhysicalPlans(newProp)
 	if err != nil {
 		return nil, 0, err

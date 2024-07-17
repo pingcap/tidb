@@ -229,6 +229,7 @@ func GetMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schema *expre
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored")
 	}
+
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
 	if (p.PreferJoinType&h.PreferMergeJoin) > 0 ||
@@ -423,6 +424,7 @@ func getHashJoins(p *LogicalJoin, prop *property.PhysicalProperty) (joins []base
 			joins = append(joins, getHashJoin(p, prop, 0, false))
 		}
 	}
+
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
 	shouldSkipHashJoin := shouldSkipHashJoin(p)
 	if !forced && shouldSkipHashJoin {
@@ -431,9 +433,6 @@ func getHashJoins(p *LogicalJoin, prop *property.PhysicalProperty) (joins []base
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, " +
 				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence.")
-	}
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		logutil.BgLogger().Info("not bug", zap.Any("joins", joins))
 	}
 	return
 }
