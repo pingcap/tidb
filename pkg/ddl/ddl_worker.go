@@ -44,7 +44,6 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -607,12 +606,6 @@ func (w *worker) updateDDLJob(job *model.Job, prevStates []model.SchemaState) er
 	} else {
 		updateRawArgs = job.SchemaState != prevStates[0]
 	}
-	intest.AssertFunc(func() bool {
-		if updateRawArgs {
-			return job.Args != nil || job.RawArgs == nil
-		}
-		return true
-	}, "job.RawArgs will be cleared: %s", job.String())
 
 	if !updateRawArgs {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
