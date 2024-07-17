@@ -73,16 +73,16 @@ const (
 	keyRangesOffset
 )
 
-func closePDSchedule() error {
+func closePDSchedule(ctx context.Context) error {
 	closeMap := make(map[string]any)
 	for _, key := range pdScheduleKey {
 		closeMap[key] = 0
 	}
-	return infosync.SetPDScheduleConfig(context.Background(), closeMap)
+	return infosync.SetPDScheduleConfig(ctx, closeMap)
 }
 
-func savePDSchedule(job *model.Job) error {
-	retValue, err := infosync.GetPDScheduleConfig(context.Background())
+func savePDSchedule(ctx context.Context, job *model.Job) error {
+	retValue, err := infosync.GetPDScheduleConfig(ctx)
 	if err != nil {
 		return err
 	}
@@ -94,11 +94,11 @@ func savePDSchedule(job *model.Job) error {
 	return nil
 }
 
-func recoverPDSchedule(pdScheduleParam map[string]any) error {
+func recoverPDSchedule(ctx context.Context, pdScheduleParam map[string]any) error {
 	if pdScheduleParam == nil {
 		return nil
 	}
-	return infosync.SetPDScheduleConfig(context.Background(), pdScheduleParam)
+	return infosync.SetPDScheduleConfig(ctx, pdScheduleParam)
 }
 
 func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
@@ -228,7 +228,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 	if err = gcutil.DisableGC(se); err != nil {
 		return err
 	}
-	if err = closePDSchedule(); err != nil {
+	if err = closePDSchedule(ctx); err != nil {
 		return err
 	}
 	if err = setTiDBEnableAutoAnalyze(ctx, se, variable.Off); err != nil {
@@ -664,7 +664,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
 	case model.StateNone:
-		if err = savePDSchedule(job); err != nil {
+		if err = savePDSchedule(w.ctx, job); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -801,7 +801,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	defer w.sessPool.Put(sess)
 
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(context.Context, kv.Transaction) error {
-		if err = recoverPDSchedule(pdScheduleValue); err != nil {
+		if err = recoverPDSchedule(w.ctx, pdScheduleValue); err != nil {
 			return err
 		}
 		if gcEnabled {

@@ -15,12 +15,12 @@
 package infoschemav2test
 
 import (
+	"context"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,8 +39,8 @@ func TestSpecialSchemas(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 
-	tk.MustExec("set @@global.tidb_schema_cache_size = 1024;")
-	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1024"))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1073741824;")
+	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1073741824"))
 	tk.MustExec("create table t (id int);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	isV2, _ := infoschema.IsV2(is)
@@ -84,7 +85,7 @@ func checkPIDNotExist(t *testing.T, dom *domain.Domain, pid int64) {
 
 func getPIDForP3(t *testing.T, dom *domain.Domain) (int64, table.Table) {
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("pt"))
 	require.NoError(t, err)
 	pi := tbl.Meta().GetPartitionInfo()
 	pid := pi.GetPartitionIDByName("p3")
@@ -142,12 +143,12 @@ PARTITION p5 VALUES LESS THAN (1980))`)
 	// Test FindTableByPartitionID after exchange partition.
 	tk.MustExec("create table nt (id int)")
 	is = dom.InfoSchema()
-	ntbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("nt"))
+	ntbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("nt"))
 	require.NoError(t, err)
 
 	tk.MustExec("alter table pt exchange partition p3 with table nt")
 	is = dom.InfoSchema()
-	ptbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
+	ptbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("pt"))
 	require.NoError(t, err)
 	pi := ptbl.Meta().GetPartitionInfo()
 	pid = pi.GetPartitionIDByName("p3")
@@ -157,11 +158,7 @@ PARTITION p5 VALUES LESS THAN (1980))`)
 func TestListTablesWithSpecialAttribute(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
-		require.NoError(t, err)
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
 	defer func() {
@@ -213,6 +210,13 @@ func TestListTablesWithSpecialAttribute(t *testing.T) {
 		tk.MustExec("drop database test_db1")
 		checkResult(t, tk, "test_db2 t_tiflash", "test_db2 t_ttl")
 
+		tk.MustExec("create or replace placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1\"")
+		tk.MustExec("create table t_placement (a int) placement policy=\"x\"")
+		checkResult(t, tk, "test_db2 t_placement", "test_db2 t_tiflash", "test_db2 t_ttl")
+
+		tk.MustExec("create table pt_placement (id int) placement policy x partition by HASH(id) PARTITIONS 4")
+		checkResult(t, tk, "test_db2 pt_placement", "test_db2 t_placement", "test_db2 t_tiflash", "test_db2 t_ttl")
+
 		tk.MustExec("drop database test_db2")
 		checkResult(t, tk)
 	}
@@ -240,19 +244,67 @@ func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
 	ok, raw := infoschema.IsV2(is)
 	if ok {
 		val := variable.SchemaCacheSize.Load()
-		tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain(strconv.FormatInt(val, 10))
+		tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain(strconv.FormatUint(val, 10))
 
 		// On start, the capacity might not be set correctly because infoschema have not load global variable yet.
 		// cap := raw.Data.CacheCapacity()
 		// require.Equal(t, cap, uint64(val))
 	}
 
-	tk.MustExec("set @@global.tidb_schema_cache_size = 32 * 1024 * 1024")
-	tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain("33554432")
-	require.Equal(t, variable.SchemaCacheSize.Load(), int64(33554432))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain("1073741824")
+	require.Equal(t, variable.SchemaCacheSize.Load(), uint64(1073741824))
 	tk.MustExec("create table trigger_reload (id int)") // need to trigger infoschema rebuild to reset capacity
 	is = dom.InfoSchema()
 	ok, raw = infoschema.IsV2(is)
 	require.True(t, ok)
-	require.Equal(t, raw.Data.CacheCapacity(), uint64(33554432))
+	require.Equal(t, raw.Data.CacheCapacity(), uint64(1073741824))
+}
+
+func TestUnrelatedDDLTriggerReload(t *testing.T) {
+	// TODO: pass context to loadTableInfo to avoid the global failpoint when it's ready
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+
+	tk.MustExec("create table t1 (id int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	// Mock t1 schema cache been evicted.
+	is := dom.InfoSchema()
+	ok, v2 := infoschema.IsV2(is)
+	require.True(t, ok)
+	v2.EvictTable("test", "t1")
+
+	tk.MustExec("create table t2 (id int)")
+
+	// DDL on t2 should not cause reload or cache miss on t1
+	// before test, check failpoint works
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError", `return(true)`)
+	tk.MustExecToErr("select * from t1")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError")
+
+	// Refill the cache, and do DDL
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("create table t3 (id int)")
+
+	// Ensure failpoint works, and now verify that the code never call loadTableInfo()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError", `return(true)`)
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError")
+}
+
+func TestTrace(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+	tk.MustExec("create table t_trace(id int key auto_increment)")
+	is := dom.InfoSchema()
+	ok, raw := infoschema.IsV2(is)
+	require.True(t, ok)
+
+	// Evict the table cache and check the trace information can catch this calling.
+	raw.EvictTable("test", "t_trace")
+	tk.MustQuery("trace select * from information_schema.tables").CheckContain("infoschema.loadTableInfo")
 }

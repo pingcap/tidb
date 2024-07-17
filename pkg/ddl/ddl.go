@@ -87,7 +87,7 @@ const (
 	batchAddingJobs = 10
 
 	reorgWorkerCnt   = 10
-	generalWorkerCnt = 1
+	generalWorkerCnt = 10
 	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
@@ -215,6 +215,7 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
+		involvingRef []model.InvolvingSchemaInfo,
 		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
@@ -381,6 +382,7 @@ type ddlCtx struct {
 	tableLockCkr    util.DeadTableLockChecker
 	etcdCli         *clientv3.Client
 	autoidCli       *autoid.ClientDiscover
+	schemaLoader    SchemaLoader
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -741,6 +743,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
 		autoidCli:                  opt.AutoIDClient,
+		schemaLoader:               opt.SchemaLoader,
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
@@ -838,7 +841,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(func() {
 		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
 	})
-	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
+	d.sessPool = sess.NewSessionPool(ctxPool)
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
@@ -872,16 +875,39 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
-	ingest.InitGlobalLightningEnv(func(jobIDs []int64) ([]int64, error) {
-		se, err := d.sessPool.Get()
-		if err != nil {
-			return nil, err
+	ingestDataDir, err := ingest.GenIngestTempDataDir()
+	if err != nil {
+		logutil.DDLIngestLogger().Warn(ingest.LitWarnEnvInitFail,
+			zap.Error(err))
+	} else {
+		ok := ingest.InitGlobalLightningEnv(ingestDataDir)
+		if ok {
+			d.wg.Run(func() {
+				d.CleanUpTempDirLoop(d.ctx, ingestDataDir)
+			})
 		}
-		defer d.sessPool.Put(se)
-		return filterProcessingJobIDs(sess.NewSession(se), jobIDs)
-	})
+	}
 
 	return nil
+}
+
+func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			se, err := d.sessPool.Get()
+			if err != nil {
+				logutil.DDLLogger().Warn("get session from pool failed", zap.Error(err))
+				return
+			}
+			ingest.CleanUpTempDir(ctx, se, path)
+			d.sessPool.Put(se)
+		case <-d.ctx.Done():
+			return
+		}
+	}
 }
 
 // EnableDDL enable this node to execute ddl.
@@ -1119,6 +1145,8 @@ func setDDLJobMode(job *model.Job) {
 			job.LocalMode = true
 			return
 		}
+	case model.ActionCreateSchema:
+		job.LocalMode = true
 	default:
 	}
 	job.LocalMode = false
@@ -1130,11 +1158,6 @@ func (d *ddl) deliverJobTask(task *limitJobTask) {
 	} else {
 		d.limitJobCh <- task
 	}
-}
-
-func (*ddl) shouldCheckHistoryJob(job *model.Job) bool {
-	// for local mode job, we add the history job directly now, so no need to check it.
-	return !job.LocalMode
 }
 
 // DoDDLJob will return
@@ -1184,8 +1207,12 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Notice worker that we push a new job and wait the job done.
 	d.notifyNewJobSubmitted(d.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
 	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
-	if !d.shouldCheckHistoryJob(job) {
-		return nil
+
+	// for local mode job, we add the history job directly now, so no need to check it.
+	// fast-create doesn't wait schema version synced, we must reload info-schema
+	// here to make sure later statements can see the created table/database.
+	if job.LocalMode {
+		return d.schemaLoader.Reload()
 	}
 
 	var historyJob *model.Job
@@ -1448,30 +1475,35 @@ func (d *ddl) SwitchFastCreateTable(val bool) error {
 
 // disableFastCreateTable disable fast create table feature.
 func (*ddl) disableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ddlV2Initialized {
+	if !fastCreateTableInitialized {
 		return nil
 	}
-	// clear all table names when we switch to v1.
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(m.SetDDLV2Initialized(false))
+	return errors.Trace(m.SetFastCreateTableInitialized(false))
 }
 
 // enableFastCreateTable enable fast create table feature.
 func (*ddl) enableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ddlV2Initialized {
+	if fastCreateTableInitialized {
 		return nil
 	}
 
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
@@ -1479,6 +1511,12 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	for _, dbInfo := range dbs {
+		if err := m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for _, dbInfo := range dbs {
@@ -1493,7 +1531,7 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 		}
 	}
 
-	return errors.Trace(m.SetDDLV2Initialized(true))
+	return errors.Trace(m.SetFastCreateTableInitialized(true))
 }
 
 func (d *ddl) switchFastCreateTable(val bool) (err error) {
@@ -1524,9 +1562,13 @@ type RecoverInfo struct {
 type RecoverSchemaInfo struct {
 	*model.DBInfo
 	RecoverTabsInfo []*RecoverInfo
-	DropJobID       int64
-	SnapshotTS      uint64
-	OldSchemaName   model.CIStr
+	// LoadTablesOnExecute is the new logic to avoid a large RecoverTabsInfo can't be
+	// persisted. If it's true, DDL owner will recover RecoverTabsInfo instead of the
+	// job submit node.
+	LoadTablesOnExecute bool
+	DropJobID           int64
+	SnapshotTS          uint64
+	OldSchemaName       model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
@@ -1597,7 +1639,7 @@ type Info struct {
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	se := sess.NewSession(s)
-	err := se.Begin()
+	err := se.Begin(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -1757,7 +1799,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			idsStr = append(idsStr, strconv.FormatInt(id, 10))
 		}
 
-		err = ns.Begin()
+		err = ns.Begin(context.Background())
 		if err != nil {
 			return nil, err
 		}
@@ -1797,7 +1839,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 		})
 
 		// There may be some conflict during the update, try it again
-		if err = ns.Commit(); err != nil {
+		if err = ns.Commit(context.Background()); err != nil {
 			continue
 		}
 
@@ -1848,7 +1890,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 	var jobErrs = make(map[int64]error)
 
 	ns := sess.NewSession(se)
-	err = ns.Begin()
+	err = ns.Begin(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -1894,7 +1936,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		jobID = jobIDMax + 1
 	}
 
-	err = ns.Commit()
+	err = ns.Commit(context.Background())
 	if err != nil {
 		return nil, err
 	}

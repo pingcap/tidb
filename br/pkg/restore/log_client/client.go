@@ -680,6 +680,16 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		info := rc.dom.InfoSchema()
+		shcemas := info.AllSchemaNames()
+		for _, schema := range shcemas {
+			for _, table := range info.SchemaTables(schema) {
+				tableInfo := table.Meta()
+				if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
+					return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
+				}
+			}
+		}
 	}
 
 	if len(dbMaps) <= 0 {
@@ -1321,7 +1331,7 @@ NEXTSQL:
 	for _, sql := range sqls {
 		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
 
-		tableInfo, err := info.TableByName(sql.SchemaName, sql.TableName)
+		tableInfo, err := info.TableByName(ctx, sql.SchemaName, sql.TableName)
 		if err != nil {
 			return errors.Trace(err)
 		}

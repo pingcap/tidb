@@ -73,6 +73,7 @@ func (c PDRegionScanner) FetchCurrentTS(ctx context.Context) (uint64, error) {
 // RegionScan gets a list of regions, starts from the region that contains key.
 // Limit limits the maximum number of regions returned.
 func (c PDRegionScanner) RegionScan(ctx context.Context, key, endKey []byte, limit int) ([]RegionWithLeader, error) {
+	//nolint:staticcheck
 	rs, err := c.Client.ScanRegions(ctx, key, endKey, limit)
 	if err != nil {
 		return nil, err
@@ -172,6 +173,8 @@ type StreamMeta interface {
 	Begin(ctx context.Context, ch chan<- TaskEvent) error
 	// UploadV3GlobalCheckpointForTask uploads the global checkpoint to the meta store.
 	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error
+	// GetGlobalCheckpointForTask gets the global checkpoint from the meta store.
+	GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
 	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.
 	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
 	PauseTask(ctx context.Context, taskName string) error

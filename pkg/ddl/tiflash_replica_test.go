@@ -176,7 +176,7 @@ func TestInfoSchemaForTiFlashReplica(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, index idx(a))")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
-	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica.Available = true
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 0"))
@@ -227,7 +227,7 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			if db == "MySQL" || db == "SYS" {
-				tbl, err1 := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(one))
+				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(one))
 				require.NoError(t, err1)
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
@@ -251,11 +251,12 @@ func TestSkipSchemaChecker(t *testing.T) {
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
-	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
 	// Test skip schema checker for ActionSetTiFlashReplica.
@@ -270,7 +271,14 @@ func TestSkipSchemaChecker(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t1")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
-	tk.MustExec("commit")
+	err = tk.ExecToErr("commit")
+	if err != nil {
+		// If infoschema is changed betewen v1 and v2, it may trigger full reload.
+		// The delta(schema diffs) in schema validator maybe `Reset()` and lost.
+		// As a result, the schema validator cannot determine if a txn is valid.
+		// Since this is only happened when metadata lock is disabled, we can ignore this error.
+		require.True(t, terror.ErrorEqual(domain.ErrInfoSchemaChanged, err))
+	}
 
 	// Test can't skip schema checker.
 	tk.MustExec("begin")
@@ -394,7 +402,7 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustExec("create table truncate_table (c1 int, c2 int)")
 	tk.MustExec("insert truncate_table values (1, 1), (2, 2)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"))
+	oldTblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("truncate_table"))
 	require.NoError(t, err)
 	oldTblID := oldTblInfo.Meta().ID
 
@@ -404,7 +412,7 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustQuery("select * from truncate_table").Check(testkit.Rows("3 3", "4 4"))
 
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"))
+	newTblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("truncate_table"))
 	require.NoError(t, err)
 	require.Greater(t, newTblInfo.Meta().ID, oldTblID)
 

@@ -15,6 +15,7 @@
 package clustertablestest
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -595,11 +596,11 @@ func TestReloadDropDatabase(t *testing.T) {
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create table t3 (a int)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	t2, err := is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	t2, err := is.TableByName(context.Background(), model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tk.MustExec("drop database test_dbs")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	_, err = is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	_, err = is.TableByName(context.Background(), model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
 	require.True(t, terror.ErrorEqual(infoschema.ErrTableNotExists, err))
 	_, ok := is.TableByID(t2.Meta().ID)
 	require.False(t, ok)
@@ -644,7 +645,7 @@ func TestSelectHiddenColumn(t *testing.T) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
 	require.NoError(t, err)
 	colInfo := tb.Meta().Columns
 	// Set column b to hidden
@@ -1228,6 +1229,8 @@ func TestTiDBTrx(t *testing.T) {
 			// `WAITING_START_TIME` will not be affected by time_zone, it is in memory and we assume that the system time zone will not change.
 			blockTime2.Format(types.TimeFSPFormat)+
 			" 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
+	tk.MustQuery(`select state from information_schema.tidb_trx as trx  union select state from information_schema.tidb_trx as trx`).Sort().
+		Check(testkit.Rows(txninfo.TxnRunningStateStrs[txninfo.TxnIdle], txninfo.TxnRunningStateStrs[txninfo.TxnLockAcquiring]))
 
 	rows := tk.MustQuery(`select WAITING_TIME from information_schema.TIDB_TRX where WAITING_TIME is not null`)
 	require.Len(t, rows.Rows(), 1)

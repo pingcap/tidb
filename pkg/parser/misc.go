@@ -888,6 +888,7 @@ var tokenMap = map[string]int{
 	"VARIABLES":                variables,
 	"VARIANCE":                 varPop,
 	"VARYING":                  varying,
+	"VECTOR":                   vectorType,
 	"VERBOSE":                  verboseType,
 	"VOTER":                    voter,
 	"VOTER_CONSTRAINTS":        voterConstraints,
@@ -1024,6 +1025,7 @@ var hintTokenMap = map[string]int{
 	"SET_VAR":               hintSetVar,
 	"RESOURCE_GROUP":        hintResourceGroup,
 	"QB_NAME":               hintQBName,
+	"HYPO_INDEX":            hintHypoIndex,
 
 	// TiDB hint names
 	"AGG_TO_COP":              hintAggToCop,

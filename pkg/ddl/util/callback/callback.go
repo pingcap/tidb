@@ -47,7 +47,7 @@ type TestDDLCallback struct {
 	*ddl.BaseCallback
 	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
 	// domain to reload schema before your ddl stepping into the next state change.
-	Do ddl.DomainReloader
+	Do ddl.SchemaLoader
 
 	onJobRunBefore          func(*model.Job)
 	OnJobRunBeforeExported  func(*model.Job)
@@ -55,8 +55,8 @@ type TestDDLCallback struct {
 	onJobUpdated            func(*model.Job)
 	OnJobUpdatedExported    atomic.Pointer[func(*model.Job)]
 	onWatched               func(ctx context.Context)
-	OnGetJobBeforeExported  func(string)
-	OnGetJobAfterExported   func(string, *model.Job)
+	OnGetJobBeforeExported  func()
+	OnGetJobAfterExported   func(*model.Job)
 	OnJobSchemaStateChanged func(int64)
 
 	OnUpdateReorgInfoExported func(job *model.Job, pid int64)
@@ -143,24 +143,6 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	}
 
 	tc.BaseCallback.OnWatched(ctx)
-}
-
-// OnGetJobBefore implements Callback.OnGetJobBefore interface.
-func (tc *TestDDLCallback) OnGetJobBefore(jobType string) {
-	if tc.OnGetJobBeforeExported != nil {
-		tc.OnGetJobBeforeExported(jobType)
-		return
-	}
-	tc.BaseCallback.OnGetJobBefore(jobType)
-}
-
-// OnGetJobAfter implements Callback.OnGetJobAfter interface.
-func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
-	if tc.OnGetJobAfterExported != nil {
-		tc.OnGetJobAfterExported(jobType, job)
-		return
-	}
-	tc.BaseCallback.OnGetJobAfter(jobType, job)
 }
 
 // Clone copies the callback and take its reference

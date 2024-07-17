@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -212,8 +213,12 @@ func (rc *reorgCtx) getRowCount() int64 {
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
-	lease time.Duration, f func() error) error {
+func (w *worker) runReorgJob(
+	reorgInfo *reorgInfo,
+	tblInfo *model.TableInfo,
+	lease time.Duration,
+	reorgFn func() error,
+) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
@@ -247,7 +252,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			rc.doneCh <- f()
+			rc.doneCh <- reorgFn()
 		}()
 	}
 
@@ -324,25 +329,6 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 	if w.getReorgCtx(job.ID) != nil {
 		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
 		return nil
-	}
-	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
-	if ok {
-		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
-		if bc.GetCheckpointManager() == nil {
-			mgr, err := ingest.NewCheckpointManager(
-				w.ctx,
-				bc,
-				w.sessPool,
-				job.ID,
-				extractElemIDs(reorgInfo),
-				bc.GetLocalBackend().LocalStoreDir,
-				w.store.(kv.StorageWithPD).GetPDClient(),
-			)
-			if err != nil {
-				logutil.DDLIngestLogger().Warn("create checkpoint manager failed", zap.Error(err))
-			}
-			bc.AttachCheckpointManager(mgr)
-		}
 	}
 	start, end, pid, err := getCheckpointReorgHandle(sess, job)
 	if err != nil {
@@ -892,13 +878,13 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error
 	defer pool.Put(sctx)
 
 	se := sess.NewSession(sctx)
-	err = se.Begin()
+	err = se.Begin(context.Background())
 	if err != nil {
 		return
 	}
 	rh := newReorgHandler(se)
 	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
-	err1 := se.Commit()
+	err1 := se.Commit(context.Background())
 	if err == nil {
 		err = err1
 	}

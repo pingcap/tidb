@@ -32,6 +32,10 @@ func init() {
 	utilfuncp.HasMaxOneRowUtil = HasMaxOneRow
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CanPushToCopImpl = canPushToCopImpl
+	utilfuncp.GetStreamAggs = getStreamAggs
+	utilfuncp.GetHashAggs = getHashAggs
+	utilfuncp.PruneByItems = pruneByItems
+
 	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
 

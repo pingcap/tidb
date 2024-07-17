@@ -363,7 +363,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		Session:             s,
 		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
 	}
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprCtx)
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.txn.kvPairs = &Pairs{}
 
 	return s

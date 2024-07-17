@@ -16,7 +16,7 @@ package exec
 
 import (
 	"context"
-	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -332,7 +332,7 @@ func (e *BaseExecutor) Ctx() sessionctx.Context {
 // UpdateDeltaForTableID updates the delta info for the table with tableID.
 func (e *BaseExecutor) UpdateDeltaForTableID(id int64) {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+	txnCtx.UpdateDeltaForTable(id, 0, 0, nil)
 }
 
 // GetSysSession gets a system session context from executor.
@@ -403,7 +403,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
+	r, ctx := tracing.StartRegionEx(ctx, reflect.TypeOf(e).String()+".Next")
 	defer r.End()
 
 	e.RegisterSQLAndPlanInExecForTopSQL()

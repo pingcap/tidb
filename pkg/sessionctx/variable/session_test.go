@@ -559,3 +559,46 @@ func TestSetStatus(t *testing.T) {
 	require.False(t, sv.InTxn())
 	require.Equal(t, mysql.ServerStatusAutocommit|mysql.ServerStatusCursorExists, sv.Status())
 }
+
+func TestMapDeltaCols(t *testing.T) {
+	for _, c := range []struct {
+		m    map[int64]int64
+		cols variable.DeltaColsMap
+		r    map[int64]int64
+	}{
+		{},
+		{
+			cols: map[int64]int64{1: 2},
+			r:    map[int64]int64{1: 2},
+		},
+		{
+			m: map[int64]int64{1: 2},
+			r: map[int64]int64{1: 2},
+		},
+		{
+			m:    map[int64]int64{1: 3, 3: 5, 5: 7},
+			cols: map[int64]int64{1: 2, 3: -4, 6: 8},
+			r:    map[int64]int64{1: 5, 3: 1, 5: 7, 6: 8},
+		},
+	} {
+		originalCols := make(map[int64]int64)
+		for k, v := range c.cols {
+			originalCols[k] = v
+		}
+
+		m2 := c.cols.UpdateColSizeMap(c.m)
+		require.Equal(t, c.r, m2)
+		if c.m == nil {
+			if len(c.cols) == 0 {
+				require.Nil(t, m2)
+			}
+		} else {
+			require.Equal(t, m2, c.m)
+		}
+
+		if c.cols != nil {
+			// deltaCols not change
+			require.Equal(t, originalCols, map[int64]int64(c.cols))
+		}
+	}
+}
