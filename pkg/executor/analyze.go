@@ -172,7 +172,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(ctx, infoSchema)
+	return statsHandle.Update(infoSchema)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
@@ -469,6 +469,10 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
+		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			close(saveResultsCh)
+			return err
+		}
 		results, ok := <-resultsCh
 		if !ok {
 			break

@@ -1094,9 +1094,6 @@ func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
 			return attachPlan2Task(sel, mppTask.Copy())
 		}
 	}
-	if tasks[0] == nil {
-		fmt.Println("fuck")
-	}
 	t := tasks[0].ConvertToRootTask(sel.SCtx())
 	return attachPlan2Task(sel, t)
 }

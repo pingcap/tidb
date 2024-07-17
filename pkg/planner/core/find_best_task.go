@@ -162,9 +162,6 @@ func rebuildChildTasks(p *logicalop.BaseLogicalPlan, childTasks *[]base.Task, pp
 		}
 		*childTasks = append(*childTasks, childTask)
 	}
-	if len(*childTasks) == 0 {
-		fmt.Println("fuckyou")
-	}
 	return nil
 }
 
@@ -189,11 +186,6 @@ func enumeratePhysicalPlans4Task(
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
-		if !p.SCtx().GetSessionVars().InRestrictedSQL {
-			if len(childTasks) == 1 && childTasks[0] == nil {
-				logutil.BgLogger().Info("before fuck enumeratePhysicalPlans4Task", zap.Int("len child task", len(childTasks)))
-			}
-		}
 		childTasks, curCntPlan, childCnts, err = iteration(p, pp, childTasks, childCnts, prop, opt)
 		if err != nil {
 			return nil, 0, err
@@ -203,11 +195,6 @@ func enumeratePhysicalPlans4Task(
 		if len(childTasks) != p.ChildLen() {
 			continue
 		}
-		if !p.SCtx().GetSessionVars().InRestrictedSQL {
-			if len(childTasks) == 1 && childTasks[0] == nil {
-				logutil.BgLogger().Info("fuck enumeratePhysicalPlans4Task", zap.Int("len child task", len(childTasks)))
-			}
-		}
 		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
 			p.SCtx().GetSessionVars().PlanID.Store(savedPlanID)
@@ -215,11 +202,6 @@ func enumeratePhysicalPlans4Task(
 			err := rebuildChildTasks(p, &childTasks, pp, childCnts, int64(*planCounter), timeStampNow, opt)
 			if err != nil {
 				return nil, 0, err
-			}
-		}
-		if !p.SCtx().GetSessionVars().InRestrictedSQL {
-			if len(childTasks) == 1 && childTasks[0] == nil {
-				logutil.BgLogger().Info("fuck enumeratePhysicalPlans4Task after ", zap.Int("len child task", len(childTasks)))
 			}
 		}
 
@@ -280,19 +262,7 @@ func iteratePhysicalPlan4BaseLogical(
 	// The curCntPlan records the number of possible plans for pp
 	curCntPlan := int64(1)
 	for j, child := range p.Children() {
-		//if child == nil {
-		//	logutil.BgLogger().Info("WTF")
-		//}
-		//if child.ExplainInfo() == "" {
-		//	logutil.BgLogger().Info("WTF")
-		//}
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		//if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		//logutil.BgLogger().Info("fuck child", zap.String("child.ExplainInfo()", child.ExplainInfo()))
-		//}
-		if _, ok := child.(*LogicalCTETable); ok {
-			fmt.Println("here")
-		}
 		childTask, cnt, err := child.FindBestTask(childProp, &PlanCounterDisabled, opt)
 		childCnts[j] = cnt
 		if err != nil {

@@ -229,9 +229,6 @@ func GetMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schema *expre
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored")
 	}
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("check here")
-	}
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
 	if (p.PreferJoinType&h.PreferMergeJoin) > 0 ||
@@ -425,9 +422,6 @@ func getHashJoins(p *LogicalJoin, prop *property.PhysicalProperty) (joins []base
 			joins = append(joins, getHashJoin(p, prop, 1, false))
 			joins = append(joins, getHashJoin(p, prop, 0, false))
 		}
-	}
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("fuck")
 	}
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
 	shouldSkipHashJoin := shouldSkipHashJoin(p)
@@ -2439,10 +2433,6 @@ func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 	}
 
 	if !p.isNAAJ() {
-		if !p.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("wwz")
-		}
-		logutil.BgLogger().Info("fuckfuck")
 		// naaj refuse merge join and index join.
 		mergeJoins := GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
 		if (p.PreferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
