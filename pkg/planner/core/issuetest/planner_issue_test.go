@@ -119,12 +119,12 @@ WHERE
   );`).Check(testkit.Rows(
 		"Projection_54 9990.00 root  1->Column#17",
 		"└─IndexJoin_59 9990.00 root  inner join, inner:IndexReader_58, outer key:test.p.groupid, inner key:test.g.groupid, equal cond:eq(test.p.groupid, test.g.groupid)",
-		"├─HashAgg_75(Build) 12800.00 root  group by:test.p.groupid, funcs:firstrow(test.p.groupid)->test.p.groupid",
-		"│ └─Selection_72 12800.00 root  not(isnull(test.p.groupid))",
-		"│   └─CTEFullScan_73 16000.00 root CTE:w data:CTE_0",
-		"└─IndexReader_58(Probe) 9990.00 root  index:Selection_57",
-		"└─Selection_57 9990.00 cop[tikv]  not(isnull(test.g.groupid))",
-		"└─IndexRangeScan_56 10000.00 cop[tikv] table:g, index:k2(groupid, parentid) range: decided by [eq(test.g.groupid, test.p.groupid)], keep order:false, stats:pseudo",
+		"  ├─HashAgg_75(Build) 12800.00 root  group by:test.p.groupid, funcs:firstrow(test.p.groupid)->test.p.groupid",
+		"  │ └─Selection_72 12800.00 root  not(isnull(test.p.groupid))",
+		"  │   └─CTEFullScan_73 16000.00 root CTE:w data:CTE_0",
+		"  └─IndexReader_58(Probe) 9990.00 root  index:Selection_57",
+		"    └─Selection_57 9990.00 cop[tikv]  not(isnull(test.g.groupid))",
+		"      └─IndexRangeScan_56 10000.00 cop[tikv] table:g, index:k2(groupid, parentid) range: decided by [eq(test.g.groupid, test.p.groupid)], keep order:false, stats:pseudo",
 		"CTE_0 16000.00 root  Recursive CTE",
 		"├─IndexReader_24(Seed Part) 10000.00 root  index:IndexFullScan_23",
 		"│ └─IndexFullScan_23 10000.00 cop[tikv] table:p, index:k1(groupid) keep order:false, stats:pseudo",
@@ -133,6 +133,6 @@ WHERE
 		"  │ └─CTETable_52 10000.00 root  Scan on CTE_0",
 		"  └─IndexLookUp_31(Probe) 10000.00 root  ",
 		"    ├─IndexRangeScan_29(Build) 10000.00 cop[tikv] table:g, index:k1(parentid) range: decided by [eq(test.g.parentid, test.p.groupid)], keep order:false, stats:pseudo",
-		"    └─TableRowIDScan_30(Probe) 10000.00 cop[tikv] table:g keep order:false, stats:pseudo]"))
+		"    └─TableRowIDScan_30(Probe) 10000.00 cop[tikv] table:g keep order:false, stats:pseudo"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }
