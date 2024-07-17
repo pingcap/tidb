@@ -331,7 +331,7 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) [
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
-func (is *infoSchema) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
+func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) []*model.TableNameInfo {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
 		return nil
