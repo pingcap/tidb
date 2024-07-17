@@ -1589,9 +1589,10 @@ const (
 	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
-	PasswordRequireCurrentDefault
-
 	UserResourceGroupName
+	PasswordRequireCurrent
+	PasswordRequireCurrentDefault
+	PasswordRequireCurrentOptional
 )
 
 type PasswordOrLockOption struct {
@@ -1634,6 +1635,12 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" DAY")
 	case PasswordReuseDefault:
 		ctx.WriteKeyWord("PASSWORD REUSE INTERVAL DEFAULT")
+	case PasswordRequireCurrent:
+		ctx.WriteKeyWord("PASSWORD REQUIRE CURRENT")
+	case PasswordRequireCurrentDefault:
+		ctx.WriteKeyWord("PASSWORD REQUIRE CURRENT DEFAULT")
+	case PasswordRequireCurrentOptional:
+		ctx.WriteKeyWord("PASSWORD REQUIRE CURRENT OPTIONAL")
 	default:
 		return errors.Errorf("Unsupported PasswordOrLockOption.Type %d", p.Type)
 	}

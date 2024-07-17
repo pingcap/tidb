@@ -96,17 +96,19 @@ type SimpleExec struct {
 }
 
 type passwordOrLockOptionsInfo struct {
-	lockAccount                 string
-	passwordExpired             string
-	passwordLifetime            any
-	passwordHistory             int64
-	passwordHistoryChange       bool
-	passwordReuseInterval       int64
-	passwordReuseIntervalChange bool
-	failedLoginAttempts         int64
-	passwordLockTime            int64
-	failedLoginAttemptsChange   bool
-	passwordLockTimeChange      bool
+	lockAccount                  string
+	passwordExpired              string
+	passwordLifetime             any
+	passwordHistory              int64
+	passwordHistoryChange        bool
+	passwordReuseInterval        int64
+	passwordReuseIntervalChange  bool
+	failedLoginAttempts          int64
+	passwordLockTime             int64
+	failedLoginAttemptsChange    bool
+	passwordLockTimeChange       bool
+	passwordRequireCurrent       string
+	passwordRequireCurrentChange bool
 }
 
 type passwordReuseInfo struct {
@@ -896,6 +898,15 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 		case ast.PasswordReuseDefault:
 			info.passwordReuseInterval = notSpecified
 			info.passwordReuseIntervalChange = true
+		case ast.PasswordRequireCurrent:
+			info.passwordRequireCurrent = "Y"
+			info.passwordRequireCurrentChange = true
+		case ast.PasswordRequireCurrentOptional:
+			info.passwordRequireCurrent = "N"
+			info.passwordRequireCurrentChange = true
+		case ast.PasswordRequireCurrentDefault:
+			info.passwordRequireCurrent = ""
+			info.passwordRequireCurrentChange = true
 		}
 	}
 	return nil
@@ -1057,6 +1068,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		passwordLockTimeChange:      false,
 		passwordHistoryChange:       false,
 		passwordReuseIntervalChange: false,
+		passwordRequireCurrent:      "",
 	}
 	err = plOptions.loadOptions(s.PasswordOrLockOptions)
 	if err != nil {
@@ -1900,6 +1912,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 
+		if plOptions.passwordRequireCurrentChange {
+			switch(plOptions.passwordRequireCurrent) {
+			case "Y":
+				fields = append(fields, alterField{"Password_require_current = 'Y'", ""})
+			case "N":
+				fields = append(fields, alterField{"Password_require_current = 'N'", ""})
+			case "":
+				fields = append(fields, alterField{"Password_require_current = NULL", ""})
+			}
+		}
+
 		passwordLockingInfo, err := readPasswordLockingInfo(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, &plOptions)
 		if err != nil {
 			return err
@@ -2009,7 +2032,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(privData) > 0 {
 			sql := new(strings.Builder)
-			sqlescape.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
+			sqlescape.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)",
+				mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())

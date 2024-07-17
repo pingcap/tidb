@@ -693,6 +693,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(!IsSandBoxModeEnabled.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: PasswordRequireCurrent, Value: Off, Type: TypeBool},
 
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
@@ -3631,4 +3632,6 @@ const (
 	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
 	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is separated by semicolon (;).
 	ValidatePasswordDictionary = "validate_password.dictionary"
+	// PasswordRequireCurrent specifies if the current password is needed for password changes or not.
+	PasswordRequireCurrent = "password_require_current"
 )
