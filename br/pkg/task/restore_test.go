@@ -134,7 +134,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 				Collate: "utf8mb4_bin",
 			},
 		}
-		err = se.CreateTable(ctx, tables[i].DB.Name, tables[i].Info, ddl.OnExistIgnore)
+		err = se.CreateTable(ctx, tables[i].DB.Name, tables[i].Info, ddl.WithOnExist(ddl.OnExistIgnore))
 		require.NoError(t, err)
 	}
 

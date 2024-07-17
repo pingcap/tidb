@@ -49,7 +49,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *mo
 		Args:       []any{tblInfo},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -146,7 +146,7 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *m
 		}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
 	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
@@ -171,7 +171,7 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	ver := getSchemaVer(t, ctx)
 	return job, ver
@@ -277,7 +277,7 @@ func TestSchema(t *testing.T) {
 	}
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
@@ -355,7 +355,7 @@ func doDDLJobErr(
 	}
 	// TODO: check error detail
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.Error(t, d.DoDDLJob(ctx, job))
+	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 	testCheckJobCancelled(t, store, job, nil)
 
 	return job

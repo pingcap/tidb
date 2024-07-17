@@ -79,14 +79,14 @@ func (*mockSession) CreatePlacementPolicy(_ context.Context, _ *model.PolicyInfo
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (*mockSession) CreateTables(_ context.Context, _ map[string][]*model.TableInfo,
-	_ ...ddl.CreateTableWithInfoConfigurier) error {
+	_ ...ddl.CreateTableOption) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTable implements glue.Session.
 func (*mockSession) CreateTable(_ context.Context, _ model.CIStr,
-	_ *model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
+	_ *model.TableInfo, _ ...ddl.CreateTableOption) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
