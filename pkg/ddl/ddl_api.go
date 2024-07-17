@@ -429,7 +429,6 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
 
 	for _, tbl := range tbls {
-		tbl := tbl.Meta()
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))

@@ -1195,11 +1195,6 @@ var PartitionAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
 }
 
-var ForeignKeysAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
-	return len(t.ForeignKeys) > 0
-
-}
-
 func hasSpecialAttributes(t *model.TableInfo) bool {
 	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t)
 }

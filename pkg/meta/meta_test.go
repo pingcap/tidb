@@ -792,13 +792,6 @@ func TestCheckSpecialAttributes(t *testing.T) {
 	require.True(t, meta.CheckSpecialAttributes(string(b)))
 
 	tableInfo = &model.TableInfo{
-		ForeignKeys: []*model.FKInfo{{Name: model.NewCIStr("a")}},
-	}
-	b, err = json.Marshal(tableInfo)
-	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(string(b)))
-
-	tableInfo = &model.TableInfo{
 		ID: 123,
 	}
 	b, err = json.Marshal(tableInfo)
