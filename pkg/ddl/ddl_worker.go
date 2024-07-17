@@ -734,11 +734,11 @@ func combineBatchCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 
 	newJobW := &JobWrapper{
 		Job:    job,
-		errChs: []chan error{},
+		ErrChs: []chan error{},
 	}
 	// combine the error chans.
 	for _, j := range jobWs {
-		newJobW.errChs = append(newJobW.errChs, j.errChs...)
+		newJobW.ErrChs = append(newJobW.ErrChs, j.ErrChs...)
 	}
 	return []*JobWrapper{newJobW}, nil
 }

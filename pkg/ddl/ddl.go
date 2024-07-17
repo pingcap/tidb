@@ -262,6 +262,10 @@ type DDL interface {
 	GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
+	// DoDDLJobWrapper similar to DoDDLJob, but with JobWrapper as input.
+	// exported for testing.
+	// TODO remove it after decouple components of DDL.
+	DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error
 }
 
 // JobWrapper is used to wrap a job and some other information.
@@ -271,15 +275,26 @@ type JobWrapper struct {
 	// IDAllocated see config of same name in CreateTableConfig.
 	// exported for test.
 	IDAllocated bool
-	// when we combine multiple jobs into one task,
-	// append the errChs to this slice.
-	errChs   []chan error
+	// job submission is run in async, we use this channel to notify the caller.
+	// for local job we might combine multiple jobs into one, append the ErrChs to
+	// this slice.
+	ErrChs   []chan error
 	cacheErr error
+}
+
+// NewJobWrapper creates a new JobWrapper.
+// exported for testing.
+func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
+	return &JobWrapper{
+		Job:         job,
+		IDAllocated: idAllocated,
+		ErrChs:      []chan error{make(chan error)},
+	}
 }
 
 // NotifyError notifies the error to all error channels.
 func (t *JobWrapper) NotifyError(err error) {
-	for _, errCh := range t.errChs {
+	for _, errCh := range t.ErrChs {
 		errCh <- err
 	}
 }
@@ -1170,13 +1185,10 @@ func (d *ddl) deliverJobTask(task *JobWrapper) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	return d.doDDLJobWrapper(ctx, &JobWrapper{
-		Job:    job,
-		errChs: []chan error{make(chan error)},
-	})
+	return d.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
 }
 
-func (d *ddl) doDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
+func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	job := jobW.Job
 	job.TraceInfo = &model.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
@@ -1194,14 +1206,10 @@ func (d *ddl) doDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
-			<-jobW.errChs[0]
+			<-jobW.ErrChs[0]
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			newJobW := &JobWrapper{
-				Job:         job,
-				IDAllocated: jobW.IDAllocated,
-				errChs:      []chan error{make(chan error)},
-			}
+			newJobW := NewJobWrapper(job, jobW.IDAllocated)
 			d.deliverJobTask(newJobW)
 			// The second job result is used for test.
 			jobW = newJobW
@@ -1209,7 +1217,7 @@ func (d *ddl) doDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	})
 
 	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
-	err := <-jobW.errChs[0]
+	err := <-jobW.ErrChs[0]
 	// job.ID must be allocated after previous channel receive returns nil.
 	defer d.delJobDoneCh(job.ID)
 	if err != nil {

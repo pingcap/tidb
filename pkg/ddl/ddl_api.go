@@ -2953,13 +2953,9 @@ func (d *ddl) CreateTableWithInfo(
 		return nil
 	}
 
-	jobW := &JobWrapper{
-		Job:         job,
-		IDAllocated: c.IDAllocated,
-		errChs:      []chan error{make(chan error)},
-	}
+	jobW := NewJobWrapper(job, c.IDAllocated)
 
-	err = d.doDDLJobWrapper(ctx, jobW)
+	err = d.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
@@ -2987,15 +2983,14 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	})
 	c := GetCreateTableConfig(cs)
 
-	jobW := &JobWrapper{
-		Job: &model.Job{
+	jobW := NewJobWrapper(
+		&model.Job{
 			BinlogInfo:     &model.HistoryInfo{},
 			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 			SQLMode:        ctx.GetSessionVars().SQLMode,
 		},
-		IDAllocated: c.IDAllocated,
-		errChs:      []chan error{make(chan error)},
-	}
+		c.IDAllocated,
+	)
 	args := make([]*model.TableInfo, 0, len(infos))
 
 	var err error
@@ -3055,7 +3050,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	jobW.Args = append(jobW.Args, args)
 	jobW.Args = append(jobW.Args, ctx.GetSessionVars().ForeignKeyChecks)
 
-	err = d.doDDLJobWrapper(ctx, jobW)
+	err = d.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {

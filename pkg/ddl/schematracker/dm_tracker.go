@@ -1275,3 +1275,8 @@ func (SchemaTracker) GetInfoSchemaWithInterceptor(_ sessionctx.Context) infosche
 func (SchemaTracker) DoDDLJob(_ sessionctx.Context, _ *model.Job) error {
 	return nil
 }
+
+// DoDDLJobWrapper implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) DoDDLJobWrapper(_ sessionctx.Context, _ *ddl.JobWrapper) error {
+	return nil
+}

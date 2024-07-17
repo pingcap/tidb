@@ -155,47 +155,47 @@ func TestCombinedIDAllocation(t *testing.T) {
 
 	cases := []idAllocationCase{
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblsJob(1, 2, 0)},
+			jobW:            ddl.NewJobWrapper(genCreateTblsJob(1, 2, 0), false),
 			requiredIDCount: 1 + 3 + 1 + 2,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblsJob(3, 4), IDAllocated: true},
+			jobW:            ddl.NewJobWrapper(genCreateTblsJob(3, 4), true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblJob(model.ActionCreateTable, 3)},
+			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 3), false),
 			requiredIDCount: 1 + 1 + 3,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblJob(model.ActionCreateTable, 0)},
+			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 0), false),
 			requiredIDCount: 1 + 1,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblJob(model.ActionCreateTable, 8), IDAllocated: true},
+			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 8), true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblJob(model.ActionCreateSequence, 0)},
+			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateSequence, 0), false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblJob(model.ActionCreateSequence, 0), IDAllocated: true},
+			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateSequence, 0), true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblJob(model.ActionCreateView, 0)},
+			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateView, 0), false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateTblJob(model.ActionCreateView, 0), IDAllocated: true},
+			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateView, 0), true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateDBJob()},
+			jobW:            ddl.NewJobWrapper(genCreateDBJob(), false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            &ddl.JobWrapper{Job: genCreateDBJob(), IDAllocated: true},
+			jobW:            ddl.NewJobWrapper(genCreateDBJob(), true),
 			requiredIDCount: 1,
 		},
 	}

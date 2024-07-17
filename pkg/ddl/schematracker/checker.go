@@ -560,6 +560,11 @@ func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return d.realDDL.DoDDLJob(ctx, job)
 }
 
+// DoDDLJobWrapper implements the DDL interface.
+func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
+	return d.realDDL.DoDDLJobWrapper(ctx, jobW)
+}
+
 type storageAndMore interface {
 	kv.Storage
 	kv.EtcdBackend

@@ -65,7 +65,7 @@ func testRenameTable(
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
@@ -86,7 +86,7 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.DDL, oldSchema
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
@@ -120,7 +120,7 @@ func testLockTable(
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -162,7 +162,7 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 		Args:       []any{newTableID},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -296,7 +296,7 @@ func TestCreateView(t *testing.T) {
 		Args:       []any{newTblInfo0},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -319,7 +319,7 @@ func TestCreateView(t *testing.T) {
 		Args:       []any{newTblInfo1, true, newTblInfo0.ID},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	v = getSchemaVer(t, ctx)
@@ -342,7 +342,7 @@ func TestCreateView(t *testing.T) {
 		Args:       []any{newTblInfo2, true, newTblInfo0.ID},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	// The non-existing table id in job args will not be considered anymore.
 	require.NoError(t, err)
 }
@@ -391,7 +391,7 @@ func testAlterCacheTable(
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -418,7 +418,7 @@ func testAlterNoCacheTable(
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
@@ -508,7 +508,7 @@ func TestCreateTables(t *testing.T) {
 			*errP = errors.New("mock get job by ID failed")
 		})
 	})
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	testGetTable(t, domain, genIDs[0])
@@ -567,7 +567,7 @@ func TestAlterTTL(t *testing.T) {
 		}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
@@ -588,7 +588,7 @@ func TestAlterTTL(t *testing.T) {
 		Args:       []any{true},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
 	v = getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
