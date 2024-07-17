@@ -537,7 +537,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 			pool.put(wk)
 		}()
 		for {
-			err := s.runOneJobStep(wk, job)
+			err := s.runOneJobStepAndWaitSync(wk, job)
 			if err != nil {
 				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", job))
 			} else if job.InFinalState() {
@@ -572,10 +572,9 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-// runOneJobStep runs one step of the DDL job. we are using online-schema-change,
-// one job might go through multiple steps, each step is one job state change such
-// as from 'done' -> 'synced', or one schema state change such as 'delete only' -> 'write only'.
-func (s *jobScheduler) runOneJobStep(wk *worker, job *model.Job) error {
+// runOneJobStepAndWaitSync runs one step of the DDL job and waits for other TiDB
+// node to synchronize.
+func (s *jobScheduler) runOneJobStepAndWaitSync(wk *worker, job *model.Job) error {
 	failpoint.InjectCall("beforeRunOneJobStep")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
@@ -605,7 +604,7 @@ func (s *jobScheduler) runOneJobStep(wk *worker, job *model.Job) error {
 		}
 	}
 
-	schemaVer, err := wk.HandleDDLJobTable(s.ddlCtx, job)
+	schemaVer, err := wk.runOneJobStep(s.ddlCtx, job)
 	if err != nil {
 		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err

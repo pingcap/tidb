@@ -44,6 +44,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -579,15 +580,40 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 	return errors.Trace(err)
 }
 
-// updateDDLJob updates the DDL job information.
-// Every time we enter another state except final state, we must call this function.
-func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
+// updateDDLJob persists the new DDL job information. It should be called when
+// job state is changed (except for the final state), to save the latest
+// serialized representation.
+//
+// In some jobs' implementation, job.Args may change for the next state. In these
+// cases we must marshal job.Args to job.RawArgs to save the consistent job
+// fields. `prevStates` is used to check it. For multi-schema change jobs, it's
+// the copy of every subjob schema state. For other jobs, it only contains one
+// state.
+func (w *worker) updateDDLJob(job *model.Job, prevStates []model.SchemaState) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
 		}
 	})
-	updateRawArgs := needUpdateRawArgs(job, meetErr)
+
+	updateRawArgs := false
+	if info := job.MultiSchemaInfo; info != nil {
+		for i, prevState := range prevStates {
+			if info.SubJobs[i].SchemaState != prevState {
+				updateRawArgs = true
+				break
+			}
+		}
+	} else {
+		updateRawArgs = job.SchemaState != prevStates[0]
+	}
+	intest.AssertFunc(func() bool {
+		if updateRawArgs {
+			return job.Args != nil || job.RawArgs == nil
+		}
+		return true
+	}, "job.RawArgs will be cleared: %s", job.String())
+
 	if !updateRawArgs {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
@@ -654,17 +680,6 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}
 	}
-}
-
-func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
-	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
-	// we shouldn't replace RawArgs with the marshaling Args.
-	if meetErr && job.RawArgs != nil && job.Args == nil {
-		// However, for multi-schema change, the args of the parent job is always nil.
-		// Since Job.Encode() can handle the sub-jobs properly, we can safely update the raw args.
-		return job.MultiSchemaInfo != nil
-	}
-	return true
 }
 
 // JobNeedGC is called to determine whether delete-ranges need to be generated for the provided job.
@@ -849,7 +864,7 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 }
 
-func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
+func (w *worker) handleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
@@ -863,7 +878,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	if err != nil {
 		return err
 	}
-	CleanupDDLReorgHandles(job, w.sess)
+	cleanupDDLReorgHandles(job, w.sess)
 	d.notifyJobDone(job.ID)
 	return nil
 }
@@ -899,7 +914,27 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	return txn, err
 }
 
-func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
+// runOneJobStep runs one step of the DDL job and persist the states change. One
+// *step* is defined as the following reason:
+//
+// - TiDB uses "Asynchronous Schema Change in F1", one job may have multiple
+// *steps* each for a "schema state" such as 'delete only' -> 'write only'. The
+// cluster can only have at most two adjacent schema states for a DDL object.
+// This function forwards one (schema state) *step* and caller
+// `runOneJobStepAndWaitSync` waits for other nodes to catch up.
+//
+// - In order to make sure every job is deterministic, idempotent to provide
+// correctness through failover, this function will decide and persist the
+// arguments of a job as a separate *step*. These steps will reuse "schema state"
+// changes, see onRecoverTable as an example.
+//
+// - We may need to use caller `runOneJobStepAndWaitSync` to make sure other node
+// is synchronized before change the job state. So an extra job state *step* is
+// added.
+//
+// The first return value is the schema version after running the job. If it's
+// non-zero, caller should wait for other nodes to catch up.
+func (w *worker) runOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	var (
 		err       error
 		schemaVer int64
@@ -913,14 +948,14 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-
 	var t *meta.Meta
 	if variable.EnableFastCreateTable.Load() {
 		t = meta.NewMeta(txn, meta.WithUpdateTableName())
 	} else {
 		t = meta.NewMeta(txn)
 	}
-	if job.IsDone() || job.IsRollbackDone() {
+
+	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
 			job.State = model.JobStateSynced
 		}
@@ -939,12 +974,21 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 				}
 			}
 		})
-		err = w.HandleJobDone(d, job, t)
-		return 0, err
+		return 0, w.handleJobDone(d, job, t)
 	}
 	d.mu.RLock()
 	d.mu.hook.OnJobRunBefore(job)
 	d.mu.RUnlock()
+
+	var prevStates []model.SchemaState
+	if info := job.MultiSchemaInfo; info != nil {
+		prevStates = make([]model.SchemaState, 0, len(info.SubJobs))
+		for _, sub := range info.SubJobs {
+			prevStates = append(prevStates, sub.SchemaState)
+		}
+	} else {
+		prevStates = []model.SchemaState{job.SchemaState}
+	}
 
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
@@ -957,8 +1001,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
-		err = w.HandleJobDone(d, job, t)
-		return 0, err
+		return 0, w.handleJobDone(d, job, t)
 	}
 
 	if err = w.checkBeforeCommit(); err != nil {
@@ -985,7 +1028,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	err = w.updateDDLJob(job, runJobErr != nil)
+	err = w.updateDDLJob(job, prevStates)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
 		d.unlockSchemaVersion(job.ID)
@@ -1063,7 +1106,7 @@ func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 
 	job.State = model.JobStateSynced
-	return w.HandleJobDone(d, job, t)
+	return w.handleJobDone(d, job, t)
 }
 
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
@@ -1201,12 +1244,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
-	if job.IsFinished() {
-		w.jobLogger(job).Debug("finish DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
-		return ver, err
-	}
 
-	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
 		w.jobLogger(job).Debug("cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
