@@ -2616,7 +2616,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *Plan
 
 func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, _ *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsSortItemEmpty() {
-		return nil, 1, nil
+		return invalidTask, 0, nil
 	}
 
 	pcteTable := PhysicalCTETable{IDForStorage: p.idForStorage}.Init(p.SCtx(), p.StatsInfo())
