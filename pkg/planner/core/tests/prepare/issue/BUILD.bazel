@@ -8,6 +8,10 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:pkg/planner/core/tests/prepare/issue/BUILD.bazel
+=======
+    shard_count = 8,
+>>>>>>> 156f23aacb9 (planer: fix invalid pointer caused by a recursive CTE query (#54450)):pkg/executor/test/cte/BUILD.bazel
     deps = [
         "//pkg/parser/auth",
         "//pkg/testkit",
