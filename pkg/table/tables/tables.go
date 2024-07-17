@@ -127,7 +127,6 @@ func (t *TableCommon) ResetColumnsCache() {
 // Copy copies a TableCommon struct, and reset its column cache. This is not a deep copy.
 func (t *TableCommon) Copy() TableCommon {
 	newTable := *t
-	// newTable.ClearColumnsCache()
 	return newTable
 }
 
