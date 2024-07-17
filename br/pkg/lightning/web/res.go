@@ -20,4 +20,9 @@ import (
 	"net/http"
 )
 
+<<<<<<< HEAD:br/pkg/lightning/web/res.go
 var Res http.FileSystem = http.Dir("br/web/dist")
+=======
+// Res is the web resources.
+var Res http.FileSystem = http.Dir("lightning/web/dist")
+>>>>>>> c4fd1b212c0 (lightning: upgrade webpack and other nodejs module version (#54692)):lightning/pkg/web/res.go
