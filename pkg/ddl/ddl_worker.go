@@ -1063,7 +1063,7 @@ func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 		if err = w.HandleJobDone(d, job, t); err != nil {
 			return err
 		}
-		// return job.Error to let outer known job is cancelled.
+		// return job.Error to let caller know the job is cancelled.
 		return job.Error
 	}
 
