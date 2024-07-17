@@ -5165,13 +5165,13 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
 		if len(ds.AllConds) != 0 {
 			// extract the not null attributes from selection conditions.
-			notnullColsUniqueIDs := extractNotNullFromConds(ds.AllConds, ds)
+			notnullColsUniqueIDs := ExtractNotNullFromConds(ds.AllConds, ds)
 
 			// extract the constant cols from selection conditions.
-			constUniqueIDs := extractConstantCols(ds.AllConds, ds.SCtx(), fds)
+			constUniqueIDs := ExtractConstantCols(ds.AllConds, ds.SCtx(), fds)
 
 			// extract equivalence cols.
-			equivUniqueIDs := extractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
+			equivUniqueIDs := ExtractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
 
 			// apply conditions to FD.
 			fds.MakeNotNull(notnullColsUniqueIDs)

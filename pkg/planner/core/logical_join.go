@@ -163,9 +163,9 @@ func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Express
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
 	allConds := append(eqCondSlice, p.OtherConditions...)
 	allConds = append(allConds, filtersFromApply...)
-	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+	notNullColsFromFilters := ExtractNotNullFromConds(allConds, p)
 
-	constUniqueIDs := extractConstantCols(p.LeftConditions, p.SCtx(), fds)
+	constUniqueIDs := ExtractConstantCols(p.LeftConditions, p.SCtx(), fds)
 
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
@@ -182,11 +182,11 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 	// some join eq conditions are stored in the OtherConditions.
 	allConds := append(eqCondSlice, p.OtherConditions...)
 	allConds = append(allConds, filtersFromApply...)
-	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+	notNullColsFromFilters := ExtractNotNullFromConds(allConds, p)
 
-	constUniqueIDs := extractConstantCols(allConds, p.SCtx(), fds)
+	constUniqueIDs := ExtractConstantCols(allConds, p.SCtx(), fds)
 
-	equivUniqueIDs := extractEquivalenceCols(allConds, p.SCtx(), fds)
+	equivUniqueIDs := ExtractEquivalenceCols(allConds, p.SCtx(), fds)
 
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
@@ -237,13 +237,13 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 	allConds = append(allConds, innerCondition...)
 	allConds = append(allConds, outerCondition...)
 	allConds = append(allConds, filtersFromApply...)
-	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+	notNullColsFromFilters := ExtractNotNullFromConds(allConds, p)
 
 	filterFD := &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
 
-	constUniqueIDs := extractConstantCols(allConds, p.SCtx(), filterFD)
+	constUniqueIDs := ExtractConstantCols(allConds, p.SCtx(), filterFD)
 
-	equivUniqueIDs := extractEquivalenceCols(allConds, p.SCtx(), filterFD)
+	equivUniqueIDs := ExtractEquivalenceCols(allConds, p.SCtx(), filterFD)
 
 	filterFD.AddConstants(constUniqueIDs)
 	equivOuterUniqueIDs := intset.NewFastIntSet()
