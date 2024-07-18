@@ -63,7 +63,7 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().UpdateWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -73,7 +73,7 @@ func TestStatsCache(t *testing.T) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().UpdateWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -117,7 +117,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().UpdateWorker(context.Background(), is)
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -129,7 +129,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().UpdateWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -156,7 +156,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().UpdateWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl2.Pseudo)
@@ -270,7 +270,7 @@ func TestInitStats(t *testing.T) {
 	table0 := h.GetTableStats(tbl.Meta())
 	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.UpdateWorker(context.Background(), is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
 index:1 ndv:6
