@@ -206,8 +206,6 @@ func TestPointGetForTemporaryTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
-
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create global temporary table t1 (id int primary key, val int) on commit delete rows")
 	tk.MustExec("begin")
