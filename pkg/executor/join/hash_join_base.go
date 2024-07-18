@@ -61,6 +61,9 @@ type hashJoinCtxBase struct {
 	IsNullAware   bool
 	memTracker    *memory.Tracker // track memory usage.
 	diskTracker   *disk.Tracker   // track disk usage.
+
+	// Only `Close()` function uses this channel to tell build fetcher the executor has been closed
+	buildFetcherFinishCh chan struct{}
 }
 
 type probeSideTupleFetcherBase struct {
@@ -111,7 +114,9 @@ func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScan
 		// current executor is closed, no need to probe
 		skipProbe = true
 	case err = <-hashJoinCtx.buildFinished:
-		if err != nil {
+		// In hash join v2, error is not passed by buildFinished.
+		// So we need to check `finished` flag
+		if err != nil || hashJoinCtx.finished.Load() {
 			// build meet error, no need to probe
 			skipProbe = true
 		} else {
@@ -173,7 +178,8 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 		fetcherAndWorkerSyncer.Add(int(hashJoinCtx.Concurrency))
 		fetcher.fetchProbeSideChunksImpl(ctx, maxChunkSize, isBuildEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize, hashJoinCtx)
 		fetcherAndWorkerSyncer.Wait()
-		// TODO wake-up final worker
+
+		// TODO wait for the wake-up from final worker
 	}
 }
 
@@ -272,22 +278,81 @@ func checkSpillAndExecute(fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *h
 	return nil
 }
 
-func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}, prebuildSync chan struct{}) {
+func (w *buildWorkerBase) fetchBuildSideRows(
+	ctx context.Context,
+	hashJoinCtx *hashJoinCtxBase,
+	fetcherAndWorkerSyncer *sync.WaitGroup,
+	spillHelper *hashJoinSpillHelper,
+	chkCh chan<- *chunk.Chunk,
+	errCh chan<- error,
+	doneCh <-chan struct{},
+	prebuildSync chan struct{},
+	buildSync chan struct{},
+	finalSync chan struct{},
+) {
 	// For HashJoinV1
 	if fetcherAndWorkerSyncer == nil {
-		w.fetchBuildSideRowsImpl(ctx, hashJoinCtx, fetcherAndWorkerSyncer, workerWaiter, spillHelper, chkCh, errCh, doneCh, prebuildSync)
+		w.fetchBuildSideRowsImpl(ctx, hashJoinCtx, fetcherAndWorkerSyncer, spillHelper, chkCh, errCh, doneCh)
 		return
 	}
 
 	// For HashJoinV2
-	
+	w.fetchBuildSideRowsV2(ctx, hashJoinCtx, fetcherAndWorkerSyncer, spillHelper, chkCh, prebuildSync, buildSync, finalSync)
+}
+
+func (w *buildWorkerBase) fetchBuildSideRowsV2(
+	ctx context.Context,
+	hashJoinCtx *hashJoinCtxBase,
+	fetcherAndWorkerSyncer *sync.WaitGroup,
+	spillHelper *hashJoinSpillHelper,
+	chkCh chan<- *chunk.Chunk,
+	prebuildSync chan struct{},
+	buildSync chan struct{},
+	finalSync chan struct{},
+) {
+	defer func() {
+		close(prebuildSync)
+		close(buildSync)
+	}()
+
+	// Actually we can directly return error by the function `fetchBuildSideRowsImpl`.
+	// However, `fetchBuildSideRowsImpl` is also used by hash join v1.
+	errCh := make(chan error)
+	w.fetchBuildSideRowsImpl(ctx, hashJoinCtx, fetcherAndWorkerSyncer, spillHelper, chkCh, errCh, hashJoinCtx.buildFetcherFinishCh)
+	close(errCh)
+	if err := <-errCh; err != nil {
+		hashJoinCtx.finished.Store(true)
+		hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: err}
+		return
+	}
+
+	if hashJoinCtx.finished.Load() {
+		return
+	}
+
+	// TODO do we need to set some configs for dispatcher before waking it up?
+	// Wake up build task dispatcher
+	buildSync <- struct{}{}
+
+	for {
+		select {
+		case <-hashJoinCtx.buildFetcherFinishCh: // executor may be closed in advance
+		case <-finalSync: // Wait for the wake-up from final worker
+		}
+
+		if hashJoinCtx.finished.Load() {
+			return
+		}
+
+		// TODO check spill, set finished to true if there is no more data to process
+	}
 }
 
 // fetchBuildSideRowsImpl fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}, prebuildSync chan struct{}) {
+func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer func() {
-		if workerWaiter != nil {
+		if fetcherAndWorkerSyncer != nil {
 			// Try to spill remaining rows if spill is triggered
 			err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
 			if err != nil {

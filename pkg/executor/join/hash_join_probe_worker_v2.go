@@ -160,6 +160,8 @@ func (w *ProbeWorkerV2) runJoinWorkerImpl(fetcherAndWorkerSyncer *sync.WaitGroup
 		}
 		probeSideResult.Reset()
 		emptyProbeSideResult.chk = probeSideResult
+
+		// Give back to probe fetcher
 		w.probeChkResourceCh <- emptyProbeSideResult
 	}
 
