@@ -3884,3 +3884,12 @@ func (s *SessionVars) GetOptObjective() string {
 func (s *SessionVars) UseLowResolutionTSO() bool {
 	return !s.InRestrictedSQL && s.lowResolutionTSO
 }
+
+// PessimisticLockRequired indicates whether pessimistic locks are required for the following execution.
+func (s *SessionVars) PessimisticLockRequired() bool {
+	if !s.IsAutocommit() || s.InTxn() || (config.GetGlobalConfig().
+		PessimisticTxn.PessimisticAutoCommit.Load() && !s.BulkDMLEnabled) {
+		return true
+	}
+	return false
+}
