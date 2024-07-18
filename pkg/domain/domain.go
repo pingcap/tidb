@@ -445,8 +445,16 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
+<<<<<<< HEAD
 	builder := infoschema.NewBuilder(do, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	builder.SetDeltaUpdateBundles()
+=======
+	builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	builder.WithStore(do.store).SetDeltaUpdateBundles()
+>>>>>>> 320d0f41db7 (*: don't save table IDs in schema diff of FLASHBACK DATABASE (#54665))
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
