@@ -455,6 +455,28 @@ func (is *infoschemaV2) EvictTable(schema, tbl string) {
 	is.tableCache.Remove(tableCacheKey{itm.tableID, itm.schemaVersion})
 }
 
+type helper struct {
+	end           tableItem
+	schemaVersion int64
+	ok            bool
+	itm           tableItem
+}
+
+func (h *helper) iter(item tableItem) bool {
+	if item.dbName != h.end.dbName || item.tableName != h.end.tableName {
+		h.ok = false
+		return false
+	}
+	if item.schemaVersion <= h.schemaVersion {
+		if !item.tomb { // If the item is a tomb record, the database is dropped.
+			h.ok = true
+			h.itm = item
+		}
+		return false
+	}
+	return true
+}
+
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
 	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
@@ -467,11 +489,16 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	}
 
 	start := time.Now()
-	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
-	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
-	if !ok {
+
+	var h helper
+	h.end = tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}
+	h.schemaVersion = is.infoSchema.schemaMetaVersion
+	is.byName.Descend(h.end, h.iter)
+
+	if !h.ok {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
+	itm := h.itm
 
 	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
