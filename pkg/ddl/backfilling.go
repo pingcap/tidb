@@ -748,12 +748,17 @@ type localRowCntListener struct {
 	// prevPhysicalRowCnt records the row count from previous physical tables (partitions).
 	prevPhysicalRowCnt int64
 	// curPhysicalRowCnt records the row count of current physical table.
-	curPhysicalRowCnt int64
+	curPhysicalRowCnt struct {
+		cnt int64
+		mu  sync.Mutex
+	}
 }
 
 func (s *localRowCntListener) Written(rowCnt int) {
-	newCurPhysicalRowCnt := atomic.AddInt64(&s.curPhysicalRowCnt, int64(rowCnt))
-	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + newCurPhysicalRowCnt)
+	s.curPhysicalRowCnt.mu.Lock()
+	s.curPhysicalRowCnt.cnt += int64(rowCnt)
+	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)
+	s.curPhysicalRowCnt.mu.Unlock()
 	s.counter.Add(float64(rowCnt))
 }
 
