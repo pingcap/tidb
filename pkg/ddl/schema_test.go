@@ -425,7 +425,7 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	// ddl finish does not mean the infoschema loaded.
 	// when infoschema v1->v2 switch, it take more time, so we must wait to ensure
 	// the new infoschema is used.
-	require.Eventually(t, func() { return dom.InfoSchema().SchemaMetaVersion() > v1 }, time.Minute, 2*time.Millisecond)
+	require.Eventually(t, func() bool { return dom.InfoSchema().SchemaMetaVersion() > v1 }, time.Minute, 2*time.Millisecond)
 
 	tk3.MustExec(`BEGIN`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (50, 5)`)
