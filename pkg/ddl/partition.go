@@ -2988,7 +2988,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		if len(bundles) > 0 {
-			if err = infosync.PutRuleBundlesWithDefaultRetry(w.ctx, bundles); err != nil {
+			if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
 				if !changesMade {
 					job.State = model.JobStateCancelled
 					return ver, errors.Wrapf(err, "failed to notify PD the placement rules")

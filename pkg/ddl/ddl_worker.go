@@ -1163,7 +1163,6 @@ func (w *worker) countForError(err error, job *model.Job) error {
 func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable bool, err error) {
 	if job.IsPaused() {
 		w.jobLogger(job).Debug("paused DDL job ", zap.String("job", job.String()))
-		// TODO(lance6716): check this case
 		return false, err
 	}
 	if job.IsPausing() {
