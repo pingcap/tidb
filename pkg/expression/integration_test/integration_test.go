@@ -3048,3 +3048,26 @@ func TestIssue43527(t *testing.T) {
 		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := b FROM test) AS T1 where @total >= 100",
 	).Check(testkit.Rows("200", "300", "400", "500"))
 }
+
+// TestDefaultValueAsLiteralWithParens tests that default values
+// can be a literal with optional parentheses.
+// See https://github.com/pingcap/tidb/issues/54700
+// In MySQL 8.0+ a default value can be an expression.
+// TiDB partially supports this, but is a lot more restrictive:
+// The default value must be a function. There are some unsafe
+// functions in this context, so what this fix tests is that
+// as well as functions a literal can also be used.
+// This is not yet full expression support, since a literal
+// is much more restrictive, but it is relatively safe to
+// allow and supports examples documented in the MySQL manual
+// like CREATE TABLE t2 (b BLOB DEFAULT ('abc'));
+// (ok, this example is supported by the parser but TiDB
+// doesn't yet allow functions for blobs. But it will work
+// if you change that to a varchar.)
+func TestDefaultValueAsLiteralWithParens(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (a int, b int default (1));`)
+	tk.MustExec(`CREATE TABLE t2 (a varchar(100) default ('abc'));`)
+}

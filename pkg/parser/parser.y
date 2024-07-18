@@ -937,6 +937,7 @@ import (
 	StringLiteral                   "text literal"
 	ExpressionOpt                   "Optional expression"
 	SignedLiteral                   "Literal or NumLiteral with sign"
+	SignedLiteralParentheses        "Signed literal within parentheses"
 	DefaultValueExpr                "DefaultValueExpr(Now or Signed Literal)"
 	NowSymOptionFraction            "NowSym with optional fraction part"
 	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
@@ -3929,6 +3930,7 @@ ReferOpt:
 DefaultValueExpr:
 	NowSymOptionFractionParentheses
 |	SignedLiteral
+|	SignedLiteralParentheses
 |	NextValueForSequenceParentheses
 |	BuiltinFunction
 
@@ -4034,6 +4036,12 @@ NowSym:
 CurdateSym:
 	builtinCurDate
 |	"CURRENT_DATE"
+
+SignedLiteralParentheses:
+	'(' SignedLiteral ')'
+	{
+		$$ = ast.NewValueExpr($2, parser.charset, parser.collation)
+	}
 
 SignedLiteral:
 	Literal
