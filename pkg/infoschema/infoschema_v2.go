@@ -917,6 +917,25 @@ func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
 }
 
 func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if diff.ReadTableFromMeta {
+		// recover tables under the database and set them to diff.AffectedOpts
+		s := b.store.GetSnapshot(kv.MaxVersion)
+		recoverMeta := meta.NewSnapshotMeta(s)
+		tables, err := recoverMeta.ListSimpleTables(diff.SchemaID)
+		if err != nil {
+			return nil, err
+		}
+		diff.AffectedOpts = make([]*model.AffectedOption, 0, len(tables))
+		for _, t := range tables {
+			diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+				SchemaID:    diff.SchemaID,
+				OldSchemaID: diff.SchemaID,
+				TableID:     t.ID,
+				OldTableID:  t.ID,
+			})
+		}
+	}
+
 	if b.enableV2 {
 		return b.applyRecoverSchemaV2(m, diff)
 	}
