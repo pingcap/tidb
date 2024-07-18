@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -133,8 +134,20 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 func TestDisableAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	disableAutoAnalyzeCase(t, tk, dom)
+}
+
+func TestDisableAutoAnalyzeWithAnalyzeAllColumnsOptions(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	// Set tidb_analyze_column_options to ALL.
+	tk.MustExec("set global tidb_analyze_column_options='ALL'")
+	disableAutoAnalyzeCase(t, tk, dom)
+}
+
+func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, index idx(a))")
+	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
 	h := dom.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())

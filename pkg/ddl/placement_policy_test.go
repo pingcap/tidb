@@ -770,7 +770,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, nil, ddl.OnExistError))
+	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, nil, ddl.WithOnExist(ddl.OnExistError)))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -791,7 +791,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tbl2.Name = model.NewCIStr("t3")
 	tbl2.PlacementPolicyRef.Name = model.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, nil, ddl.OnExistError)
+	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, nil, ddl.WithOnExist(ddl.OnExistError))
 	require.Equal(t, "[schema:8239]Unknown placement policy 'pxx'", err.Error())
 }
 

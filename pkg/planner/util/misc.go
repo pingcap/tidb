@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -56,6 +57,18 @@ func CloneExprs(exprs []expression.Expression) []expression.Expression {
 	cloned := make([]expression.Expression, 0, len(exprs))
 	for _, e := range exprs {
 		cloned = append(cloned, e.Clone())
+	}
+	return cloned
+}
+
+// CloneScalarFunctions uses (*ScalarFunction).Clone to clone a slice of *ScalarFunction.
+func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
+	if scalarFuncs == nil {
+		return nil
+	}
+	cloned := make([]*expression.ScalarFunction, 0, len(scalarFuncs))
+	for _, f := range scalarFuncs {
+		cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
 	}
 	return cloned
 }
@@ -107,6 +120,18 @@ func CloneByItems(byItems []*ByItems) []*ByItems {
 	}
 	cloned := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
+		cloned = append(cloned, item.Clone())
+	}
+	return cloned
+}
+
+// CloneSortItem uses SortItem.Clone to clone a slice of SortItem.
+func CloneSortItem(items []property.SortItem) []property.SortItem {
+	if items == nil {
+		return nil
+	}
+	cloned := make([]property.SortItem, 0, len(items))
+	for _, item := range items {
 		cloned = append(cloned, item.Clone())
 	}
 	return cloned

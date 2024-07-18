@@ -423,9 +423,18 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 
 // CheckRowConstraint verify row check constraints.
 func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
-	ectx := ctx.GetExprCtx()
-	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ectx.GetEvalCtx(), chunk.MutRowFromDatums(rowToCheck).ToRow())
+	if constraints := t.WritableConstraint(); len(constraints) > 0 {
+		ectx := ctx.GetExprCtx().GetEvalCtx()
+		row := chunk.MutRowFromDatums(rowToCheck).ToRow()
+		return checkRowConstraint(ectx, constraints, row)
+	}
+	return nil
+}
+
+// checkRowConstraint verify row check constraints.
+func checkRowConstraint(ctx exprctx.EvalContext, constraints []*table.Constraint, rowToCheck chunk.Row) error {
+	for _, constraint := range constraints {
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
 		if err != nil {
 			return err
 		}
@@ -571,27 +580,17 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		}
 	}
 	// check data constraint
-	err = t.CheckRowConstraint(sctx, checkRowBuffer.GetRowToCheck())
-	if err != nil {
-		return err
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	if constraints := t.WritableConstraint(); len(constraints) > 0 {
+		if err = checkRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+			return err
+		}
 	}
 	sessVars := sctx.GetSessionVars()
 	// rebuild index
-	if !sessVars.InTxn() {
-		savePresumeKeyNotExist := sessVars.PresumeKeyNotExists
-		if !sessVars.ConstraintCheckInPlace && sessVars.TxnCtx.IsPessimistic {
-			sessVars.PresumeKeyNotExists = true
-		}
-		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-		sessVars.PresumeKeyNotExists = savePresumeKeyNotExist
-		if err != nil {
-			return err
-		}
-	} else {
-		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-		if err != nil {
-			return err
-		}
+	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+	if err != nil {
+		return err
 	}
 
 	key := t.RecordKey(h)

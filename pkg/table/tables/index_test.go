@@ -196,8 +196,7 @@ func TestGenIndexValueFromIndex(t *testing.T) {
 		types.NewIntDatum(23),
 		types.NewStringDatum("4.csv"),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
