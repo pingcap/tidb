@@ -1731,6 +1731,11 @@ error = '''
 Cannot use these credentials for '%s@%s' because they contradict the password history policy.
 '''
 
+["executor:3891"]
+error = '''
+Incorrect current password. Specify the correct password which has to be replaced.
+'''
+
 ["executor:3929"]
 error = '''
 Dynamic privilege '%s' is not registered with the server.
