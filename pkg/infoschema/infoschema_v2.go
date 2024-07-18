@@ -871,9 +871,9 @@ func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
 }
 
 func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if snapTS := diff.RecoverSnapshotTS; snapTS > 0 {
+	if diff.ReadTableFromMeta {
 		// recover tables under the database and set them to diff.AffectedOpts
-		s := b.store.GetSnapshot(kv.NewVersion(diff.RecoverSnapshotTS))
+		s := b.store.GetSnapshot(kv.MaxVersion)
 		recoverMeta := meta.NewSnapshotMeta(s)
 		tables, err := recoverMeta.ListSimpleTables(diff.SchemaID)
 		if err != nil {

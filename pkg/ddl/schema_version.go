@@ -276,7 +276,7 @@ func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error
 			OldTableID:  recoverTabsInfo[i].TableInfo.ID,
 		}
 	}
-	diff.RecoverSnapshotTS = recoverSchemaInfo.SnapshotTS
+	diff.ReadTableFromMeta = true
 	return nil
 }
 
