@@ -495,7 +495,7 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			}
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
-			return errors.Errorf("get empty start key in the middle of ranges")
+			return errors.Errorf("get empty start/end key in the middle of ranges")
 		}
 	}
 	return nil
