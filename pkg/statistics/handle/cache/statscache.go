@@ -75,7 +75,7 @@ func (*StatsCacheImpl) Update() error {
 	return nil
 }
 
-// Update reads stats meta from store and updates the stats map.
+// UpdateWorker reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) UpdateWorker(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
 	lastVersion := s.getLastVersion()
