@@ -1456,5 +1456,7 @@ func TestIssue54652(t *testing.T) {
 	tk.MustExec(`begin`)
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can reuse since it's in txn now.
 	tk.MustExec(`commit`)
 }
