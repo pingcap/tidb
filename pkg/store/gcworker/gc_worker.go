@@ -890,7 +890,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 			}
 		}
-		wg.Run(func() {f(r)})
+		wg.Run(func() { f(r) })
 	}
 	wg.Wait()
 
