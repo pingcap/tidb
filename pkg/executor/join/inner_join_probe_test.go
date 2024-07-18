@@ -274,6 +274,8 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	hashJoinCtx.JoinType = joinType
 	hashJoinCtx.Concurrency = uint(partitionNumber)
 	hashJoinCtx.SetupPartitionInfo()
+	// update the partition number
+	partitionNumber = int(hashJoinCtx.partitionNumber)
 	hashJoinCtx.initHashTableContext()
 	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide)
 	buildSchema := &expression.Schema{}
