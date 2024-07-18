@@ -423,12 +423,6 @@ type ddlCtx struct {
 		hook        Callback
 		interceptor Interceptor
 	}
-
-	// TODO merge with *waitSchemaSyncedController into another new struct.
-	ddlSeqNumMu struct {
-		sync.Mutex
-		seqNum uint64
-	}
 }
 
 // the schema synchronization mechanism now requires strict incremental schema versions.
@@ -957,19 +951,6 @@ func (d *ddl) DisableDDL() error {
 	// disable campaign by interrupting campaignLoop
 	d.ownerManager.CampaignCancel()
 	return nil
-}
-
-// GetNextDDLSeqNum return the next DDL seq num.
-func (s *jobScheduler) GetNextDDLSeqNum() (uint64, error) {
-	var count uint64
-	ctx := kv.WithInternalSourceType(s.schCtx, kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err error
-		count, err = t.GetHistoryDDLCount()
-		return err
-	})
-	return count, err
 }
 
 func (d *ddl) close() {

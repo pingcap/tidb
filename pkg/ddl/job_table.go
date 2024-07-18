@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -129,9 +130,10 @@ type jobScheduler struct {
 	sysTblMgr    systable.Manager
 	schemaLoader SchemaLoader
 
-	// those fields are created on start
+	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
+	seqAllocator         atomic.Uint64
 
 	// those fields are shared with 'ddl' instance
 	// TODO ddlCtx is too large for here, we should remove dependency on it.
@@ -142,14 +144,6 @@ type jobScheduler struct {
 }
 
 func (s *jobScheduler) start() {
-	var err error
-	s.ddlCtx.ddlSeqNumMu.Lock()
-	defer s.ddlCtx.ddlSeqNumMu.Unlock()
-	s.ddlCtx.ddlSeqNumMu.seqNum, err = s.GetNextDDLSeqNum()
-	if err != nil {
-		logutil.DDLLogger().Error("error when getting the ddl history count", zap.Error(err))
-	}
-
 	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(s.schCtx, tp, s.sessPool, s.delRangeMgr, s.ddlCtx)
@@ -157,6 +151,7 @@ func (s *jobScheduler) start() {
 			if err != nil {
 				return nil, err
 			}
+			wk.seqAllocator = &s.seqAllocator
 			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			wk.sess = sess.NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
@@ -182,6 +177,7 @@ func (s *jobScheduler) close() {
 	if s.generalDDLWorkerPool != nil {
 		s.generalDDLWorkerPool.close()
 	}
+	failpoint.InjectCall("afterSchedulerClose")
 }
 
 func hasSysDB(job *model.Job) bool {
