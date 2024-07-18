@@ -197,13 +197,13 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	columnInfo.State = model.StateDeleteOnly
 	job.SchemaState = model.StateDeleteOnly
 
+	job.Args = []any{col.Name}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	job.State = model.JobStateRollingback
-	job.Args = []any{col.Name}
 	return ver, dbterror.ErrCancelledDDLJob
 }
 

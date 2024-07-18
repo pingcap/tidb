@@ -1234,6 +1234,8 @@ func (w *worker) runOneJobStep(
 		job.State = model.JobStateRunning
 	}
 
+	prevState := job.State
+
 	// For every type, `schema/table` modification and `job` modification are conducted
 	// in the one kv transaction. The `schema/table` modification can be always discarded
 	// by kv reset when meets an unhandled error, but the `job` modification can't.
@@ -1369,9 +1371,16 @@ func (w *worker) runOneJobStep(
 		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
-	// there are too many job types, we just request the caller to persist the
-	// job.Args if no error happened
+	// there are too many job types, instead let every job type output its own
+	// updateRawArgs, we try to use these rules as a generalization:
+	//
+	// if job has no error, some arguments may be changed, there's no harm to update
+	// it.
 	updateRawArgs = err == nil
+	// if job changed from running to rolling back, arguments may be changed
+	if prevState == model.JobStateRunning && job.IsRollingback() {
+		updateRawArgs = true
+	}
 
 	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
