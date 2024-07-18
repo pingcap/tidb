@@ -104,8 +104,8 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, 1, len(tables))
 	require.Equal(t, tblInfo.ID, tables[0].ID)
 
-	tblInfos, err := is.SchemaTableInfos(context.Background(), schemaName)
-	require.NoError(t, err)
+	tblInfos, err1 := is.SchemaTableInfos(context.Background(), schemaName)
+	require.NoError(t, err1)
 	require.Equal(t, 1, len(tblInfos))
 	require.Equal(t, tables[0], tblInfos[0])
 

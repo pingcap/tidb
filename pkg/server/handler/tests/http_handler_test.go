@@ -1197,7 +1197,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
 	decoder := json.NewDecoder(rc.Body)
-	err := decoder.Decode(&ti)
+	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(ti))
 
