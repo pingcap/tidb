@@ -1,10 +1,10 @@
 package utils
 
 import (
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	"testing"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/stretchr/testify/require"
 )
 
