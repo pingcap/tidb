@@ -9,10 +9,6 @@ go_library(
         "//br/pkg/config",
         "//br/pkg/glue",
         "//br/pkg/utils",
-<<<<<<< HEAD
-=======
-        "//pkg/util",
->>>>>>> 035f79e896b (br: fix get snapshot response pointer deref panic (#54510))
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",
         "@com_github_aws_aws_sdk_go//aws/session",
