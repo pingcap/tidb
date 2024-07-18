@@ -446,11 +446,11 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 */
 // Return nil if the root of plan has not been changed
 // Return new root if the root of plan is changed to selection
-func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
 	// step1: get constant predicate from left or right according to the JoinType
 	var getConstantPredicateFromLeft bool
 	var getConstantPredicateFromRight bool
-	switch logicalJoin.JoinType {
+	switch p.JoinType {
 	case LeftOuterJoin:
 		getConstantPredicateFromLeft = true
 	case RightOuterJoin:
@@ -463,17 +463,17 @@ func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan,
 	}
 	var candidateConstantPredicates []expression.Expression
 	if getConstantPredicateFromLeft {
-		candidateConstantPredicates = logicalJoin.Children()[0].PullUpConstantPredicates()
+		candidateConstantPredicates = p.Children()[0].PullUpConstantPredicates()
 	}
 	if getConstantPredicateFromRight {
-		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.Children()[1].PullUpConstantPredicates()...)
+		candidateConstantPredicates = append(candidateConstantPredicates, p.Children()[1].PullUpConstantPredicates()...)
 	}
 	if len(candidateConstantPredicates) == 0 {
 		return
 	}
 
 	// step2: add selection above of LogicalJoin
-	return addCandidateSelection(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
+	return addCandidateSelection(p, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
 // PullUpConstantPredicates inherits the BaseLogicalPlan.LogicalPlan.<9th> implementation.
@@ -795,6 +795,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 
 // *************************** end implementation of logicalPlan interface ***************************
 
+// IsNAAJ checks if the join is a non-adjacent-join.
 func (p *LogicalJoin) IsNAAJ() bool {
 	return len(p.NAEQConditions) > 0
 }
