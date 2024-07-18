@@ -416,7 +416,7 @@
     "Cases": [
       {
         "SQL": "select * from t order by b limit 1 for update",
-        "Best": "TableReader(Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)->Lock",
+        "Best": "TableReader(Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)",
         "Hints": "use_index(@`sel_1` `test`.`t` ), no_order_index(@`sel_1` `test`.`t` `primary`), limit_to_cop(@`sel_1`)"
       },
       {
