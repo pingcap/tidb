@@ -503,7 +503,7 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	tblInfo := tbl.Meta()
 	tid := tblInfo.ID
 	tk.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 220000 where table_id=%d", tid))
-	require.NoError(t, statsHandle.Update(context.Background(), is))
+	require.NoError(t, statsHandle.SyncStatsWorker(context.Background(), is))
 	result := tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
@@ -513,7 +513,7 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	))
 	tk.MustExec("insert into t values(1),(1),(1)")
 	require.NoError(t, statsHandle.DumpStatsDeltaToKV(true))
-	require.NoError(t, statsHandle.Update(context.Background(), is))
+	require.NoError(t, statsHandle.SyncStatsWorker(context.Background(), is))
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
@@ -745,7 +745,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	// auto-analyze uses the table-level options
 	tk.MustExec("insert into t values (10,10,10)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(context.Background(), is))
+	require.Nil(t, h.SyncStatsWorker(context.Background(), is))
 	h.HandleAutoAnalyze()
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -1097,7 +1097,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	tk.MustExec("insert into t values (5,5,5),(6,6,6)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(context.Background(), is))
+	require.Nil(t, h.SyncStatsWorker(context.Background(), is))
 	// auto analyze uses the saved option(predicate columns).
 	h.HandleAutoAnalyze()
 	tblStats = h.GetTableStats(tblInfo)
@@ -1905,7 +1905,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values (5,6), (7,8), (9, 10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -2725,7 +2725,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	tid := tbl.Meta().ID
 	tk.MustExec("insert into t values(1),(2),(3)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err = h.Update(context.Background(), dom.InfoSchema())
+	err = h.SyncStatsWorker(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 	tk.MustExec("analyze table t")
 	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
@@ -2749,7 +2749,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 
 	tk.MustExec("insert into t values(4),(5),(6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err = h.Update(context.Background(), dom.InfoSchema())
+	err = h.SyncStatsWorker(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
 	// Simulate that the analyze would start before and finish after the second insert.

@@ -63,8 +63,19 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 	return NewStatsCacheImpl(nil)
 }
 
-// Update reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) error {
+// StatsCacheUpdateChan is a channel for updating stats cache.
+var StatsCacheUpdateChan = make(chan struct{}, 2)
+
+// TriggerSyncStats reads stats meta from store and updates the stats map.
+func (*StatsCacheImpl) TriggerSyncStats() {
+	select {
+	case StatsCacheUpdateChan <- struct{}{}:
+	default:
+	}
+}
+
+// SyncStatsWorker reads stats meta from store and updates the stats map.
+func (s *StatsCacheImpl) SyncStatsWorker(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (

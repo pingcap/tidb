@@ -162,7 +162,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("insert into t values(4),(5),(6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err := h.Update(context.Background(), dom.InfoSchema())
+	err := h.SyncStatsWorker(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))

@@ -148,10 +148,10 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 		"('啊aabb', 'abcdc', 'aaaa', '??', '2')")
 
 	require.NoError(t, handle.HandleDDLEvent(<-handle.DDLEventCh()))
-	require.Nil(t, handle.Update(context.Background(), domain.InfoSchema()))
+	require.Nil(t, handle.SyncStatsWorker(context.Background(), domain.InfoSchema()))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t1,t2,t3,t4")
-	require.Nil(t, handle.Update(context.Background(), domain.InfoSchema()))
+	require.Nil(t, handle.SyncStatsWorker(context.Background(), domain.InfoSchema()))
 
 	var (
 		input  []string

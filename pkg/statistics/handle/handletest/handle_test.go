@@ -86,7 +86,7 @@ func TestColumnIDs(t *testing.T) {
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -126,7 +126,7 @@ func TestVersion(t *testing.T) {
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	require.Equal(t, 2*unit, h.MaxTableStatsVersion())
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
@@ -139,7 +139,7 @@ func TestVersion(t *testing.T) {
 	tableInfo2 := tbl2.Meta()
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", unit, tableInfo2.ID)
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	require.Equal(t, 2*unit, h.MaxTableStatsVersion())
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
@@ -148,7 +148,7 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("analyze table t1")
 	offset := 3 * unit
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(1), statsTbl1.RealtimeCount)
@@ -157,7 +157,7 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("analyze table t2")
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+3, tableInfo2.ID)
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
@@ -166,7 +166,7 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("analyze table t2")
 	// A smaller version write, and we cannot read it. Because at this time, lastThree Version is 4.
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
@@ -175,13 +175,13 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("alter table t2 add column c3 int")
 	testKit.MustExec("analyze table t2 all columns")
 	// load it with old schema.
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Nil(t, statsTbl2.GetCol(int64(3)))
 	// Next time DDL updated.
 	is = do.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Nil(t, statsTbl2.GetCol(int64(3)))
@@ -216,7 +216,7 @@ func TestLoadHist(t *testing.T) {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err = h.Update(context.Background(), do.InfoSchema())
+	err = h.SyncStatsWorker(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.
@@ -242,7 +242,7 @@ func TestLoadHist(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	newStatsTbl2 := h.GetTableStats(tableInfo)
 	require.False(t, newStatsTbl2 == newStatsTbl)
 	// The histograms is not updated.
@@ -455,7 +455,7 @@ func TestExtendedStatsOps(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	require.NotNil(t, statsTbl)
@@ -464,7 +464,7 @@ func TestExtendedStatsOps(t *testing.T) {
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where name = 's1'")
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.NotNil(t, statsTbl)
@@ -475,7 +475,7 @@ func TestExtendedStatsOps(t *testing.T) {
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
 		"2 [2,3] <nil> 2",
 	))
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.NotNil(t, statsTbl.ExtendedStats)
@@ -499,7 +499,7 @@ func TestAdminReloadStatistics1(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	require.NotNil(t, statsTbl)
@@ -508,7 +508,7 @@ func TestAdminReloadStatistics1(t *testing.T) {
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where name = 's1'")
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.NotNil(t, statsTbl)
@@ -516,7 +516,7 @@ func TestAdminReloadStatistics1(t *testing.T) {
 	require.Len(t, statsTbl.ExtendedStats.Stats, 1)
 
 	tk.MustExec("delete from mysql.stats_extended where name = 's1'")
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.NotNil(t, statsTbl.ExtendedStats)
@@ -545,7 +545,7 @@ func TestAdminReloadStatistics2(t *testing.T) {
 
 	tk.MustExec("delete from mysql.stats_extended where name = 's1'")
 	is := dom.InfoSchema()
-	dom.StatsHandle().Update(context.Background(), is)
+	dom.StatsHandle().SyncStatsWorker(context.Background(), is)
 	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows())
 	rows = tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
 	require.Len(t, rows, 1)
@@ -576,7 +576,7 @@ func TestCorrelationStatsCompute(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	require.NotNil(t, statsTbl)
@@ -594,7 +594,7 @@ func TestCorrelationStatsCompute(t *testing.T) {
 		"2 [1,2] 1.000000 1",
 		"2 [1,3] -1.000000 1",
 	))
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().SyncStatsWorker(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.NotNil(t, statsTbl)
@@ -1147,7 +1147,7 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 	tableInfo := tbl.Meta()
 	statsTbl1 := h.GetTableStats(tableInfo)
 	require.False(t, statsTbl1.Pseudo)
-	h.Update(context.Background(), is)
+	h.SyncStatsWorker(context.Background(), is)
 	statsTbl2 := h.GetTableStats(tableInfo)
 	require.Equal(t, statsTbl2, statsTbl1)
 }
@@ -1175,7 +1175,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 
 		tk.MustExec("insert into t values(1),(2),(3)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
-		err = h.Update(context.Background(), dom.InfoSchema())
+		err = h.SyncStatsWorker(context.Background(), dom.InfoSchema())
 		require.NoError(t, err)
 		tk.MustExec("analyze table t")
 		tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
@@ -1190,7 +1190,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 
 		tk.MustExec("insert into t values(4),(5),(6)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
-		err = h.Update(context.Background(), dom.InfoSchema())
+		err = h.SyncStatsWorker(context.Background(), dom.InfoSchema())
 		require.NoError(t, err)
 
 		// Simulate that the analyze would start before and finish after the second insert.
@@ -1298,7 +1298,7 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
