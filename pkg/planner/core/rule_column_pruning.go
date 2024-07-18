@@ -169,7 +169,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 
 // PruneColumns implements base.LogicalPlan interface.
 func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	leftCols, rightCols := la.ExtractUsedCols(parentUsedCols)
+	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
 	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
 	var err error
 	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {

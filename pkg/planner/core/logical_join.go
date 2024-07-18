@@ -293,7 +293,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
 func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	leftCols, rightCols := p.ExtractUsedCols(parentUsedCols)
+	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
 
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols, opt)
@@ -1115,8 +1115,8 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	return expression.NewSchema(joinKeys...)
 }
 
-// ExtractUsedCols extracts all the needed columns.
-func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
+// extractUsedCols extracts all the needed columns.
+func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
 	}
