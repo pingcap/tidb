@@ -580,31 +580,18 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 }
 
 // updateDDLJob updates the DDL job information.
-func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
+func (w *worker) updateDDLJob(job *model.Job, updateRawArgs bool) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
 		}
 	})
 
-	updateRawArgs := needUpdateRawArgs(job, meetErr)
-
 	if !updateRawArgs {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
 	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
-}
-
-func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
-	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
-	// we shouldn't replace RawArgs with the marshaling Args.
-	if meetErr && job.RawArgs != nil && job.Args == nil {
-		// However, for multi-schema change, the args of the parent job is always nil.
-		// Since Job.Encode() can handle the sub-jobs properly, we can safely update the raw args.
-		return job.MultiSchemaInfo != nil
-	}
-	return true
 }
 
 // registerMDLInfo registers metadata lock info.
@@ -900,27 +887,12 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	return txn, err
 }
 
-// runOneJobStep runs one step of the DDL job and persist the new job
-// information. One *step* is defined as the following reasons:
-//
-// - TiDB uses "Asynchronous Schema Change in F1", one job may have multiple
-// *steps* each for a "schema state" such as 'delete only' -> 'write only'. The
-// cluster can only have at most two adjacent schema states for a DDL object.
-// This function forwards one (schema state) *step* and caller
-// `runOneJobStepAndWaitSync` waits for other nodes to catch up.
-//
-// - Some types of DDL jobs has defined its own *step*s other than F1 algorithm
-// like onRecoverTable, onLockTables, onCreateIndex, etc. Table structure changes
-// may be saved in job.Args, TableInfo, etc. And we still need to persist these
-// changes as the *step*s of a job.
-//
-// - We may need to use caller `runOneJobStepAndWaitSync` to make sure other node
-// is synchronized before change the job state. So an extra (job state) *step* is
-// added.
+// transitOneJobStep runs one step of the DDL job and persist the new job
+// information.
 //
 // The first return value is the schema version after running the job. If it's
 // non-zero, caller should wait for other nodes to catch up.
-func (w *worker) runOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
+func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	var (
 		err error
 	)
@@ -966,7 +938,7 @@ func (w *worker) runOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
-	schemaVer, runJobErr := w.runDDLJob(d, t, job)
+	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(d, t, job)
 
 	d.mu.RLock()
 	d.mu.hook.OnJobRunAfter(job)
@@ -1002,7 +974,7 @@ func (w *worker) runOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	err = w.updateDDLJob(job, runJobErr != nil)
+	err = w.updateDDLJob(job, updateRawArgs)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
 		d.unlockSchemaVersion(job.ID)
@@ -1068,7 +1040,7 @@ func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 	d.mu.hook.OnJobRunBefore(job)
 	d.mu.RUnlock()
 
-	_, err = w.runDDLJob(d, t, job)
+	_, _, err = w.runOneJobStep(d, t, job)
 	defer d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return err
@@ -1202,9 +1174,29 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 	return true, nil
 }
 
-// runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
-func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
+// runOneJobStep runs a DDL job *step*. It returns the current schema version in
+// this transaction, if the given job.Args has changed, and the error. The *step*
+// is defined as the following reasons:
+//
+// - TiDB uses "Asynchronous Schema Change in F1", one job may have multiple
+// *steps* each for a schema state change such as 'delete only' -> 'write only'.
+// Combined with caller transitOneJobStepAndWaitSync waiting for other nodes to
+// catch up with the returned schema version, we can make sure the cluster will
+// only have two adjacent schema state for a DDL object.
+//
+// - Some types of DDL jobs has defined its own *step*s other than F1 paper like
+// onRecoverTable, onLockTables, onCreateIndex, etc. Their purposes are various
+// but they make use of caller transitOneJobStep to persist job changes.
+//
+// - We may need to use caller transitOneJobStepAndWaitSync to make sure all
+// other node is synchronized to provide linearizability. So an extra job state
+// change *step* is added.
+func (w *worker) runOneJobStep(
+	d *ddlCtx,
+	t *meta.Meta,
+	job *model.Job,
+) (ver int64, updateRawArgs bool, err error) {
+	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
 			w.countForPanic(job)
 		}, false)
@@ -1225,12 +1217,16 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	if job.IsCancelling() {
 		w.jobLogger(job).Debug("cancel DDL job", zap.String("job", job.String()))
-		return convertJob2RollbackJob(w, d, t, job)
+		ver, err = convertJob2RollbackJob(w, d, t, job)
+		// if job is converted to rollback job, the job.Args may be changed for the
+		// rollback logic, so we let caller persist the new arguments.
+		updateRawArgs = job.IsRollingback()
+		return
 	}
 
 	isRunnable, err := w.processJobPausingRequest(d, job)
 	if !isRunnable {
-		return ver, err
+		return ver, false, err
 	}
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
@@ -1373,11 +1369,15 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
+	// there are too many job types, we just request the caller to persist the
+	// job.Args if no error happened
+	updateRawArgs = err == nil
+
 	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
 		err = w.countForError(err, job)
 	}
-	return ver, err
+	return ver, updateRawArgs, err
 }
 
 func loadDDLVars(w *worker) error {

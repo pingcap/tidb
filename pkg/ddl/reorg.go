@@ -140,13 +140,13 @@ func (rc *reorgCtx) notifyJobState(state model.JobState) {
 }
 
 func (rc *reorgCtx) isReorgCanceled() bool {
-	return int32(model.JobStateCancelled) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
-		int32(model.JobStateCancelling) == atomic.LoadInt32((*int32)(&rc.jobState))
+	s := atomic.LoadInt32((*int32)(&rc.jobState))
+	return int32(model.JobStateCancelled) == s || int32(model.JobStateCancelling) == s
 }
 
 func (rc *reorgCtx) isReorgPaused() bool {
-	return int32(model.JobStatePaused) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
-		int32(model.JobStatePausing) == atomic.LoadInt32((*int32)(&rc.jobState))
+	s := atomic.LoadInt32((*int32)(&rc.jobState))
+	return int32(model.JobStatePaused) == s || int32(model.JobStatePausing) == s
 }
 
 func (rc *reorgCtx) setRowCount(count int64) {

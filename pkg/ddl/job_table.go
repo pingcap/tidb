@@ -537,7 +537,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 			pool.put(wk)
 		}()
 		for {
-			err := s.runOneJobStepAndWaitSync(wk, job)
+			err := s.transitOneJobStepAndWaitSync(wk, job)
 			if err != nil {
 				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", job))
 			} else if job.InFinalState() {
@@ -572,9 +572,9 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-// runOneJobStepAndWaitSync runs one step of the DDL job and waits for other TiDB
-// node to synchronize.
-func (s *jobScheduler) runOneJobStepAndWaitSync(wk *worker, job *model.Job) error {
+// transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
+// waits for other TiDB node to synchronize.
+func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) error {
 	failpoint.InjectCall("beforeRunOneJobStep")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
@@ -604,7 +604,7 @@ func (s *jobScheduler) runOneJobStepAndWaitSync(wk *worker, job *model.Job) erro
 		}
 	}
 
-	schemaVer, err := wk.runOneJobStep(s.ddlCtx, job)
+	schemaVer, err := wk.transitOneJobStep(s.ddlCtx, job)
 	if err != nil {
 		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
