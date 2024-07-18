@@ -264,13 +264,13 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	}
 
 	// extract the not null attributes from selection conditions.
-	notnullColsUniqueIDs.UnionWith(extractNotNullFromConds(p.Conditions, p))
+	notnullColsUniqueIDs.UnionWith(ExtractNotNullFromConds(p.Conditions, p))
 
 	// extract the constant cols from selection conditions.
-	constUniqueIDs := extractConstantCols(p.Conditions, p.SCtx(), fds)
+	constUniqueIDs := ExtractConstantCols(p.Conditions, p.SCtx(), fds)
 
 	// extract equivalence cols.
-	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p.SCtx(), fds)
+	equivUniqueIDs := ExtractEquivalenceCols(p.Conditions, p.SCtx(), fds)
 
 	// apply operator's characteristic's FD setting.
 	fds.MakeNotNull(notnullColsUniqueIDs)

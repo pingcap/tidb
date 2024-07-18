@@ -252,11 +252,11 @@ func (d *ddl) startLocalWorkerLoop() {
 		select {
 		case <-d.ctx.Done():
 			return
-		case task, ok := <-d.localJobCh:
+		case jobW, ok := <-d.localJobCh:
 			if !ok {
 				return
 			}
-			d.delivery2LocalWorker(d.localWorkerPool, task)
+			d.delivery2LocalWorker(d.localWorkerPool, jobW)
 		}
 	}
 }
@@ -469,11 +469,11 @@ func (s *jobScheduler) mustReloadSchemas() {
 // delivery2LocalWorker runs the DDL job of v2 in local.
 // send the result to the error channels in the task.
 // delivery2Localworker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
-	job := task.job
+func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
+	job := jobW.Job
 	wk, err := pool.get()
 	if err != nil {
-		task.NotifyError(err)
+		jobW.NotifyError(err)
 		return
 	}
 	for wk == nil {
@@ -484,7 +484,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		}
 		wk, err = pool.get()
 		if err != nil {
-			task.NotifyError(err)
+			jobW.NotifyError(err)
 			return
 		}
 	}
@@ -507,7 +507,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		if err != nil {
 			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		}
-		task.NotifyError(err)
+		jobW.NotifyError(err)
 	})
 }
 
@@ -667,26 +667,28 @@ const (
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
-func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobs ...*model.Job) error {
+func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWrapper) error {
 	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
 		}
 	})
-	if len(jobs) == 0 {
+	if len(jobWs) == 0 {
 		return nil
 	}
 	var sql bytes.Buffer
 	sql.WriteString(addDDLJobSQL)
-	for i, job := range jobs {
-		b, err := job.Encode(true)
+	for i, jobW := range jobWs {
+		b, err := jobW.Encode(true)
 		if err != nil {
 			return err
 		}
 		if i != 0 {
 			sql.WriteString(",")
 		}
-		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", job.ID, job.MayNeedReorg(), strconv.Quote(job2SchemaIDs(job)), strconv.Quote(job2TableIDs(job)), util.WrapKey2String(b), job.Type, !job.NotStarted())
+		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
+			strconv.Quote(job2SchemaIDs(jobW.Job)), strconv.Quote(job2TableIDs(jobW.Job)),
+			util.WrapKey2String(b), jobW.Type, !jobW.NotStarted())
 	}
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(ctx, sql.String(), "insert_job")
