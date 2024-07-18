@@ -190,3 +190,68 @@ func TestReorgDistSQLCtx(t *testing.T) {
 
 	require.Equal(t, ctx1, ctx2)
 }
+
+func TestValidateAndFillRanges(t *testing.T) {
+	kRange := func(start, end string) kv.KeyRange {
+		return kv.KeyRange{StartKey: []byte(start), EndKey: []byte(end)}
+	}
+	ranges := []kv.KeyRange{
+		kRange("b", "c"),
+		kRange("c", "d"),
+		kRange("d", "e"),
+	}
+	err := validateAndFillRanges(ranges, []byte("a"), []byte("e"))
+	require.NoError(t, err)
+	require.EqualValues(t, []kv.KeyRange{
+		kRange("b", "c"),
+		kRange("c", "d"),
+		kRange("d", "e"),
+	}, ranges)
+
+	// adjust first and last range.
+	ranges = []kv.KeyRange{
+		kRange("a", "c"),
+		kRange("c", "e"),
+		kRange("e", "g"),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.NoError(t, err)
+	require.EqualValues(t, []kv.KeyRange{
+		kRange("b", "c"),
+		kRange("c", "e"),
+		kRange("e", "f"),
+	}, ranges)
+
+	// first range startKey and last range endKey are empty.
+	ranges = []kv.KeyRange{
+		kRange("", "c"),
+		kRange("c", "e"),
+		kRange("e", ""),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.NoError(t, err)
+	require.EqualValues(t, []kv.KeyRange{
+		kRange("b", "c"),
+		kRange("c", "e"),
+		kRange("e", "f"),
+	}, ranges)
+	ranges = []kv.KeyRange{
+		kRange("", "c"),
+		kRange("e", ""),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.NoError(t, err)
+	require.EqualValues(t, []kv.KeyRange{
+		kRange("b", "c"),
+		kRange("e", "f"),
+	}, ranges)
+
+	// invalid range.
+	ranges = []kv.KeyRange{
+		kRange("b", "c"),
+		kRange("c", ""),
+		kRange("e", "f"),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.Error(t, err)
+}
