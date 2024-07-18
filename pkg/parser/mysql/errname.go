@@ -957,6 +957,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrFunctionalIndexRowValueIsNotAllowed:                   Message("Expression of functional index '%s' cannot refer to a row value", nil),
 	ErrDependentByFunctionalIndex:                            Message("Column '%s' has a functional index dependency and cannot be dropped or renamed", nil),
 	ErrInvalidJSONType:                                       Message("Invalid JSON type in argument %d to function %s; an %s is required.", nil),
+	ErrIncorrectCurrentPassword:                              Message("Incorrect current password. Specify the correct password which has to be replaced.", nil),
 	ErrInvalidJsonValueForFuncIndex:                          Message("Invalid JSON value for CAST for functional index '%s'", nil),
 	ErrJsonValueOutOfRangeForFuncIndex:                       Message("Out of range JSON value for CAST for functional index '%s'", nil),
 	ErrFunctionalIndexDataIsTooLong:                          Message("Data too long for functional index '%s'", nil),
