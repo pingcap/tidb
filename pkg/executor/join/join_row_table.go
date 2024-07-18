@@ -67,7 +67,7 @@ type rowTableSegment struct {
 	hashValues      []uint64 // the hash value of each rows
 	rowStartOffset  []uint64 // the start address of each row
 	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
-	finalized       bool
+	finalized       bool     // after finalized is set to true, no further modification is allowed
 }
 
 func (rts *rowTableSegment) totalUsedBytes() int64 {
@@ -84,13 +84,15 @@ func (rts *rowTableSegment) getRowPointer(index int) unsafe.Pointer {
 
 const maxRowTableSegmentSize = 1024
 
-func newRowTableSegment() *rowTableSegment {
+// 64 MB
+const maxRowTableSegmentByteSize = 64 * 1024 * 1024
+
+func newRowTableSegment(rowSizeHint uint) *rowTableSegment {
 	return &rowTableSegment{
-		// TODO: @XuHuaiyu if joinKeyIsInlined, the cap of rawData can be calculated
 		rawData:         make([]byte, 0),
-		hashValues:      make([]uint64, 0, maxRowTableSegmentSize),
-		rowStartOffset:  make([]uint64, 0, maxRowTableSegmentSize),
-		validJoinKeyPos: make([]int, 0, maxRowTableSegmentSize),
+		hashValues:      make([]uint64, 0, rowSizeHint),
+		rowStartOffset:  make([]uint64, 0, rowSizeHint),
+		validJoinKeyPos: make([]int, 0, rowSizeHint),
 	}
 }
 
@@ -487,47 +489,24 @@ type rowTableBuilder struct {
 	selRows                   []int
 	usedRows                  []int
 	hashValue                 []uint64
+	firstSegRowSizeHint       uint
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector  []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
 
-	crrntSizeOfRowTable []int64
-	// store the start position of each row in the rawData,
-	// we'll use this temp array to get the address of each row at the end
-	startPosInRawData [][]uint64
+	rowNumberInCurrentRowTableSeg []int64
 }
 
 func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber int, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
 	builder := &rowTableBuilder{
-		buildKeyIndex:       buildKeyIndex,
-		buildKeyTypes:       buildKeyTypes,
-		crrntSizeOfRowTable: make([]int64, partitionNumber),
-		startPosInRawData:   make([][]uint64, partitionNumber),
-		hasNullableKey:      hasNullableKey,
-		hasFilter:           hasFilter,
-		keepFilteredRows:    keepFilteredRows,
+		buildKeyIndex:                 buildKeyIndex,
+		buildKeyTypes:                 buildKeyTypes,
+		rowNumberInCurrentRowTableSeg: make([]int64, partitionNumber),
+		hasNullableKey:                hasNullableKey,
+		hasFilter:                     hasFilter,
+		keepFilteredRows:              keepFilteredRows,
 	}
-	builder.initBuffer()
 	return builder
-}
-
-func (b *rowTableBuilder) initBuffer() {
-	b.serializedKeyVectorBuffer = make([][]byte, chunk.InitialCapacity)
-	b.partIdxVector = make([]int, 0, chunk.InitialCapacity)
-	b.hashValue = make([]uint64, 0, chunk.InitialCapacity)
-	if b.hasFilter {
-		b.filterVector = make([]bool, 0, chunk.InitialCapacity)
-	}
-	if b.hasNullableKey {
-		b.nullKeyVector = make([]bool, 0, chunk.InitialCapacity)
-		for i := 0; i < chunk.InitialCapacity; i++ {
-			b.nullKeyVector = append(b.nullKeyVector, false)
-		}
-	}
-	b.selRows = make([]int, 0, chunk.InitialCapacity)
-	for i := 0; i < chunk.InitialCapacity; i++ {
-		b.selRows = append(b.selRows, i)
-	}
 }
 
 func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionNumber uint64) {
@@ -550,6 +529,7 @@ func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionNumber u
 
 func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *HashJoinCtxV2, workerID int) error {
 	b.ResetBuffer(chk)
+	b.firstSegRowSizeHint = max(uint(1), uint(float64(len(b.usedRows))/float64(hashJoinCtx.PartitionNumber)*float64(1.2)))
 	var err error
 	if b.hasFilter {
 		b.filterVector, err = expression.VectorizedFilter(hashJoinCtx.SessCtx.GetExprCtx().GetEvalCtx(), hashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, hashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), b.filterVector)
@@ -630,8 +610,7 @@ func newRowTable(meta *TableMeta) *rowTable {
 
 func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashTableContext) {
 	for partID := 0; partID < int(htCtx.hashTable.partitionNumber); partID++ {
-		startPosInRawData := b.startPosInRawData[partID]
-		if len(startPosInRawData) > 0 {
+		if b.rowNumberInCurrentRowTableSeg[partID] > 0 {
 			htCtx.finalizeCurrentSeg(workerID, partID, b)
 		}
 	}
@@ -725,20 +704,24 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		if !hasValidKey && !b.keepFilteredRows {
 			continue
 		}
+		// need append the row to rowTable
 		var (
 			row     = chk.GetRow(logicalRowIndex)
 			partIdx = b.partIdxVector[logicalRowIndex]
 			seg     *rowTableSegment
 		)
-		if b.crrntSizeOfRowTable[partIdx] >= maxRowTableSegmentSize {
+		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true, b.firstSegRowSizeHint)
+		// first check if current seg is full
+		if b.rowNumberInCurrentRowTableSeg[partIdx] >= maxRowTableSegmentSize || len(seg.rawData) >= maxRowTableSegmentByteSize {
+			// finalize current seg and create a new seg
 			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b)
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true, b.firstSegRowSizeHint)
 		}
-		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true)
 		if hasValidKey {
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
 		seg.hashValues = append(seg.hashValues, b.hashValue[logicalRowIndex])
-		b.startPosInRawData[partIdx] = append(b.startPosInRawData[partIdx], uint64(len(seg.rawData)))
+		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
 		rowLength := 0
 		// fill next_row_ptr field
 		rowLength += fillNextRowPtr(seg)
@@ -752,7 +735,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		if rowLength%8 != 0 {
 			seg.rawData = append(seg.rawData, fakeAddrPlaceHolder[:8-rowLength%8]...)
 		}
-		b.crrntSizeOfRowTable[partIdx]++
+		b.rowNumberInCurrentRowTableSeg[partIdx]++
 	}
 	return nil
 }
