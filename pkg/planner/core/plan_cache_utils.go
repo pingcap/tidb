@@ -17,7 +17,6 @@ package core
 import (
 	"cmp"
 	"context"
-	"github.com/pingcap/tidb/pkg/config"
 	"math"
 	"slices"
 	"sort"
@@ -26,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
