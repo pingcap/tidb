@@ -435,12 +435,8 @@ func loadTableRanges(
 	startKey, endKey kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
-	logutil.DDLLogger().Info("load table ranges from PD",
-		zap.Int64("physicalTableID", t.GetPhysicalID()),
-		zap.String("start key", hex.EncodeToString(startKey)),
-		zap.String("end key", hex.EncodeToString(endKey)))
 	if len(startKey) == 0 && len(endKey) == 0 {
-		logutil.DDLLogger().Info("load table range from PD, get noop table range",
+		logutil.DDLLogger().Info("load noop table range",
 			zap.Int64("physicalTableID", t.GetPhysicalID()))
 		return []kv.KeyRange{}, nil
 	}
@@ -448,30 +444,35 @@ func loadTableRanges(
 	s, ok := store.(tikv.Storage)
 	if !ok {
 		// Only support split ranges in tikv.Storage now.
+		logutil.DDLLogger().Info("load table ranges failed, unsupported storage",
+			zap.String("storage", fmt.Sprintf("%T", store)),
+			zap.Int64("physicalTableID", t.GetPhysicalID()))
 		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 	}
 
 	rc := s.GetRegionCache()
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
-	rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rs) == 0 {
-		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
-		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
-	}
-
-	ranges := make([]kv.KeyRange, 0, len(rs))
-	for _, r := range rs {
-		ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
-	}
-	err = validateAndFillRanges(ranges, startKey, endKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	var ranges []kv.KeyRange
+	util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+		logutil.DDLLogger().Info("load table ranges from PD",
+			zap.Int64("physicalTableID", t.GetPhysicalID()),
+			zap.String("start key", hex.EncodeToString(startKey)),
+			zap.String("end key", hex.EncodeToString(endKey)))
+		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		ranges = make([]kv.KeyRange, 0, len(rs))
+		for _, r := range rs {
+			ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
+		}
+		err = validateAndFillRanges(ranges, startKey, endKey)
+		if err != nil {
+			return true, errors.Trace(err)
+		}
+		return false, nil
+	})
 	logutil.DDLLogger().Info("load table ranges from PD done",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
@@ -481,6 +482,11 @@ func loadTableRanges(
 }
 
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	if len(ranges) == 0 {
+		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
+			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
+	}
 	for i, r := range ranges {
 		if i == 0 {
 			s := r.StartKey
@@ -496,6 +502,9 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
 			return errors.Errorf("get empty start/end key in the middle of ranges")
+		}
+		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
+			return errors.Errorf("ranges are not continous")
 		}
 	}
 	return nil

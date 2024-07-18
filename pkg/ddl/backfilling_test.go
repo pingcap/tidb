@@ -237,19 +237,27 @@ func TestValidateAndFillRanges(t *testing.T) {
 	}, ranges)
 	ranges = []kv.KeyRange{
 		mkRange("", "c"),
-		mkRange("e", ""),
+		mkRange("c", ""),
 	}
 	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
 	require.NoError(t, err)
 	require.EqualValues(t, []kv.KeyRange{
 		mkRange("b", "c"),
-		mkRange("e", "f"),
+		mkRange("c", "f"),
 	}, ranges)
 
 	// invalid range.
 	ranges = []kv.KeyRange{
 		mkRange("b", "c"),
 		mkRange("c", ""),
+		mkRange("e", "f"),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.Error(t, err)
+
+	ranges = []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "d"),
 		mkRange("e", "f"),
 	}
 	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
