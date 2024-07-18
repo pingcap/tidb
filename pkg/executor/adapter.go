@@ -233,7 +233,7 @@ func (a *recordSet) OnFetchReturned() {
 	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
 }
 
-// Detach creates a new `RecordSet` which doesn't depend on the current session context.
+// TryDetach creates a new `RecordSet` which doesn't depend on the current session context.
 func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
 	// TODO: also detach the executor. Currently, the executor inside may contain the session context. Once
 	// the executor itself supports detach, we should also detach it here.
