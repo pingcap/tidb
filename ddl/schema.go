@@ -322,10 +322,13 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			}
 		}
 		schemaInfo.State = model.StatePublic
+<<<<<<< HEAD:ddl/schema.go
 		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
 			recoverInfo.TableInfo.State = model.StatePublic
 			recoverInfo.TableInfo.UpdateTS = t.StartTS
 		}
+=======
+>>>>>>> 320d0f41db7 (*: don't save table IDs in schema diff of FLASHBACK DATABASE (#54665)):pkg/ddl/schema.go
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
 		ver, err = updateSchemaVersion(d, t, job)

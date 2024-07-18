@@ -188,6 +188,11 @@ type Builder struct {
 
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
+<<<<<<< HEAD:infoschema/builder.go
+=======
+	infoData *Data
+	store    kv.Storage
+>>>>>>> 320d0f41db7 (*: don't save table IDs in schema diff of FLASHBACK DATABASE (#54665)):pkg/infoschema/builder.go
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -1128,6 +1133,12 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error)) *B
 		dirtyDB: make(map[string]bool),
 		factory: factory,
 	}
+}
+
+// WithStore attaches the given store to builder.
+func (b *Builder) WithStore(s kv.Storage) *Builder {
+	b.store = s
+	return b
 }
 
 func tableBucketIdx(tableID int64) int {
