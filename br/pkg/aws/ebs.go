@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -251,6 +252,12 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 			if *s.State == ec2.SnapshotStateCompleted {
 				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
 				totalVolumeSize += *s.VolumeSize
+<<<<<<< HEAD
+=======
+			} else if *s.State == ec2.SnapshotStateError {
+				log.Error("snapshot failed", zap.String("id", *s.SnapshotId), zap.String("error", utils.GetOrZero(s.StateMessage)))
+				return 0, errors.Errorf("snapshot %s failed", *s.SnapshotId)
+>>>>>>> 035f79e896b (br: fix get snapshot response pointer deref panic (#54510))
 			} else {
 				log.Debug("snapshot creating...", zap.Stringer("snap", s))
 				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)

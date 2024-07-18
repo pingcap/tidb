@@ -11,6 +11,7 @@ go_library(
         "key.go",
         "misc.go",
         "permission.go",
+        "pointer.go",
         "pprof.go",
         "progress.go",
         "register.go",
