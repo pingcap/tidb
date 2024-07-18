@@ -87,3 +87,12 @@ func TestTimeoutRecv(t *testing.T) {
 		require.NoError(t, err)
 	}
 }
+
+func TestTimeoutRecvCancel(t *testing.T) {
+	ctx := context.Background()
+	cctx, cancel := context.WithCancel(ctx)
+
+	_, trecv := StartTimeoutRecv(cctx, time.Hour)
+	cancel()
+	trecv.wg.Wait()
+}

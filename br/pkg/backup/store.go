@@ -58,6 +58,7 @@ func (r ResponseAndStore) GetStoreID() uint64 {
 	return r.StoreID
 }
 
+// timeoutRecv cancel the context if `Refresh()` is not called within the specified time `timeout`.
 type timeoutRecv struct {
 	wg        sync.WaitGroup
 	parentCtx context.Context
@@ -66,6 +67,7 @@ type timeoutRecv struct {
 	refresh chan struct{}
 }
 
+// Refresh the timeout ticker
 func (trecv *timeoutRecv) Refresh() {
 	select {
 	case <-trecv.parentCtx.Done():
@@ -73,6 +75,7 @@ func (trecv *timeoutRecv) Refresh() {
 	}
 }
 
+// Stop the timeout ticker
 func (trecv *timeoutRecv) Stop() {
 	close(trecv.refresh)
 	trecv.wg.Wait()
@@ -94,6 +97,7 @@ func (trecv *timeoutRecv) loop(timeout time.Duration) {
 				return
 			}
 		case <-ticker.C:
+			log.Warn("receive a backup response timeout")
 			trecv.cancel(errors.Errorf("receive a backup response timeout"))
 		}
 	}
