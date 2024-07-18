@@ -1184,13 +1184,15 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 // catch up with the returned schema version, we can make sure the cluster will
 // only have two adjacent schema state for a DDL object.
 //
-// - Some types of DDL jobs has defined its own *step*s other than F1 paper like
-// onRecoverTable, onLockTables, onCreateIndex, etc. Their purposes are various
-// but they make use of caller transitOneJobStep to persist job changes.
+// - Some types of DDL jobs has defined its own *step*s other than F1 paper.
+// These *step*s may not be schema state change, and their purposes are various.
+// For example, onLockTables updates the lock state of one table every *step*.
 //
-// - We may need to use caller transitOneJobStepAndWaitSync to make sure all
-// other node is synchronized to provide linearizability. So an extra job state
-// change *step* is added.
+// - To provide linearizability we have added extra job state change *step*. For
+// example, if job becomes JobStateDone in runOneJobStep, we cannot return to
+// user that the job is finished because other nodes in cluster may not be
+// synchronized. So JobStateSynced *step* is added to make sure there is
+// waitSchemaChanged to wait for all nodes to catch up JobStateDone.
 func (w *worker) runOneJobStep(
 	d *ddlCtx,
 	t *meta.Meta,
