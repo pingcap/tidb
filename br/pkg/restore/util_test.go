@@ -5,10 +5,12 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -353,7 +355,9 @@ func TestPaginateScanRegion(t *testing.T) {
 	tc.InjectTimes = 5
 	_, err = split.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
 	require.Error(t, err)
-	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
+	var perr *errors.Error
+	goerrors.As(err, &perr)
+	require.EqualValues(t, berrors.ErrPDBatchScanRegion.ID(), perr.ID())
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	// region ID is key+1, so region 4 is deleted

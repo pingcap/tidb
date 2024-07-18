@@ -556,6 +556,7 @@ func TestFlashbackSchema(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
 	tk.MustExec("create database if not exists test_flashback")
 	tk.MustExec("use test_flashback")
 	tk.MustExec("drop table if exists t_flashback")
@@ -574,9 +575,17 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("insert into t_flashback values (1),(2),(3)")
 	tk.MustExec("drop database test_flashback")
 
+	// test PD connection issue causes failure after tidb_ddl_error_count_limit
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `return()`))
+	// TODO(lance6716): fix it later
+	//tk.MustGetErrMsg("flashback database test_flashback", "[ddl:-1]DDL job rollback, error msg: mock error for clearTablePlacementAndBundles")
+	tk.MustExecToErr("flashback database test_flashback")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `1*return()`))
+	tk.MustExec("flashback database test_flashback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr"))
+
 	// Test flashback database with db_not_exists name.
 	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")
-	tk.MustExec("flashback database test_flashback")
 	tk.MustGetErrMsg("flashback database test_flashback to test_flashback2", infoschema.ErrDatabaseExists.GenWithStack("Schema 'test_flashback' already been recover to 'test_flashback', can't be recover repeatedly").Error())
 
 	// Test flashback database failed by there is already a new database with the same name.
