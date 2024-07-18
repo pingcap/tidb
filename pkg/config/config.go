@@ -1478,6 +1478,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	ret.Sampler.SamplingServerURL = t.Sampler.SamplingServerURL
 	ret.Sampler.MaxOperations = t.Sampler.MaxOperations
 	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
+	ret, _ = ret.FromEnv()
 	return ret
 }
 

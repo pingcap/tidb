@@ -75,8 +75,8 @@ func ChildSpanFromContxt(ctx context.Context, opName string) (opentracing.Span, 
 
 // StartRegionWithNewRootSpan return Region together with the context.
 // It create and start a new span by globalTracer and store it into `ctx`.
-func StartRegionWithNewRootSpan(ctx context.Context, regionType string) (Region, context.Context) {
-	span := opentracing.GlobalTracer().StartSpan(regionType)
+func StartRegionWithNewRootSpan(ctx context.Context, regionType string, options ...opentracing.StartSpanOption) (Region, context.Context) {
+	span := opentracing.GlobalTracer().StartSpan(regionType, options...)
 	r := Region{
 		Region: trace.StartRegion(ctx, regionType),
 		Span:   span,
@@ -125,7 +125,9 @@ func (r Region) End() {
 	if r.Span != nil {
 		r.Span.Finish()
 	}
-	r.Region.End()
+	if r.Region != nil {
+		r.Region.End()
+	}
 }
 
 // TraceInfoFromContext returns the `model.TraceInfo` in context

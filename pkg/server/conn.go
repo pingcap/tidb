@@ -56,6 +56,7 @@ import (
 	"unsafe"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -1138,7 +1139,19 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		startTime := time.Now()
+		cfg := config.GetGlobalConfig()
+		var r tracing.Region
+		if cfg.OpenTracing.Enable {
+			sc := cc.ctx.GetSessionVars().SpanContext
+			opts := make([]opentracing.StartSpanOption, 0, 1)
+			if sc.TraceID().IsValid() {
+				opts = append(opts, opentracing.ChildOf(sc))
+			}
+			r, ctx = tracing.StartRegionWithNewRootSpan(ctx, "server.conn", opts...)
+			r.Span.SetTag("client.sql", cc.packetToSQL(data))
+		}
 		err = cc.dispatch(ctx, data)
+		r.End()
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
 		if err != nil {
@@ -1285,8 +1298,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
-		var r tracing.Region
-		r, ctx = tracing.StartRegionWithNewRootSpan(ctx, "server.dispatch")
+		r := tracing.StartRegion(ctx, "server.dispatch")
 		defer r.End()
 	}
 
@@ -2624,17 +2636,8 @@ func (cc *clientConn) handleRefresh(ctx context.Context, subCommand byte) error 
 	return cc.writeOK(ctx)
 }
 
-var _ fmt.Stringer = getLastStmtInConn{}
-
-type getLastStmtInConn struct {
-	*clientConn
-}
-
-func (cc getLastStmtInConn) String() string {
-	if len(cc.lastPacket) == 0 {
-		return ""
-	}
-	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
+func (cc *clientConn) packetToSQL(pkg []byte) string {
+	cmd, data := pkg[0], pkg[1:]
 	switch cmd {
 	case mysql.ComInitDB:
 		return "Use " + string(data)
@@ -2656,6 +2659,19 @@ func (cc getLastStmtInConn) String() string {
 		}
 		return string(hack.String(data))
 	}
+}
+
+var _ fmt.Stringer = getLastStmtInConn{}
+
+type getLastStmtInConn struct {
+	*clientConn
+}
+
+func (cc getLastStmtInConn) String() string {
+	if len(cc.lastPacket) == 0 {
+		return ""
+	}
+	return cc.packetToSQL(cc.lastPacket)
 }
 
 // PProfLabel return sql label used to tag pprof.

@@ -60,6 +60,7 @@ import (
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
+	"github.com/uber/jaeger-client-go"
 	"go.uber.org/zap"
 )
 
@@ -3256,6 +3257,18 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: ScopeSession, Name: TiDBTraceID, Value: "", Type: TypeStr, AllowEmpty: true, SetSession: func(sv *SessionVars, s string) error {
+		if len(s) != 0 {
+			sc, err := jaeger.ContextFromString(s)
+			if err != nil {
+				return err
+			}
+			sv.SpanContext = sc
+		} else {
+			sv.SpanContext = jaeger.SpanContext{}
+		}
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
