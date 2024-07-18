@@ -53,7 +53,7 @@ func (cx migrateToCtx) estlimateByLog(migs stream.Migrations, targetVersion int)
 
 }
 
-func (cx migrateToCtx) estlimateBySim(ctx context.Context, migs stream.Migrations, targetVersion int) error {
+func (cx migrateToCtx) dryRun(ctx context.Context, migs stream.Migrations, targetVersion int) error {
 	est := cx.est
 	console := cx.console
 	targetMig := est.MergeTo(migs, targetVersion)
@@ -74,9 +74,6 @@ func (cx migrateToCtx) estlimateBySim(ctx context.Context, migs stream.Migration
 		color.New(color.Bold).Sprint(file.Name()))
 	cx.printErr(estBase.Warnings, "The following errors happened during estimating: ")
 
-	if !console.PromptBool("continue?") {
-		return errors.Annotatef(context.Canceled, "the user aborted the operation")
-	}
 	return nil
 }
 
@@ -112,13 +109,11 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		console.Printf("No recent migration found. Skipping.")
 	}
 
+	if cfg.DryRun {
+		return cx.dryRun(ctx, migs, targetVersion)
+	}
 	if !cfg.Yes {
-		var err error
-		if cfg.SimulateExecution {
-			err = cx.estlimateBySim(ctx, migs, targetVersion)
-		} else {
-			err = cx.estlimateByLog(migs, targetVersion)
-		}
+		err := cx.estlimateByLog(migs, targetVersion)
 		if err != nil {
 			return err
 		}

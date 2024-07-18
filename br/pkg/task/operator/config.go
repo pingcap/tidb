@@ -117,8 +117,8 @@ type MigrateToConfig struct {
 	MigrateTo  int
 	Base       bool
 
-	Yes               bool
-	SimulateExecution bool
+	Yes    bool
+	DryRun bool
 }
 
 const (
@@ -127,7 +127,7 @@ const (
 	flagMigrateTo = "migrate-to"
 	flagBase      = "base"
 	flagYes       = "yes"
-	flagSimulate  = "simulate"
+	flagDryRun    = "dry-run"
 )
 
 func DefineFlagsForMigrateToConfig(flags *pflag.FlagSet) {
@@ -137,7 +137,7 @@ func DefineFlagsForMigrateToConfig(flags *pflag.FlagSet) {
 	flags.Int(flagMigrateTo, 0, "migrate to the specific migration.")
 	flags.Bool(flagBase, false, "don't merge any migrations, just retry run pending operations in BASE")
 	flags.BoolP(flagYes, "y", false, "skip all effect estimating and confirming. execute directly.")
-	flags.Bool(flagSimulate, false, "simulate the execution before really do them.")
+	flags.Bool(flagDryRun, false, "do not actually perform the migration, just print the effect.")
 }
 
 func (cfg *MigrateToConfig) ParseFromFlags(flags *pflag.FlagSet) error {
@@ -166,7 +166,7 @@ func (cfg *MigrateToConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return err
 	}
-	cfg.SimulateExecution, err = flags.GetBool(flagSimulate)
+	cfg.DryRun, err = flags.GetBool(flagDryRun)
 	if err != nil {
 		return err
 	}

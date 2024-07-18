@@ -5,10 +5,12 @@ package storage
 import (
 	"bufio"
 	"context"
+	stderrors "errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -29,12 +31,22 @@ const (
 // export for using in tests.
 type LocalStorage struct {
 	base string
+	// Whether ignoring ENOINT while deleting.
+	// Don't fail when deleting an unexist file is more like
+	// a normal ExternalStorage implementation does.
+	IgnoreEnoentForDelete bool
 }
 
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	path := filepath.Join(l.base, name)
-	return os.Remove(path)
+	err := os.Remove(path)
+	if err != nil &&
+		l.IgnoreEnoentForDelete &&
+		stderrors.Is(err, syscall.ENOENT) {
+		return nil
+	}
+	return err
 }
 
 // DeleteFiles deletes the files.

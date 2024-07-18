@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -29,6 +30,8 @@ import (
 )
 
 func requireMigrationsEqual(t *testing.T, miga, migb *backuppb.Migration) {
+	require.NotNil(t, miga)
+	require.NotNil(t, migb)
 	require.Equal(t, hashMigration(miga), hashMigration(migb), "\n%s\n%s", miga, migb)
 }
 
@@ -721,6 +724,7 @@ func tmp(t *testing.T) *storage.LocalStorage {
 	s, err := storage.NewLocalStorage(tmpDir)
 	require.NoError(t, os.MkdirAll(path.Join(tmpDir, migrationPrefix), 0644))
 	require.NoError(t, err)
+	s.IgnoreEnoentForDelete = true
 	return s
 }
 
@@ -2574,8 +2578,8 @@ func TestBasicMigration(t *testing.T) {
 		),
 	)
 
-	ds := storage.Batch(s)
-	est := MigerationExtension(ds)
+	bs := storage.Batch(s)
+	est := MigerationExtension(bs)
 	res := est.merge(mig1, mig2)
 
 	resE := mig(
@@ -2598,14 +2602,13 @@ func TestBasicMigration(t *testing.T) {
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, newBaseE, mg.NewBase)
 
-	efs := effectsOf(ds.Effects())
+	efs := effectsOf(bs.Effects())
 	require.ElementsMatch(t, maps.Keys(efs.Deletions), []string{"foo.log", "bar.log", "00002.log", "00001.meta"})
 	var meta backuppb.Metadata
 	require.NoError(t, meta.Unmarshal(efs.Edits["00002.meta"]))
 	require.Equal(t, &meta, mt(mtGroup("00001.log", dsp(60, 1024-60))))
 
-	// FIXME: LocalStorage will report error when deleting a not-existing file...
-	_ = ds.Commit(ctx)
+	require.NoError(t, bs.Commit(ctx))
 
 	delRem := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(60, 1024-60))))
 	newNewBase := est.merge(mg.NewBase, delRem)
@@ -2644,6 +2647,15 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	est := MigerationExtension(bs)
 
 	ctx := context.Background()
+	migs, err := est.Load(ctx)
+	require.NoError(t, err)
+	requireMigrationsEqual(t, est.MergeTo(migs, 2), mig(
+		mDel(mN(1), lN(2)),
+		mLogDel(mN(1),
+			spans(lN(4), 100, sp(42, 58)),
+			spans(lN(3), 100, sp(0, 42), sp(42, 18), sp(60, 40))),
+	))
+
 	mg := est.MergeAndMigrateTo(ctx, 2)
 
 	require.Len(t, mg.Source, 2)
@@ -2652,15 +2664,11 @@ func TestMergeAndMigrateTo(t *testing.T) {
 
 	effs := effectsOf(bs.Effects())
 	require.ElementsMatch(t, maps.Keys(effs.Deletions), []string{lN(2), lN(3), mig1p, mig2p})
-	// FIXME: LocalStorage will report error when deleting a not-existing file...
-	_ = bs.Commit(ctx)
+	require.NoError(t, bs.Commit(ctx))
 
-	migs, err := est.Load(ctx)
+	migs, err = est.Load(ctx)
 	require.NoError(t, err)
 
-	for _, mig := range migs.Layers {
-		fmt.Printf("mig: %v\n", mig)
-	}
 	requireMigrationsEqual(t, migs.Base, mg.NewBase)
 	require.Len(t, migs.Layers, 1)
 	requireMigrationsEqual(t, &migs.Layers[0].Content, mig3)
@@ -2695,15 +2703,27 @@ func TestRemoveCompaction(t *testing.T) {
 	mig1 := mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),
-		mCompaction(cDir(3), aDir(3), 5, 29),
 		// Should not truncate the full dir...
-		mCompaction("", aDir(4), 15, 25),
 		mTruncatedTo(30),
 	)
-
+	mig2 := mig(
+		mCompaction("", aDir(4), 15, 25),
+		mCompaction(cDir(3), aDir(3), 5, 29),
+		mTruncatedTo(20),
+	)
 	bs := storage.Batch(s)
 	est := MigerationExtension(bs)
-	mg := est.MigrateTo(ctx, mig1)
+
+	merged := est.merge(mig1, mig2)
+	requireMigrationsEqual(t, merged, mig(
+		mCompaction(cDir(1), aDir(1), 10, 40),
+		mCompaction(cDir(2), aDir(2), 35, 50),
+		mCompaction("", aDir(4), 15, 25),
+		mCompaction(cDir(3), aDir(3), 5, 29),
+		mTruncatedTo(30),
+	))
+
+	mg := est.MigrateTo(ctx, merged)
 	requireMigrationsEqual(t, mg.NewBase, mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),
@@ -2716,23 +2736,31 @@ func TestRemoveCompaction(t *testing.T) {
 
 func TestRetry(t *testing.T) {
 	s := tmp(t)
-	failpoint.Inject("github.com/pingcap/tidb/br/pkg/storage/local_write_file_err", `return("this disk remembers nothing")`)
 	lN := func(n uint64) string { return fmt.Sprintf("%05d.log", n) }
 	mN := func(n uint64) string { return fmt.Sprintf("%05d.meta", n) }
+	dfi := func(off, len uint64) *backuppb.DataFileInfo { return dFile(sp(off, len)) }
 
 	pmt(s, mN(1), mt(
-		mtGroup(lN(1)), mtGroup(lN(2)), mtGroup(lN(3))))
+		mtGroup(lN(1), dfi(0, 41)), mtGroup(lN(2), dfi(0, 42)), mtGroup(lN(3), dfi(0, 43))))
 
-	mig1 := mig(mDel(lN(1)))
-	mig1p := pmig(s, 1, mig1)
-	mig2 := mig(mDel(lN(2)))
-	mig2p := pmig(s, 2, mig2)
+	mig1 := mig(mDel(mN(1), lN(1)))
+	pmig(s, 1, mig1)
+	mig2 := mig(mDel(mN(1), lN(2)))
+	pmig(s, 2, mig2)
 
+	require.NoError(t,
+		failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_write_file_err", `1*return("this disk remembers nothing")`))
 	ctx := context.Background()
 	est := MigerationExtension(s)
 	mg := est.MergeAndMigrateTo(ctx, 2)
 	require.Len(t, mg.Warnings, 1)
 	require.Error(t, mg.Warnings[0], "this disk remembers nothing")
+	fmt.Printf("mg: %v\n", mg)
+	requireMigrationsEqual(t, mg.NewBase, mig(mDel(mN(1), lN(1), lN(2))))
 
-	_, _ = mig1p, mig2p
+	mg = est.MergeAndMigrateTo(ctx, 2)
+	require.Empty(t, slices.DeleteFunc(mg.Warnings, func(err error) bool {
+		return strings.Contains(err.Error(), "failed to delete file")
+	}))
+	requireMigrationsEqual(t, mg.NewBase, mig())
 }

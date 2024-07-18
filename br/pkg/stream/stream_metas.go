@@ -563,6 +563,9 @@ func (m MigrationExt) EstimateEffectFor(ctx context.Context, mig *pb.Migration) 
 func (m MigrationExt) MergeTo(migs Migrations, version int) *pb.Migration {
 	newBase := migs.Base
 	for _, mig := range migs.Layers {
+		if mig.ID > version {
+			return newBase
+		}
 		newBase = m.merge(newBase, &mig.Content)
 	}
 	return newBase
@@ -588,9 +591,11 @@ func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, version int) (resul
 	}
 
 	migTo := m.MigrateTo(ctx, newBase)
+	result.MigratedTo = migTo
+
 	err = m.writeBase(ctx, migTo.NewBase)
 	if err != nil {
-		result.MigratedTo = MigratedTo{Warnings: []error{errors.Annotatef(err, "failed to save the new base")}}
+		result.MigratedTo.Warnings = append(result.MigratedTo.Warnings, errors.Annotatef(err, "failed to save the new base"))
 		return
 	}
 	for _, mig := range result.Source {
@@ -599,7 +604,6 @@ func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, version int) (resul
 			migTo.Warnings = append(migTo.Warnings, errors.Annotatef(err, "failed to delete the merged migration %s", migs.Layers[0].Path))
 		}
 	}
-	result.MigratedTo = migTo
 	return
 }
 
