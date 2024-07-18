@@ -1890,9 +1890,9 @@ func TestLowResolutionTSORead(t *testing.T) {
 	tk.MustExec("insert low_resolution_tso values (1)")
 
 	// enable low resolution tso
-	require.False(t, tk.Session().GetSessionVars().lowResolutionTSO)
+	require.False(t, tk.Session().GetSessionVars().UseLowResolutionTSO())
 	tk.MustExec("set @@tidb_low_resolution_tso = 'on'")
-	require.True(t, tk.Session().GetSessionVars().lowResolutionTSO)
+	require.True(t, tk.Session().GetSessionVars().UseLowResolutionTSO())
 
 	tk.MustQuery("select * from low_resolution_tso")
 	err := tk.ExecToErr("update low_resolution_tso set a = 2")
