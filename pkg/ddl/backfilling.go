@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -35,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -398,13 +397,21 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	}
 }
 
+<<<<<<< HEAD
 func splitAndValidateTableRanges(
 	_ context.Context,
+=======
+// loadTableRanges load table key ranges from PD between given start key and end key.
+// It returns up to `limit` ranges.
+func loadTableRanges(
+	ctx context.Context,
+>>>>>>> eab8700a53e (ddl: load table ranges from PD instead of region cache (#54598))
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
+<<<<<<< HEAD
 	ranges, err := splitTableRanges(t, store, startKey, endKey, limit)
 	if err != nil {
 		return nil, err
@@ -438,33 +445,64 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("start key", hex.EncodeToString(startKey)),
 		zap.String("end key", hex.EncodeToString(endKey)))
+=======
+>>>>>>> eab8700a53e (ddl: load table ranges from PD instead of region cache (#54598))
 	if len(startKey) == 0 && len(endKey) == 0 {
-		logutil.DDLLogger().Info("split table range from PD, get noop table range",
+		logutil.DDLLogger().Info("load noop table range",
 			zap.Int64("physicalTableID", t.GetPhysicalID()))
 		return []kv.KeyRange{}, nil
 	}
 
-	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
 		// Only support split ranges in tikv.Storage now.
-		return []kv.KeyRange{kvRange}, nil
+		logutil.DDLLogger().Info("load table ranges failed, unsupported storage",
+			zap.String("storage", fmt.Sprintf("%T", store)),
+			zap.Int64("physicalTableID", t.GetPhysicalID()))
+		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 	}
 
+	rc := s.GetRegionCache()
 	maxSleep := 10000 // ms
+<<<<<<< HEAD
 	bo := backoff.NewBackofferWithVars(context.Background(), maxSleep, nil)
 	rc := copr.NewRegionCache(s.GetRegionCache())
 	ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange}, limit)
+=======
+	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
+	var ranges []kv.KeyRange
+	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+		logutil.DDLLogger().Info("load table ranges from PD",
+			zap.Int64("physicalTableID", t.GetPhysicalID()),
+			zap.String("start key", hex.EncodeToString(startKey)),
+			zap.String("end key", hex.EncodeToString(endKey)))
+		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		ranges = make([]kv.KeyRange, 0, len(rs))
+		for _, r := range rs {
+			ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
+		}
+		err = validateAndFillRanges(ranges, startKey, endKey)
+		if err != nil {
+			return true, errors.Trace(err)
+		}
+		return false, nil
+	})
+>>>>>>> eab8700a53e (ddl: load table ranges from PD instead of region cache (#54598))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(ranges) == 0 {
-		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
-		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
-	}
+	logutil.DDLLogger().Info("load table ranges from PD done",
+		zap.Int64("physicalTableID", t.GetPhysicalID()),
+		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
+		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
+		zap.Int("range count", len(ranges)))
 	return ranges, nil
 }
 
+<<<<<<< HEAD
 type resultConsumer struct {
 	dc         *ddlCtx
 	wg         *sync.WaitGroup
@@ -581,6 +619,32 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 		if err != nil {
 			logutil.DDLLogger().Warn("cannot adjust backfill worker size",
 				zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
+=======
+func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	if len(ranges) == 0 {
+		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
+			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
+	}
+	for i, r := range ranges {
+		if i == 0 {
+			s := r.StartKey
+			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
+				ranges[i].StartKey = startKey
+			}
+		}
+		if i == len(ranges)-1 {
+			e := r.EndKey
+			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
+				ranges[i].EndKey = endKey
+			}
+		}
+		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
+			return errors.Errorf("get empty start/end key in the middle of ranges")
+		}
+		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
+			return errors.Errorf("ranges are not continuous")
+>>>>>>> eab8700a53e (ddl: load table ranges from PD instead of region cache (#54598))
 		}
 	}
 	return nil
@@ -786,8 +850,42 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		if len(kvRanges) == 0 {
 			break
+=======
+	})
+
+	// generate task goroutine
+	eg.Go(func() error {
+		// we will modify the startKey in this goroutine, so copy them to avoid race.
+		start, end := startKey, endKey
+		taskIDAlloc := newTaskIDAllocator()
+		for {
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, backfillTaskChanSize)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+			if len(kvRanges) == 0 {
+				break
+			}
+			logutil.DDLLogger().Info("start backfill workers to reorg record",
+				zap.Stringer("type", bfWorkerType),
+				zap.Int("workerCnt", scheduler.currentWorkerSize()),
+				zap.Int("regionCnt", len(kvRanges)),
+				zap.String("startKey", hex.EncodeToString(start)),
+				zap.String("endKey", hex.EncodeToString(end)))
+
+			err2 = sendTasks(scheduler, t, kvRanges, reorgInfo, taskIDAlloc, bfWorkerType)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+
+			start = kvRanges[len(kvRanges)-1].EndKey
+			if start.Cmp(end) >= 0 {
+				break
+			}
+>>>>>>> eab8700a53e (ddl: load table ranges from PD instead of region cache (#54598))
 		}
 		logutil.DDLLogger().Info("start backfill workers to reorg record",
 			zap.Stringer("type", bfWorkerType),
