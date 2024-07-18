@@ -99,11 +99,12 @@ type FloatOpt struct {
 // AuthOption is used for parsing create use statement.
 type AuthOption struct {
 	// ByAuthString set as true, if AuthString is used for authorization. Otherwise, authorization is done by HashString.
-	ByAuthString bool
-	AuthString   string
-	ByHashString bool
-	HashString   string
-	AuthPlugin   string
+	ByAuthString  bool
+	AuthString    string
+	ByHashString  bool
+	HashString    string
+	AuthPlugin    string
+	ReplaceString string
 }
 
 // Restore implements Node interface.

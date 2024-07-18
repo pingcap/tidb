@@ -13811,6 +13811,14 @@ AuthOption:
 			ByAuthString: true,
 		}
 	}
+|	"IDENTIFIED" "BY" AuthString "REPLACE" AuthString
+	{
+		$$ = &ast.AuthOption{
+			AuthString:    $3,
+			ReplaceString: $5,
+			ByAuthString:  true,
+		}
+	}
 |	"IDENTIFIED" "WITH" AuthPlugin
 	{
 		$$ = &ast.AuthOption{
@@ -13823,6 +13831,15 @@ AuthOption:
 			AuthPlugin:   $3,
 			AuthString:   $5,
 			ByAuthString: true,
+		}
+	}
+|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString "REPLACE" AuthString
+	{
+		$$ = &ast.AuthOption{
+			AuthPlugin:    $3,
+			AuthString:    $5,
+			ReplaceString: $7,
+			ByAuthString:  true,
 		}
 	}
 |	"IDENTIFIED" "WITH" AuthPlugin "AS" HashString
