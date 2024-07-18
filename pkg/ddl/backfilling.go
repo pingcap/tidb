@@ -507,7 +507,7 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			return errors.Errorf("get empty start/end key in the middle of ranges")
 		}
 		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
-			return errors.Errorf("ranges are not continous")
+			return errors.Errorf("ranges are not continuous")
 		}
 	}
 	return nil
