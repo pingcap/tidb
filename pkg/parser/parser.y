@@ -13460,6 +13460,18 @@ AlterUserStmt:
 			CurrentAuth: auth,
 		}
 	}
+|	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString "REPLACE" AuthString
+	{
+		auth := &ast.AuthOption{
+			AuthString:    $9,
+			ReplaceString: $11,
+			ByAuthString:  true,
+		}
+		$$ = &ast.AlterUserStmt{
+			IfExists:    $3.(bool),
+			CurrentAuth: auth,
+		}
+	}
 
 /* See https://dev.mysql.com/doc/refman/8.0/en/alter-instance.html */
 AlterInstanceStmt:
