@@ -1650,7 +1650,7 @@ var (
 	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
 	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
 	// ChangeSchemaCacheSize is called when tidb_schema_cache_size is changed.
-	ChangeSchemaCacheSize func(size uint64)
+	ChangeSchemaCacheSize func(ctx context.Context, size uint64) error
 )
 
 // Hooks functions for Cluster Resource Control.

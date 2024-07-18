@@ -2488,7 +2488,8 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		checker := privilege.GetPrivilegeManager(e.Ctx())
 		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
+			currUser := e.Ctx().GetSessionVars().User
+			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
 	}
 	exists, err := userExistsInternal(ctx, sqlExecutor, u, h)
