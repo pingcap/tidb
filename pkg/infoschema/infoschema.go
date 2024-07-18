@@ -318,7 +318,7 @@ func (is *infoSchema) FindTableInfoByPartitionID(
 	return getTableInfo(tbl), db, partDef
 }
 
-// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
+// SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error) {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {

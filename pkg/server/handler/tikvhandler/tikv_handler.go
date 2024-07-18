@@ -643,9 +643,14 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	tableInfoRes := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
-	for _, res := range tableInfoRes {
-		for _, tbl := range res.TableInfos {
+	allDBs := schema.AllSchemaNames()
+	for _, db := range allDBs {
+		tbls, err := schema.SchemaTableInfos(context.Background(), db)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		for _, tbl := range tbls {
 			replicaInfos = h.getTiFlashReplicaInfo(tbl, replicaInfos)
 		}
 	}
