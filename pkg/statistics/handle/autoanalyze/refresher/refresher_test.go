@@ -812,6 +812,10 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 			},
 		},
 	}
+	tblStats := statistics.Table{
+		HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
+	}
 	partitionStats := map[refresher.PartitionIDAndName]*statistics.Table{
 		{
 			ID:   1,
@@ -833,7 +837,7 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 		},
 	}
 
-	partitionIndexes := refresher.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, partitionStats)
+	partitionIndexes := refresher.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, &tblStats, partitionStats)
 	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
 	require.Equal(t, len(expected), len(partitionIndexes))
 

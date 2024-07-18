@@ -480,7 +480,7 @@ func CheckGlobalIndex(
 		if !idx.Global {
 			continue
 		}
-		if !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) || needAnalyzeGlobalIndex {
+		if needAnalyzeGlobalIndex {
 			globalIndexes = append(globalIndexes, idx.Name.O)
 			continue
 		}
@@ -513,6 +513,7 @@ func createTableAnalysisJobForPartitions(
 	)
 	partitionIndexes := CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		tblInfo,
+		tblStats,
 		partitionStats,
 	)
 	globalIndexes := CheckGlobalIndex(
@@ -600,22 +601,28 @@ func CalculateIndicatorsForPartitions(
 // NOTE: This is only for newly added indexes.
 func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 	tblInfo *model.TableInfo,
+	tblStats *statistics.Table,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 ) map[string][]string {
 	partitionIndexes := make(map[string][]string, len(tblInfo.Indices))
 
 	for _, idx := range tblInfo.Indices {
-		// No need to analyze the index if it's not public
-		// or index is a global index.
-		if idx.State != model.StatePublic || idx.Global {
+		// No need to analyze the index if it's not public.
+		if idx.State != model.StatePublic {
 			continue
 		}
 
 		// Find all the partitions that need to analyze this index.
 		names := make([]string, 0, len(partitionStats))
-		for pIDAndName, tblStats := range partitionStats {
+		if !idx.Global {
+			for pIDAndName, tblStats := range partitionStats {
+				if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
+					names = append(names, pIDAndName.Name)
+				}
+			}
+		} else {
 			if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
-				names = append(names, pIDAndName.Name)
+				names = append(names, priorityqueue.GlobalIndexTableName)
 			}
 		}
 

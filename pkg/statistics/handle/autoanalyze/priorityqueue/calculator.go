@@ -56,6 +56,13 @@ func (pc *PriorityCalculator) CalculateWeight(job AnalysisJob) float64 {
 	// when we apply the log10 function, the resulting value is more meaningful and reasonable.
 	indicators := job.GetIndicators()
 	changeRatio := 100 * indicators.ChangePercentage
+	if j, ok := job.(*DynamicPartitionedTableAnalysisJob); ok {
+		tblSize := indicators.TableSize * (1 + float64(len(j.GlobalIndexes)))
+		return changeRatioWeight*math.Log10(1+changeRatio) +
+			sizeWeight*(1-math.Log10(1+tblSize)) +
+			analysisInterval*math.Log10(1+math.Sqrt(indicators.LastAnalysisDuration.Seconds())) +
+			pc.GetSpecialEvent(job)
+	}
 	return changeRatioWeight*math.Log10(1+changeRatio) +
 		sizeWeight*(1-math.Log10(1+indicators.TableSize)) +
 		analysisInterval*math.Log10(1+math.Sqrt(indicators.LastAnalysisDuration.Seconds())) +

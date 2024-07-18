@@ -683,7 +683,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			statsTbl := statsHandle.GetTableStats(tblInfo)
 			// Need analyze global index when modify count greater than threshold and analyzed before.
 			// Or no stats with this global index.
-			if  !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) || (modifyCount/tblCnt > ratio && tblCnt >= float64(exec.AutoAnalyzeMinCnt)) {
+			if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) || (modifyCount/tblCnt > ratio && tblCnt >= float64(exec.AutoAnalyzeMinCnt)) {
 				statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 				sql := "analyze table %n.%n index %n"
 				params := append([]any{db, tblInfo.Name.O}, idx.Name.O)
