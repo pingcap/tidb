@@ -623,7 +623,8 @@ func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, d
 	require.True(t, ok)
 	require.Equal(t, dbID, db.ID)
 	// Test for information_schema table id.
-	tables := is.SchemaTableInfos(context.Background(), model.NewCIStr(dbName))
+	tables, err := is.SchemaTableInfos(context.Background(), model.NewCIStr(dbName))
+	require.NoError(t, err)
 	require.Greater(t, len(tables), 0)
 	for _, tbl := range tables {
 		tid := tbl.ID

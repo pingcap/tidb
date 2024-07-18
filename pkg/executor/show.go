@@ -504,7 +504,10 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	// sort for tables
-	schemaTables := e.is.SchemaTableInfos(ctx, e.DBName)
+	schemaTables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	tableNames := make([]string, 0, len(schemaTables))
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	var (

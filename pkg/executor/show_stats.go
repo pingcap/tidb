@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -38,7 +39,10 @@ func (e *ShowExec) fetchShowStatsExtended(ctx context.Context) error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		tables := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, tblInfo := range tables {
 			pi := tblInfo.GetPartitionInfo()
 			// Extended statistics for partitioned table is not supported now.
@@ -111,7 +115,10 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		tables := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, tbl := range tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -184,7 +191,10 @@ func (e *ShowExec) fetchShowStatsLocked(ctx context.Context) error {
 	tableInfo := make(map[int64]*LockedTableInfo)
 
 	for _, db := range dbs {
-		tables := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, tbl := range tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -233,7 +243,10 @@ func (e *ShowExec) fetchShowStatsHistogram(ctx context.Context) error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		tables := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, tbl := range tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -310,7 +323,10 @@ func (e *ShowExec) fetchShowStatsBuckets(ctx context.Context) error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		tables := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, tbl := range tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -370,7 +386,10 @@ func (e *ShowExec) fetchShowStatsTopN(ctx context.Context) error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		tables := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, tbl := range tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -500,7 +519,8 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
 			continue
 		}
-		tables := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		terror.Log(err)
 		for _, tbl := range tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -596,7 +616,10 @@ func (e *ShowExec) fetchShowColumnStatsUsage(ctx context.Context) error {
 	}
 
 	for _, db := range dbs {
-		tables := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, tbl := range tables {
 			pi := tbl.GetPartitionInfo()
 			// Though partition tables in static pruning mode don't have global stats, we dump predicate columns of partitions with table ID

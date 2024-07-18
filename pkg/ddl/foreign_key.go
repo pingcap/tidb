@@ -605,7 +605,10 @@ func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoS
 	if !fkCheck {
 		return nil
 	}
-	tables := is.SchemaTableInfos(ctx, schema)
+	tables, err := is.SchemaTableInfos(ctx, schema)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	tableNames := make([]ast.Ident, len(tables))
 	for i := range tables {
 		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Name}

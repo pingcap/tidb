@@ -181,7 +181,10 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 					continue
 				}
 
-				tbls := is.SchemaTableInfos(context.Background(), db)
+				tbls, err := is.SchemaTableInfos(context.Background(), db)
+				if err != nil {
+					return err
+				}
 				// We need to check every partition of every table to see if it needs to be analyzed.
 				for _, tblInfo := range tbls {
 					// If table locked, skip analyze all partitions of the table.

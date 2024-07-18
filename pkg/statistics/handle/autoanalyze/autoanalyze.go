@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -353,7 +354,8 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			continue
 		}
 
-		tbls := is.SchemaTableInfos(context.Background(), model.NewCIStr(db))
+		tbls, err := is.SchemaTableInfos(context.Background(), model.NewCIStr(db))
+		terror.Log(err)
 		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
 		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
 		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.

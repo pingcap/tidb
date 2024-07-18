@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -318,16 +319,16 @@ func (is *infoSchema) FindTableInfoByPartitionID(
 }
 
 // SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
-func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) []*model.TableInfo {
+func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error) {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	tables := make([]*model.TableInfo, 0, len(schemaTables.tables))
 	for _, tbl := range schemaTables.tables {
 		tables = append(tables, tbl.Meta())
 	}
-	return tables
+	return tables, nil
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
@@ -355,7 +356,9 @@ func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilt
 	ret := make([]tableInfoResult, 0, 10)
 	for _, dbName := range is.AllSchemaNames() {
 		res := tableInfoResult{DBName: dbName.O}
-		for _, tblInfo := range is.SchemaTableInfos(stdctx.Background(), dbName) {
+		tblInfos, err := is.SchemaTableInfos(stdctx.Background(), dbName)
+		terror.Log(err)
+		for _, tblInfo := range tblInfos {
 			if !filter(tblInfo) {
 				continue
 			}

@@ -1191,7 +1191,8 @@ func TestWriteDBTablesData(t *testing.T) {
 	// No table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{})
 	rc := httptest.NewRecorder()
-	tbs := info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	tbs, err := info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 0, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
@@ -1203,7 +1204,8 @@ func TestWriteDBTablesData(t *testing.T) {
 	// One table in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 1, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
@@ -1216,7 +1218,8 @@ func TestWriteDBTablesData(t *testing.T) {
 	// Two tables in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 2, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)

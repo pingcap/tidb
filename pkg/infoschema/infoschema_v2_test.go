@@ -50,7 +50,9 @@ func TestV2Basic(t *testing.T) {
 	is.base().schemaMetaVersion = 2
 	is.ts = ver.Ver
 	require.Equal(t, 1, len(is.AllSchemas()))
-	require.Equal(t, 1, len(is.SchemaTableInfos(context.Background(), is.AllSchemas()[0].Name)))
+	tblInfos, err := is.SchemaTableInfos(context.Background(), is.AllSchemas()[0].Name)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tblInfos))
 
 	getDBInfo, ok := is.SchemaByName(schemaName)
 	require.True(t, ok)
@@ -97,18 +99,22 @@ func TestV2Basic(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, gotTblInfo)
 
-	tables := is.SchemaTableInfos(context.Background(), schemaName)
+	tables, err := is.SchemaTableInfos(context.Background(), schemaName)
+	require.NoError(t, err)
 	require.Equal(t, 1, len(tables))
 	require.Equal(t, tblInfo.ID, tables[0].ID)
 
-	tblInfos := is.SchemaTableInfos(context.Background(), schemaName)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), schemaName)
+	require.NoError(t, err)
 	require.Equal(t, 1, len(tblInfos))
 	require.Equal(t, tables[0], tblInfos[0])
 
-	tables = is.SchemaTableInfos(context.Background(), model.NewCIStr("notexist"))
+	tables, err = is.SchemaTableInfos(context.Background(), model.NewCIStr("notexist"))
+	require.NoError(t, err)
 	require.Equal(t, 0, len(tables))
 
-	tblInfos = is.SchemaTableInfos(context.Background(), model.NewCIStr("notexist"))
+	tblInfos, err = is.SchemaTableInfos(context.Background(), model.NewCIStr("notexist"))
+	require.NoError(t, err)
 	require.Equal(t, 0, len(tblInfos))
 
 	require.Equal(t, int64(2), is.SchemaMetaVersion())
@@ -268,7 +274,9 @@ func TestBundles(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
-	require.Equal(t, 1, len(is.SchemaTableInfos(context.Background(), dbInfo.Name)))
+	tblInfos, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tblInfos))
 	require.NoError(t, txn.Rollback())
 
 	// test create policy

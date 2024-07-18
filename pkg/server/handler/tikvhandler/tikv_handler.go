@@ -1012,7 +1012,11 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeDBSimpleTablesData(w, tbs)
 				return
 			}
-			tbs := schema.SchemaTableInfos(context.Background(), cDBName)
+			tbs, err := schema.SchemaTableInfos(context.Background(), cDBName)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
 			WriteDBTablesData(w, tbs)
 			return
 		}
@@ -1528,7 +1532,11 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if util.IsMemDB(dbName.L) {
 			continue
 		}
-		tables := schema.SchemaTableInfos(context.Background(), dbName)
+		tables, err := schema.SchemaTableInfos(context.Background(), dbName)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
 		for _, tableVal := range tables {
 			regionDetail.addTableInRange(dbName.String(), tableVal, frameRange)
 		}

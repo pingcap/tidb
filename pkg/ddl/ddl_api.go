@@ -398,7 +398,10 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	tbls := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+	tbls, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	total := len(tbls)
 	succ := 0
 	skip := 0
@@ -408,7 +411,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
-	err := checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
+	err = checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -699,7 +702,10 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		return nil
 	}
 	// Clear table locks hold by the session.
-	tbs := is.SchemaTableInfos(d.ctx, stmt.Name)
+	tbs, err := is.SchemaTableInfos(d.ctx, stmt.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	lockTableIDs := make([]int64, 0)
 	for _, tb := range tbs {
 		if ok, _ := ctx.CheckTableLocked(tb.ID); ok {
