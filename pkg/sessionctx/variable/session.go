@@ -1090,8 +1090,9 @@ type SessionVars struct {
 	// TxnMode indicates should be pessimistic or optimistic.
 	TxnMode string
 
-	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
-	LowResolutionTSO bool
+	// lowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
+	// Do not use it directly, use the `UseLowResolutionTSO` method below.
+	lowResolutionTSO bool
 
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the value is 0, timeouts are not enabled.
@@ -3877,4 +3878,9 @@ const (
 // Please see comments of SessionVars.OptObjective for details.
 func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
+}
+
+// UseLowResolutionTSO indicates whether low resolution tso could be used for execution.
+func (s *SessionVars) UseLowResolutionTSO() bool {
+	return !s.InRestrictedSQL && s.lowResolutionTSO
 }
