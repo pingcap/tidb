@@ -1106,7 +1106,11 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
-		indexVals, err := v.FetchValues(r, indexVals)
+		// We declared `err` here to make sure `indexVals` is assigned with `=` instead of `:=`.
+		// The latter one will create a new variable that shadows the outside `indexVals` that makes `indexVals` outside
+		// always nil, and we cannot reuse it.
+		var err error
+		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
 			return nil, err
 		}
