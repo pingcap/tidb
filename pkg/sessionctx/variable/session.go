@@ -3879,7 +3879,7 @@ func (s *SessionVars) GetOptObjective() string {
 
 // UseLowResolutionTSO indicates whether low resolution tso could be used for execution.
 func (s *SessionVars) UseLowResolutionTSO() bool {
-	if !s.InRestrictedSQL && s.LowResolutionTSO {
+	return !s.InRestrictedSQL && s.LowResolutionTSO 
 		return true
 	}
 	return false
