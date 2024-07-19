@@ -244,7 +244,11 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
 	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
-		e.diskTracker = disk.NewTracker(e.ID(), -1)
+		if e.diskTracker != nil {
+			e.diskTracker.Reset()
+		} else {
+			e.diskTracker = disk.NewTracker(e.ID(), -1)
+		}
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
 		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())

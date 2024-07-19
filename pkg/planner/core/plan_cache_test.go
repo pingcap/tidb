@@ -1310,6 +1310,20 @@ func TestIssue47133(t *testing.T) {
 	require.Equal(t, cnt, 2)
 }
 
+func TestIssue53505(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (v varchar(16))`)
+	tk.MustExec(`insert into t values ('156')`)
+	tk.MustExec(`prepare stmt7 from 'select * from t where v = conv(?, 16, 8)'`)
+	tk.MustExec(`set @arg=0x6E`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustExec(`set @arg=0x70`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows()) // empty
+}
+
 func TestBuiltinFuncFlen(t *testing.T) {
 	// same as TestIssue45378 and TestIssue45253
 	store := testkit.CreateMockStore(t)
@@ -1422,4 +1436,27 @@ func TestIndexRange(t *testing.T) {
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
 	tk.MustQuery(`SELECT t0.* FROM t0 WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE t1.c0!=BIN(-1);").Check(testkit.Rows("1"))
+}
+
+func TestIssue54652(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set autocommit=on`)
+	tk.MustQuery(`select @@autocommit`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @pk=1`)
+
+	tk.MustExec(`prepare st from 'select * from t where pk=? for update'`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can reuse since it's in txn now.
+	tk.MustExec(`commit`)
 }

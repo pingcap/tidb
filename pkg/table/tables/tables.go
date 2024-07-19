@@ -886,7 +886,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			// following AddRecord() operation.
 			// Make the IDs continuous benefit for the performance of TiKV.
 			stmtCtx := sctx.GetSessionVars().StmtCtx
-			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
+			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
 				return nil, err
 			}
@@ -1684,11 +1684,13 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 		}
 	}
 
-	_, rowID, err := allocHandleIDs(ctx, sctx, t, 1)
+	_, rowID, err := AllocHandleIDs(ctx, sctx, t, 1)
 	return kv.IntHandle(rowID), err
 }
 
-func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
+// AllocHandleIDs allocates n handle ids (_tidb_rowid), and caches the range
+// in the session context.
+func AllocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
 	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
