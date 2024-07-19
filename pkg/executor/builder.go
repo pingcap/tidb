@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -303,7 +304,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	case *plannercore.SplitRegion:
 		return b.buildSplitRegion(v)
 	case *plannercore.PhysicalIndexMergeReader:
-		return b.buildIndexMergeReader(v)
+		return b.buildIndexMergeReader(v, nil)
 	case *plannercore.SelectInto:
 		return b.buildSelectInto(v)
 	case *plannercore.PhysicalCTE:
@@ -1766,7 +1767,12 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.
 }
 
 func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exec.Executor {
-	childExec := b.build(v.Children()[0])
+	var childExec exec.Executor
+	if _, ok := v.Children()[0].(*core.PhysicalIndexMergeReader); ok {
+		childExec = b.buildIndexMergeReader(v.Children()[0].(*plannercore.PhysicalIndexMergeReader), v.Exprs)
+	} else {
+		childExec = b.build(v.Children()[0])
+	}
 	if b.err != nil {
 		return nil
 	}
@@ -3925,7 +3931,38 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	return e, nil
 }
 
-func buildSingleIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
+func buildOutputColumns(exprs []expression.Expression, indexColumns []*expression.Column) []*expression.Column {
+	var outputColumns []*expression.Column
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *expression.Column:
+			for _, indexCol := range indexColumns {
+				if v.UniqueID == indexCol.UniqueID { // 使用 v.UniqueID 而不是 expr.UniqueID
+					outputColumns = append(outputColumns, indexCol)
+				}
+			}
+		case *expression.ScalarFunction:
+			// Even if the index only contains prefix `col`, the index can cover `col is null`.
+			if v.FuncName.L == ast.IsNull {
+				if col, ok := v.GetArgs()[0].(*expression.Column); ok {
+					for _, indexCol := range indexColumns {
+						if col.UniqueID == indexCol.UniqueID {
+							outputColumns = append(outputColumns, indexCol)
+						}
+					}
+				}
+			}
+			for _, arg := range v.GetArgs() {
+				outputColumns = append(outputColumns, buildOutputColumns([]expression.Expression{arg}, indexColumns)...)
+			}
+		}
+	}
+
+	return outputColumns
+}
+
+func buildSingleIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader, Exprs []expression.Expression) (*IndexMergeReaderExecutor, error) {
+	outputColumns := buildOutputColumns(Exprs, v.Schema().Columns)
 	partialPlanCount := len(v.PartialPlans)
 	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
 	partialDataSizes := make([]float64, 0, partialPlanCount)
@@ -3987,7 +4024,7 @@ func buildSingleIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInde
 		partialPlans:                        v.PartialPlans,
 		tblPlans:                            v.TablePlans,
 		partialNetDataSizes:                 partialDataSizes,
-		dataAvgRowSize:                      0.0,
+		dataAvgRowSize:                      v.GetAvgIndexRowSize(),
 		dataReaderBuilder:                   readerBuilder,
 		paging:                              paging,
 		handleCols:                          ts.TblHandleCols,
@@ -4000,7 +4037,7 @@ func buildSingleIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInde
 		keepOrder:                           v.KeepOrder,
 		hasGlobalIndex:                      hasGlobalIndex,
 		partialPathIndexForSingleIndexMerge: 0,
-		OutputColumns:                       ts.IdxCols,
+		OutputColumns:                       outputColumns,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
@@ -4028,7 +4065,7 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader) (ind
 	return indexUsageReporter
 }
 
-func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
+func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader, exprs []expression.Expression) exec.Executor {
 	ts := v.PartialPlans[0][0].(*plannercore.PhysicalIndexScan)
 	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
@@ -4042,7 +4079,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	if v.TablePlans != nil {
 		ret, err = buildNoRangeIndexMergeReader(b, v)
 	} else {
-		ret, err = buildSingleIndexMergeReader(b, v)
+		ret, err = buildSingleIndexMergeReader(b, v, exprs)
 	}
 	// buildSingleIndexMergeReader
 	if err != nil {

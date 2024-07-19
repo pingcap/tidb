@@ -614,6 +614,20 @@ func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
 	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
 }
 
+// GetIndexAvgRowSize computes average row size for a index scan.
+func (p *PhysicalIndexMergeReader) GetAvgIndexRowSize() float64 {
+	var size float64
+	for i := 0; i < len(p.partialPlans); i++ {
+		currsize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.partialPlans[i]), p.Schema().Columns, false, false)
+		if currsize > size {
+			size = currsize
+		}
+	}
+	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
+	size += 20
+	return size
+}
+
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
