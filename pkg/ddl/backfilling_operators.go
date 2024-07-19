@@ -939,6 +939,7 @@ func (s *indexWriteResultSink) flush() error {
 	})
 	flushed, imported, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
 	if s.cpMgr != nil {
+		// Try to advance watermark even if there is an error.
 		s.cpMgr.AdvanceWatermark(flushed, imported)
 	}
 	if err != nil {

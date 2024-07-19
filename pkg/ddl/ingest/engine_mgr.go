@@ -107,7 +107,7 @@ type UnregisterOpt int
 const (
 	// OptBasic only closes engines, it does not clean up sort path data.
 	OptBasic UnregisterOpt = iota << 1
-	// OptCleanData cleans up sort path data.
+	// OptCleanData cleans up local sort dir data.
 	OptCleanData
 	// OptCheckDup checks if there is duplicate entry for unique indexes.
 	OptCheckDup

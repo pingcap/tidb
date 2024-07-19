@@ -118,10 +118,13 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	pipe, err := r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
+	if err != nil {
+		return err
+	}
 	err = executeAndClosePipeline(opCtx, pipe)
 	if err != nil {
-		// For dist task local based ingest, there is no checkpoint support.
-		// If there is error we should keep local sort path clean.
+		// For dist task local based ingest, checkpoint is unsupported.
+		// If there is an error we should keep local sort dir clean.
 		err1 := r.bc.FinishAndUnregisterEngines(ingest.OptCleanData)
 		if err1 != nil {
 			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
