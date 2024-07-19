@@ -90,22 +90,22 @@ func createRowTable(rows int) (*rowTable, error) {
 }
 
 func TestHashTableSize(t *testing.T) {
-	rowTable := createMockRowTable(10, 5, true)
+	rowTable := createMockRowTable(2, 5, true)
 	subTable := newSubTable(rowTable)
-	// min hash table size is 1024
-	require.Equal(t, 1024, len(subTable.hashTable))
-	rowTable = createMockRowTable(1024, 1, true)
+	// min hash table size is 32
+	require.Equal(t, 32, len(subTable.hashTable))
+	rowTable = createMockRowTable(32, 1, true)
 	subTable = newSubTable(rowTable)
-	require.Equal(t, 2048, len(subTable.hashTable))
-	rowTable = createMockRowTable(1025, 1, true)
+	require.Equal(t, 64, len(subTable.hashTable))
+	rowTable = createMockRowTable(33, 1, true)
 	subTable = newSubTable(rowTable)
-	require.Equal(t, 2048, len(subTable.hashTable))
-	rowTable = createMockRowTable(2048, 1, true)
+	require.Equal(t, 64, len(subTable.hashTable))
+	rowTable = createMockRowTable(64, 1, true)
 	subTable = newSubTable(rowTable)
-	require.Equal(t, 4096, len(subTable.hashTable))
-	rowTable = createMockRowTable(2049, 1, true)
+	require.Equal(t, 128, len(subTable.hashTable))
+	rowTable = createMockRowTable(65, 1, true)
 	subTable = newSubTable(rowTable)
-	require.Equal(t, 4096, len(subTable.hashTable))
+	require.Equal(t, 128, len(subTable.hashTable))
 }
 
 func TestBuild(t *testing.T) {
