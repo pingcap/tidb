@@ -543,8 +543,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 
 	key := t.RecordKey(h)
-	sc := sessVars.StmtCtx
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), sc.TimeZone(), sc.ErrCtx(), memBuffer, key)
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key)
 	if err != nil {
 		return err
 	}
@@ -574,7 +574,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		return err
 	}
 	if sessVars.EnableMutationChecker {
-		if err = CheckDataConsistency(txn, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
+		if err = CheckDataConsistency(txn, tc, t, newData, oldData, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -593,12 +593,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 	colSizeBuffer := mutateBuffers.GetColSizeDeltaBufferWithCap(len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), newData[id])
+		size, err := codec.EstimateValueSize(tc, newData[id])
 		if err != nil {
 			continue
 		}
 		newLen := size - 1
-		size, err = codec.EstimateValueSize(sc.TypeCtx(), oldData[id])
+		size, err = codec.EstimateValueSize(tc, oldData[id])
 		if err != nil {
 			continue
 		}
@@ -793,6 +793,10 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	} else {
 		ctx = context.Background()
 	}
+
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+
 	var hasRecordID bool
 	cols := t.Cols()
 	// opt.IsUpdate is a flag for update.
@@ -816,8 +820,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			}
 			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
-			handleBytes, err = codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, pkDts...)
-			err = sctx.GetSessionVars().StmtCtx.HandleError(err)
+			handleBytes, err = codec.EncodeKey(tc.Location(), nil, pkDts...)
+			err = ec.HandleError(err)
 			if err != nil {
 				return
 			}
@@ -949,8 +953,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 	}
 
-	sc := sessVars.StmtCtx
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), sc.TimeZone(), sc.ErrCtx(), memBuffer, key, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, flags...)
 	if err != nil {
 		return nil, err
 	}
@@ -994,7 +997,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		return nil, err
 	}
 	if sessVars.EnableMutationChecker {
-		if err = CheckDataConsistency(txn, sessVars, t, r, nil, memBuffer, sh); err != nil {
+		if err = CheckDataConsistency(txn, tc, t, r, nil, memBuffer, sh); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -1015,7 +1018,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 
 	colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
+		size, err := codec.EstimateValueSize(tc, r[id])
 		if err != nil {
 			continue
 		}
@@ -1256,13 +1259,13 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		return err
 	}
 
-	sessVars := ctx.GetSessionVars()
-	sc := sessVars.StmtCtx
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
-	if sessVars.EnableMutationChecker {
-		if err = CheckDataConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
+
+	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
+	if ctx.GetSessionVars().EnableMutationChecker {
+		if err = CheckDataConsistency(txn, tc, t, nil, r, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1298,7 +1301,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	// It can only act as a temporary buffer for the current function call.
 	colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
+		size, err := codec.EstimateValueSize(tc, r[id])
 		if err != nil {
 			continue
 		}
