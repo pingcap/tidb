@@ -146,8 +146,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	}
 }
 
-// decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
-// If it failed, it would return false to trigger normal decoding way without the virtual column.
+// decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the decoded normal columns.
 func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	collector statistics.RowSampleCollector,
 	fieldTps []*types.FieldType,
