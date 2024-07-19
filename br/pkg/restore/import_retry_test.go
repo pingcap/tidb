@@ -429,7 +429,6 @@ func TestPaginateScanLeader(t *testing.T) {
 	assertRegions(t, collectedRegions, "", "aay", "bba")
 }
 
-<<<<<<< HEAD:br/pkg/restore/import_retry_test.go
 func TestImportKVFiles(t *testing.T) {
 	var (
 		importer            = restore.FileImporter{}
@@ -599,7 +598,8 @@ func TestFilterFilesByRegion(t *testing.T) {
 		require.Equal(t, err, c.err)
 		require.Equal(t, subfile, c.subfiles)
 	}
-=======
+}
+
 func TestRetryRecognizeErrCode(t *testing.T) {
 	waitTime := 1 * time.Millisecond
 	maxWaitTime := 16 * time.Millisecond
@@ -620,5 +620,4 @@ func TestRetryRecognizeErrCode(t *testing.T) {
 	}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("import sst", 3)))
 	require.Equal(t, 10, outer)
 	require.Equal(t, 100, inner)
->>>>>>> c12bf3fa024 (br: fix backoffer can't handle multierrs (#54084)):br/pkg/restore/log_client/import_retry_test.go
 }
