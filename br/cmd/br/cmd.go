@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -110,14 +111,15 @@ func AddFlags(cmd *cobra.Command) {
 	_ = cmd.PersistentFlags().MarkHidden(FlagRedactLog)
 }
 
+const halfGiB uint64 = 512 * size.MB
+const fourGiB uint64 = 8 * halfGiB
+
 func calculateMemoryLimit(memleft uint64) uint64 {
-	const halfGB = uint64(512 * 1024 * 1024)
-	const fourGB = 8 * halfGB
 	// memreserved = f(memleft) = 512MB * memleft / (memleft + 4GB)
 	//  * f(0) = 0
 	//  * f(4GB) = 256MB
 	//  * f(+inf) -> 512MB
-	memreserved := halfGB / (1 + fourGB/(memleft+1))
+	memreserved := halfGiB / (1 + fourGiB/(memleft|1))
 	// 0     memused          memtotal-memreserved  memtotal
 	// +--------+--------------------+----------------+
 	//          ^            br mem upper limit
@@ -193,11 +195,15 @@ func Init(cmd *cobra.Command) (err error) {
 				err = e
 				return
 			}
-			memleft := memtotal - memused
-			memlimit := calculateMemoryLimit(memleft)
-			log.Info("calculate the rest memory",
-				zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
-			debug.SetMemoryLimit(int64(memlimit))
+			if memused >= memtotal {
+				log.Warn("failed to obtain memory size, skip setting memory limit", zap.Uint64("memused", memused), zap.Uint64("memtotal", memtotal))
+			} else {
+				memleft := memtotal - memused
+				memlimit := calculateMemoryLimit(memleft)
+				log.Info("calculate the rest memory and set memory limit",
+					zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
+				debug.SetMemoryLimit(int64(memlimit))
+			}
 		}
 
 		redactLog, e := cmd.Flags().GetBool(FlagRedactLog)
