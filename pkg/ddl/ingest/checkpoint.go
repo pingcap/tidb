@@ -346,7 +346,7 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			if cp.PhysicalID != s.physicalID {
-				s.logger.Info("checkpoint phyiscal ID mismatch",
+				s.logger.Info("checkpoint physical table ID mismatch",
 					zap.Int64("current", s.physicalID),
 					zap.Int64("get", cp.PhysicalID))
 				return nil
