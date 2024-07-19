@@ -462,7 +462,7 @@ func TestRcTSOCmdCountForTextSQLExecuteNormal(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(495), count)
+	require.Equal(t, uint64(594), count)
 }
 
 func resetAllTsoCounter(sctx sessionctx.Context) {
