@@ -388,16 +388,3 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 	strs = append(strs, str)
 	return strs, idxs
 }
-
-func writeRedactMarker(build *strings.Builder, v string, redact string) {
-	if redact == perrors.RedactLogMarker {
-		build.WriteString("‹")
-		build.WriteString(v)
-		build.WriteString("›")
-		return
-	} else if redact == perrors.RedactLogEnable {
-		build.WriteString("?")
-		return
-	}
-	build.WriteString(v)
-}

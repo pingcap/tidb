@@ -26,14 +26,15 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/redact"
 )
 
 // ExplainInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainInfo(ctx EvalContext) string {
-	return expr.explainInfo(ctx, false, ctx.GetTiDBRedactLog() == errors.RedactLogMarker)
+	return expr.explainInfo(ctx, false)
 }
 
-func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool, marker bool) string {
+func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string {
 	// we only need ctx for non-normalized explain info.
 	intest.Assert(normalized || ctx != nil)
 	var buffer bytes.Buffer
@@ -77,7 +78,7 @@ func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool, marker
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainNormalizedInfo() string {
-	return expr.explainInfo(nil, true, false)
+	return expr.explainInfo(nil, true)
 }
 
 // ExplainNormalizedInfo4InList implements the Expression interface.
@@ -190,30 +191,12 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 				builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 			}
 		case *Constant:
-			redactOn := redactMode == errors.RedactLogEnable
-			RedactMarker := redactMode == errors.RedactLogMarker
 			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
 			length := 64
 			if len(v) < length {
-				if redactOn {
-					builder.WriteString("?")
-				} else if RedactMarker {
-					builder.WriteString("‹")
-					builder.WriteString(v)
-					builder.WriteString("›")
-				} else {
-					builder.WriteString(v)
-				}
+				redact.WriteRedact(builder, v, redactMode)
 			} else {
-				if redactOn {
-					builder.WriteString("?")
-				} else if RedactMarker {
-					builder.WriteString("‹")
-					builder.WriteString(v[:length])
-					builder.WriteString("›")
-				} else {
-					builder.WriteString(v[:length])
-				}
+				redact.WriteRedact(builder, v[:length], redactMode)
 				fmt.Fprintf(builder, "(len:%d)", len(v))
 			}
 			builder.WriteString("->")

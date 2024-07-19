@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -202,9 +203,9 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 			if redactOn {
 				buffer.WriteString("?")
 			} else if p.UnsignedHandle {
-				writeRedactMarker(&buffer, strconv.FormatUint(uint64(p.Handle.IntValue()), 10), redactMode)
+				redact.WriteRedact(&buffer, strconv.FormatUint(uint64(p.Handle.IntValue()), 10), redactMode)
 			} else {
-				writeRedactMarker(&buffer, p.Handle.String(), redactMode)
+				redact.WriteRedact(&buffer, p.Handle.String(), redactMode)
 			}
 		}
 	}

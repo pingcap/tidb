@@ -213,7 +213,6 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("range:[?,?], ")
 		} else if !p.isFullScan() {
-			redact := p.SCtx().GetSessionVars().EnableRedactLog
 			buffer.WriteString("range:")
 			for _, idxRange := range p.Ranges {
 				buffer.WriteString(idxRange.Redact(redact))
