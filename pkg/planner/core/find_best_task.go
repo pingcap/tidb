@@ -1451,6 +1451,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet && ds.table.Meta().GetPartitionInfo() != nil {
 			// partition table with dynamic prune not support batchPointGet
 			// Due to sorting?
+			// Please make sure handle `where _tidb_rowid in (xx, xx)` correctly when delete this if statements.
 			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				canConvertPointGet = false
 			}
@@ -1467,6 +1468,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if hashPartColName == nil {
 					canConvertPointGet = false
 				}
+			}
+			// Partition table can't use `_tidb_rowid` to generate PointGet Plan unless one partition is explicitly specified.
+			if canConvertPointGet && path.IsIntHandlePath && !ds.table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
+				canConvertPointGet = false
 			}
 			if canConvertPointGet {
 				// If the schema contains ExtraPidColID, do not convert to point get.
