@@ -1526,9 +1526,24 @@ func (e *TableDualExec) Next(_ context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+type selectionExecutorContext struct {
+	stmtMemTracker             *memory.Tracker
+	evalCtx                    expression.EvalContext
+	enableVectorizedExpression bool
+}
+
+func newSelectionExecutorContext(sctx sessionctx.Context) selectionExecutorContext {
+	return selectionExecutorContext{
+		stmtMemTracker:             sctx.GetSessionVars().StmtCtx.MemTracker,
+		evalCtx:                    sctx.GetExprCtx().GetEvalCtx(),
+		enableVectorizedExpression: sctx.GetSessionVars().EnableVectorizedExpression,
+	}
+}
+
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
-	exec.BaseExecutor
+	selectionExecutorContext
+	exec.BaseExecutorV2
 
 	batched     bool
 	filters     []expression.Expression
@@ -1542,7 +1557,7 @@ type SelectionExec struct {
 
 // Open implements the Executor Open interface.
 func (e *SelectionExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutorV2.Open(ctx); err != nil {
 		return err
 	}
 	failpoint.Inject("mockSelectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
@@ -1559,7 +1574,7 @@ func (e *SelectionExec) open(context.Context) error {
 	} else {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.stmtMemTracker)
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
@@ -1578,7 +1593,7 @@ func (e *SelectionExec) Close() error {
 		e.childResult = nil
 	}
 	e.selected = nil
-	return e.BaseExecutor.Close()
+	return e.BaseExecutorV2.Close()
 }
 
 // Next implements the Executor Next interface.
@@ -1611,7 +1626,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx().GetEvalCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.filters, e.inputIter, e.selected)
+		e.selected, err = expression.VectorizedFilter(e.evalCtx, e.enableVectorizedExpression, e.filters, e.inputIter, e.selected)
 		if err != nil {
 			return err
 		}
@@ -1623,10 +1638,10 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // For sql with "SETVAR" in filter and "GETVAR" in projection, for example: "SELECT @a FROM t WHERE (@a := 2) > 0",
 // we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) error {
-	exprCtx := e.Ctx().GetExprCtx()
+	evalCtx := e.evalCtx
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			selected, _, err := expression.EvalBool(exprCtx.GetEvalCtx(), e.filters, e.inputRow)
+			selected, _, err := expression.EvalBool(evalCtx, e.filters, e.inputRow)
 			if err != nil {
 				return err
 			}
