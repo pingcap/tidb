@@ -938,27 +938,22 @@ func (s *indexWriteResultSink) flush() error {
 		failpoint.Return(errors.New("mock flush error"))
 	})
 	flushed, imported, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
-	if err != nil {
-		logutil.Logger(s.ctx).Error("flush error",
-			zap.String("category", "ddl"), zap.Error(err))
-		return err
-	}
 	if s.cpMgr != nil {
 		s.cpMgr.AdvanceWatermark(flushed, imported)
+	}
+	if err != nil {
+		msg := "flush error"
+		if flushed {
+			msg = "import error"
+		}
+		logutil.Logger(s.ctx).Error(msg, zap.String("category", "ddl"), zap.Error(err))
+		return err
 	}
 	return nil
 }
 
 func (s *indexWriteResultSink) Close() error {
-	err := s.errGroup.Wait()
-	// for local pipeline
-	if bc := s.backendCtx; bc != nil {
-		err2 := bc.FinishAndUnregisterEngines()
-		if err == nil {
-			err = err2
-		}
-	}
-	return err
+	return s.errGroup.Wait()
 }
 
 func (*indexWriteResultSink) String() string {

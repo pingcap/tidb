@@ -109,25 +109,26 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	defer opCtx.Cancel()
 	r.curRowCount.Store(0)
 
-	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
-	} else {
-		pipe, err = r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
-	}
-	if err != nil {
-		return err
+		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
+		if err != nil {
+			return err
+		}
+		return executeAndClosePipeline(opCtx, pipe)
 	}
 
-	err = pipe.Execute()
+	pipe, err := r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
+	err = executeAndClosePipeline(opCtx, pipe)
 	if err != nil {
+		// For dist task local based ingest, there is no checkpoint support.
+		// If there is error we should keep local sort path clean.
+		err1 := r.bc.FinishAndUnregisterEngines(ingest.OptCleanData)
+		if err1 != nil {
+			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
+		}
 		return err
 	}
-	err = pipe.Close()
-	if opCtx.OperatorErr() != nil {
-		return opCtx.OperatorErr()
-	}
-	return err
+	return r.bc.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
 func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {

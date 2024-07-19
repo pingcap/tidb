@@ -269,11 +269,6 @@ func (s *CheckpointManager) afterImport() {
 
 // Close closes the checkpoint manager.
 func (s *CheckpointManager) Close() {
-	s.mu.Lock()
-	s.afterFlush()
-	s.afterImport()
-	s.mu.Unlock()
-
 	err := s.updateCheckpoint()
 	if err != nil {
 		s.logger.Error("update checkpoint failed", zap.Error(err))
@@ -304,9 +299,7 @@ type ReorgCheckpoint struct {
 	GlobalKeyCount int    `json:"global_key_count"`
 	InstanceAddr   string `json:"instance_addr"`
 
-	PhysicalID int64  `json:"physical_id"`
-	StartKey   kv.Key `json:"start_key"`
-	EndKey     kv.Key `json:"end_key"`
+	PhysicalID int64 `json:"physical_id"`
 	// TS of next engine ingest.
 	TS uint64 `json:"ts"`
 
@@ -354,7 +347,8 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 			s.importedKeyLowWatermark = cp.GlobalSyncKey
 			s.importedKeyCnt = cp.GlobalKeyCount
 			s.ts = cp.TS
-			if util.FolderNotEmpty(s.localStoreDir) &&
+			folderNotEmpty := util.FolderNotEmpty(s.localStoreDir)
+			if folderNotEmpty &&
 				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
 				s.localDataIsValid = true
 				s.flushedKeyLowWatermark = cp.LocalSyncKey
@@ -365,7 +359,8 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 				zap.String("imported key low watermark", hex.EncodeToString(s.importedKeyLowWatermark)),
 				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
-				zap.String("current instance", s.instanceAddr))
+				zap.String("current instance", s.instanceAddr),
+				zap.Bool("folder is empty", !folderNotEmpty))
 			return nil
 		}
 		s.logger.Info("checkpoint not found")

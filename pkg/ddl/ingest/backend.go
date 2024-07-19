@@ -58,7 +58,7 @@ type BackendCtx interface {
 	// are Register-ed before. It's safe to call it multiple times.
 	//
 	// FinishAndUnregisterEngines is only used in local disk based ingest.
-	FinishAndUnregisterEngines() error
+	FinishAndUnregisterEngines(opt UnregisterOpt) error
 
 	FlushController
 
@@ -297,7 +297,6 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		}
 		ei.openedEngine = nil
-		ei.closedEngine = nil
 		return err
 	}
 	return nil

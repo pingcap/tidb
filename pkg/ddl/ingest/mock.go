@@ -121,7 +121,7 @@ func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ table.Table) ([]
 }
 
 // FinishAndUnregisterEngines implements BackendCtx interface.
-func (*MockBackendCtx) FinishAndUnregisterEngines() error {
+func (*MockBackendCtx) FinishAndUnregisterEngines(_ UnregisterOpt) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
 	return nil
 }
@@ -178,8 +178,8 @@ func (*MockEngineInfo) Flush() error {
 	return nil
 }
 
-// Clean implements Engine.Clean interface.
-func (*MockEngineInfo) Clean() {
+// Close implements Engine.Close interface.
+func (*MockEngineInfo) Close(_ bool) {
 }
 
 // SetHook set the write hook.
