@@ -206,9 +206,12 @@ func Init(cmd *cobra.Command) (err error) {
 				// BR command needs 256 MiB at least, if the left memory is less than 256 MiB,
 				// the memory limit cannot limit anyway and then finally OOM.
 				memlimit = mathutil.Max(memlimit, quarterGiB)
-				log.Info("calculate the rest memory and set memory limit",
+				log.Info("calculate the rest memory",
 					zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
-				debug.SetMemoryLimit(int64(memlimit & math.MaxInt64))
+				// No need to set memory limit because the left memory is sufficient.
+				if memlimit < uint64(math.MaxInt64) {
+					debug.SetMemoryLimit(int64(memlimit))
+				}
 			}
 		}
 
