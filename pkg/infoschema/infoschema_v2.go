@@ -458,7 +458,7 @@ func (is *infoschemaV2) EvictTable(schema, tbl string) {
 type tableByNameHelper struct {
 	end           tableItem
 	schemaVersion int64
-	found            bool
+	found         bool
 	res           tableItem
 }
 
