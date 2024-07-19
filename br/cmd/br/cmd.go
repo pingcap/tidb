@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -111,8 +112,9 @@ func AddFlags(cmd *cobra.Command) {
 	_ = cmd.PersistentFlags().MarkHidden(FlagRedactLog)
 }
 
+const quarterGiB uint64 = 256 * size.MB
 const halfGiB uint64 = 512 * size.MB
-const fourGiB uint64 = 8 * halfGiB
+const fourGiB uint64 = 4 * size.GB
 
 func calculateMemoryLimit(memleft uint64) uint64 {
 	// memreserved = f(memleft) = 512MB * memleft / (memleft + 4GB)
@@ -200,6 +202,9 @@ func Init(cmd *cobra.Command) (err error) {
 			} else {
 				memleft := memtotal - memused
 				memlimit := calculateMemoryLimit(memleft)
+				// BR command needs 256 MiB at least, if the left memory is less than 256 MiB,
+				// the memory limit cannot limit anyway and then finally OOM.
+				memlimit = mathutil.Max(memlimit, quarterGiB)
 				log.Info("calculate the rest memory and set memory limit",
 					zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
 				debug.SetMemoryLimit(int64(memlimit))
