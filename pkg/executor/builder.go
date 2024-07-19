@@ -1963,8 +1963,9 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.
 		return nil
 	}
 	e := &SelectionExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		filters:      v.Conditions,
+		selectionExecutorContext: newSelectionExecutorContext(b.ctx),
+		BaseExecutorV2:           exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		filters:                  v.Conditions,
 	}
 	return e
 }
@@ -4265,8 +4266,9 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 			return nil, err
 		}
 		exec := &SelectionExec{
-			BaseExecutor: exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
-			filters:      v.Conditions,
+			selectionExecutorContext: newSelectionExecutorContext(builder.ctx),
+			BaseExecutorV2:           exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+			filters:                  v.Conditions,
 		}
 		err = exec.open(ctx)
 		return exec, err

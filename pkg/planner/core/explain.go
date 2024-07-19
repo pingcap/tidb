@@ -881,28 +881,6 @@ func formatWindowFuncDescs(ctx expression.EvalContext, buffer *bytes.Buffer, des
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalJoin) ExplainInfo() string {
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString(p.JoinType.String())
-	if len(p.EqualConditions) > 0 {
-		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
-	}
-	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s",
-			expression.SortedExplainExpressionList(evalCtx, p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.SortedExplainExpressionList(evalCtx, p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.SortedExplainExpressionList(evalCtx, p.OtherConditions))
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalApply) ExplainInfo() string {
 	return p.LogicalJoin.ExplainInfo()
 }

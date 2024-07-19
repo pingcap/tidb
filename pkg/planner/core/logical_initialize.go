@@ -20,12 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
-// Init initializes LogicalJoin.
-func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)
-	return &p
-}
-
 // Init initializes DataSource.
 func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	ds.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)

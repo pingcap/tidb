@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/predicatecolumn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -561,7 +563,12 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 		if err != nil {
 			return err
 		}
-		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl)
+		// Note: Because we don't show this information in the session directly, so we can always use UTC here.
+		colStatsUsage, err := predicatecolumn.LoadColumnStatsUsageForTable(sctx, time.UTC, physicalID)
+		if err != nil {
+			return err
+		}
+		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl, colStatsUsage)
 		return err
 	})
 	if err != nil {
@@ -717,5 +724,47 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = s.SaveColumnStatsUsageToStorage(tbl.PhysicalID, jsonTbl.PredicateColumns)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+}
+
+// SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.
+func (s *statsReadWriter) SaveColumnStatsUsageToStorage(physicalID int64, predicateColumns []*util.JSONPredicateColumn) error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		colStatsUsage := make(map[model.TableItemID]statstypes.ColStatsTimeInfo, len(predicateColumns))
+		for _, col := range predicateColumns {
+			if col == nil {
+				continue
+			}
+			itemID := model.TableItemID{TableID: physicalID, ID: col.ID}
+			lastUsedAt, err := parseTimeOrNil(col.LastUsedAt)
+			if err != nil {
+				return err
+			}
+			lastAnalyzedAt, err := parseTimeOrNil(col.LastAnalyzedAt)
+			if err != nil {
+				return err
+			}
+			colStatsUsage[itemID] = statstypes.ColStatsTimeInfo{
+				LastUsedAt:     lastUsedAt,
+				LastAnalyzedAt: lastAnalyzedAt,
+			}
+		}
+		return predicatecolumn.SaveColumnStatsUsageForTable(sctx, colStatsUsage)
+	}, util.FlagWrapTxn)
+}
+
+func parseTimeOrNil(timeStr *string) (*types.Time, error) {
+	if timeStr == nil {
+		return nil, nil
+	}
+	// DefaultStmtNoWarningContext use UTC timezone.
+	parsedTime, err := types.ParseTime(types.DefaultStmtNoWarningContext, *timeStr, mysql.TypeTimestamp, types.MaxFsp)
+	if err != nil {
+		return nil, err
+	}
+	return &parsedTime, nil
 }

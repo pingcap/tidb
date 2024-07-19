@@ -179,9 +179,10 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	vars := sctx.GetSessionVars()
 	writeBufs := vars.GetWriteStmtBufs()
 	skipCheck := vars.StmtCtx.BatchCheck
-	sc := sctx.GetSessionVars().StmtCtx
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
-		key, distinct, err := c.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), value, h, writeBufs.IndexKeyBuf)
+		key, distinct, err := c.GenIndexKey(ec, loc, value, h, writeBufs.IndexKeyBuf)
 		if err != nil {
 			return nil, err
 		}
@@ -238,9 +239,9 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		c.initNeedRestoreData.Do(func() {
 			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 		})
-		idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx.TimeZone(), c.tblInfo, c.idxInfo,
+		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
 			c.needRestoredData, distinct, opt.Untouched, value, h, c.phyTblID, handleRestoreData, nil)
-		err = sctx.GetSessionVars().StmtCtx.HandleError(err)
+		err = ec.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
@@ -393,9 +394,10 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
 	indexedValues := c.getIndexedValue(indexedValue)
-	sc := ctx.GetSessionVars().StmtCtx
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
-		key, distinct, err := c.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), value, h, nil)
+		key, distinct, err := c.GenIndexKey(ec, loc, value, h, nil)
 		if err != nil {
 			return err
 		}
