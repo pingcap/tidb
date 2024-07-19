@@ -335,7 +335,8 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		return errors.Trace(err)
 	}
 	if pid != reorgInfo.PhysicalTableID {
-		// Partition may not match, does not resume checkpoint.
+		// Current physical ID does not match checkpoint physical ID.
+		// Don't overwrite reorgInfo.StartKey.
 		return nil
 	}
 	if len(start) > 0 {
