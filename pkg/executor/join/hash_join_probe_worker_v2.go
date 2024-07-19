@@ -155,7 +155,7 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 
 	err := w.JoinProbe.SpillRemainingProbeChunks()
 	if err != nil {
-		w.HashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: err}
+		handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, err)
 		return
 	}
 

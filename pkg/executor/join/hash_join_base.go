@@ -276,6 +276,14 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 // to e.buildSideResult.
 func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer func() {
+		// We must put the close of chkCh after the place of spilling remaining rows or there will be data race
+		defer close(chkCh)
+
+		if r := recover(); r != nil {
+			errCh <- util.GetRecoverError(r)
+			return
+		}
+
 		if fetcherAndWorkerSyncer != nil {
 			// Try to spill remaining rows if spill is triggered
 			err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
@@ -283,9 +291,6 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 				errCh <- errors.Trace(err)
 			}
 		}
-
-		// We must put the close of chkCh after the place of spilling remaining rows or there will be data race
-		close(chkCh)
 	}()
 
 	var err error

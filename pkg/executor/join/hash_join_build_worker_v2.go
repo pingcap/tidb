@@ -15,11 +15,13 @@
 package join
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -66,6 +68,8 @@ func (b *BuildWorkerV2) clearSegments(partID int) {
 
 // buildHashTableForList builds hash table from `list`.
 func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
+	log.Info(fmt.Sprintf("xzxdebug worker %d starts to work", w.WorkerID))
+	defer log.Info(fmt.Sprintf("xzxdebug worker %d exits...", w.WorkerID))
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
@@ -73,7 +77,12 @@ func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 			setMaxValue(&w.HashJoinCtx.stats.maxBuildHashTable, cost)
 		}
 	}()
+
 	for task := range taskCh {
+		if w.HashJoinCtx.finished.Load() {
+			return nil
+		}
+
 		start := time.Now()
 		partIdx, segStartIdx, segEndIdx := task.partitionIdx, task.segStartIdx, task.segEndIdx
 		w.HashJoinCtx.hashTableContext.hashTable.tables[partIdx].build(segStartIdx, segEndIdx)
@@ -111,6 +120,10 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
+		if hashJoinCtx.finished.Load() {
+			return
+		}
+
 		err = w.processOneChunk(typeCtx, chk, fetcherAndWorkerSyncer, &cost)
 		if err != nil {
 			return err
