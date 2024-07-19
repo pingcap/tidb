@@ -388,17 +388,19 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup) {
 	fetcherAndWorkerSyncer.Add(int(e.hashJoinCtxBase.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
-		go func() {
-			defer func() {
-				trace.StartRegion(ctx, "HashJoinWorker").End()
+		workerID := i
+		e.waiterWg.RunWithRecover(
+			func() {
+				defer trace.StartRegion(ctx, "HashJoinWorker").End()
+				e.ProbeWorkers[workerID].runJoinWorker()
+			},
+			func(r any) {
 				if r := recover(); r != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 				}
 				fetcherAndWorkerSyncer.Done()
-			}()
-
-			e.ProbeWorkers[i].runJoinWorker(fetcherAndWorkerSyncer)
-		}()
+			},
+		)
 	}
 }
 
@@ -422,7 +424,6 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 
 	pfAndFWSync := make(chan struct{})
 
-	e.initializeForProbe()
 	e.startProbeWorkers(ctx, fetcherAndWorkerSyncer)
 	e.startFinalWorker(pfAndFWSync)
 
@@ -467,16 +468,17 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 }
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
-	go func() {
-		defer func() {
-			trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
+	e.waiterWg.RunWithRecover(
+		func() {
+			defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
+			e.startProbeFetcher(ctx)
+		},
+		func(r any) {
 			if r := recover(); r != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 			}
-		}()
-
-		e.startProbeFetcher(ctx)
-	}()
+		},
+	)
 }
 
 // finaWorker is responsible for scanning the row table after probe done and wake up the build fetcher
@@ -498,17 +500,19 @@ func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 			wg := &sync.WaitGroup{}
 			wg.Add(int(e.Concurrency))
 			for i := uint(0); i < e.Concurrency; i++ {
-				go func(workerID uint) {
-					defer func() {
+				workerID := i
+				e.waiterWg.RunWithRecover(
+					func() {
+						// Error has been handled in the function
+						_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
+					},
+					func(r any) {
 						if r := recover(); r != nil {
 							e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 						}
 						wg.Done()
-					}()
-
-					// Error has been handled in the function
-					_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
-				}(i)
+					},
+				)
 			}
 			wg.Wait()
 		}
@@ -625,10 +629,10 @@ func (e *HashJoinV2Exec) restore() error {
 }
 
 func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
-	go func() {
+	e.waiterWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
 		e.startBuildFetcher(ctx)
-	}()
+	}, nil)
 }
 
 func (e *HashJoinV2Exec) updateRequiredRows(req *chunk.Chunk) {
@@ -651,6 +655,7 @@ func (e *HashJoinV2Exec) recycleChunk(req *chunk.Chunk, result *hashjoinWorkerRe
 func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.initHashTableContext()
+		e.initializeForProbe()
 		e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
 		e.buildFinished = make(chan error, 1)
 		e.fetchAndBuildHashTable(ctx)
@@ -835,50 +840,54 @@ func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetche
 	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
 		workIndex := i
-		go func() {
-			defer func() {
+		e.waiterWg.RunWithRecover(
+			func() {
+				err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
+				if err != nil {
+					e.joinResultCh <- &hashjoinWorkerResult{err: err}
+				}
+			},
+			func(r any) {
 				if r := recover(); r != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 				}
 				wg.Done()
-			}()
-
-			err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
-			if err != nil {
-				e.joinResultCh <- &hashjoinWorkerResult{err: err}
-			}
-		}()
+			},
+		)
 	}
 }
 
 func (e *HashJoinV2Exec) startBuildTaskDispatcher(syncer chan struct{}) {
-	go func() {
-		defer func() {
+	e.waiterWg.RunWithRecover(
+		func() {
+			e.dispatchBuildTasks(syncer)
+		},
+		func(r any) {
 			if r := recover(); r != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 			}
-		}()
-
-		e.dispatchBuildTasks(syncer)
-	}()
+		},
+	)
 }
 
 func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask, wg *sync.WaitGroup) {
 	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
-		go func(workID uint) {
-			defer func() {
+		workerID := i
+		e.waiterWg.RunWithRecover(
+			func() {
+				err := e.BuildWorkers[workerID].buildHashTable(buildTaskCh)
+				if err != nil {
+					e.joinResultCh <- &hashjoinWorkerResult{err: err}
+				}
+			},
+			func(r any) {
 				if r := recover(); r != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 				}
 				wg.Done()
-			}()
-
-			err := e.BuildWorkers[workID].buildHashTable(buildTaskCh)
-			if err != nil {
-				e.joinResultCh <- &hashjoinWorkerResult{err: err}
-			}
-		}(i)
+			},
+		)
 	}
 }
 

@@ -117,6 +117,10 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 		}
 	}
 
+	if w.HashJoinCtx.finished.Load() {
+		return
+	}
+
 	start := time.Now()
 	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))

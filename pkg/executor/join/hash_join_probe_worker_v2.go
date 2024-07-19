@@ -15,12 +15,10 @@
 package join
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -93,8 +91,7 @@ func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, ha
 	return w.probeAndSendResult(joinResult)
 }
 
-func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult, fetcherAndWorkerSyncer *sync.WaitGroup) (bool, int64, *hashjoinWorkerResult) {
-	defer fetcherAndWorkerSyncer.Done()
+func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
 	joinResult.err = w.JoinProbe.SetChunkForProbe(probeChunk)
 	if joinResult.err != nil {
 		return false, 0, joinResult
@@ -102,10 +99,7 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 	return w.probeAndSendResult(joinResult)
 }
 
-// TODO check if probe data are restored data and handle them in another way
-func (w *ProbeWorkerV2) runJoinWorkerImpl(fetcherAndWorkerSyncer *sync.WaitGroup) {
-	defer fetcherAndWorkerSyncer.Done()
-
+func (w *ProbeWorkerV2) runJoinWorker() {
 	probeTime := int64(0)
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
@@ -147,7 +141,7 @@ func (w *ProbeWorkerV2) runJoinWorkerImpl(fetcherAndWorkerSyncer *sync.WaitGroup
 
 		start := time.Now()
 		waitTime := int64(0)
-		ok, waitTime, joinResult = w.processOneProbeChunk(probeSideResult, joinResult, fetcherAndWorkerSyncer)
+		ok, waitTime, joinResult = w.processOneProbeChunk(probeSideResult, joinResult)
 		probeTime += int64(time.Since(start)) - waitTime
 		if !ok {
 			break
@@ -174,18 +168,6 @@ func (w *ProbeWorkerV2) runJoinWorkerImpl(fetcherAndWorkerSyncer *sync.WaitGroup
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
-	}
-}
-
-func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
-	// Process data in memory
-	w.runJoinWorkerImpl(fetcherAndWorkerSyncer)
-	
-	for {
-		// TODO wait for the wake-up from fetcher
-		// TODO check finish flag
-		
-		
 
 	}
 }
