@@ -583,11 +583,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
-	// Special handle for "select for update statement" in pessimistic transaction.
 	if a.isSelectForUpdate {
 		if sctx.GetSessionVars().UseLowResolutionTSO() {
 			return nil, errors.New("can not execute select for update statement when 'tidb_low_resolution_tso' is set")
 		}
+		// Special handle for "select for update statement" in pessimistic transaction.
 		if isPessimistic {
 			return a.handlePessimisticSelectForUpdate(ctx, e)
 		}
