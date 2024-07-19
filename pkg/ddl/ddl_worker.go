@@ -411,7 +411,7 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 		return nil
 	}
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
 	se, err := d.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
