@@ -3466,8 +3466,8 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 		row := types.MakeDatums(
 			watch.ID,
 			watch.ResourceGroupName,
-			watch.StartTime.Local().Format(time.DateTime),
-			watch.EndTime.Local().Format(time.DateTime),
+			watch.StartTime.Format(time.DateTime),
+			watch.EndTime.Format(time.DateTime),
 			rmpb.RunawayWatchType_name[int32(watch.Watch)],
 			watch.WatchText,
 			watch.Source,
