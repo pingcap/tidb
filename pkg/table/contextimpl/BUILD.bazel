@@ -24,6 +24,7 @@ go_test(
     deps = [
         ":contextimpl",
         "//pkg/sessionctx/binloginfo",
+        "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/util/mock",
         "@com_github_pingcap_tipb//go-binlog",
