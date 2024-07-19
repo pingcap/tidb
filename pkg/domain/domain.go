@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -328,6 +330,18 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 3. There are less 100 diffs.
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
+	// begin CPU profile
+	profileFile := fmt.Sprintf("/tmp/cpu_profile_%d", time.Now().Unix())
+	f, err := os.Create(profileFile)
+	if err != nil {
+		logutil.BgLogger().Error("create cpu profile failed", zap.Error(err))
+	}
+	defer f.Close()
+	err = pprof.StartCPUProfile(f)
+	if err != nil {
+		logutil.BgLogger().Error("start cpu profile failed", zap.Error(err))
+	}
+	defer pprof.StopCPUProfile()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
 		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
 		if err == nil {
@@ -376,6 +390,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Int64("currentSchemaVersion", currentSchemaVersion),
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("elapsed time", time.Since(startTime)))
+
+	pprof.StopCPUProfile()
+	f.Close()
 
 	if isV1V2Switch && schemaTs > 0 {
 		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
