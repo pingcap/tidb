@@ -386,44 +386,83 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 	}
 }
 
-func (e *HashJoinV2Exec) startJoinWorker(ctx context.Context, workerID uint, fetcherAndWorkerSyncer *sync.WaitGroup) {
-	e.workerWg.RunWithRecover(func() {
-		defer trace.StartRegion(ctx, "HashJoinWorker").End()
-		e.ProbeWorkers[workerID].runJoinWorker(fetcherAndWorkerSyncer)
-	}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
+func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup) {
+	fetcherAndWorkerSyncer.Add(int(e.hashJoinCtxBase.Concurrency))
+	for i := uint(0); i < e.Concurrency; i++ {
+		e.workerWg.RunWithRecover(func() {
+			defer trace.StartRegion(ctx, "HashJoinWorker").End()
+			e.ProbeWorkers[i].runJoinWorker(fetcherAndWorkerSyncer)
+		},
+			func(r any) {
+				if r != nil {
+					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+				}
+				fetcherAndWorkerSyncer.Done()
+			},
+		)
+	}
 }
 
-func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
+func (e *HashJoinV2Exec) startFinalWorker(sync chan struct{}) {
+	e.waiterWg.RunWithRecover(
+		func() {
+			e.finalWorker(sync)
+		},
+		func(r any) {
+			if r != nil {
+				e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+			}
+		},
+	)
+}
+
+func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 	// Fetcher needs to wake up finalWorker after all probe workers finish tasks.
 	// This syncer could let fetcher knows if probe workers have finished their tasks.
 	fetcherAndWorkerSyncer := &sync.WaitGroup{}
 
+	pfAndFWSync := make(chan struct{})
+
 	e.initializeForProbe()
-	fetchProbeSideChunksFunc := func() {
+
+	e.startProbeWorkers(ctx, fetcherAndWorkerSyncer)
+	e.startFinalWorker()
+
+	defer close(pfAndFWSync)
+
+	e.ProbeSideTupleFetcher.fetchProbeSideChunksImpl(
+		ctx,
+		e.MaxChunkSize(),
+		func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
+		e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
+		e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
+		e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
+		&e.ProbeSideTupleFetcher.hashJoinCtxBase)
+
+	e.ProbeSideTupleFetcher.closeProbeResultChs()
+	fetcherAndWorkerSyncer.Wait()
+
+	// Wake up final worker
+	pfAndFWSync <- struct{}{}
+
+	for {
+		// We use buildFinished as the syncer between build task dispatcher and probe fetcher
+		<-e.hashJoinCtxBase.buildFinished
+		if e.hashJoinCtxBase.finished.Load() {
+			return
+		}
+
+		// TODO mock no spill
+		return
+		// TODO check spill
+	}
+}
+
+func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
+	e.workerWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.ProbeSideTupleFetcher.fetchProbeSideChunks(
-			ctx,
-			fetcherAndWorkerSyncer,
-			e.MaxChunkSize(),
-			func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
-			e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
-			e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
-			e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
-			&e.ProbeSideTupleFetcher.hashJoinCtxBase)
-	}
-
-	// fetchAndWorkerSync := make(chan struct{}, e.Concurrency)
-
-	// Start probe fetcher
-	e.workerWg.RunWithRecover(fetchProbeSideChunksFunc, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
-
-	// Start probe worker
-	for i := uint(0); i < e.Concurrency; i++ {
-		e.startJoinWorker(ctx, i, fetcherAndWorkerSyncer)
-	}
-
-	// Start final worker
-	e.waiterWg.RunWithRecover(e.finalWorker, nil)
+		e.startProbeFetcher(ctx)
+	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanicV2)
 }
 
 func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
@@ -433,24 +472,29 @@ func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 }
 
 // finaWorker is responsible for scanning the row table after probe done and wake up the build fetcher
-func (e *HashJoinV2Exec) finalWorker() {
+func (e *HashJoinV2Exec) finalWorker(sync chan struct{}) {
 	defer close(e.joinResultCh)
 	e.workerWg.Wait() // TODO maybe we can remove it
 
 	// TODO wait for the wake-up from probe fetcher
 	// TODO check finish flag
+	for {
+		<-sync
+		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
+			for i := uint(0); i < e.Concurrency; i++ {
+				var workerID = i
+				e.workerWg.RunWithRecover(func() {
+					// Error has been handled in the function
+					_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
+				}, e.handleJoinWorkerPanic)
+			}
+			e.workerWg.Wait()
+		}
+
+		// TODO wake up build fetcher
+	}
 
 	// scan row table
-	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
-		for i := uint(0); i < e.Concurrency; i++ {
-			var workerID = i
-			e.workerWg.RunWithRecover(func() {
-				// Error has been handled in the function
-				_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
-			}, e.handleJoinWorkerPanic)
-		}
-		e.workerWg.Wait()
-	}
 
 	// TODO remove them
 	// if e.spillHelper.isSpillTriggered() {
@@ -562,7 +606,7 @@ func (e *HashJoinV2Exec) restore() error {
 func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	e.workerWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
-		e.fetchAndBuildHashTableImpl(ctx)
+		e.startBuildFetcher(ctx)
 	}, nil)
 }
 
@@ -637,11 +681,16 @@ func (e *HashJoinV2Exec) checkBalance(totalSegmentCnt int) bool {
 	return isBalanced
 }
 
-func (e *HashJoinV2Exec) dispatchBuildTasks(buildTaskCh chan<- *buildTask, syncer chan struct{}) {
+func (e *HashJoinV2Exec) dispatchBuildTasks(syncer chan struct{}) {
+	buildTaskCh := make(chan *buildTask, e.Concurrency)
+
 	defer func() {
 		close(buildTaskCh)
 		close(e.buildFinished)
 	}()
+
+	wg := &sync.WaitGroup{}
+	e.startBuildWorkers(buildTaskCh, wg)
 
 	for {
 		<-syncer
@@ -683,6 +732,10 @@ func (e *HashJoinV2Exec) dispatchBuildTasks(buildTaskCh chan<- *buildTask, synce
 			}
 		}
 
+		wg.Wait()
+
+		// TODO check spill when build is done
+
 		// TODO set configs for probe fetcher and workers
 		// we do not pass error by buildFinished in hash join v2
 		e.buildFinished <- nil
@@ -690,27 +743,73 @@ func (e *HashJoinV2Exec) dispatchBuildTasks(buildTaskCh chan<- *buildTask, synce
 
 }
 
-func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
+func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
-			// TODO we need to handle it
+			// TODO we need to re-handle it
 			e.stats.fetchAndBuildHashTable = time.Since(start)
 		}()
 	}
 
 	// Build fetcher wakes up prebuild workers with this channel
-	buildFetcherAndPrebuildWorkerSyncChan := make(chan struct{}, e.Concurrency)
+	// buildFetcherAndPrebuildWorkerSyncChan := make(chan struct{}, e.Concurrency)
 
 	// Build fetcher wakes up build workers with this channel
 	buildFetcherAndBuildWorkerSyncChan := make(chan struct{})
 
-	srcChkCh, fetcherAndWorkerSyncer := e.fetchBuildSideRows(ctx, buildFetcherAndPrebuildWorkerSyncChan, buildFetcherAndBuildWorkerSyncChan, e.finalSync)
-	e.startPrebuildWorkers(srcChkCh, fetcherAndWorkerSyncer, buildFetcherAndPrebuildWorkerSyncChan)
+	defer func() {
+		close(buildFetcherAndBuildWorkerSyncChan)
+	}()
 
-	buildTaskCh := e.startBuildTaskDispatcher(buildFetcherAndBuildWorkerSyncChan)
-	// TODO check spill when building hash table
-	e.startBuildWorkers(buildTaskCh)
+	srcChkCh := make(chan *chunk.Chunk, 1)
+
+	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
+	fetcherAndWorkerSyncer := &sync.WaitGroup{}
+
+	preBuildWorkerWg := &sync.WaitGroup{}
+
+	// srcChkCh, fetcherAndWorkerSyncer := e.fetchBuildSideRows(ctx, buildFetcherAndPrebuildWorkerSyncChan, buildFetcherAndBuildWorkerSyncChan, e.finalSync) // TODO remove it
+	e.startPrebuildWorkers(srcChkCh, fetcherAndWorkerSyncer, preBuildWorkerWg)
+
+	e.startBuildTaskDispatcher(buildFetcherAndBuildWorkerSyncChan)
+
+	// Actually we can directly return error by the function `fetchBuildSideRowsImpl`.
+	// However, `fetchBuildSideRowsImpl` is also used by hash join v1.
+	errCh := make(chan error)
+	e.BuildWorkers[0].fetchBuildSideRowsImpl(ctx, &e.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, e.hashJoinCtxBase.buildFetcherFinishCh)
+	close(errCh)
+	if err := <-errCh; err != nil {
+		e.hashJoinCtxBase.finished.Store(true)
+		e.hashJoinCtxBase.joinResultCh <- &hashjoinWorkerResult{err: err}
+		return
+	}
+
+	if e.hashJoinCtxBase.finished.Load() {
+		return
+	}
+
+	// Wait for the finish of prebuild workers
+	preBuildWorkerWg.Wait()
+
+	// TODO do we need to set some configs for dispatcher when spill is triggered before waking it up?
+	// Wake up build task dispatcher
+	buildFetcherAndBuildWorkerSyncChan <- struct{}{}
+
+	for {
+		select {
+		case <-e.hashJoinCtxBase.buildFetcherFinishCh: // executor may be closed in advance
+		case <-e.finalSync: // Wait for the wake-up from final worker
+		}
+
+		if e.hashJoinCtxBase.finished.Load() {
+			return
+		}
+
+		// TODO mock no spill
+		return
+		// TODO check spill, set finished to true if there is no more data to process
+	}
 }
 
 func (e *HashJoinV2Exec) fetchBuildSideRows(
@@ -738,12 +837,13 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(
 }
 
 // Workers in this function receive chunks from fetcher and pre-build hash table
-func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, syncer chan struct{}) {
+func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup) {
+	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
-				err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer, syncer)
+				err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
 				if err != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: err}
 				}
@@ -752,26 +852,25 @@ func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetche
 				if r != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 				}
+				wg.Done()
 			},
 		)
 	}
 }
 
-func (e *HashJoinV2Exec) startBuildTaskDispatcher(syncer chan struct{}) chan *buildTask {
-	buildTaskCh := make(chan *buildTask, e.Concurrency)
+func (e *HashJoinV2Exec) startBuildTaskDispatcher(syncer chan struct{}) {
 	e.workerWg.RunWithRecover(
-		func() { e.dispatchBuildTasks(buildTaskCh, syncer) },
+		func() { e.dispatchBuildTasks(syncer) },
 		func(r any) {
 			if r != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 			}
-			close(buildTaskCh)
 		},
 	)
-	return buildTaskCh
 }
 
-func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask) {
+func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask, wg *sync.WaitGroup) {
+	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
 		workID := i
 		e.workerWg.RunWithRecover(
@@ -785,6 +884,7 @@ func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask) {
 				if r != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 				}
+				wg.Done()
 			},
 		)
 	}

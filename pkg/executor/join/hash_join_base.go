@@ -94,10 +94,21 @@ func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uin
 	fetcher.joinResultChannel = joinResultChannel
 }
 
-func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
+func (fetcher *probeSideTupleFetcherBase) closeProbeResultChs() {
 	for i := range fetcher.probeResultChs {
 		close(fetcher.probeResultChs[i])
 	}
+}
+
+func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
+	fetcher.closeProbeResultChs()
+
+	if r != nil {
+		fetcher.joinResultChannel <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+	}
+}
+
+func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanicV2(r any) {
 	if r != nil {
 		fetcher.joinResultChannel <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
@@ -164,23 +175,8 @@ func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeF
 	return probeSideResource
 }
 
-func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
-	// For HashJoinV1
-	if fetcherAndWorkerSyncer == nil {
-		fetcher.fetchProbeSideChunksImpl(ctx, maxChunkSize, isBuildEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize, hashJoinCtx)
-		return
-	}
-
-	// For HashJoinV2
-	for {
-		// TODO wait for the wake-up from build fetcher
-		// TODO check finish flag, wake up final worker if it's true
-		fetcherAndWorkerSyncer.Add(int(hashJoinCtx.Concurrency))
-		fetcher.fetchProbeSideChunksImpl(ctx, maxChunkSize, isBuildEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize, hashJoinCtx)
-		fetcherAndWorkerSyncer.Wait()
-
-		// TODO wait for the wake-up from final worker
-	}
+func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
+	fetcher.fetchProbeSideChunksImpl(ctx, maxChunkSize, isBuildEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize, hashJoinCtx)
 }
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine

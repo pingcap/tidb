@@ -33,12 +33,6 @@ type ProbeWorkerV2 struct {
 	JoinProbe ProbeV2
 }
 
-func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
-	if r != nil {
-		w.HashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
-	}
-}
-
 func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 	w.JoinProbe.InitForScanRowTable(inSpillMode)
 	ok, joinResult := w.getNewJoinResult()
@@ -139,7 +133,7 @@ func (w *ProbeWorkerV2) runJoinWorkerImpl(fetcherAndWorkerSyncer *sync.WaitGroup
 	}
 	for ok := true; ok; {
 		if w.HashJoinCtx.finished.Load() {
-			break
+			return
 		}
 		select {
 		case <-w.HashJoinCtx.closeCh:
@@ -184,10 +178,15 @@ func (w *ProbeWorkerV2) runJoinWorkerImpl(fetcherAndWorkerSyncer *sync.WaitGroup
 }
 
 func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
+	// Process data in memory
+	w.runJoinWorkerImpl(fetcherAndWorkerSyncer)
+	
 	for {
 		// TODO wait for the wake-up from fetcher
 		// TODO check finish flag
-		w.runJoinWorkerImpl(fetcherAndWorkerSyncer)
+		
+		
+
 	}
 }
 

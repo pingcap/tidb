@@ -95,7 +95,7 @@ func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk,
 	return err
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, syncer chan struct{}) (err error) {
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup) (err error) {
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
