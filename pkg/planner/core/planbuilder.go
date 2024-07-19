@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -2196,7 +2197,7 @@ func getModifiedIndexesInfoForAnalyze(
 		if originIdx.State != model.StatePublic {
 			continue
 		}
-		if isSpecialGlobalIndex(originIdx, tblInfo) {
+		if statsutil.IsSpecialGlobalIndex(originIdx, tblInfo) {
 			specialGlobalIdxsInfo = append(specialGlobalIdxsInfo, originIdx)
 			continue
 		}
@@ -2254,22 +2255,6 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast
 	return
 }
 
-// Check a index is a special global index or not.
-// A special global index is one that is a global index and has virtual generated columns or prefix columns.
-func isSpecialGlobalIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
-	if !idx.Global {
-		return false
-	}
-	for _, col := range idx.Columns {
-		colInfo := tblInfo.Columns[col.Offset]
-		isPrefixCol := col.Length != types.UnspecifiedLength
-		if colInfo.IsVirtualGenerated() || isPrefixCol {
-			return true
-		}
-	}
-	return false
-}
-
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
 	analyzePlan *Analyze,
@@ -2293,7 +2278,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if idx == nil || idx.State != model.StatePublic {
 			return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
 		}
-		if isSpecialGlobalIndex(idx, tbl.TableInfo) {
+		if statsutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
 			if !isAnalyzeTable {
 				return errors.NewNoStackErrorf("Analyze special global index %s can't work with analyze partition", idxName.O)
 			}
@@ -2396,7 +2381,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		} else {
 			for _, idxName := range as.IndexNames {
 				idx := tbl.TableInfo.FindIndexByName(idxName.L)
-				if idx == nil || !isSpecialGlobalIndex(idx, tbl.TableInfo) {
+				if idx == nil || !statsutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
 					continue
 				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, nil, nil, version)...)

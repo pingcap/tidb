@@ -22,9 +22,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -298,4 +300,20 @@ type JSONPredicateColumn struct {
 	LastUsedAt     *string `json:"last_used_at"`
 	LastAnalyzedAt *string `json:"last_analyzed_at"`
 	ID             int64   `json:"id"`
+}
+
+// IsSpecialGlobalIndex checks a index is a special global index or not.
+// A special global index is one that is a global index and has virtual generated columns or prefix columns.
+func IsSpecialGlobalIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	if !idx.Global {
+		return false
+	}
+	for _, col := range idx.Columns {
+		colInfo := tblInfo.Columns[col.Offset]
+		isPrefixCol := col.Length != types.UnspecifiedLength
+		if colInfo.IsVirtualGenerated() || isPrefixCol {
+			return true
+		}
+	}
+	return false
 }

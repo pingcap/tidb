@@ -29,7 +29,6 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -454,9 +453,8 @@ func CheckIndexesNeedAnalyze(
 	return indexes
 }
 
-func CheckSpecialIndex(
+func checkSpecialIndex(
 	tblInfo *model.TableInfo,
-	tblStats *statistics.Table,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 	autoAnalyzeRatio float64,
 ) []string {
@@ -478,19 +476,10 @@ func CheckSpecialIndex(
 		needAnalyzeGlobalIndex = true
 	}
 	for _, idx := range tblInfo.Indices {
-		if !idx.Global {
+		if !statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
 			continue
 		}
-		isSpecial := false
-		for _, col := range idx.Columns {
-			colInfo := tblInfo.Columns[col.Offset]
-			isPrefixCol := col.Length != types.UnspecifiedLength
-			if colInfo.IsVirtualGenerated() || isPrefixCol {
-				isSpecial = true
-				break
-			}
-		}
-		if needAnalyzeGlobalIndex && isSpecial {
+		if needAnalyzeGlobalIndex {
 			specialIndexes = append(specialIndexes, idx.Name.O)
 			continue
 		}
@@ -526,9 +515,8 @@ func createTableAnalysisJobForPartitions(
 		tblStats,
 		partitionStats,
 	)
-	specialIndexes := CheckSpecialIndex(
+	specialIndexes := checkSpecialIndex(
 		tblInfo,
-		tblStats,
 		partitionStats,
 		autoAnalyzeRatio,
 	)
@@ -624,7 +612,7 @@ func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 
 		// Find all the partitions that need to analyze this index.
 		names := make([]string, 0, len(partitionStats))
-		if !idx.Global {
+		if !statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
 			for pIDAndName, tblStats := range partitionStats {
 				if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 					names = append(names, pIDAndName.Name)
