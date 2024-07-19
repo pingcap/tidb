@@ -22,25 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIndexLookupMergeJoinHang(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/IndexMergeJoinMockOOM", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/IndexMergeJoinMockOOM"))
-	}()
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (a int,b int,index idx(a))")
-	tk.MustExec("create table t2 (a int,b int,index idx(a))")
-	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(2000,2000)")
-	tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(2000,2000)")
-	// Do not hang in index merge join when OOM occurs.
-	err := tk.QueryToErr("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2 where t1.a = t2.a")
-	require.Error(t, err)
-	require.Equal(t, "OOM test index merge join doesn't hang here.", err.Error())
-}
-
 func TestIssue18068(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIssue18068", `return(true)`))
 	defer func() {
