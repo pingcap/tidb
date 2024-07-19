@@ -57,8 +57,8 @@ func (b *BuilderV3) InitWithOldInfoSchema(oldSchema InfoSchema) (*BuilderV3, err
 }
 
 // InitWithDBInfos ...
-func (b *BuilderV3) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*BuilderV3, error) {
-	_, err1 := b.builderV1.InitWithDBInfos(dbInfos, policies, resourceGroups, schemaVersion)
+func (b *BuilderV3) InitWithDBInfos(dbInfosFull []*model.DBInfo, dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*BuilderV3, error) {
+	_, err1 := b.builderV1.InitWithDBInfos(dbInfosFull, policies, resourceGroups, schemaVersion)
 	_, err2 := b.builderV2.InitWithDBInfos(dbInfos, policies, resourceGroups, schemaVersion)
 	if !errors.ErrorEqual(err1, err2) {
 		panic("err1 != err2")

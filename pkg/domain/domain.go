@@ -291,6 +291,13 @@ func (do *Domain) FullReload(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	save := variable.SchemaCacheSize.Load()
+	variable.SchemaCacheSize.Store(0)
+	fullSchemas, err := do.fetchAllSchemasWithTables(m)
+	if err != nil {
+		return err
+	}
+	variable.SchemaCacheSize.Store(save)
 
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
@@ -303,7 +310,7 @@ func (do *Domain) FullReload(startTS uint64) error {
 	}
 	// clear data
 	do.infoCache.Data = infoschema.NewData()
-	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(fullSchemas, schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return err
 	}
@@ -420,6 +427,13 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	save := variable.SchemaCacheSize.Load()
+	variable.SchemaCacheSize.Store(0)
+	fullSchemas, err := do.fetchAllSchemasWithTables(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
+	variable.SchemaCacheSize.Store(save)
 
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
@@ -430,7 +444,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	newISBuilder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(fullSchemas, schemas, policies, resourceGroups, neededSchemaVersion)
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
 	if err != nil {
@@ -547,7 +561,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		}
 		var tables []*model.TableInfo
 		var err error
-		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+		if variable.SchemaCacheSize.Load() > 0 {
 			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndSpecialAttributeInfo(m, di.ID)
 			if err != nil {
 				done <- err

@@ -439,9 +439,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 
 // IsSpecialDB tells whether the database is a special database.
 func IsSpecialDB(dbName string) bool {
-	return dbName == util.InformationSchemaName.L ||
-		dbName == util.PerformanceSchemaName.L ||
-		dbName == util.MetricSchemaName.L
+	return dbName == util.InformationSchemaName.L
 }
 
 // EvictTable is exported for testing only.
