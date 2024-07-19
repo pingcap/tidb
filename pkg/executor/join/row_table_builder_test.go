@@ -186,10 +186,10 @@ func TestLargeColumn(t *testing.T) {
 	}
 
 	hashJoinCtx := &HashJoinCtxV2{
-		PartitionNumber: 1,
-		hashTableMeta:   meta,
+		hashTableMeta: meta,
 	}
 	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
