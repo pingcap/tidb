@@ -695,7 +695,7 @@ func pmt(s storage.ExternalStorage, path string, mt *backuppb.Metadata) {
 
 func pmig(s storage.ExternalStorage, num uint64, mt *backuppb.Migration) string {
 	numS := fmt.Sprintf("%08d", num)
-	if num == baseMigrationID {
+	if num == baseMigrationSN {
 		numS = baseMigrationName
 	}
 	name := fmt.Sprintf("%s_%08X.mgrt", numS, hashMigration(mt))
@@ -2580,7 +2580,7 @@ func TestBasicMigration(t *testing.T) {
 
 	bs := storage.Batch(s)
 	est := MigerationExtension(bs)
-	res := est.merge(mig1, mig2)
+	res := mergeMigrations(mig1, mig2)
 
 	resE := mig(
 		mDel("00001.meta", "bar.log"),
@@ -2602,7 +2602,7 @@ func TestBasicMigration(t *testing.T) {
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, newBaseE, mg.NewBase)
 
-	efs := effectsOf(bs.Effects())
+	efs := effectsOf(bs.ReadOnlyEffects())
 	require.ElementsMatch(t, maps.Keys(efs.Deletions), []string{"foo.log", "bar.log", "00002.log", "00001.meta"})
 	var meta backuppb.Metadata
 	require.NoError(t, meta.Unmarshal(efs.Edits["00002.meta"]))
@@ -2611,7 +2611,7 @@ func TestBasicMigration(t *testing.T) {
 	require.NoError(t, bs.Commit(ctx))
 
 	delRem := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(60, 1024-60))))
-	newNewBase := est.merge(mg.NewBase, delRem)
+	newNewBase := mergeMigrations(mg.NewBase, delRem)
 	mg = est.MigrateTo(ctx, newNewBase)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig())
@@ -2649,7 +2649,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	ctx := context.Background()
 	migs, err := est.Load(ctx)
 	require.NoError(t, err)
-	requireMigrationsEqual(t, est.MergeTo(migs, 2), mig(
+	requireMigrationsEqual(t, migs.MergeTo(2), mig(
 		mDel(mN(1), lN(2)),
 		mLogDel(mN(1),
 			spans(lN(4), 100, sp(42, 58)),
@@ -2662,7 +2662,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig(mLogDel(mN(1), spans(lN(4), 100, sp(42, 58)))))
 
-	effs := effectsOf(bs.Effects())
+	effs := effectsOf(bs.ReadOnlyEffects())
 	require.ElementsMatch(t, maps.Keys(effs.Deletions), []string{lN(2), lN(3), mig1p, mig2p})
 	require.NoError(t, bs.Commit(ctx))
 
@@ -2672,12 +2672,12 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	requireMigrationsEqual(t, migs.Base, mg.NewBase)
 	require.Len(t, migs.Layers, 1)
 	requireMigrationsEqual(t, &migs.Layers[0].Content, mig3)
-	require.EqualValues(t, migs.Layers[0].ID, 3)
+	require.EqualValues(t, migs.Layers[0].SeqNum, 3)
 
 	mg = est.MergeAndMigrateTo(ctx, 3)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig())
-	effs = effectsOf(bs.Effects())
+	effs = effectsOf(bs.ReadOnlyEffects())
 	require.ElementsMatch(t, maps.Keys(effs.Deletions), []string{mN(1), lN(1), lN(4), mig3p})
 }
 
@@ -2714,7 +2714,7 @@ func TestRemoveCompaction(t *testing.T) {
 	bs := storage.Batch(s)
 	est := MigerationExtension(bs)
 
-	merged := est.merge(mig1, mig2)
+	merged := mergeMigrations(mig1, mig2)
 	requireMigrationsEqual(t, merged, mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),
@@ -2730,7 +2730,7 @@ func TestRemoveCompaction(t *testing.T) {
 		mTruncatedTo(30),
 	))
 
-	ops := effectsOf(bs.Effects())
+	ops := effectsOf(bs.ReadOnlyEffects())
 	require.ElementsMatch(t, maps.Keys(ops.Deletions), []string{ap[2], cp[2], ap[3]})
 }
 

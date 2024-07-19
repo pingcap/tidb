@@ -31,7 +31,7 @@ import (
 const (
 	notDeletedBecameFatalThreshold = 128
 
-	baseMigrationID   = 0
+	baseMigrationSN   = 0
 	baseMigrationName = "BASE"
 	baseTmp           = "BASE_TMP"
 	migrationPrefix   = "v1/migrations"
@@ -235,7 +235,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 // removeDataFilesAndUpdateMetadata removes some datafilegroups of the metadata, if their max-ts is less than `from`
 func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	st storage.ExternalStorage,
 	from uint64,
 	meta *pb.Metadata,
 	metaPath string,
@@ -257,14 +257,13 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(
 	num = int64(len(removed))
 
 	if ms.DryRun {
-		log.Info("dry run, skip deletion ...")
-		return num, notDeleted, nil
+		st = storage.Batch(st)
 	}
 
 	// remove data file groups
 	for _, f := range removed {
 		log.Info("Deleting file", zap.String("path", f.Path))
-		if err := storage.DeleteFile(ctx, f.Path); err != nil {
+		if err := st.DeleteFile(ctx, f.Path); err != nil {
 			log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
 			notDeleted = append(notDeleted, f.Path)
 			if len(notDeleted) > notDeletedBecameFatalThreshold {
@@ -288,9 +287,18 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(
 			return num, notDeleted, nil
 		}
 
-		if err := ms.doWriteBackForFile(ctx, storage, metaPath, meta); err != nil {
+		if err := ms.doWriteBackForFile(ctx, st, metaPath, meta); err != nil {
 			// NOTE: Maybe we'd better roll back all writebacks? (What will happen if roll back fails too?)
 			return num, notDeleted, errors.Annotatef(err, "failed to write back file %s", metaPath)
+		}
+	}
+
+	if bst, ok := st.(*storage.Batched); ok {
+		effs, err := storage.SaveJSONEffectsToTmp(bst.ReadOnlyEffects())
+		if err != nil {
+			log.Warn("failed to save effects", logutil.ShortError(err))
+		} else {
+			log.Info("effects are saved, you may check them then.", zap.String("path", effs))
 		}
 	}
 
@@ -462,11 +470,34 @@ func addCompactionToTable(m *pb.LogFileCompaction, table *glue.Table, idx int) {
 	table.Add(withIdx("file"), fmt.Sprintf("[%q, %q]", m.Artifactes, m.GeneratedFiles))
 }
 
+// MigrationExt is an extension to the `ExternalStorage` type.
+// This added some support methods for the "migration" system of log backup.
+//
+// Migrations are idempontent batch modifications (adding a compaction, delete a file, etc..) to the backup files.
+// You may check the protocol buffer message `Migration` for more details.
+// Idempontence is important for migrations, as they may be executed multi times due to retry or racing.
+//
+// The encoded migrations will be put in a folder in the external storage,
+// they are ordered by a series number.
+//
+// Not all migrations can be applied to the storage then removed from the migration.
+// Small "additions" will be inlined into the migration, for example, a `Compaction`.
+// Small "deletions" will also be delayed, for example, deleting a span in a file.
+// Such operations will be save to a special migration, the first migration, named "BASE".
+//
+// A simple list of migrations (loaded by `Load()`):
+/*
+base = [ compaction, deleteSpan, ... ],
+layers = {
+  { sn = 1, content = [ compaction, ... ] },
+  { sn = 2, content = [ compaction, deleteFiles, ... ] },
+*/
 type MigrationExt struct {
 	s      storage.ExternalStorage
 	prefix string
 }
 
+// MigrateionExtnsion installs the extension methods to an `ExternalStorage`.
 func MigerationExtension(s storage.ExternalStorage) MigrationExt {
 	return MigrationExt{
 		s:      s,
@@ -475,7 +506,8 @@ func MigerationExtension(s storage.ExternalStorage) MigrationExt {
 }
 
 // Merge merges two migrations.
-func (m MigrationExt) merge(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
+// The merged migration contains all operations from the two arguments.
+func mergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out := new(pb.Migration)
 	out.EditMeta = mergeMetaEdits(m1.EditMeta, m2.EditMeta)
 	out.Compactions = append(out.Compactions, m1.Compactions...)
@@ -486,28 +518,43 @@ func (m MigrationExt) merge(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	return out
 }
 
+// MergeAndMigratedTo is the result of a call to `MergeAndMigrateTo`.
 type MergeAndMigratedTo struct {
 	MigratedTo
-	Base   *pb.Migration
+	// The BASE migration of this "migrate to" operation.
+	Base *pb.Migration
+	// The migrations have been merged to the BASE migration.
 	Source []*OrderedMigration
 }
 
+// MigratedTo is the result of trying to "migrate to" a migration.
+//
+// The term "migrate to" means, try to performance all possible operations
+// from a migration to the storage.
 type MigratedTo struct {
+	// Errors happen during executing the migration.
 	Warnings []error
-	NewBase  *pb.Migration
+	// The new BASE migration after the operation.
+	NewBase *pb.Migration
 }
 
+// Migrations represents living migrations from the storage.
 type Migrations struct {
-	Base   *pb.Migration
+	// The BASE migration.
+	Base *pb.Migration
+	// Appended migrations.
+	// They are sorted by their sequence numbers.
 	Layers []*OrderedMigration
 }
 
+// OrderedMigration is a migration with its path and sequence number.
 type OrderedMigration struct {
-	ID      int          `json:"id"`
+	SeqNum  int          `json:"seq_num"`
 	Path    string       `json:"path"`
 	Content pb.Migration `json:"content"`
 }
 
+// Load loads the current living migrations from the storage.
 func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	opt := &storage.WalkOption{
 		SubDir: m.prefix,
@@ -515,11 +562,14 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	items := storage.UnmarshalDir(ctx, opt, m.s, func(t *OrderedMigration, name string, b []byte) error {
 		t.Path = name
 		var err error
-		t.ID, err = migIdOf(path.Base(name))
+		t.SeqNum, err = migIdOf(path.Base(name))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.ID == baseMigrationID {
+		if t.SeqNum == baseMigrationSN {
+			// NOTE: the legacy truncating isn't implemented by appending a migration.
+			// We load their checkpoint here to be compatible with them.
+			// Then we can know a truncation happens so we are safe to remove stale compactions.
 			truncatedTs, err := GetTSFromFile(ctx, m.s, TruncateSafePointFileName)
 			if err != nil {
 				return errors.Annotate(err, "failed to get the truncate safepoint for base migration")
@@ -533,16 +583,18 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 		return Migrations{}, collected.Err
 	}
 	sort.Slice(collected.Item, func(i, j int) bool {
-		return collected.Item[i].ID < collected.Item[j].ID
+		return collected.Item[i].SeqNum < collected.Item[j].SeqNum
 	})
 
 	var result Migrations
-	if collected.Item[0].ID == baseMigrationID {
+	if collected.Item[0].SeqNum == baseMigrationSN {
 		result = Migrations{
 			Base:   &collected.Item[0].Content,
 			Layers: collected.Item[1:],
 		}
 	} else {
+		// The BASE migration isn't persisted.
+		// This happens when `migrate-to` wasn't run ever.
 		result = Migrations{
 			Base:   new(pb.Migration),
 			Layers: collected.Item,
@@ -551,27 +603,32 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	return result, nil
 }
 
+// EstimateEffectFor estimiates the possible modifications (or, effects) to the storage after
+// migrate to the specified migration.
 func (m MigrationExt) EstimateEffectFor(ctx context.Context, mig *pb.Migration) (MigratedTo, []storage.Effect) {
-	drySelf := MigrationExt{
+	batchSelf := MigrationExt{
 		s:      storage.Batch(m.s),
 		prefix: m.prefix,
 	}
-	res := drySelf.MigrateTo(ctx, mig)
-	return res, drySelf.s.(*storage.Batched).Effects()
+	res := batchSelf.MigrateTo(ctx, mig)
+	return res, batchSelf.s.(*storage.Batched).ReadOnlyEffects()
 }
 
-func (m MigrationExt) MergeTo(migs Migrations, version int) *pb.Migration {
+// MergeTo merges migrations from the BASE in the live migrations until the specified sequence number.
+func (migs Migrations) MergeTo(seq int) *pb.Migration {
 	newBase := migs.Base
 	for _, mig := range migs.Layers {
-		if mig.ID > version {
+		if mig.SeqNum > seq {
 			return newBase
 		}
-		newBase = m.merge(newBase, &mig.Content)
+		newBase = mergeMigrations(newBase, &mig.Content)
 	}
 	return newBase
 }
 
-func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, version int) (result MergeAndMigratedTo) {
+// MergeAndMigrateTo will merge the migrations from BASE until the specified SN, then migrate to it.
+// Finally it writes the new BASE and remove stale migrations from the storage.
+func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, seq int) (result MergeAndMigratedTo) {
 	migs, err := m.Load(ctx)
 	if err != nil {
 		result.MigratedTo = MigratedTo{Warnings: []error{errors.Annotate(err, "failed to load migrations, nothing will happen")}}
@@ -579,7 +636,7 @@ func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, version int) (resul
 	}
 	result.Base = migs.Base
 	for _, mig := range migs.Layers {
-		if mig.ID > version {
+		if mig.SeqNum > seq {
 			break
 		}
 		result.Source = append(result.Source, mig)
@@ -587,7 +644,7 @@ func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, version int) (resul
 
 	newBase := result.Base
 	for _, mig := range result.Source {
-		newBase = m.merge(newBase, &mig.Content)
+		newBase = mergeMigrations(newBase, &mig.Content)
 	}
 
 	migTo := m.MigrateTo(ctx, newBase)
@@ -607,6 +664,9 @@ func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, version int) (resul
 	return
 }
 
+// MigrateTo migrates to a migration.
+// If encountered some error during executing some operation, the operation will be put
+// to the new BASE, which can be retryed then.
 func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration) MigratedTo {
 	result := MigratedTo{
 		NewBase: new(pb.Migration),
@@ -630,6 +690,7 @@ func (m MigrationExt) writeBase(ctx context.Context, mig *pb.Migration) error {
 	return m.s.Rename(ctx, path.Join(m.prefix, baseTmp), path.Join(m.prefix, baseMigrationName))
 }
 
+// doMetaEdits applies the modification to the meta files in the storage.
 func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
 	for _, medit := range mig.EditMeta {
 		if isEmptyEdition(medit) {
@@ -856,7 +917,7 @@ func migIdOf(s string) (int, error) {
 		migrationPrefixLen = 8
 	)
 	if s == baseMigrationName {
-		return baseMigrationID, nil
+		return baseMigrationSN, nil
 	}
 	if len(s) < 8 {
 		return 0, errors.Annotatef(berrors.ErrUnknown,

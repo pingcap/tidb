@@ -2,7 +2,6 @@ package operator
 
 import (
 	"context"
-	"os"
 
 	"github.com/fatih/color"
 	"github.com/pingcap/errors"
@@ -16,7 +15,7 @@ func (cfg *MigrateToConfig) getTargetVersion(migs stream.Migrations) (int, bool)
 		if len(migs.Layers) == 0 {
 			return 0, false
 		}
-		return migs.Layers[0].ID, true
+		return migs.Layers[0].SeqNum, true
 	} else if cfg.Base {
 		return 0, true
 	} else {
@@ -40,7 +39,7 @@ func (cx migrateToCtx) printErr(errs []error, msg string) {
 }
 
 func (cx migrateToCtx) estlimateByLog(migs stream.Migrations, targetVersion int) error {
-	targetMig := cx.est.MergeTo(migs, targetVersion)
+	targetMig := migs.MergeTo(targetVersion)
 	tbl := cx.console.CreateTable()
 	stream.AddMigrationToTable(targetMig, tbl)
 	cx.console.Println("The migration going to be executed will be like: ")
@@ -56,24 +55,20 @@ func (cx migrateToCtx) estlimateByLog(migs stream.Migrations, targetVersion int)
 func (cx migrateToCtx) dryRun(ctx context.Context, migs stream.Migrations, targetVersion int) error {
 	est := cx.est
 	console := cx.console
-	targetMig := est.MergeTo(migs, targetVersion)
+	targetMig := migs.MergeTo(targetVersion)
 	estBase, effects := est.EstimateEffectFor(ctx, targetMig)
 	tbl := console.CreateTable()
 	stream.AddMigrationToTable(estBase.NewBase, tbl)
 	console.Println("The new BASE migration will be like: ")
 	tbl.Print()
-	file, err := os.CreateTemp(os.TempDir(), "tidb_br_migrate_to_*.json")
+	file, err := storage.SaveJSONEffectsToTmp(effects)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := storage.JSONEffects(effects, file); err != nil {
 		return errors.Trace(err)
 	}
 	console.Printf("%s effects will happen in the external storage, you may check them in %s\n",
 		color.HiRedString("%d", len(effects)),
-		color.New(color.Bold).Sprint(file.Name()))
+		color.New(color.Bold).Sprint(file))
 	cx.printErr(estBase.Warnings, "The following errors happened during estimating: ")
-
 	return nil
 }
 
@@ -110,6 +105,10 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 	}
 
 	if cfg.DryRun {
+		// Note: this shouldn't be committed even user requires,
+		// as once we encounter error during committing,
+		// we won't record the failure to the new BASE migration.
+		// Then those files failed to be deleted will leak.
 		return cx.dryRun(ctx, migs, targetVersion)
 	}
 	if !cfg.Yes {

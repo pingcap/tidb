@@ -41,7 +41,7 @@ func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
 		stream.AddMigrationToTable(migs.Base, tbl)
 		tbl.Print()
 		for _, t := range migs.Layers {
-			console.Printf("> %08d <\n", t.ID)
+			console.Printf("> %08d <\n", t.SeqNum)
 			tbl := console.CreateTable()
 			stream.AddMigrationToTable(&t.Content, tbl)
 			tbl.Print()

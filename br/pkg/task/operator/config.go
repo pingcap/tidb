@@ -122,20 +122,20 @@ type MigrateToConfig struct {
 }
 
 const (
-	flagStorage   = "storage"
-	flagRecent    = "recent"
-	flagMigrateTo = "migrate-to"
-	flagBase      = "base"
-	flagYes       = "yes"
-	flagDryRun    = "dry-run"
+	flagStorage = "storage"
+	flagRecent  = "recent"
+	flagTo      = "to"
+	flagBase    = "base"
+	flagYes     = "yes"
+	flagDryRun  = "dry-run"
 )
 
 func DefineFlagsForMigrateToConfig(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "the external storage input.")
-	flags.Bool(flagRecent, true, "migrate to the most recent migration.")
-	flags.Int(flagMigrateTo, 0, "migrate to the specific migration.")
-	flags.Bool(flagBase, false, "don't merge any migrations, just retry run pending operations in BASE")
+	flags.Bool(flagRecent, true, "migrate to the most recent migration and BASE.")
+	flags.Int(flagTo, 0, "migrate all migrations from the BASE to the specified sequence number.")
+	flags.Bool(flagBase, false, "don't merge any migrations, just retry run pending operations in BASE.")
 	flags.BoolP(flagYes, "y", false, "skip all effect estimating and confirming. execute directly.")
 	flags.Bool(flagDryRun, false, "do not actually perform the migration, just print the effect.")
 }
@@ -154,7 +154,7 @@ func (cfg *MigrateToConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return err
 	}
-	cfg.MigrateTo, err = flags.GetInt(flagMigrateTo)
+	cfg.MigrateTo, err = flags.GetInt(flagTo)
 	if err != nil {
 		return err
 	}
@@ -177,12 +177,12 @@ func (cfg *MigrateToConfig) Verify() error {
 	if cfg.Recent && cfg.MigrateTo != 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"the --%s and --%s flag cannot be used at the same time",
-			flagRecent, flagMigrateTo)
+			flagRecent, flagTo)
 	}
 	if cfg.Base && (cfg.Recent || cfg.MigrateTo != 0) {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"the --%s and ( --%s or --%s ) flag cannot be used at the same time",
-			flagBase, flagMigrateTo, flagRecent)
+			flagBase, flagTo, flagRecent)
 
 	}
 	return nil

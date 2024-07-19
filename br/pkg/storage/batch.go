@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -12,24 +14,31 @@ import (
 	"go.uber.org/multierr"
 )
 
+// Effect is an side effect that happens in the batch storage.
 type Effect any
 
+// EffPut is the side effect of a call to `WriteFile`.
 type EffPut struct {
 	File    string `json:"file"`
 	Content []byte `json:"content"`
 }
 
+// EffDeleteFiles is the side effect of a call to `DeleteFiles`.
 type EffDeleteFiles struct {
 	Files []string `json:"files"`
 }
 
+// EffDeleteFile is the side effect of a call to `DeleteFile`.
 type EffDeleteFile string
 
+// EffRename is the side effect of a call to `Rename`.
 type EffRename struct {
 	From string `json:"from"`
 	To   string `json:"to"`
 }
 
+// JSONEffects converts a slices of effects into json.
+// The json will be a tagged union: `{"type": $go_type_name, "effect": $effect}`
 func JSONEffects(es []Effect, output io.Writer) error {
 	type Typed struct {
 		Type string `json:"type"`
@@ -47,6 +56,26 @@ func JSONEffects(es []Effect, output io.Writer) error {
 	return json.NewEncoder(output).Encode(out)
 }
 
+func SaveJSONEffectsToTmp(es []Effect) (string, error) {
+	// Save the json to a subdir so user can redirect the output path by symlinking...
+	tmp, err := os.CreateTemp(path.Join(os.TempDir(), "tidb_br"), "br-effects-*.json")
+	if err != nil {
+		return "", err
+	}
+	if err := JSONEffects(es, tmp); err != nil {
+		return "", err
+	}
+	return tmp.Name(), nil
+}
+
+// Batched is a wrapper of an external storage that suspends all write operations ("effects").
+// If `Close()` without calling `Commit()`, nothing will happen in the underlying external storage.
+// In that case, we have done a "dry run".
+//
+// You may use `ReadOnlyEffects()` to get the history of the effects.
+// But don't modify the returned slice!
+//
+// You may use `Commit()` to execute all suspended effects.
 type Batched struct {
 	ExternalStorage
 	effectsMu sync.Mutex
@@ -55,14 +84,21 @@ type Batched struct {
 	effects []Effect
 }
 
+// Batch wraps an external storage instance to a batched version.
 func Batch(s ExternalStorage) *Batched {
 	return &Batched{ExternalStorage: s}
 }
 
-func (d *Batched) Effects() []Effect {
+// Fetch all effects from the batched storage.
+//
+// **The returned slice should not be modified.**
+func (d *Batched) ReadOnlyEffects() []Effect {
+	d.effectsMu.Lock()
+	defer d.effectsMu.Unlock()
 	return d.effects
 }
 
+// CleanEffects cleans all suspended effects.
 func (d *Batched) CleanEffects() {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
@@ -102,6 +138,7 @@ func (d *Batched) Create(ctx context.Context, path string, option *WriterOption)
 }
 
 // Commit performs all effects recorded so long in the REAL external storage.
+// This will cleanup all of the suspended effects.
 func (d *Batched) Commit(ctx context.Context) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
