@@ -29,6 +29,7 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -453,13 +454,13 @@ func CheckIndexesNeedAnalyze(
 	return indexes
 }
 
-func CheckGlobalIndex(
+func CheckSpecialIndex(
 	tblInfo *model.TableInfo,
 	tblStats *statistics.Table,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 	autoAnalyzeRatio float64,
 ) []string {
-	globalIndexes := make([]string, 0)
+	specialIndexes := make([]string, 0)
 	needAnalyzeGlobalIndex := false
 	modifyCount, tblCnt := 0.0, 0.0
 	for _, pStats := range partitionStats {
@@ -480,12 +481,21 @@ func CheckGlobalIndex(
 		if !idx.Global {
 			continue
 		}
-		if needAnalyzeGlobalIndex {
-			globalIndexes = append(globalIndexes, idx.Name.O)
+		isSpecial := false
+		for _, col := range idx.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			isPrefixCol := col.Length != types.UnspecifiedLength
+			if colInfo.IsVirtualGenerated() || isPrefixCol {
+				isSpecial = true
+				break
+			}
+		}
+		if needAnalyzeGlobalIndex && isSpecial {
+			specialIndexes = append(specialIndexes, idx.Name.O)
 			continue
 		}
 	}
-	return globalIndexes
+	return specialIndexes
 }
 
 func createTableAnalysisJobForPartitions(
@@ -516,7 +526,7 @@ func createTableAnalysisJobForPartitions(
 		tblStats,
 		partitionStats,
 	)
-	globalIndexes := CheckGlobalIndex(
+	specialIndexes := CheckSpecialIndex(
 		tblInfo,
 		tblStats,
 		partitionStats,
@@ -526,7 +536,7 @@ func createTableAnalysisJobForPartitions(
 	// No need to analyze.
 	// We perform a separate check because users may set the auto analyze ratio to 0,
 	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
-	if len(partitionNames) == 0 && len(partitionIndexes) == 0 && len(globalIndexes) == 0 {
+	if len(partitionNames) == 0 && len(partitionIndexes) == 0 && len(specialIndexes) == 0 {
 		return nil
 	}
 
@@ -536,7 +546,7 @@ func createTableAnalysisJobForPartitions(
 		tblInfo.ID,
 		partitionNames,
 		partitionIndexes,
-		globalIndexes,
+		specialIndexes,
 		tableStatsVer,
 		averageChangePercentage,
 		avgSize,
@@ -622,7 +632,7 @@ func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 			}
 		} else {
 			if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
-				names = append(names, priorityqueue.GlobalIndexTableName)
+				names = append(names, priorityqueue.SpecialIndexTableName)
 			}
 		}
 

@@ -2182,7 +2182,7 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // in the execution phase of ANALYZE, we need to modify index.Columns[i].Offset according to colInfos.
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
 // For multi-valued index, we need to collect it separately here and analyze it as independent index analyze task.
-// For global index, we also need to analyze it as independent index analyze task.
+// For a special global index, we also need to analyze it as independent index analyze task.
 // See comments for AnalyzeResults.ForMVIndex for more details.
 func getModifiedIndexesInfoForAnalyze(
 	tblInfo *model.TableInfo,
@@ -2191,13 +2191,13 @@ func getModifiedIndexesInfoForAnalyze(
 ) ([]*model.IndexInfo, []*model.IndexInfo, []*model.IndexInfo) {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	independentIdxsInfo := make([]*model.IndexInfo, 0)
-	globalIdxsInfo := make([]*model.IndexInfo, 0)
+	specialGlobalIdxsInfo := make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
 			continue
 		}
-		if originIdx.Global {
-			globalIdxsInfo = append(globalIdxsInfo, originIdx)
+		if isSpecialGlobalIndex(originIdx, tblInfo) {
+			specialGlobalIdxsInfo = append(specialGlobalIdxsInfo, originIdx)
 			continue
 		}
 		if originIdx.MVIndex {
@@ -2217,7 +2217,7 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		idxsInfo = append(idxsInfo, idx)
 	}
-	return idxsInfo, independentIdxsInfo, globalIdxsInfo
+	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
@@ -2254,6 +2254,22 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast
 	return
 }
 
+// Check a index is a special global index or not.
+// A special global index is one that is a global index and has virtual generated columns or prefix columns.
+func isSpecialGlobalIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	if !idx.Global {
+		return false
+	}
+	for _, col := range idx.Columns {
+		colInfo := tblInfo.Columns[col.Offset]
+		isPrefixCol := col.Length != types.UnspecifiedLength
+		if colInfo.IsVirtualGenerated() || isPrefixCol {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
 	analyzePlan *Analyze,
@@ -2271,18 +2287,18 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	isAnalyzeTable := len(as.PartitionNames) == 0
 	isAnalyzeIndex := len(as.IndexNames) != 0
-	allGlobalIndex := true
+	allSpecialGlobalIndex := true
 	for _, idxName := range as.IndexNames {
 		idx := tbl.TableInfo.FindIndexByName(idxName.L)
 		if idx == nil || idx.State != model.StatePublic {
 			return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
 		}
-		if idx.Global {
+		if isSpecialGlobalIndex(idx, tbl.TableInfo) {
 			if !isAnalyzeTable {
-				return errors.NewNoStackErrorf("Analyze global index %s can't work with analyze partition", idxName.O)
+				return errors.NewNoStackErrorf("Analyze special global index %s can't work with analyze partition", idxName.O)
 			}
 		} else {
-			allGlobalIndex = false
+			allSpecialGlobalIndex = false
 		}
 	}
 
@@ -2315,9 +2331,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		analyzePlan.OptionsMap[physicalID] = opts
 	}
 
-	var indexes, independentIndexes, globalIndexes []*model.IndexInfo
+	var indexes, independentIndexes, specialGlobalIndexes []*model.IndexInfo
 
-	needAnalyzeCols := !(isAnalyzeIndex && allGlobalIndex)
+	needAnalyzeCols := !(isAnalyzeIndex && allSpecialGlobalIndex)
 
 	if needAnalyzeCols {
 		if isAnalyzeIndex {
@@ -2345,7 +2361,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			}
 			execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-			indexes, independentIndexes, globalIndexes = getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			newTask := AnalyzeColumnsTask{
 				HandleCols:  handleCols,
@@ -2374,13 +2390,13 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	if isAnalyzeTable {
 		if !isAnalyzeIndex {
-			for _, indexInfo := range globalIndexes {
+			for _, indexInfo := range specialGlobalIndexes {
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
 			}
 		} else {
 			for _, idxName := range as.IndexNames {
 				idx := tbl.TableInfo.FindIndexByName(idxName.L)
-				if idx == nil || !idx.Global {
+				if idx == nil || !isSpecialGlobalIndex(idx, tbl.TableInfo) {
 					continue
 				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, nil, nil, version)...)
