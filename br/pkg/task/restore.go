@@ -908,7 +908,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// or backfilled data in upstream may not be covered by
 		// the new ts.
 		// see https://github.com/pingcap/tidb/issues/54426
-		newTS, err = client.GetTSWithRetry(ctx) 
+		newTS, err = client.GetTSWithRetry(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
