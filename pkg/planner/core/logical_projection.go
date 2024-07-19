@@ -116,6 +116,23 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 
+	allPruned := true
+	for i, b := range used {
+		if b || expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
+			// Set to true to avoid the ExprHasSetVarOrSleep be called multiple times.
+			used[i] = true
+			allPruned = false
+			break
+		}
+	}
+	if allPruned {
+		_, ok := p.Children()[0].(*LogicalTableDual)
+		if ok {
+			// If the child is dual. The proj should not be eliminated.
+			return p, nil
+		}
+	}
+
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type columnPruner struct {
@@ -38,7 +40,27 @@ func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 	if err != nil {
 		return nil, planChanged, err
 	}
+	intest.AssertNoError(noZeroColumnLayOut(lp), "After column pruning, some operator got zero row output. Please fix it.")
 	return lp, planChanged, nil
+}
+
+func noZeroColumnLayOut(p base.LogicalPlan) error {
+	for _, child := range p.Children() {
+		if err := noZeroColumnLayOut(child); err != nil {
+			return err
+		}
+	}
+	if p.Schema().Len() == 0 {
+		// The p don't hold its schema. So we don't need check itself.
+		if len(p.Children()) > 0 && p.Schema() == p.Children()[0].Schema() {
+			return nil
+		}
+		_, ok := p.(*LogicalTableDual)
+		if !ok {
+			return errors.Errorf("Operator %s has zero row output", p.ExplainID().String())
+		}
+	}
+	return nil
 }
 
 // PruneColumns implement the Expand OP's column pruning logic.
@@ -155,7 +177,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	// Current DataSource operator contains all the filters on this table, and the columns used by these filters are always included
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
-	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
+	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
