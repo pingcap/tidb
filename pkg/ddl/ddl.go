@@ -821,6 +821,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 }
 
 func (d *ddl) prepareLocalModeWorkers() {
+	var idAllocator atomic.Uint64
 	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx)
@@ -830,6 +831,7 @@ func (d *ddl) prepareLocalModeWorkers() {
 			}
 			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			wk.sess = sess.NewSession(sessForJob)
+			wk.seqAllocator = &idAllocator
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
