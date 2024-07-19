@@ -283,7 +283,7 @@ func HandleAutoAnalyze(
 			return false
 		}
 		r := refresher.NewRefresher(statsHandle, sysProcTracker)
-		err := r.RebuildTableAnalysisJobQueue()
+		err = r.RebuildTableAnalysisJobQueue()
 		if err != nil {
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
 			return false
