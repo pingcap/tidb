@@ -455,22 +455,22 @@ func (is *infoschemaV2) EvictTable(schema, tbl string) {
 	is.tableCache.Remove(tableCacheKey{itm.tableID, itm.schemaVersion})
 }
 
-type helper struct {
+type tableByNameHelper struct {
 	end           tableItem
 	schemaVersion int64
-	ok            bool
-	itm           tableItem
+	found            bool
+	res           tableItem
 }
 
-func (h *helper) iter(item tableItem) bool {
+func (h *tableByNameHelper) onItem(item tableItem) bool {
 	if item.dbName != h.end.dbName || item.tableName != h.end.tableName {
-		h.ok = false
+		h.found = false
 		return false
 	}
 	if item.schemaVersion <= h.schemaVersion {
 		if !item.tomb { // If the item is a tomb record, the database is dropped.
-			h.ok = true
-			h.itm = item
+			h.found = true
+			h.res = item
 		}
 		return false
 	}
@@ -490,15 +490,15 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 
 	start := time.Now()
 
-	var h helper
+	var h tableByNameHelper
 	h.end = tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}
 	h.schemaVersion = is.infoSchema.schemaMetaVersion
-	is.byName.Descend(h.end, h.iter)
+	is.byName.Descend(h.end, h.onItem)
 
-	if !h.ok {
+	if !h.found {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
-	itm := h.itm
+	itm := h.res
 
 	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
