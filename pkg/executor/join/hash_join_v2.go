@@ -192,7 +192,8 @@ type HashJoinCtxV2 struct {
 	LUsedInOtherCondition, RUsedInOtherCondition []int
 
 	// final worker wakes up build fetcher by this channel
-	finalSync     chan struct{}
+	finalSync chan struct{}
+
 	maxSpillRound int
 	spillHelper   *hashJoinSpillHelper
 	spillAction   *hashJoinSpillAction
@@ -230,7 +231,6 @@ type HashJoinV2Exec struct {
 	ProbeWorkers          []*ProbeWorkerV2
 	BuildWorkers          []*BuildWorkerV2
 
-	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
 
 	prepared bool
@@ -322,7 +322,6 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 	}
 
-	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
 	e.closeCh = make(chan struct{})
 	e.buildFetcherFinishCh = make(chan struct{})
@@ -389,24 +388,24 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup) {
 	fetcherAndWorkerSyncer.Add(int(e.hashJoinCtxBase.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
-		e.workerWg.RunWithRecover(func() {
-			defer trace.StartRegion(ctx, "HashJoinWorker").End()
-			e.ProbeWorkers[i].runJoinWorker(fetcherAndWorkerSyncer)
-		},
-			func(r any) {
-				if r != nil {
+		go func() {
+			defer func() {
+				trace.StartRegion(ctx, "HashJoinWorker").End()
+				if r := recover(); r != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 				}
 				fetcherAndWorkerSyncer.Done()
-			},
-		)
+			}()
+
+			e.ProbeWorkers[i].runJoinWorker(fetcherAndWorkerSyncer)
+		}()
 	}
 }
 
-func (e *HashJoinV2Exec) startFinalWorker(sync chan struct{}) {
+func (e *HashJoinV2Exec) startFinalWorker(syncer chan struct{}) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			e.finalWorker(sync)
+			e.finalWorker(syncer)
 		},
 		func(r any) {
 			if r != nil {
@@ -424,11 +423,16 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 	pfAndFWSync := make(chan struct{})
 
 	e.initializeForProbe()
-
 	e.startProbeWorkers(ctx, fetcherAndWorkerSyncer)
-	e.startFinalWorker()
+	e.startFinalWorker(pfAndFWSync)
 
-	defer close(pfAndFWSync)
+	defer func() {
+		if r := recover(); r != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+		}
+
+		close(pfAndFWSync)
+	}()
 
 	e.ProbeSideTupleFetcher.fetchProbeSideChunksImpl(
 		ctx,
@@ -448,9 +452,13 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 	for {
 		// We use buildFinished as the syncer between build task dispatcher and probe fetcher
 		<-e.hashJoinCtxBase.buildFinished
+
 		if e.hashJoinCtxBase.finished.Load() {
 			return
 		}
+
+		// Wake up final worker
+		// pfAndFWSync <- struct{}{} // TODO enable it in the future
 
 		// TODO mock no spill
 		return
@@ -459,39 +467,53 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 }
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
-	e.workerWg.RunWithRecover(func() {
-		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.startProbeFetcher(ctx)
-	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanicV2)
-}
+	go func() {
+		defer func() {
+			trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
+			if r := recover(); r != nil {
+				e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+			}
+		}()
 
-func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
-	if r != nil {
-		e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
-	}
+		e.startProbeFetcher(ctx)
+	}()
 }
 
 // finaWorker is responsible for scanning the row table after probe done and wake up the build fetcher
-func (e *HashJoinV2Exec) finalWorker(sync chan struct{}) {
-	defer close(e.joinResultCh)
-	e.workerWg.Wait() // TODO maybe we can remove it
+func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
+	defer func() {
+		close(e.joinResultCh)
+		close(e.finalSync)
+	}()
 
-	// TODO wait for the wake-up from probe fetcher
-	// TODO check finish flag
 	for {
-		<-sync
-		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
-			for i := uint(0); i < e.Concurrency; i++ {
-				var workerID = i
-				e.workerWg.RunWithRecover(func() {
-					// Error has been handled in the function
-					_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
-				}, e.handleJoinWorkerPanic)
-			}
-			e.workerWg.Wait()
+		// Wait for the wake-up from probe fetcher
+		<-syncer
+
+		if e.finished.Load() {
+			return
 		}
 
-		// TODO wake up build fetcher
+		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
+			wg := &sync.WaitGroup{}
+			wg.Add(int(e.Concurrency))
+			for i := uint(0); i < e.Concurrency; i++ {
+				go func(workerID uint) {
+					defer func() {
+						if r := recover(); r != nil {
+							e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+						}
+						wg.Done()
+					}()
+
+					// Error has been handled in the function
+					_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
+				}(i)
+			}
+			wg.Wait()
+		}
+
+		e.finalSync <- struct{}{}
 	}
 
 	// scan row table
@@ -503,7 +525,6 @@ func (e *HashJoinV2Exec) finalWorker(sync chan struct{}) {
 	// 		e.joinResultCh <- &hashjoinWorkerResult{err: err}
 	// 	}
 	// }
-	// TODO wake up the build fetcher
 }
 
 func (e *HashJoinV2Exec) probeInSpillMode(probeSideChunks *chunk.DataInDiskByChunks, hashTable *hashTableV2) error {
@@ -604,10 +625,10 @@ func (e *HashJoinV2Exec) restore() error {
 }
 
 func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
-	e.workerWg.RunWithRecover(func() {
+	go func() {
 		defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
 		e.startBuildFetcher(ctx)
-	}, nil)
+	}()
 }
 
 func (e *HashJoinV2Exec) updateRequiredRows(req *chunk.Chunk) {
@@ -744,21 +765,19 @@ func (e *HashJoinV2Exec) dispatchBuildTasks(syncer chan struct{}) {
 }
 
 func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
+	// TODO we need to re-handle it
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
-			// TODO we need to re-handle it
 			e.stats.fetchAndBuildHashTable = time.Since(start)
 		}()
 	}
-
-	// Build fetcher wakes up prebuild workers with this channel
-	// buildFetcherAndPrebuildWorkerSyncChan := make(chan struct{}, e.Concurrency)
 
 	// Build fetcher wakes up build workers with this channel
 	buildFetcherAndBuildWorkerSyncChan := make(chan struct{})
 
 	defer func() {
+		e.finished.Store(true)
 		close(buildFetcherAndBuildWorkerSyncChan)
 	}()
 
@@ -780,7 +799,6 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	e.BuildWorkers[0].fetchBuildSideRowsImpl(ctx, &e.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, e.hashJoinCtxBase.buildFetcherFinishCh)
 	close(errCh)
 	if err := <-errCh; err != nil {
-		e.hashJoinCtxBase.finished.Store(true)
 		e.hashJoinCtxBase.joinResultCh <- &hashjoinWorkerResult{err: err}
 		return
 	}
@@ -812,81 +830,55 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	}
 }
 
-func (e *HashJoinV2Exec) fetchBuildSideRows(
-	ctx context.Context,
-	prebuildSync chan struct{},
-	buildSync chan struct{},
-	finalSync chan struct{},
-) (chan *chunk.Chunk, *sync.WaitGroup) {
-	srcChkCh := make(chan *chunk.Chunk, 1)
-	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
-	fetcherAndWorkerSyncer := &sync.WaitGroup{}
-	e.workerWg.RunWithRecover(
-		func() {
-			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			fetcher := e.BuildWorkers[0]
-			fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, nil, nil, prebuildSync, buildSync, finalSync)
-		},
-		func(r any) {
-			if r != nil {
-				e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
-			}
-		},
-	)
-	return srcChkCh, fetcherAndWorkerSyncer
-}
-
 // Workers in this function receive chunks from fetcher and pre-build hash table
 func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup) {
 	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
 		workIndex := i
-		e.workerWg.RunWithRecover(
-			func() {
-				err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
-				if err != nil {
-					e.joinResultCh <- &hashjoinWorkerResult{err: err}
-				}
-			},
-			func(r any) {
-				if r != nil {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 				}
 				wg.Done()
-			},
-		)
+			}()
+
+			err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
+			if err != nil {
+				e.joinResultCh <- &hashjoinWorkerResult{err: err}
+			}
+		}()
 	}
 }
 
 func (e *HashJoinV2Exec) startBuildTaskDispatcher(syncer chan struct{}) {
-	e.workerWg.RunWithRecover(
-		func() { e.dispatchBuildTasks(syncer) },
-		func(r any) {
-			if r != nil {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 			}
-		},
-	)
+		}()
+
+		e.dispatchBuildTasks(syncer)
+	}()
 }
 
 func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask, wg *sync.WaitGroup) {
 	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
-		workID := i
-		e.workerWg.RunWithRecover(
-			func() {
-				err := e.BuildWorkers[workID].buildHashTable(buildTaskCh)
-				if err != nil {
-					e.joinResultCh <- &hashjoinWorkerResult{err: err}
-				}
-			},
-			func(r any) {
-				if r != nil {
+		go func(workID uint) {
+			defer func() {
+				if r := recover(); r != nil {
 					e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 				}
 				wg.Done()
-			},
-		)
+			}()
+
+			err := e.BuildWorkers[workID].buildHashTable(buildTaskCh)
+			if err != nil {
+				e.joinResultCh <- &hashjoinWorkerResult{err: err}
+			}
+		}(i)
 	}
 }
 
