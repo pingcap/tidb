@@ -17,7 +17,6 @@ package schematracker
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
@@ -127,8 +127,8 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model
 		return
 	}
 
-	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
-	tableInfo2, _ := d.tracker.TableByName(dbName, tableName)
+	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(context.Background(), dbName, tableName)
+	tableInfo2, _ := d.tracker.TableByName(context.Background(), dbName, tableName)
 
 	if tableInfo == nil || tableInfo2 == nil {
 		if tableInfo == nil && tableInfo2 == nil {
@@ -463,13 +463,13 @@ func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInf
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
+func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -560,38 +560,29 @@ func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return d.realDDL.DoDDLJob(ctx, job)
 }
 
-// StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
-type StorageDDLInjector struct {
+// DoDDLJobWrapper implements the DDL interface.
+func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
+	return d.realDDL.DoDDLJobWrapper(ctx, jobW)
+}
+
+type storageAndMore interface {
 	kv.Storage
 	kv.EtcdBackend
+	helper.Storage
+}
+
+// StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
+type StorageDDLInjector struct {
+	storageAndMore
 	Injector func(ddl.DDL) *Checker
-}
-
-var _ kv.EtcdBackend = StorageDDLInjector{}
-
-// EtcdAddrs implements the kv.EtcdBackend interface.
-func (s StorageDDLInjector) EtcdAddrs() ([]string, error) {
-	return s.EtcdBackend.EtcdAddrs()
-}
-
-// TLSConfig implements the kv.EtcdBackend interface.
-func (s StorageDDLInjector) TLSConfig() *tls.Config {
-	return s.EtcdBackend.TLSConfig()
-}
-
-// StartGCWorker implements the kv.EtcdBackend interface.
-func (s StorageDDLInjector) StartGCWorker() error {
-	return s.EtcdBackend.StartGCWorker()
 }
 
 // NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.
 func NewStorageDDLInjector(s kv.Storage) kv.Storage {
+	raw := s.(storageAndMore)
 	ret := StorageDDLInjector{
-		Storage:  s,
-		Injector: NewChecker,
-	}
-	if ebd, ok := s.(kv.EtcdBackend); ok {
-		ret.EtcdBackend = ebd
+		storageAndMore: raw,
+		Injector:       NewChecker,
 	}
 	return ret
 }
@@ -602,5 +593,5 @@ func UnwrapStorage(s kv.Storage) kv.Storage {
 	if !ok {
 		return s
 	}
-	return injector.Storage
+	return injector.storageAndMore
 }

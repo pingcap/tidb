@@ -215,8 +215,7 @@ a	b	a
 2	NULL	NULL
 drop table if exists t,s;
 create table t(a int primary key auto_increment, b time);
-create table s(a int, b time);
-alter table s add index idx(a,b);
+create table s(a int, b time, index idx(a, b));
 set @@tidb_index_join_batch_size=4;
 set @@tidb_init_chunk_size=1;
 set @@tidb_max_chunk_size=32;
@@ -231,8 +230,8 @@ insert into t select 0, b + 1 from t;
 insert into t select 0, b + 1 from t;
 insert into t select 0, b + 1 from t;
 insert into s select a, b - 1 from t;
-analyze table t;
-analyze table s;
+analyze table t all columns;
+analyze table s all columns;
 desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#6

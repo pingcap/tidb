@@ -8,8 +8,10 @@ go_library(
     deps = [
         "//pkg/distsql",
         "//pkg/kv",
-        "//pkg/planner/core",
+        "//pkg/planner/context",
+        "//pkg/planner/core/base",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/util/timeutil",
         "@com_github_pingcap_tipb//go-tipb",
     ],

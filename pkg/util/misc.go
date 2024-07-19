@@ -39,6 +39,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -110,15 +111,16 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		return
 	}
 
-	if recoverFn != nil {
-		recoverFn()
-	}
 	logutil.BgLogger().Error("panic in the recoverable goroutine",
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+
+	if recoverFn != nil {
+		recoverFn()
+	}
 	if quit {
 		// Wait for metrics to be pushed.
 		time.Sleep(time.Second * 15)
@@ -166,12 +168,10 @@ func SyntaxWarn(err error) error {
 	}
 	logutil.BgLogger().Debug("syntax error", zap.Error(err))
 
-	// If the warn is already a terror with stack, pass it through.
-	if errors.HasStack(err) {
-		cause := errors.Cause(err)
-		if _, ok := cause.(*terror.Error); ok {
-			return err
-		}
+	// If the "err" is already a terror, pass it through.
+	cause := errors.Cause(err)
+	if _, ok := cause.(*terror.Error); ok {
+		return err
 	}
 
 	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())
@@ -206,7 +206,7 @@ func IsMemDB(dbLowerName string) bool {
 
 // IsSysDB checks whether dbLowerName is system database.
 func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB
+	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
 }
 
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
@@ -445,7 +445,7 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is any, schema, sequence model.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence model.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.

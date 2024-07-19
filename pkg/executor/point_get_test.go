@@ -88,7 +88,7 @@ func TestReturnValues(t *testing.T) {
 	txnCtx := tk.Session().GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	require.True(t, ok)
-	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
+	handle, err := tablecodec.DecodeHandleInIndexValue(val)
 	require.NoError(t, err)
 	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
@@ -374,40 +374,4 @@ func TestWithTiDBSnapshot(t *testing.T) {
 	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
-}
-
-func TestGlobalIndexPointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
-
-	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
-						PARTITION BY RANGE (a) (
-		PARTITION p0 VALUES LESS THAN (10),
-		PARTITION p1 VALUES LESS THAN (20),
-		PARTITION p2 VALUES LESS THAN (30),
-		PARTITION p3 VALUES LESS THAN (40))`)
-	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
-	tk.MustExec("analyze table t")
-
-	tk.MustQuery("select * from t use index(idx) where b in (15, 25, 35)").Sort().Check(testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
-	tk.MustQuery("explain select * from t use index(idx) where b in (15, 25, 35)").Check(
-		testkit.Rows("Batch_Point_Get_1 3.00 root table:t, index:idx(b) keep order:false, desc:false"))
-
-	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b>10)").Sort().Check(testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
-
-	tk.MustQuery("select * from t use index(idx) where b = 15").Check(testkit.Rows("15 15 0"))
-	tk.MustQuery("explain select * from t use index(idx) where b = 15").Check(
-		testkit.Rows("Point_Get_1 1.00 root table:t, index:idx(b) "))
-
-	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b > 10)").Sort().Check(
-		testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
-
-	tk.MustQuery("select * from t partition(p1) use index(idx) where b = 3").Check(testkit.Rows())
-	tk.MustQuery("select * from t partition(p1) use index(idx) where b in (15, 25, 35)").Check(testkit.Rows("15 15 0"))
 }

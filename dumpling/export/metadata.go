@@ -160,7 +160,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 		isms  bool
 		query string
 	)
-	if err := simpleQuery(db, "SELECT @@default_master_connection", func(rows *sql.Rows) error {
+	if err := simpleQuery(db, "SELECT @@default_master_connection", func(*sql.Rows) error {
 		isms = true
 		return nil
 	}); err != nil {

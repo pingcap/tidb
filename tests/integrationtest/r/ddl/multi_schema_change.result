@@ -319,7 +319,7 @@ drop table if exists t;
 create table t(a bigint null default '1761233443433596323', index t(a));
 insert into t set a = '-7184819032643664798';
 alter table t change column a b datetime null default '8972-12-24 10:56:03', rename index t to t1;
-Error 1292 (22007): Incorrect time value: '-7184819032643664798'
+Error 1292 (22007): Incorrect datetime value: '-7184819032643664798'
 drop table if exists t;
 create table t (a int, b double, index i(a, b));
 alter table t rename index i to i1, change column b c int;
@@ -373,12 +373,14 @@ select * from t use index (i3);
 c	d	e	f
 3	4	5	6
 drop table if exists t;
-create table t (a int auto_increment primary key, b int);
-alter table t modify column b tinyint, auto_increment = 100;
-insert into t (b) values (1);
+create table t (a int auto_increment primary key, b int) auto_id_cache = 100;
+insert into t(b) values(1);
+alter table t modify column b tinyint, auto_increment = 200;
+insert into t (b) values (2);
 select * from t;
 a	b
-100	1
+1	1
+200	2
 drop table if exists t;
 create table t (a int auto_increment primary key, b int);
 alter table t auto_increment = 110, auto_increment = 90;

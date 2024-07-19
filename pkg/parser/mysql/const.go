@@ -191,6 +191,9 @@ const (
 const (
 	// SystemDB is the name of system database.
 	SystemDB = "mysql"
+	// SysDB is the name of `sys` schema, which is a set of objects to help users to interpret data collected
+	// in `information_schema`.
+	SysDB = "sys"
 	// GlobalPrivTable is the table in system db contains global scope privilege info.
 	GlobalPrivTable = "global_priv"
 	// UserTable is the table in system db contains user info.
@@ -331,6 +334,19 @@ var DefaultLengthOfTimeFraction = map[int]int{
 
 	5: 3,
 	6: 3,
+}
+
+// DefaultAuthPlugins are the supported default authentication plugins.
+var DefaultAuthPlugins = []string{
+	AuthNativePassword,
+	AuthCachingSha2Password,
+	AuthTiDBSM3Password,
+	AuthLDAPSASL,
+	AuthLDAPSimple,
+	AuthSocket,
+	AuthTiDBSessionToken,
+	AuthTiDBAuthToken,
+	AuthMySQLClearPassword,
 }
 
 // SQLMode is the type for MySQL sql_mode.

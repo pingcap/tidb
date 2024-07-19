@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -71,7 +70,6 @@ type schemaValidator struct {
 	lease              time.Duration
 	latestSchemaVer    int64
 	restartSchemaVer   int64
-	latestInfoSchema   infoschema.InfoSchema
 	do                 *Domain
 	latestSchemaExpire time.Time
 	// deltaSchemaInfos is a queue that maintain the history of changes.
@@ -112,7 +110,7 @@ func (s *schemaValidator) Restart() {
 	defer s.mux.Unlock()
 	s.isStarted = true
 	if s.do != nil {
-		// When this instance reconnects PD, we should record the latest schema verion after mustReload(),
+		// When this instance reconnects PD, we should record the latest schema version after mustReload(),
 		// to prevent write txns using a stale schema version by aborting them before commit.
 		// However, the problem still exists for read-only txns.
 		s.restartSchemaVer = s.do.InfoSchema().SchemaMetaVersion()
@@ -140,9 +138,6 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 
 	// Renew the lease.
 	s.latestSchemaVer = currVer
-	if s.do != nil {
-		s.latestInfoSchema = s.do.InfoSchema()
-	}
 	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 	s.latestSchemaExpire = leaseExpire
@@ -207,12 +202,12 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		}
 	}
 	if len(changedTblMap) > 0 {
-		tblIds := make([]int64, 0, len(changedTblMap))
+		tblIDs := make([]int64, 0, len(changedTblMap))
 		for id := range changedTblMap {
-			tblIds = append(tblIds, id)
+			tblIDs = append(tblIDs, id)
 		}
-		slices.Sort(tblIds)
-		logutil.BgLogger().Info("schema of tables in the transaction are changed", zap.Int64s("conflicted table IDs", tblIds),
+		slices.Sort(tblIDs)
+		logutil.BgLogger().Info("schema of tables in the transaction are changed", zap.Int64s("conflicted table IDs", tblIDs),
 			zap.Int64("transaction schema", currVer), zap.Int64s("schema versions that changed the tables", changedSchemaVers))
 		return true
 	}

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -51,7 +50,7 @@ type Aggregation interface {
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
-func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx sessionctx.Context) (Aggregation, *AggFuncDesc, error) {
+func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx expression.BuildContext) (Aggregation, *AggFuncDesc, error) {
 	args := make([]expression.Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
 		arg, err := expression.PBToExpr(ctx, child, fieldTps)
@@ -80,11 +79,11 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx sessionctx
 	case tipb.ExprType_Max:
 		aggF := newAggFunc(ast.AggFuncMax, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
-		return &maxMinFunction{aggFunction: aggF, isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, aggF.AggFuncDesc, nil
+		return &maxMinFunction{aggFunction: aggF, isMax: true, ctor: collate.GetCollator(args[0].GetType(ctx.GetEvalCtx()).GetCollate())}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Min:
 		aggF := newAggFunc(ast.AggFuncMin, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
-		return &maxMinFunction{aggFunction: aggF, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, aggF.AggFuncDesc, nil
+		return &maxMinFunction{aggFunction: aggF, ctor: collate.GetCollator(args[0].GetType(ctx.GetEvalCtx()).GetCollate())}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_First:
 		aggF := newAggFunc(ast.AggFuncFirstRow, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
@@ -135,6 +134,23 @@ const (
 	DedupMode
 )
 
+// ToString show the agg mode.
+func (a AggFunctionMode) ToString() string {
+	switch a {
+	case CompleteMode:
+		return "complete"
+	case FinalMode:
+		return "final"
+	case Partial1Mode:
+		return "partial1"
+	case Partial2Mode:
+		return "partial2"
+	case DedupMode:
+		return "deduplicate"
+	}
+	return ""
+}
+
 type aggFunction struct {
 	*AggFuncDesc
 }
@@ -150,14 +166,14 @@ func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool)
 func (af *aggFunction) CreateContext(ctx expression.EvalContext) *AggEvaluateContext {
 	evalCtx := &AggEvaluateContext{Ctx: ctx}
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	return evalCtx
 }
 
 func (af *aggFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	evalCtx.Ctx = ctx
 	evalCtx.Value.SetNull()
@@ -216,7 +232,7 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 }
 
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
-func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
 		return false
 	}
@@ -226,7 +242,7 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	ret := true
 	switch storeType {
 	case kv.TiFlash:
-		ret = CheckAggPushFlash(aggFunc)
+		ret = CheckAggPushFlash(ctx, aggFunc)
 	case kv.TiKV:
 		// TiKV does not support group_concat now
 		ret = aggFunc.Name != ast.AggFuncGroupConcat
@@ -238,9 +254,9 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 }
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
-func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
+func CheckAggPushFlash(ctx expression.EvalContext, aggFunc *AggFuncDesc) bool {
 	for _, arg := range aggFunc.Args {
-		if arg.GetType().GetType() == mysql.TypeDuration {
+		if arg.GetType(ctx).GetType() == mysql.TypeDuration {
 			return false
 		}
 	}
@@ -249,7 +265,7 @@ func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
 		return true
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		// Now tiflash doesn't support CastJsonAsReal and CastJsonAsString.
-		return aggFunc.Args[0].GetType().GetType() != mysql.TypeJSON
+		return aggFunc.Args[0].GetType(ctx).GetType() != mysql.TypeJSON
 	}
 	return false
 }

@@ -52,7 +52,7 @@ func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		binary.BigEndian.PutUint32(ip, uint32(val))
 		ipv4 := ip.To4()
 		if ipv4 == nil {
-			// Not a vaild ipv4 address.
+			// Not a valid ipv4 address.
 			result.AppendNull()
 			continue
 		}
@@ -302,6 +302,11 @@ func (b *builtinSleepSig) vectorized() bool {
 // vecEvalInt evals a builtinSleepSig in a vectorized manner.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -338,7 +343,7 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 			return errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 
-		if isKilled := doSleep(val, ctx.GetSessionVars()); isKilled {
+		if isKilled := doSleep(val, vars); isKilled {
 			for j := i; j < n; j++ {
 				i64s[j] = 1
 			}

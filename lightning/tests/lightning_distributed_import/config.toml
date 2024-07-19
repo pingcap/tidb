@@ -1,0 +1,12 @@
+[tikv-importer]
+backend = 'local'
+incremental-import = true
+
+[conflict]
+strategy = ""
+
+[post-restore]
+checksum = "required"
+
+[mydumper.csv]
+header = false

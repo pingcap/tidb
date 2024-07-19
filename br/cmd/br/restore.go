@@ -12,10 +12,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -66,6 +67,10 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 
 	// No need to cache the coproceesor result
 	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
+
+	// Disable the memory limit tuner. That's because the server memory is get from TiDB node instead of BR node.
+	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
+	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
@@ -146,7 +151,7 @@ func NewRestoreCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			build.LogInfo(build.BR)
-			utils.LogEnvVariables()
+			logutil.LogEnvVariables()
 			task.LogArguments(c)
 			session.DisableStats4Test()
 

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
@@ -57,6 +58,8 @@ func (t *mockDetectClient) SendRequest(
 
 	return &tikvrpc.Response{Resp: &mpp.IsAliveResponse{Available: true}}, nil
 }
+
+func (t *mockDetectClient) SetEventListener(_ tikv.ClientEventListener) {}
 
 type ProbeTest map[string]*mockDetectClient
 

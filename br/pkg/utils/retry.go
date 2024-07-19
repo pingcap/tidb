@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -238,11 +239,46 @@ func WithRetryV2[T any](
 		allErrors = multierr.Append(allErrors, err)
 		select {
 		case <-ctx.Done():
+			// allErrors must not be `nil` here, so ignore the context error.
 			return *new(T), allErrors
 		case <-time.After(backoffer.NextBackoff(err)):
 		}
 	}
 	return *new(T), allErrors // nolint:wrapcheck
+}
+
+var sampleLoggerFactory = logutil.SampleLoggerFactory(
+	time.Minute, 3, zap.String(logutil.LogFieldCategory, "utils"),
+)
+
+// WithRetryReturnLastErr is like WithRetry but the returned error is the last
+// error during retry rather than a multierr.
+func WithRetryReturnLastErr(
+	ctx context.Context,
+	retryableFunc RetryableFunc,
+	backoffer Backoffer,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var lastErr error
+	for backoffer.Attempt() > 0 {
+		lastErr = retryableFunc()
+		if lastErr == nil {
+			return nil
+		}
+		backoff := backoffer.NextBackoff(lastErr)
+		sampleLoggerFactory().Info(
+			"retryable operation failed",
+			zap.Error(lastErr), zap.Duration("backoff", backoff))
+		select {
+		case <-ctx.Done():
+			return lastErr
+		case <-time.After(backoff):
+		}
+	}
+
+	return lastErr
 }
 
 // MessageIsRetryableStorageError checks whether the message returning from TiKV is retryable ExternalStorageError.

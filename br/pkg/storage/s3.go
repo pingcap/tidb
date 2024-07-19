@@ -289,10 +289,22 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 func createOssRAMCred() (*credentials.Credentials, error) {
 	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
-		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
+		log.Warn("failed to get aliyun ram credential", zap.Error(err))
+		return nil, nil
 	}
-	ncred := cred.(*alicred.StsTokenCredential)
-	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
+	var aliCred, ok = cred.(*alicred.StsTokenCredential)
+	if !ok {
+		return nil, errors.Errorf("invalid credential type %T", cred)
+	}
+	newCred := credentials.NewChainCredentials([]credentials.Provider{
+		&credentials.EnvProvider{},
+		&credentials.SharedCredentialsProvider{},
+		&credentials.StaticProvider{Value: credentials.Value{AccessKeyID: aliCred.AccessKeyId, SecretAccessKey: aliCred.AccessKeySecret, SessionToken: aliCred.AccessKeyStsToken, ProviderName: ""}},
+	})
+	if _, err := newCred.Get(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newCred, nil
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
@@ -891,23 +903,29 @@ type s3ObjectReader struct {
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx          context.Context
-	retryCnt     int
 	prefetchSize int
 }
 
 // Read implement the io.Reader interface.
 func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
+	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
-	if maxCnt > int64(len(p)) {
-		maxCnt = int64(len(p))
-	}
 	if maxCnt == 0 {
 		return 0, io.EOF
+	}
+	if maxCnt > int64(len(p)) {
+		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
-	if err != nil && errors.Cause(err) != io.EOF && r.retryCnt < maxErrorRetries { //nolint:errorlint
+	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+		log.L().Warn(
+			"read s3 object failed, will retry",
+			zap.String("file", r.name),
+			zap.Int("retryCnt", retryCnt),
+			zap.Error(err),
+		)
 		// if can retry, reopen a new reader and try read again
 		end := r.rangeInfo.End + 1
 		if end == r.rangeInfo.Size {
@@ -924,7 +942,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		if r.prefetchSize > 0 {
 			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
 		}
-		r.retryCnt++
+		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 

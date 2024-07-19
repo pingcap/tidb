@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
@@ -53,7 +54,8 @@ const (
 	runawayRecordGCBatchSize       = 100
 	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
 
-	maxIDRetries = 3
+	maxIDRetries                     = 3
+	runawayLoopLogErrorIntervalCount = 1800
 )
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
@@ -67,7 +69,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	})
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := model.NewCIStr(tableName)
-	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
+	tbl, err := do.InfoSchema().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -139,12 +141,41 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	}
 }
 
+func (do *Domain) runawayStartLoop() {
+	defer util.Recover(metrics.LabelDomain, "runawayStartLoop", nil, false)
+	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
+	count := 0
+	var err error
+	logutil.BgLogger().Info("try to start runaway manager loop")
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-runawayWatchSyncTicker.C:
+			// Due to the watch and watch done tables is created later than runaway queries table
+			err = do.updateNewAndDoneWatch()
+			if err == nil {
+				logutil.BgLogger().Info("preparations for the runaway manager are finished and start runaway manager loop")
+				do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
+				do.wg.Run(do.runawayWatchSyncLoop, "runawayWatchSyncLoop")
+				do.runawayManager.MarkSyncerInitialized()
+				return
+			}
+		}
+		if count %= runawayLoopLogErrorIntervalCount; count == 0 {
+			logutil.BgLogger().Warn(
+				"failed to start runaway manager loop, please check whether the bootstrap or update is finished",
+				zap.Error(err))
+		}
+		count++
+	}
+}
+
 func (do *Domain) updateNewAndDoneWatch() error {
 	do.runawaySyncer.mu.Lock()
 	defer do.runawaySyncer.mu.Unlock()
 	records, err := do.runawaySyncer.getNewWatchRecords()
 	if err != nil {
-		logutil.BgLogger().Error("try to get new runaway watch", zap.Error(err))
 		return err
 	}
 	for _, r := range records {
@@ -152,7 +183,6 @@ func (do *Domain) updateNewAndDoneWatch() error {
 	}
 	doneRecords, err := do.runawaySyncer.getNewWatchDoneRecords()
 	if err != nil {
-		logutil.BgLogger().Error("try to get done runaway watch", zap.Error(err))
 		return err
 	}
 	for _, r := range doneRecords {
@@ -164,6 +194,7 @@ func (do *Domain) updateNewAndDoneWatch() error {
 func (do *Domain) runawayWatchSyncLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayWatchSyncLoop", nil, false)
 	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
+	count := 0
 	for {
 		select {
 		case <-do.exit:
@@ -171,7 +202,10 @@ func (do *Domain) runawayWatchSyncLoop() {
 		case <-runawayWatchSyncTicker.C:
 			err := do.updateNewAndDoneWatch()
 			if err != nil {
-				logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
+				if count %= runawayLoopLogErrorIntervalCount; count == 0 {
+					logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
+				}
+				count++
 			}
 		}
 	}
@@ -206,23 +240,23 @@ func (do *Domain) RemoveRunawayWatch(recordID int64) error {
 func (do *Domain) runawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
 
-	// this times is used to batch flushing rocords, with 1s duration,
+	// this times is used to batch flushing records, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
-	runawayRecordFluashTimer := time.NewTimer(runawayRecordFlushInterval)
+	runawayRecordFlushTimer := time.NewTimer(runawayRecordFlushInterval)
 	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
 	failpoint.Inject("FastRunawayGC", func() {
-		runawayRecordFluashTimer.Stop()
+		runawayRecordFlushTimer.Stop()
 		runawayRecordGCTicker.Stop()
-		runawayRecordFluashTimer = time.NewTimer(time.Millisecond * 50)
+		runawayRecordFlushTimer = time.NewTimer(time.Millisecond * 50)
 		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
 	})
 
 	fired := false
-	recordCh := do.RunawayManager().RunawayRecordChan()
-	quarantineRecordCh := do.RunawayManager().QuarantineRecordChan()
-	staleQuarantineRecordCh := do.RunawayManager().StaleQuarantineRecordChan()
-	flushThrehold := do.runawayManager.FlushThreshold()
-	records := make([]*resourcegroup.RunawayRecord, 0, flushThrehold)
+	recordCh := do.runawayManager.RunawayRecordChan()
+	quarantineRecordCh := do.runawayManager.QuarantineRecordChan()
+	staleQuarantineRecordCh := do.runawayManager.StaleQuarantineRecordChan()
+	flushThreshold := do.runawayManager.FlushThreshold()
+	records := make([]*resourcegroup.RunawayRecord, 0, flushThreshold)
 
 	flushRunawayRecords := func() {
 		if len(records) == 0 {
@@ -239,7 +273,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 		select {
 		case <-do.exit:
 			return
-		case <-runawayRecordFluashTimer.C:
+		case <-runawayRecordFlushTimer.C:
 			flushRunawayRecords()
 			fired = true
 		case r := <-recordCh:
@@ -247,12 +281,12 @@ func (do *Domain) runawayRecordFlushLoop() {
 			failpoint.Inject("FastRunawayGC", func() {
 				flushRunawayRecords()
 			})
-			if len(records) >= flushThrehold {
+			if len(records) >= flushThreshold {
 				flushRunawayRecords()
 			} else if fired {
 				fired = false
 				// meet a new record, reset the timer.
-				runawayRecordFluashTimer.Reset(runawayRecordFlushInterval)
+				runawayRecordFlushTimer.Reset(runawayRecordFlushInterval)
 			}
 		case <-runawayRecordGCTicker.C:
 			go do.deleteExpiredRows("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
@@ -287,7 +321,7 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint6
 	if err != nil {
 		return 0, errors.Annotate(err, "get session failed")
 	}
-	exec, _ := se.(sqlexec.SQLExecutor)
+	exec := se.(sessionctx.Context).GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
@@ -347,7 +381,8 @@ func (do *Domain) handleRunawayWatchDone(record *resourcegroup.QuarantineRecord)
 	if err != nil {
 		return errors.Annotate(err, "get session failed")
 	}
-	exec, _ := se.(sqlexec.SQLExecutor)
+	sctx, _ := se.(sessionctx.Context)
+	exec := sctx.GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
@@ -382,7 +417,8 @@ func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.Quarantine
 	if err != nil {
 		return errors.Annotate(err, "get session failed")
 	}
-	exec, _ := se.(sqlexec.SQLExecutor)
+	sctx, _ := se.(sessionctx.Context)
+	exec := sctx.GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
@@ -412,7 +448,8 @@ func execRestrictedSQL(sessPool *sessionPool, sql string, params []any) ([]chunk
 	if err != nil {
 		return nil, errors.Annotate(err, "get session failed")
 	}
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
@@ -484,7 +521,8 @@ func (s *runawaySyncer) getWatchRecord(reader *SystemTableReader, sqlGenFn func(
 	if err != nil {
 		return nil, errors.Annotate(err, "get session failed")
 	}
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetRestrictedSQLExecutor()
 	return getRunawayWatchRecord(exec, reader, sqlGenFn, push)
 }
 
@@ -496,7 +534,8 @@ func (s *runawaySyncer) getWatchDoneRecord(reader *SystemTableReader, sqlGenFn f
 	if err != nil {
 		return nil, errors.Annotate(err, "get session failed")
 	}
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetRestrictedSQLExecutor()
 	return getRunawayWatchDoneRecord(exec, reader, sqlGenFn, push)
 }
 

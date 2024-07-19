@@ -172,6 +172,8 @@ func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
 
 }
 
+func (t *mockTxn) MemHookSet() bool { return false }
+
 func (t *mockTxn) Mem() uint64 {
 	return 0
 }
@@ -181,6 +183,8 @@ func (t *mockTxn) RetryFairLocking(_ context.Context) error  { return nil }
 func (t *mockTxn) CancelFairLocking(_ context.Context) error { return nil }
 func (t *mockTxn) DoneFairLocking(_ context.Context) error   { return nil }
 func (t *mockTxn) IsInFairLockingMode() bool                 { return false }
+func (t *mockTxn) IsPipelined() bool                         { return false }
+func (t *mockTxn) MayFlush() error                           { return nil }
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {

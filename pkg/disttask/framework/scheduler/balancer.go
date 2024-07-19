@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	llog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -74,15 +74,16 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	// we will use currUsedSlots to calculate adjusted eligible nodes during balance,
 	// it's initial value depends on the managed nodes, to have a consistent view,
 	// DO NOT call getManagedNodes twice during 1 balance.
-	managedNodes := b.nodeMgr.getManagedNodes()
+	managedNodes := b.nodeMgr.getNodes()
 	b.currUsedSlots = make(map[string]int, len(managedNodes))
 	for _, n := range managedNodes {
-		b.currUsedSlots[n] = 0
+		b.currUsedSlots[n.ID] = 0
 	}
 
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
-		if err := b.balanceSubtasks(ctx, sch, managedNodes); err != nil {
+		nodeIDs := filterByScope(managedNodes, sch.GetTask().TargetScope)
+		if err := b.balanceSubtasks(ctx, sch, nodeIDs); err != nil {
 			b.logger.Warn("failed to balance subtasks",
 				zap.Int64("task-id", sch.GetTask().ID), llog.ShortError(err))
 			return
@@ -133,24 +134,24 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 
 	averageSubtaskCnt := len(subtasks) / len(adjustedNodes)
 	averageSubtaskRemainder := len(subtasks) - averageSubtaskCnt*len(adjustedNodes)
-	executorSubtasks := make(map[string][]*proto.Subtask, len(adjustedNodes))
+	executorSubtasks := make(map[string][]*proto.SubtaskBase, len(adjustedNodes))
 	executorPendingCnts := make(map[string]int, len(adjustedNodes))
 	for _, node := range adjustedNodes {
-		executorSubtasks[node] = make([]*proto.Subtask, 0, averageSubtaskCnt+1)
+		executorSubtasks[node] = make([]*proto.SubtaskBase, 0, averageSubtaskCnt+1)
 	}
 	for _, subtask := range subtasks {
 		// put running subtask in the front of slice.
 		// if subtask fail-over, it's possible that there are multiple running
 		// subtasks for one task executor.
 		if subtask.State == proto.SubtaskStateRunning {
-			executorSubtasks[subtask.ExecID] = append([]*proto.Subtask{subtask}, executorSubtasks[subtask.ExecID]...)
+			executorSubtasks[subtask.ExecID] = append([]*proto.SubtaskBase{subtask}, executorSubtasks[subtask.ExecID]...)
 		} else {
 			executorSubtasks[subtask.ExecID] = append(executorSubtasks[subtask.ExecID], subtask)
 			executorPendingCnts[subtask.ExecID]++
 		}
 	}
 
-	subtasksNeedSchedule := make([]*proto.Subtask, 0)
+	subtasksNeedSchedule := make([]*proto.SubtaskBase, 0)
 	remainder := averageSubtaskRemainder
 	executorWithOneMoreSubtask := make(map[string]struct{}, remainder)
 	for node, sts := range executorSubtasks {
@@ -215,7 +216,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	return nil
 }
 
-func (b *balancer) updateUsedNodes(subtasks []*proto.Subtask) {
+func (b *balancer) updateUsedNodes(subtasks []*proto.SubtaskBase) {
 	used := make(map[string]int, len(b.currUsedSlots))
 	// see slotManager.alloc in task executor.
 	for _, st := range subtasks {

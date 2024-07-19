@@ -186,3 +186,231 @@ where test2.id in
   select * from v1
 );
 select * from test2;
+
+# https://github.com/pingcap/tidb/issues/51560
+create table A(a int primary key, b int);
+create table B(b int primary key);
+create table C(c int primary key, b int);
+
+insert into A values (2, 1), (3, 2);
+insert into B values (1), (2);
+
+# Returns data as expected
+select b.b
+from A a
+left join (
+  B b
+  left join C c on b.b = c.b)
+on b.b = a.b
+where a.a in (2, 3);
+
+# Returns the same.
+select b.b
+from A a
+left join (
+  B b
+  left join C c on b.b = c.b)
+on b.b = a.b
+where a.a in (2, 3, null);
+
+# https://github.com/pingcap/tidb/issues/52687
+CREATE TABLE `t_o9_7_f` (
+  `c_ob5k0` int(11) NOT NULL,
+  `c_r5axbk` tinyint(4) DEFAULT NULL,
+  `c_fulsthp7e` text DEFAULT NULL,
+  `c_nylhnz` double DEFAULT NULL,
+  `c_fd7zeyfs49` int(11) NOT NULL,
+  `c_wpmmiv` tinyint(4) DEFAULT NULL,
+  PRIMARY KEY (`c_fd7zeyfs49`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `c_ob5k0` (`c_ob5k0`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `t_q1` (
+  `c__c_r38murv` int(11) NOT NULL,
+  `c_i93u7f2yma` double NOT NULL,
+  `c_v5mf4` double DEFAULT NULL,
+  `c_gprkp` int(11) DEFAULT NULL,
+  `c_ru` text NOT NULL,
+  `c_nml` tinyint(4) DEFAULT NULL,
+  `c_z` text DEFAULT NULL,
+  `c_ok` double DEFAULT NULL,
+  PRIMARY KEY (`c__c_r38murv`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `c__c_r38murv_2` (`c__c_r38murv`),
+  UNIQUE KEY `c_nml` (`c_nml`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `t_yzyyqbo2u` (
+  `c_c4l` int(11) DEFAULT NULL,
+  `c_yb_` text DEFAULT NULL,
+  `c_pq4c1la6cv` int(11) NOT NULL,
+  `c_kbcid` int(11) DEFAULT NULL,
+  `c_um` double DEFAULT NULL,
+  `c_zjmgh995_6` text DEFAULT NULL,
+  `c_fujjmh8m2` double NOT NULL,
+  `c_qkf4n` double DEFAULT NULL,
+  `c__x9cqrnb0` double NOT NULL,
+  `c_b5qjz_jj0` double DEFAULT NULL,
+  PRIMARY KEY (`c_pq4c1la6cv`) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY `c__x9cqrnb0` (`c__x9cqrnb0`),
+  UNIQUE KEY `c_b5qjz_jj0` (`c_b5qjz_jj0`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=2 */;
+
+CREATE TABLE `t_kg74` (
+  `c_a1tv2` int(11) NOT NULL,
+  `c_eobbbypzbu` tinyint(4) DEFAULT NULL,
+  `c_g` double NOT NULL,
+  `c_ixy` tinyint(4) DEFAULT NULL,
+  `c_if` text NOT NULL,
+  `c_obnq8s7_s2` double DEFAULT NULL,
+  `c_xrgd2snrop` tinyint(4) DEFAULT NULL,
+  `c_vqafa6o6` text DEFAULT NULL,
+  `c_ku44klry7o` double NOT NULL,
+  `c_js835qkmjz` tinyint(4) DEFAULT NULL,
+  PRIMARY KEY (`c_a1tv2`));
+
+update t_kg74 set 
+  c_eobbbypzbu = (t_kg74.c_js835qkmjz in (
+    select  
+          (ref_0.c_yb_ <> 'mlp40j') as c0
+        from 
+          t_yzyyqbo2u as ref_0
+        where (89.25 && ref_0.c_pq4c1la6cv)
+      union
+      (select  
+          ((cast(null as double) != 1382756095)) 
+            and ((1=1 <> (EXISTS (
+                  select distinct 
+                      ref_2.c_zjmgh995_6 as c0, 
+                      ref_2.c_zjmgh995_6 as c1, 
+                      ref_2.c_kbcid as c2, 
+                      ref_1.c_r5axbk as c3, 
+                      -633150135 as c4, 
+                      ref_2.c_c4l as c5, 
+                      ref_1.c_fd7zeyfs49 as c6, 
+                      ref_1.c_nylhnz as c7, 
+                      ref_2.c_um as c8, 
+                      ref_2.c_c4l as c9
+                    from 
+                      t_yzyyqbo2u as ref_2
+                    where ((ref_1.c_ob5k0 <= ref_2.c_qkf4n)) 
+                      and ((EXISTS (
+                        select  
+                            ref_3.c_qkf4n as c0, 
+                            ref_3.c_kbcid as c1, 
+                            ref_3.c_qkf4n as c2, 
+                            ref_1.c_wpmmiv as c3, 
+                            ref_1.c_fd7zeyfs49 as c4, 
+                            ref_3.c_c4l as c5, 
+                            ref_1.c_r5axbk as c6, 
+                            ref_3.c_kbcid as c7
+                          from 
+                            t_yzyyqbo2u as ref_3
+                          where ((ref_2.c_qkf4n >= ( 
+                              select distinct 
+                                    ref_4.c_b5qjz_jj0 as c0
+                                  from 
+                                    t_yzyyqbo2u as ref_4
+                                  where (ref_3.c__x9cqrnb0 not in (
+                                    select  
+                                          ref_5.c_ok as c0
+                                        from 
+                                          t_q1 as ref_5
+                                        where 1=1
+                                      union
+                                      (select  
+                                          ref_6.c_b5qjz_jj0 as c0
+                                        from 
+                                          t_yzyyqbo2u as ref_6
+                                        where (ref_6.c_qkf4n not in (
+                                          select  
+                                                ref_7.c_um as c0
+                                              from 
+                                                t_yzyyqbo2u as ref_7
+                                              where 1=1
+                                            union
+                                            (select  
+                                                ref_8.c_b5qjz_jj0 as c0
+                                              from 
+                                                t_yzyyqbo2u as ref_8
+                                              where (ref_8.c_yb_ not like 'nrry%m')))))))
+                                union
+                                (select  
+                                    ref_2.c_fujjmh8m2 as c0
+                                  from 
+                                    t_q1 as ref_9
+                                  where (ref_2.c_zjmgh995_6 like 'v8%3xn%_uc'))
+                                order by c0 limit 1))) 
+                            or ((ref_1.c_fulsthp7e in (
+                              select  
+                                    ref_10.c_ru as c0
+                                  from 
+                                    t_q1 as ref_10
+                                  where (55.34 >= 1580576276)
+                                union
+                                (select  
+                                    ref_11.c_ru as c0
+                                  from 
+                                    t_q1 as ref_11
+                                  where (ref_11.c_ru in (
+                                    select distinct 
+                                          ref_12.c_zjmgh995_6 as c0
+                                        from 
+                                          t_yzyyqbo2u as ref_12
+                                        where 0<>0
+                                      union
+                                      (select  
+                                          ref_13.c_zjmgh995_6 as c0
+                                        from 
+                                          t_yzyyqbo2u as ref_13
+                                        where ('q2chm8gfsa' = ref_13.c_yb_))))))))))))))) as c0
+        from 
+          t_o9_7_f as ref_1
+        where (-9186514464458010455 <> 62.67)))), 
+  c_if = 'u1ah7', 
+  c_vqafa6o6 = (t_kg74.c_a1tv2 + (((t_kg74.c_a1tv2 between t_kg74.c_a1tv2 and t_kg74.c_a1tv2)) 
+        or (1=1)) 
+      and ((1288561802 <= t_kg74.c_a1tv2))), 
+  c_js835qkmjz = (t_kg74.c_vqafa6o6 in (
+    select  
+        ref_14.c_z as c0
+      from 
+        t_q1 as ref_14
+      where (ref_14.c_z like 'o%fiah')))
+where (t_kg74.c_obnq8s7_s2 = case when (t_kg74.c_a1tv2 is NULL) then t_kg74.c_g else t_kg74.c_obnq8s7_s2 end
+      );
+
+# https://github.com/pingcap/tidb/issues/53236
+drop table if exists t1, t2;
+create table t1(id int primary key, a varchar(128));
+create table t2(id int primary key, b varchar(128), c varchar(128));
+UPDATE
+    t1
+SET
+    t1.a = IFNULL(
+            (
+                SELECT
+                    t2.c
+                FROM
+                    t2
+                WHERE
+                    t2.b = t1.a
+                ORDER BY
+                    t2.b DESC,
+                    t2.c DESC
+                LIMIT
+                    1
+            ), ''
+        )
+WHERE
+    t1.id = 1;
+ 
+# https://github.com/pingcap/tidb/issues/49109
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 NUMERIC);
+CREATE TABLE t1(c0 NUMERIC);
+INSERT INTO t0 VALUES (0), (NULL), (1), (2);
+INSERT INTO t1(c0) VALUES (NULL), (3), (4), (5);
+drop view if exists v0;
+CREATE VIEW v0(c0) AS SELECT t0.c0 FROM t0;
+
+SELECT t0.c0 FROM v0, t0 LEFT JOIN t1 ON t0.c0 WHERE ((INET_ATON('5V')) IS NULL);

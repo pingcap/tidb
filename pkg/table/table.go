@@ -29,12 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-binlog"
 )
 
 // Type is used to distinguish between different tables that store data in different ways.
@@ -176,26 +175,10 @@ type columnAPI interface {
 }
 
 // MutateContext is used to when mutating a table.
-type MutateContext interface {
-	expression.BuildContext
-	// GetSessionVars returns the session variables.
-	GetSessionVars() *variable.SessionVars
-	// Txn returns the current transaction which is created before executing a statement.
-	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
-	// If the active parameter is true, call this function will wait for the pending txn
-	// to become valid.
-	Txn(active bool) (kv.Transaction, error)
-	// StmtGetMutation gets the binlog mutation for current statement.
-	StmtGetMutation(int64) *binlog.TableMutation
-	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion
-}
+type MutateContext = tbctx.MutateContext
 
 // AllocatorContext is used to provide context for method `table.Allocators`.
-type AllocatorContext interface {
-	// GetTemporaryTable returns some runtime information for temporary tables to allocate IDs.
-	GetTemporaryTable(tbl *model.TableInfo) tableutil.TempTable
-}
+type AllocatorContext = tbctx.AllocatorContext
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
@@ -232,13 +215,24 @@ type Table interface {
 	GetPartitionedTable() PartitionedTable
 }
 
+func getIncrementAndOffset(vars *variable.SessionVars) (int, int) {
+	increment := vars.AutoIncrementIncrement
+	offset := vars.AutoIncrementOffset
+	// When the value of auto_increment_offset is greater than that of auto_increment_increment,
+	// the value of auto_increment_offset is ignored.
+	// Ref https://dev.mysql.com/doc/refman/8.0/en/replication-options-source.html
+	if offset > increment {
+		offset = 1
+	}
+	return increment, offset
+}
+
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
 func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
 	defer r.End()
-	increment := sctx.GetSessionVars().AutoIncrementIncrement
-	offset := sctx.GetSessionVars().AutoIncrementOffset
-	alloc := t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoIncrementType)
+	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
+	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
 	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
@@ -248,18 +242,17 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
-func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
-	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
-	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	alloc := t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoIncrementType)
-	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
+	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
+	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
+	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
 	if err != nil {
 		return min, max, err
 	}
 	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
 	// signed and unsigned value can be unified as the unsigned handle.
-	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset)))
-	return nr, increment, nil
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment1), uint64(offset)))
+	return nr, int64(increment1), nil
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
@@ -275,11 +268,12 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(expression.BuildContext, []types.Datum) (PhysicalTable, error)
+	GetPartitionByRow(expression.EvalContext, []types.Datum) (PhysicalTable, error)
+	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
-	CheckForExchangePartition(ctx expression.BuildContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
+	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

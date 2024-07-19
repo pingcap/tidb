@@ -25,8 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func row2TaskBasic(r chunk.Row) *proto.Task {
-	task := &proto.Task{
+func row2TaskBasic(r chunk.Row) *proto.TaskBase {
+	task := &proto.TaskBase{
 		ID:          r.GetInt64(0),
 		Key:         r.GetString(1),
 		Type:        proto.TaskType(r.GetString(2)),
@@ -34,6 +34,7 @@ func row2TaskBasic(r chunk.Row) *proto.Task {
 		Step:        proto.Step(r.GetInt64(4)),
 		Priority:    int(r.GetInt64(5)),
 		Concurrency: int(r.GetInt64(6)),
+		TargetScope: r.GetString(8),
 	}
 	task.CreateTime, _ = r.GetTime(7).GoTime(time.Local)
 	return task
@@ -41,20 +42,21 @@ func row2TaskBasic(r chunk.Row) *proto.Task {
 
 // Row2Task converts a row to a task.
 func Row2Task(r chunk.Row) *proto.Task {
-	task := row2TaskBasic(r)
+	taskBase := row2TaskBasic(r)
+	task := &proto.Task{TaskBase: *taskBase}
 	var startTime, updateTime time.Time
-	if !r.IsNull(8) {
-		startTime, _ = r.GetTime(8).GoTime(time.Local)
-	}
 	if !r.IsNull(9) {
-		updateTime, _ = r.GetTime(9).GoTime(time.Local)
+		startTime, _ = r.GetTime(9).GoTime(time.Local)
+	}
+	if !r.IsNull(10) {
+		updateTime, _ = r.GetTime(10).GoTime(time.Local)
 	}
 	task.StartTime = startTime
 	task.StateUpdateTime = updateTime
-	task.Meta = r.GetBytes(10)
-	task.SchedulerID = r.GetString(11)
-	if !r.IsNull(12) {
-		errBytes := r.GetBytes(12)
+	task.Meta = r.GetBytes(11)
+	task.SchedulerID = r.GetString(12)
+	if !r.IsNull(13) {
+		errBytes := r.GetBytes(13)
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
@@ -68,7 +70,7 @@ func Row2Task(r chunk.Row) *proto.Task {
 }
 
 // row2BasicSubTask converts a row to a subtask with basic info
-func row2BasicSubTask(r chunk.Row) *proto.Subtask {
+func row2BasicSubTask(r chunk.Row) *proto.SubtaskBase {
 	taskIDStr := r.GetString(2)
 	tid, err := strconv.Atoi(taskIDStr)
 	if err != nil {
@@ -88,7 +90,7 @@ func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 		startTime = time.Unix(ts, 0)
 	}
 
-	subtask := &proto.Subtask{
+	subtask := &proto.SubtaskBase{
 		ID:          r.GetInt64(0),
 		Step:        proto.Step(r.GetInt64(1)),
 		TaskID:      int64(tid),
@@ -105,7 +107,9 @@ func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 
 // Row2SubTask converts a row to a subtask.
 func Row2SubTask(r chunk.Row) *proto.Subtask {
-	subtask := row2BasicSubTask(r)
+	subtask := &proto.Subtask{
+		SubtaskBase: *row2BasicSubTask(r),
+	}
 
 	// subtask defines update time as bigint, to ensure backward compatible,
 	// we keep it that way, and we convert it here.

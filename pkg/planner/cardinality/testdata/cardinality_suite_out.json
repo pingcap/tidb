@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 723.504166655054
+        "Count": 755.754166655054
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1181.696869573942
+        "Count": 1213.946869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1190.2788209899081
+        "Count": 1215.0288209899081
       },
       {
         "Start": 200,
@@ -1521,7 +1521,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -1590,7 +1590,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -1679,7 +1679,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 3080
@@ -1705,7 +1705,7 @@
                           {
                             "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -1755,7 +1755,7 @@
                                 ]
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -1892,7 +1892,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 3080
@@ -1918,7 +1918,7 @@
                           {
                             "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -2078,7 +2078,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -2147,7 +2147,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -2242,7 +2242,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 2980
@@ -2333,7 +2333,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 2980
@@ -2450,7 +2450,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -2536,6 +2536,23 @@
                         ]
                       },
                       {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindMinNotNull <nil>"
+                            }
+                          },
+                          {
+                            "Count": 0,
+                            "Matched": false
+                          }
+                        ]
+                      },
+                      {
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
                             "lDatum": "KindMinNotNull <nil>",
@@ -2585,7 +2602,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -2723,7 +2740,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 3080
@@ -2817,6 +2834,23 @@
                             ]
                           },
                           {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                              {
+                                "Locate value in buckets": {
+                                  "BucketIdx": 0,
+                                  "Exceed": false,
+                                  "InBucket": false,
+                                  "MatchLastValue": false,
+                                  "Value": "KindBytes \\x01"
+                                }
+                              },
+                              {
+                                "Count": 0,
+                                "Matched": false
+                              }
+                            ]
+                          },
+                          {
                             "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                               {
                                 "lDatum": "KindBytes \\x01",
@@ -2874,7 +2908,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 3080
@@ -2900,7 +2934,7 @@
                           {
                             "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -3146,7 +3180,7 @@
                           {
                             "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -3441,7 +3475,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -3527,6 +3561,23 @@
                         ]
                       },
                       {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindMinNotNull <nil>"
+                            }
+                          },
+                          {
+                            "Count": 0,
+                            "Matched": false
+                          }
+                        ]
+                      },
+                      {
                         "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": {
                           "Result": 0
                         }
@@ -3581,7 +3632,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -3667,6 +3718,32 @@
                         ]
                       },
                       {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindInt64 400"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Count": 0.99,
+                            "Matched": false
+                          }
+                        ]
+                      },
+                      {
                         "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": [
                           {
                             "Related TopN Range": {
@@ -3730,7 +3807,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 2980
@@ -3814,6 +3891,23 @@
                         ]
                       },
                       {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindBytes \\x01"
+                            }
+                          },
+                          {
+                            "Count": 0,
+                            "Matched": false
+                          }
+                        ]
+                      },
+                      {
                         "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": {
                           "Result": 0
                         }
@@ -3859,7 +3953,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 2980
@@ -3939,6 +4033,32 @@
                           {
                             "Bucket idx": 111,
                             "Result": 893.25
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindBytes \\x03\\x80\\x00\\x00\\x00\\x00\\x00\\x01\\x91"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Count": 0.99,
+                            "Matched": false
                           }
                         ]
                       },
@@ -4057,8 +4177,8 @@
       {
         "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1",
         "Result": [
-          "Projection 16.00 root  test.t.a, test.t.b",
-          "└─IndexReader 16.00 root  index:IndexRangeScan",
+          "IndexReader 16.00 root  index:Projection",
+          "└─Projection 16.00 cop[tikv]  test.t.a, test.t.b",
           "  └─IndexRangeScan 16.00 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1 1,1 1 1], keep order:false"
         ]
       },

@@ -50,7 +50,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := model.Job{}
-	require.Equal(t, 392, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 400, int(unsafe.Sizeof(job)), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -117,4 +117,16 @@ func TestActionBDRMap(t *testing.T) {
 	}
 
 	require.Equal(t, totalActions, len(model.ActionBDRMap))
+}
+
+func TestInFinalState(t *testing.T) {
+	for s, v := range map[model.JobState]bool{
+		model.JobStateSynced:       true,
+		model.JobStateCancelled:    true,
+		model.JobStatePaused:       true,
+		model.JobStateCancelling:   false,
+		model.JobStateRollbackDone: false,
+	} {
+		require.Equal(t, v, (&model.Job{State: s}).InFinalState())
+	}
 }

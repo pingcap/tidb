@@ -318,14 +318,12 @@ func TestCreateTableWithInfo(t *testing.T) {
 	d := dom.DDL()
 	require.NotNil(t, d)
 	info := []*model.TableInfo{{
-		ID:   42,
+		ID:   42042, // Note, we must ensure the table ID is globally unique!
 		Name: model.NewCIStr("t"),
 	}}
 
-	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
-		return false
-	})))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42"))
+	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.WithOnExist(ddl.OnExistError), ddl.WithIDAllocated(true)))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42042"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
 	var id int64
@@ -342,9 +340,7 @@ func TestCreateTableWithInfo(t *testing.T) {
 		Name: model.NewCIStr("tt"),
 	}}
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
-		return true
-	})))
+	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.WithOnExist(ddl.OnExistError)))
 	idGen, ok := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tt'").Rows()[0][0].(string)
 	require.True(t, ok)
 	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
@@ -374,7 +370,7 @@ func TestBatchCreateTable(t *testing.T) {
 
 	// correct name
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err := d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.OnExistError)
+	err := d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError))
 	require.NoError(t, err)
 
 	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
@@ -389,7 +385,7 @@ func TestBatchCreateTable(t *testing.T) {
 	// duplicated name
 	infos[1].Name = model.NewCIStr("tables_1")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.OnExistError)
+	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError))
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableExists))
 
 	newinfo := &model.TableInfo{
@@ -418,7 +414,7 @@ func TestBatchCreateTable(t *testing.T) {
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
+	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.WithOnExist(ddl.OnExistError))
 	require.NoError(t, err)
 }
 
@@ -780,9 +776,9 @@ func TestAddColumn2(t *testing.T) {
 	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Session(), kv.IntHandle(1), writeOnlyTable.WritableCols())
 	require.NoError(t, err)
 	require.Equal(t, 3, len(oldRow))
-	err = writeOnlyTable.RemoveRecord(tk.Session(), kv.IntHandle(1), oldRow)
+	err = writeOnlyTable.RemoveRecord(tk.Session().GetTableCtx(), kv.IntHandle(1), oldRow)
 	require.NoError(t, err)
-	_, err = writeOnlyTable.AddRecord(tk.Session(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
+	_, err = writeOnlyTable.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	require.NoError(t, err)
 	tk.Session().StmtCommit(ctx)
 	err = tk.Session().CommitTxn(ctx)

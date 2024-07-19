@@ -23,21 +23,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -117,7 +118,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 
 		addSpecs(specs)
 	case proto.ImportStepMergeSort:
-		specs, err := generateMergeSortSpecs(planCtx)
+		specs, err := generateMergeSortSpecs(planCtx, p)
 		if err != nil {
 			return nil, err
 		}
@@ -205,11 +206,12 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
-	var localChecksum verify.KVChecksum
+	localChecksum := verify.NewKVGroupChecksumForAdd()
 	maxIDs := make(map[autoid.AllocatorType]int64, 3)
 	for _, subtaskMeta := range subtaskMetas {
-		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
-		localChecksum.Add(&checksum)
+		for id, c := range subtaskMeta.Checksum {
+			localChecksum.AddRawGroup(id, c.Size, c.KVs, c.Sum)
+		}
 
 		for key, val := range subtaskMeta.MaxIDs {
 			if maxIDs[key] < val {
@@ -217,13 +219,17 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 			}
 		}
 	}
+	c := localChecksum.GetInnerChecksums()
 	postProcessStepMeta := &PostProcessStepMeta{
-		Checksum: Checksum{
-			Size: localChecksum.SumSize(),
-			KVs:  localChecksum.SumKVS(),
-			Sum:  localChecksum.Sum(),
-		},
-		MaxIDs: maxIDs,
+		Checksum: make(map[int64]Checksum, len(c)),
+		MaxIDs:   maxIDs,
+	}
+	for id, cksum := range c {
+		postProcessStepMeta.Checksum[id] = Checksum{
+			Size: cksum.SumSize(),
+			KVs:  cksum.SumKVS(),
+			Sum:  cksum.Sum(),
+		}
 	}
 	return json.Marshal(postProcessStepMeta)
 }
@@ -233,7 +239,7 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 }
 
 func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataController, error) {
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -295,7 +301,7 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
-func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, error) {
+func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
 	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
@@ -303,7 +309,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 		return nil, err
 	}
 	for kvGroup, kvMeta := range kvMetas {
-		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
+		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
 				zap.Int64("task-id", planCtx.TaskID),
 				zap.String("kv-group", kvGroup))
@@ -339,7 +345,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	// kvMetas contains data kv meta and all index kv metas.
 	// each kvMeta will be split into multiple range group individually,
 	// i.e. data and index kv will NOT be in the same subtask.
-	kvMetas, err := getSortedKVMetasForIngest(planCtx)
+	kvMetas, err := getSortedKVMetasForIngest(planCtx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -357,6 +363,13 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			},
 		}, nil)
 	})
+
+	pTS, lTS, err := planCtx.Store.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ts := oracle.ComposeTS(pTS, lTS)
+
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
@@ -404,6 +417,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					StatFiles:      statFiles,
 					RangeSplitKeys: rangeSplitKeys,
 					RangeSplitSize: splitter.GetRangeSplitSize(),
+					TS:             ts,
 				}
 				specs = append(specs, &WriteIngestSpec{m})
 
@@ -465,7 +479,7 @@ func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.So
 	return result, nil
 }
 
-func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan) (map[string]*external.SortedKVMeta, error) {
 	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort])
 	if err != nil {
 		return nil, err
@@ -477,7 +491,7 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.So
 	for kvGroup, kvMeta := range kvMetasOfEncodeStep {
 		// only part of kv files are merge sorted. we need to merge kv metas that
 		// are not merged into the kvMetasOfMergeSort.
-		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
+		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			if _, ok := kvMetasOfMergeSort[kvGroup]; ok {
 				// this should not happen, because we only generate merge sort
 				// subtasks for those kv groups with MaxOverlappingTotal > MergeSortOverlapThreshold
@@ -510,6 +524,5 @@ func getRangeSplitter(ctx context.Context, store storage.ExternalStorage, kvMeta
 		int64(math.MaxInt64),
 		regionSplitSize,
 		regionSplitKeys,
-		false,
 	)
 }

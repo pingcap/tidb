@@ -17,8 +17,9 @@ package statistics
 import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/twmb/murmur3"
@@ -76,7 +77,7 @@ func (idx *Index) ItemID() int64 {
 
 // IsAllEvicted indicates whether all stats evicted
 func (idx *Index) IsAllEvicted() bool {
-	return idx.statsInitialized && idx.evictedStatus >= AllEvicted
+	return idx == nil || (idx.statsInitialized && idx.evictedStatus >= AllEvicted)
 }
 
 // GetEvictedStatus returns the evicted status
@@ -127,23 +128,36 @@ func (idx *Index) TotalRowCount() float64 {
 	return idx.Histogram.TotalRowCount()
 }
 
-// IsInvalid checks if this index is invalid.
-func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
-	idx.CheckStats()
+// IndexStatsIsInvalid checks whether the index has valid stats or not.
+func IndexStatsIsInvalid(sctx context.PlanContext, idxStats *Index, coll *HistColl, cid int64) (res bool) {
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx,
 				"IsInvalid", res,
-				"CollPseudo", collPseudo,
+				"CollPseudo", coll.Pseudo,
 				"TotalCount", totalCount,
 			)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	totalCount = idx.TotalRowCount()
-	return (collPseudo) || totalCount == 0
+	// If the given index statistics is nil or we found that the index's statistics hasn't been fully loaded, we add this index to NeededItems.
+	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
+	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad {
+		asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
+			TableID:          coll.PhysicalID,
+			ID:               cid,
+			IsIndex:          true,
+			IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
+		}, true)
+		// TODO: we can return true here. But need to fix some tests first.
+	}
+	if idxStats == nil {
+		return true
+	}
+	totalCount = idxStats.TotalRowCount()
+	return coll.Pseudo || totalCount == 0
 }
 
 // EvictAllStats evicts all stats
@@ -181,7 +195,7 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 
 // QueryBytes is used to query the count of specified bytes.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) {
+func (idx *Index) QueryBytes(sctx context.PlanContext, d []byte) (result uint64) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -200,15 +214,6 @@ func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) 
 	}
 	v, _ := idx.Histogram.EqualRowCount(sctx, types.NewBytesDatum(d), idx.StatsVer >= Version2)
 	return uint64(v)
-}
-
-// CheckStats will check if the index stats need to be updated.
-func (idx *Index) CheckStats() {
-	// When we are using stats from PseudoTable(), all column/index ID will be -1.
-	if idx.IsFullLoad() || idx.PhysicalID <= 0 {
-		return
-	}
-	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.

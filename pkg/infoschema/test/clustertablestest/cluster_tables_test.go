@@ -15,6 +15,7 @@
 package clustertablestest
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
@@ -186,7 +188,7 @@ func TestTestDataLockWaits(t *testing.T) {
 		"6B657934 <nil> 7 8 <nil> <nil>"))
 }
 
-func SubTestDataLockWaitsPrivilege(t *testing.T) {
+func TestDataLockWaitsPrivilege(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -291,7 +293,7 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
 }
 
-func SubTestSelectClusterTablePrivilege(t *testing.T) {
+func TestSelectClusterTablePrivilege(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -324,7 +326,7 @@ select * from t3;
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0 ", "")))
+	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0   ", "")))
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(t, s.store)
@@ -714,6 +716,8 @@ select * from t1;
 	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
 	defer tk.MustExec("set global tidb_mem_oom_action='LOG'")
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	// Align with the timezone in slow log files
+	tk.MustExec("set @@time_zone='+08:00'")
 	checkFn := func(quota int) {
 		tk.MustExec("set tidb_mem_quota_query=" + strconv.Itoa(quota)) // session
 
@@ -760,6 +764,7 @@ func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.
 	}()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
+		conf.AdvertiseAddress = "127.0.0.1"
 	})
 	return srv, addr
 }
@@ -905,6 +910,24 @@ func TestMDLView(t *testing.T) {
 	}
 }
 
+func TestMDLViewPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("select * from mysql.tidb_mdl_view;").Check(testkit.Rows())
+	tk.MustExec("create user 'test'@'%' identified by '';")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
+	_, err := tk.Exec("select * from mysql.tidb_mdl_view;")
+	require.ErrorContains(t, err, "view lack rights")
+
+	// grant all privileges to test user.
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("grant all privileges on *.* to 'test'@'%';")
+	tk.MustExec("flush privileges;")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("select * from mysql.tidb_mdl_view;").Check(testkit.Rows())
+}
+
 func TestQuickBinding(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -916,6 +939,7 @@ func TestQuickBinding(t *testing.T) {
 	tk := s.newTestKitWithRoot(t)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
+	tk.MustExec("set tidb_opt_projection_push_down = 0")
 	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (pk int, a int, b int, c int, primary key(pk), key k_a(a), key k_bc(b, c))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, key k_a(a), key k_bc(b, c))`) // no primary key
@@ -1262,12 +1286,14 @@ func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
 	sql := "select * from t1 where t1.id in (select id from t2)"
 	tk.MustExec(sql)
 	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
-	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with sub query")
+	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries with sub queries might not be complete, the plan might change even after creating this binding"))
 
 	sql = "select * from t1, t2, t3 where t1.id = t2.id and t2.id = t3.id"
 	tk.MustExec(sql)
 	planDigest = tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
-	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with more than two table join")
+	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding"))
 }
 
 // withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
@@ -1313,7 +1339,8 @@ func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 	sql := "select * from t"
 	tk.MustExec(sql)
 	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.cluster_statements_summary where query_sample_text = '%s'", sql)).Rows()
-	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with tiflash engine")
+	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries accessing TiFlash might not be complete, the plan might change even after creating this binding"))
 }
 
 func TestSetBindingStatusBySQLDigest(t *testing.T) {
@@ -1657,4 +1684,123 @@ func TestIndexUsageTable(t *testing.T) {
 
 func TestClusterIndexUsageTable(t *testing.T) {
 	testIndexUsageTable(t, true)
+}
+
+func TestUnusedIndexView(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id1 int unique, id2 int unique)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("analyze table t")
+	tk.RefreshSession()
+	tk.MustExec("use test")
+	// range scan 0-10 through t1 id1
+	tk.MustQuery("select * from t use index(id1) where id1 >= 0 and id1 < 10")
+	tk.MustHavePlan("select * from t use index(id1) where id1 >= 0 and id1 < 10", "IndexLookUp")
+	tk.RefreshSession()
+	// the index `id2` is unused
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select * from sys.schema_unused_indexes where object_name = 't'`)
+		logutil.BgLogger().Info("select schema_unused_indexes", zap.Any("row", result.Rows()))
+		expectedResult := testkit.Rows("test t id2")
+		return result.Equal(expectedResult)
+	}, 5*time.Second, 100*time.Millisecond)
+}
+
+func TestMDLViewIDConflict(t *testing.T) {
+	save := privileges.SkipWithGrant
+	privileges.SkipWithGrant = true
+	defer func() {
+		privileges.SkipWithGrant = save
+	}()
+
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	tk := s.newTestKitWithRoot(t)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tk.MustExec("insert into t values (1)")
+
+	bigID := tbl.Meta().ID * 10
+	bigTableName := ""
+	// set a hard limitation on 10000 to avoid using too much resource
+	for i := 0; i < 10000; i++ {
+		bigTableName = fmt.Sprintf("t%d", i)
+		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
+
+		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(bigTableName))
+		require.NoError(t, err)
+
+		require.LessOrEqual(t, tbl.Meta().ID, bigID)
+		if tbl.Meta().ID == bigID {
+			break
+		}
+	}
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec(fmt.Sprintf("insert into %s values (1)", bigTableName))
+
+	// Now we have two table: t and `bigTableName`. The later one's ID is 10 times the former one.
+	// Then create two session to run TXNs on these two tables
+	txnTK1 := s.newTestKitWithRoot(t)
+	txnTK2 := s.newTestKitWithRoot(t)
+	txnTK1.MustExec("use test")
+	txnTK1.MustExec("BEGIN")
+	// this transaction will query `t` and one another table. Then the `related_table_ids` is `smallID|anotherID`
+	txnTK1.MustQuery("SELECT * FROM t").Check(testkit.Rows("1"))
+	txnTK1.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
+	txnTK2.MustExec("use test")
+	txnTK2.MustExec("BEGIN")
+	txnTK2.MustQuery("SELECT * FROM " + bigTableName).Check(testkit.Rows("1"))
+
+	testTK := s.newTestKitWithRoot(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", testTK.Session().GetSessionManager())
+	defer s.rpcserver.Stop()
+	testTK.MustQuery("select table_name from mysql.tidb_mdl_view").Check(testkit.Rows())
+
+	// run a DDL on the table with smallID
+	ddlTK1 := s.newTestKitWithRoot(t)
+	ddlTK1.MustExec("use test")
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		ddlTK1.MustExec("ALTER TABLE t ADD index(a);")
+		wg.Done()
+	}()
+	ddlTK2 := s.newTestKitWithRoot(t)
+	ddlTK2.MustExec("use test")
+	wg.Add(1)
+	go func() {
+		ddlTK2.MustExec(fmt.Sprintf("ALTER TABLE %s ADD index(a);", bigTableName))
+		wg.Done()
+	}()
+
+	require.Eventually(t, func() bool {
+		rows := testTK.MustQuery("select table_ids from mysql.tidb_mdl_info").Rows()
+		return len(rows) == 2
+	}, time.Second*10, time.Second)
+
+	// it only contains the table with smallID
+	require.Eventually(t, func() bool {
+		rows := testTK.MustQuery("select table_name, query, start_time from mysql.tidb_mdl_view order by table_name").Rows()
+		return len(rows) == 2
+	}, time.Second*10, time.Second)
+	txnTK1.MustExec("COMMIT")
+	txnTK2.MustExec("COMMIT")
+	wg.Wait()
 }

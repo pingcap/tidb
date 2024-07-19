@@ -9,7 +9,7 @@ go_test(
         "tables_test.go",
     ],
     flaky = True,
-    shard_count = 49,
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/domain",

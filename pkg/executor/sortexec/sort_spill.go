@@ -17,9 +17,12 @@ package sortexec
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
+
+const spillInfo = "memory exceeds quota, spill to disk now."
 
 // sortPartitionSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, sortPartitionSpillDiskAction.Action is
@@ -53,7 +56,8 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 	if !s.partition.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
 		s.once.Do(func() {
 			go func() {
-				err := s.partition.spillToDisk(t)
+				logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+				err := s.partition.spillToDisk()
 				if err != nil {
 					s.partition.setError(err)
 				}
@@ -75,33 +79,54 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 	return s.GetFallback()
 }
 
-// It's used only when spill is triggered
-type dataCursor struct {
-	chkID     int
-	chunkIter *chunk.Iterator4Chunk
+type parallelSortSpillAction struct {
+	memory.BaseOOMAction
+	spillHelper *parallelSortSpillHelper
 }
 
-// NewDataCursor creates a new dataCursor
-func NewDataCursor() *dataCursor {
-	return &dataCursor{
-		chkID:     -1,
-		chunkIter: chunk.NewIterator4Chunk(nil),
+func newParallelSortSpillDiskAction(spillHelper *parallelSortSpillHelper) *parallelSortSpillAction {
+	return &parallelSortSpillAction{
+		spillHelper: spillHelper,
 	}
 }
 
-func (d *dataCursor) getChkID() int {
-	return d.chkID
+// GetPriority get the priority of the Action.
+func (*parallelSortSpillAction) GetPriority() int64 {
+	return memory.DefSpillPriority
 }
 
-func (d *dataCursor) begin() chunk.Row {
-	return d.chunkIter.Begin()
+func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
+	if s.actionImpl(t) {
+		return
+	}
+
+	if t.CheckExceed() && !hasEnoughDataToSpill(s.spillHelper.sortExec.memTracker, t) {
+		s.GetFallback().Action(t)
+	}
 }
 
-func (d *dataCursor) next() chunk.Row {
-	return d.chunkIter.Next()
+// Return true if it successfully sets spill flag
+func (s *parallelSortSpillAction) actionImpl(t *memory.Tracker) bool {
+	s.spillHelper.cond.L.Lock()
+	defer s.spillHelper.cond.L.Unlock()
+
+	for s.spillHelper.isInSpillingNoLock() {
+		s.spillHelper.cond.Wait()
+	}
+
+	if t.CheckExceed() && s.spillHelper.isNotSpilledNoLock() && hasEnoughDataToSpill(s.spillHelper.sortExec.memTracker, t) {
+		// Ideally, all goroutines entering this action should wait for the finish of spill once
+		// spill is triggered(we consider spill is triggered when the `needSpill` has been set).
+		// However, out of some reasons, we have to directly return before the finish of
+		// sort operation executed in spill as sort will retrigger the action and lead to dead lock.
+		s.spillHelper.setNeedSpillNoLock()
+		s.spillHelper.bytesConsumed.Store(t.BytesConsumed())
+		s.spillHelper.bytesLimit.Store(t.GetBytesLimit())
+		return true
+	}
+	return false
 }
 
-func (d *dataCursor) setChunk(chk *chunk.Chunk, chkID int) {
-	d.chkID = chkID
-	d.chunkIter = chunk.NewIterator4Chunk(chk)
+func hasEnoughDataToSpill(sortTracker *memory.Tracker, passedInTracker *memory.Tracker) bool {
+	return sortTracker.BytesConsumed() >= passedInTracker.GetBytesLimit()/10
 }

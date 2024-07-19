@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -29,7 +30,7 @@ import (
 type RuntimeFilterGenerator struct {
 	rfIDGenerator                 *util.IDGenerator
 	columnUniqueIDToRF            map[int64][]*RuntimeFilter
-	parentPhysicalPlan            PhysicalPlan
+	parentPhysicalPlan            base.PhysicalPlan
 	childIdxForParentPhysicalPlan int
 }
 
@@ -55,7 +56,7 @@ PhysicalPlanTree:
  TableScan   ExchangeNode
 (assign RF1)
 */
-func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan PhysicalPlan) {
+func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.PhysicalPlan) {
 	switch physicalPlan := plan.(type) {
 	case *PhysicalHashJoin:
 		generator.generateRuntimeFilterInterval(physicalPlan)
@@ -89,9 +90,10 @@ func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinP
 	if !generator.matchRFJoinType(hashJoinPlan) {
 		return
 	}
+	ectx := hashJoinPlan.SCtx().GetExprCtx().GetEvalCtx()
 	// check eq predicate pattern
 	for _, eqPredicate := range hashJoinPlan.EqualConditions {
-		if generator.matchEQPredicate(eqPredicate, hashJoinPlan.RightIsBuildSide()) {
+		if generator.matchEQPredicate(ectx, eqPredicate, hashJoinPlan.RightIsBuildSide()) {
 			// construct runtime filter
 			newRFList, targetColumnUniqueID := NewRuntimeFilter(generator.rfIDGenerator, eqPredicate, hashJoinPlan)
 			// update generator rf list
@@ -178,12 +180,12 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 	return true
 }
 
-func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFunction,
+func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPredicate *expression.ScalarFunction,
 	rightIsBuildSide bool) bool {
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
 		logutil.BgLogger().Debug("The runtime filter doesn't support null safe eq predicate",
-			zap.String("EQPredicate", eqPredicate.String()))
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)))
 		return false
 	}
 	var targetColumn, srcColumn *expression.Column
@@ -200,21 +202,21 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 	// todo: cast expr in target column
 	if targetColumn.IsHidden || targetColumn.OrigName == "" {
 		logutil.BgLogger().Debug("Target column does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.String()),
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)),
 			zap.String("TargetColumn", targetColumn.String()),
 			zap.Bool("IsHidden", targetColumn.IsHidden),
 			zap.String("OrigName", targetColumn.OrigName))
 		return false
 	}
 	// match data type
-	srcColumnType := srcColumn.GetType().GetType()
+	srcColumnType := srcColumn.GetStaticType().GetType()
 	if srcColumnType == mysql.TypeJSON || srcColumnType == mysql.TypeBlob ||
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
-		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetType().Hybrid() || srcColumn.GetType().IsArray() {
+		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetStaticType().Hybrid() || srcColumn.GetStaticType().IsArray() {
 		logutil.BgLogger().Debug("Src column type does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.String()),
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)),
 			zap.String("SrcColumn", srcColumn.String()),
-			zap.String("SrcColumnType", srcColumn.GetType().String()))
+			zap.String("SrcColumnType", srcColumn.GetStaticType().String()))
 		return false
 	}
 	return true
@@ -227,7 +229,7 @@ func (generator *RuntimeFilterGenerator) calculateRFMode(buildNode *PhysicalHash
 	return variable.RFGlobal
 }
 
-func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode PhysicalPlan, targetNode *PhysicalTableScan) bool {
+func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode base.PhysicalPlan, targetNode *PhysicalTableScan) bool {
 	switch currentNode.(type) {
 	case *PhysicalExchangeReceiver:
 		// terminal traversal

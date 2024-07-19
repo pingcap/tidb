@@ -15,16 +15,19 @@
 package importintotest
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 //go:embed test.parquet
@@ -59,14 +62,17 @@ func (s *mockGCSSuite) TestDetachedLoadParquet() {
 	))
 
 	s.tk.MustExec("TRUNCATE TABLE t;")
-	s.T().Cleanup(func() { executor.TestDetachedTaskFinished.Store(false) })
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/testDetachedTaskFinished", "return(true)")
 	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-load-parquet/p?endpoint=%s'
 		FORMAT 'parquet' WITH detached;`, gcsEndpoint)
 	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
+	jobID, err := strconv.Atoi(rows[0][0].(string))
+	s.NoError(err)
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	require.Eventually(s.T(), func() bool {
-		return executor.TestDetachedTaskFinished.Load()
+		task := s.getTaskByJobID(ctx, int64(jobID))
+		return task.State == proto.TaskStateSucceed
 	}, maxWaitTime, time.Second)
 
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(

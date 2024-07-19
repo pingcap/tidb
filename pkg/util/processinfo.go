@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -45,6 +46,7 @@ type ProcessInfo struct {
 	ExpensiveTxnLogTime   time.Time
 	CurTxnCreateTime      time.Time
 	Plan                  any
+	CursorTracker         cursor.Tracker
 	StmtCtx               *stmtctx.StatementContext
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
@@ -59,6 +61,7 @@ type ProcessInfo struct {
 	Port                  string
 	ResourceGroupName     string
 	SessionAlias          string
+	RedactSQL             string
 	IndexNames            []string
 	TableIDs              []int64
 	PlanExplainRows       [][]string
@@ -70,7 +73,6 @@ type ProcessInfo struct {
 	MaxExecutionTime uint64
 	State            uint16
 	Command          byte
-	RedactSQL        bool
 }
 
 // Clone return a shallow clone copy of this processInfo.

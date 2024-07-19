@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
@@ -117,10 +118,10 @@ func TestPlanStringer(t *testing.T) {
 		stmt, err := parser.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, "for %s", tt.sql)
 		ret := &core.PreprocessorReturn{}
-		builder, _ := core.NewPlanBuilder().Init(tk.Session(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(context.TODO(), stmt)
 		require.NoError(t, err, "for %s", tt.sql)
-		p, err = core.LogicalOptimize(context.TODO(), builder.GetOptFlag(), p.(core.LogicalPlan))
+		p, err = core.LogicalOptimize(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err, "for %s", tt.sql)
 		require.Equal(t, tt.plan, core.ToString(p))
 	}

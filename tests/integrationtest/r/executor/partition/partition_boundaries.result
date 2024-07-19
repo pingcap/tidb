@@ -10,7 +10,7 @@ INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'
 INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...');
 INSERT INTO t VALUES (2999998, '2999998 Filler ...'), (2999999, '2999999 Filler ...');
 INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
-ANALYZE TABLE t;
+ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a = -2147483648;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p0	data:Selection
@@ -125,7 +125,9 @@ a	b
 1000002	1000002 Filler ...
 explain format='brief' SELECT * FROM t WHERE a = 3000000;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableReader	0.00	root	partition:dual	data:Selection
+└─Selection	0.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000000)
+  └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a = 3000000;
 a	b
 explain format='brief' SELECT * FROM t WHERE a IN (3000000);
@@ -137,7 +139,9 @@ SELECT * FROM t WHERE a IN (3000000);
 a	b
 explain format='brief' SELECT * FROM t WHERE a = 3000001;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableReader	0.00	root	partition:dual	data:Selection
+└─Selection	0.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000001)
+  └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a = 3000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a IN (3000001);
@@ -293,7 +297,7 @@ INSERT INTO t VALUES (3, '3 Filler...');
 INSERT INTO t VALUES (4, '4 Filler...');
 INSERT INTO t VALUES (5, '5 Filler...');
 INSERT INTO t VALUES (6, '6 Filler...');
-ANALYZE TABLE t;
+ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a != -1;
 id	estRows	task	access object	operator info
 TableReader	7.00	root	partition:all	data:Selection
@@ -705,7 +709,7 @@ INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'
 INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...');
 INSERT INTO t VALUES (2999998, '2999998 Filler ...'), (2999999, '2999999 Filler ...');
 INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
-ANALYZE TABLE t;
+ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483649;
 id	estRows	task	access object	operator info
 TableReader	0.00	root	partition:p0	data:Selection
@@ -1575,7 +1579,7 @@ INSERT INTO t VALUES (3, '3 Filler...');
 INSERT INTO t VALUES (4, '4 Filler...');
 INSERT INTO t VALUES (5, '5 Filler...');
 INSERT INTO t VALUES (6, '6 Filler...');
-ANALYZE TABLE t;
+ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND -1;
 id	estRows	task	access object	operator info
 TableReader	0.00	root	partition:dual	data:Selection
@@ -1754,7 +1758,7 @@ INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'
 INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...');
 INSERT INTO t VALUES (2999998, '2999998 Filler ...'), (2999999, '2999999 Filler ...');
 INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
-ANALYZE TABLE t;
+ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a < -2147483648;
 id	estRows	task	access object	operator info
 TableReader	0.00	root	partition:p0	data:Selection
@@ -3362,7 +3366,7 @@ INSERT INTO t VALUES (3, '3 Filler...');
 INSERT INTO t VALUES (4, '4 Filler...');
 INSERT INTO t VALUES (5, '5 Filler...');
 INSERT INTO t VALUES (6, '6 Filler...');
-ANALYZE TABLE t;
+ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a < -1;
 id	estRows	task	access object	operator info
 TableReader	0.00	root	partition:p0	data:Selection

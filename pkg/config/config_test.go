@@ -57,7 +57,7 @@ func TestAtomicBoolUnmarshal(t *testing.T) {
 	require.Equal(t, "ab = \"false\"\n", firstBuffer.String())
 
 	_, err = toml.Decode("ab = 1", &d)
-	require.EqualError(t, err, "Invalid value for bool type: 1")
+	require.EqualError(t, err, "toml: line 1 (last key \"ab\"): Invalid value for bool type: 1")
 }
 
 func TestNullableBoolUnmarshal(t *testing.T) {
@@ -93,7 +93,7 @@ func TestNullableBoolUnmarshal(t *testing.T) {
 	require.Equal(t, nbUnset, log.EnableErrorStack)
 
 	_, err = toml.Decode("enable-error-stack = 1", &log)
-	require.EqualError(t, err, "Invalid value for bool type: 1")
+	require.EqualError(t, err, "toml: line 1 (last key \"enable-error-stack\"): Invalid value for bool type: 1")
 	require.Equal(t, nbUnset, log.EnableErrorStack)
 
 	// Test for UnmarshalJSON
@@ -126,7 +126,7 @@ func TestLogConfig(t *testing.T) {
 		require.Equal(t, expectedDisableErrorStack, conf.Log.DisableErrorStack)
 		require.Equal(t, expectedEnableTimestamp, conf.Log.EnableTimestamp)
 		require.Equal(t, expectedDisableTimestamp, conf.Log.DisableTimestamp)
-		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
+		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
 		err := f.Truncate(0)
 		require.NoError(t, err)
 		_, err = f.Seek(0, 0)
@@ -910,7 +910,7 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
-	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
+	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
@@ -1170,6 +1170,44 @@ func TestTableColumnCountLimit(t *testing.T) {
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
 
+func TestTokenLimit(t *testing.T) {
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
+
+	tests := []struct {
+		tokenLimit         uint
+		expectedTokenLimit uint
+	}{
+		{
+			0,
+			1000,
+		},
+		{
+			99999999999,
+			MaxTokenLimit,
+		},
+	}
+
+	for _, test := range tests {
+		require.NoError(t, f.Truncate(0))
+		_, err = f.Seek(0, 0)
+		require.NoError(t, err)
+		_, err = f.WriteString(fmt.Sprintf(`
+token-limit = %d
+`, test.tokenLimit))
+		require.NoError(t, err)
+		require.NoError(t, f.Sync())
+		conf := NewConfig()
+		require.NoError(t, conf.Load(configFile))
+		require.Equal(t, test.expectedTokenLimit, conf.TokenLimit)
+	}
+}
+
 func TestEncodeDefTempStorageDir(t *testing.T) {
 	tests := []struct {
 		host       string
@@ -1205,8 +1243,8 @@ func TestModifyThroughLDFlags(t *testing.T) {
 		EnableTelemetry       bool
 		CheckTableBeforeDrop  bool
 	}{
-		{"Community", "None", true, false},
-		{"Community", "1", true, true},
+		{"Community", "None", false, false},
+		{"Community", "1", false, true},
 		{"Enterprise", "None", false, false},
 		{"Enterprise", "1", false, true},
 	}
@@ -1216,7 +1254,7 @@ func TestModifyThroughLDFlags(t *testing.T) {
 	originalGlobalConfig := GetGlobalConfig()
 
 	for _, test := range tests {
-		defaultConf.EnableTelemetry = true
+		defaultConf.EnableTelemetry = false
 		CheckTableBeforeDrop = false
 
 		initByLDFlags(test.Edition, test.CheckBeforeDropLDFlag)
@@ -1287,7 +1325,7 @@ func TestConfigExample(t *testing.T) {
 func TestStatsLoadLimit(t *testing.T) {
 	conf := NewConfig()
 	checkConcurrencyValid := func(concurrency int, shouldBeValid bool) {
-		conf.Performance.StatsLoadConcurrency = uint(concurrency)
+		conf.Performance.StatsLoadConcurrency = concurrency
 		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkConcurrencyValid(DefStatsLoadConcurrencyLimit, true)
@@ -1335,4 +1373,26 @@ func TestAutoScalerConfig(t *testing.T) {
 	UpdateGlobal(func(conf *Config) {
 		conf.UseAutoScaler = false
 	})
+}
+
+func TestInvalidConfigWithDeprecatedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.toml")
+
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+
+	_, err = f.WriteString(`
+[log]
+slow-threshold = 1000
+[performance]
+enforce-mpp = 1
+	`)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+
+	var conf Config
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
 }

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,6 +44,7 @@ func TestSessionPool(t *testing.T) {
 }
 
 type testResource struct {
+	sessionctx.Context
 	status int
 }
 

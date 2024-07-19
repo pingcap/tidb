@@ -552,12 +552,8 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 
 // Prepared represents a prepared statement.
 type Prepared struct {
-	Stmt          StmtNode
-	StmtType      string
-	Params        []ParamMarkerExpr
-	SchemaVersion int64
-	CachedPlan    interface{}
-	CachedNames   interface{}
+	Stmt     StmtNode
+	StmtType string
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
@@ -979,6 +975,13 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
+	for i, t := range n.Tables {
+		node, ok := t.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 
@@ -1586,6 +1589,7 @@ const (
 	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
+	PasswordRequireCurrentDefault
 
 	UserResourceGroupName
 )
@@ -2328,8 +2332,6 @@ const (
 	AdminCaptureBindings
 	AdminEvolveBindings
 	AdminReloadBindings
-	AdminShowTelemetry
-	AdminResetTelemetryID
 	AdminReloadStatistics
 	AdminFlushPlanCache
 	AdminSetBDRRole
@@ -2614,10 +2616,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
-	case AdminShowTelemetry:
-		ctx.WriteKeyWord("SHOW TELEMETRY")
-	case AdminResetTelemetryID:
-		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -3281,6 +3279,9 @@ const (
 	BRIEOptionCheckpoint
 	BRIEOptionStartTS
 	BRIEOptionUntilTS
+	BRIEOptionChecksumConcurrency
+	BRIEOptionEncryptionMethod
+	BRIEOptionEncryptionKeyFile
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
@@ -3288,10 +3289,16 @@ const (
 	BRIEOptionLastBackupTS
 	BRIEOptionLastBackupTSO
 	BRIEOptionGCTTL
+	BRIEOptionCompressionLevel
+	BRIEOptionCompression
+	BRIEOptionIgnoreStats
+	BRIEOptionLoadStats
 	// restore options
 	BRIEOptionOnline
 	BRIEOptionFullBackupStorage
 	BRIEOptionRestoredTS
+	BRIEOptionWaitTiflashReady
+	BRIEOptionWithSysTable
 	// import options
 	BRIEOptionAnalyze
 	BRIEOptionBackend
@@ -3411,6 +3418,24 @@ func (kind BRIEOptionType) String() string {
 		return "UNTIL_TS"
 	case BRIEOptionGCTTL:
 		return "GC_TTL"
+	case BRIEOptionWaitTiflashReady:
+		return "WAIT_TIFLASH_READY"
+	case BRIEOptionWithSysTable:
+		return "WITH_SYS_TABLE"
+	case BRIEOptionIgnoreStats:
+		return "IGNORE_STATS"
+	case BRIEOptionLoadStats:
+		return "LOAD_STATS"
+	case BRIEOptionChecksumConcurrency:
+		return "CHECKSUM_CONCURRENCY"
+	case BRIEOptionCompressionLevel:
+		return "COMPRESSION_LEVEL"
+	case BRIEOptionCompression:
+		return "COMPRESSION_TYPE"
+	case BRIEOptionEncryptionMethod:
+		return "ENCRYPTION_METHOD"
+	case BRIEOptionEncryptionKeyFile:
+		return "ENCRYPTION_KEY_FILE"
 	default:
 		return ""
 	}
@@ -3439,7 +3464,7 @@ func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(opt.Tp.String())
 	ctx.WritePlain(" = ")
 	switch opt.Tp {
-	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL:
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL, BRIEOptionCompression, BRIEOptionEncryptionMethod, BRIEOptionEncryptionKeyFile:
 		ctx.WriteString(opt.StrValue)
 	case BRIEOptionBackupTimeAgo:
 		ctx.WritePlainf("%d ", opt.UintValue/1000)

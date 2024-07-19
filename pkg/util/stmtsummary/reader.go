@@ -304,6 +304,8 @@ const (
 	LastSeenStr                       = "LAST_SEEN"
 	PlanInCacheStr                    = "PLAN_IN_CACHE"
 	PlanCacheHitsStr                  = "PLAN_CACHE_HITS"
+	PlanCacheUnqualifiedStr           = "PLAN_CACHE_UNQUALIFIED"
+	PlanCacheUnqualifiedLastReasonStr = "PLAN_CACHE_UNQUALIFIED_LAST_REASON"
 	PlanInBindingStr                  = "PLAN_IN_BINDING"
 	QuerySampleTextStr                = "QUERY_SAMPLE_TEXT"
 	PrevSampleTextStr                 = "PREV_SAMPLE_TEXT"
@@ -325,7 +327,7 @@ const (
 type columnValueFactory func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any
 
 var columnValueFactoryMap = map[string]columnValueFactory{
-	ClusterTableInstanceColumnNameStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any {
+	ClusterTableInstanceColumnNameStr: func(reader *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return reader.instanceAddr
 	},
 	SummaryBeginTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
@@ -659,5 +661,11 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	ResourceGroupName: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.resourceGroupName
+	},
+	PlanCacheUnqualifiedStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheUnqualifiedCount
+	},
+	PlanCacheUnqualifiedLastReasonStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.lastPlanCacheUnqualified
 	},
 }

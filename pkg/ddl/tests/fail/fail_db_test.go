@@ -209,7 +209,7 @@ func TestAddIndexFailed(t *testing.T) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -365,7 +365,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 	is := s.dom.InfoSchema()
 	schemaName := model.NewCIStr("test_db")
 	tableName := model.NewCIStr("test_add_index")
-	tbl, err := is.TableByName(schemaName, tableName)
+	tbl, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 
 	splitCount := 100
@@ -425,6 +425,11 @@ func TestRunDDLJobPanic(t *testing.T) {
 func TestPartitionAddIndexGC(t *testing.T) {
 	s := createFailDBSuite(t)
 	tk := testkit.NewTestKit(t, s.store)
+	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		// This test mock GC expire time exceeded, it's ok for infoschema v1 because it does not visit the network.
+		// While in infoschema v2, SchemaTable call meta.ListTables and fail.
+		t.Skip()
+	}
 	tk.MustExec("use test")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
@@ -460,7 +465,7 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("alter table t change column b bb mediumint first")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	cols := tbl.Meta().Columns
 	colsStr := ""

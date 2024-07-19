@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
@@ -45,7 +44,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   sessionctx.Context
+	ctx   *mock.Context
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -150,7 +149,7 @@ func (h *benchHelper) init() {
 
 	h.outputTypes = make([]*types.FieldType, 0, len(h.exprs))
 	for i := 0; i < len(h.exprs); i++ {
-		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType())
+		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType(h.ctx))
 	}
 
 	h.outputChunk = chunk.NewChunkWithCapacity(h.outputTypes, numRows)
@@ -161,10 +160,11 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 	h.init()
 	inputIter := chunk.NewIterator4Chunk(h.inputChunk)
 
+	evalCtx := h.ctx.GetEvalCtx()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
-		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
+		if err := VectorizedExecute(evalCtx, h.exprs, inputIter, h.outputChunk); err != nil {
 			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}
@@ -1264,7 +1264,7 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 	}
 }
 
-func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (expr Expression, fts []*types.FieldType, input *chunk.Chunk, output *chunk.Chunk) {
+func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenchCase) (expr Expression, fts []*types.FieldType, input *chunk.Chunk, output *chunk.Chunk) {
 	fts = make([]*types.FieldType, len(testCase.childrenTypes))
 	for i := range fts {
 		if i < len(testCase.childrenFieldTypes) && testCase.childrenFieldTypes[i] != nil {
@@ -1293,7 +1293,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, testCase.chunkSize, testCase.chunkSize)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType(ctx.GetEvalCtx()).EvalType())}, testCase.chunkSize, testCase.chunkSize)
 	return expr, fts, input, output
 }
 
@@ -1313,7 +1313,7 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 			require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
 
 			c1, c2 := output.Column(0), output2.Column(0)
-			switch expr.GetType().EvalType() {
+			switch expr.GetType(ctx).EvalType() {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
@@ -1371,11 +1371,11 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 // benchmarkVectorizedEvalOneVec is used to get the effect of
 // using the vectorized expression evaluations during projection
 func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
-	ctx := mock.NewContext()
+	ctx := createContext(b)
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
-			exprName := expr.String()
+			exprName := expr.StringWithCtx(ctx)
 			if sf, ok := expr.(*ScalarFunction); ok {
 				exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
 				tmp := strings.Split(exprName, ".")
@@ -1403,7 +1403,7 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 	}
 }
 
-func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (baseFunc builtinFunc, fts []*types.FieldType, input *chunk.Chunk, result *chunk.Column) {
+func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecExprBenchCase) (baseFunc builtinFunc, fts []*types.FieldType, input *chunk.Chunk, result *chunk.Column) {
 	childrenNumber := len(testCase.childrenTypes)
 	fts = make([]*types.FieldType, childrenNumber)
 	for i := range fts {
@@ -1436,11 +1436,11 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		tp := eType2FieldType(testCase.retEvalType)
 		switch testCase.retEvalType {
 		case types.ETInt:
-			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDecimal:
-			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETReal:
-			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDatetime, types.ETTimestamp:
 			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETDuration:
@@ -2013,6 +2013,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	vecEnabled := ctx.GetSessionVars().EnableVectorizedExpression
 	for numCols := 1; numCols <= 2; numCols++ {
 		typeCombination := make([]types.EvalType, numCols)
 		var combFunc func(nCols int)
@@ -2030,7 +2031,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := VecEvalBool(ctx, exprs, input, selected, nulls)
+						_, _, err := VecEvalBool(ctx, vecEnabled, exprs, input, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -2084,7 +2085,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := vectorizedFilter(ctx, exprs, it, selected, nulls)
+						_, _, err := vectorizedFilter(ctx, ctx.GetSessionVars().EnableVectorizedExpression, exprs, it, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -2119,7 +2120,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 	b.Run("Vec-special case", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := vectorizedFilter(ctx, []Expression{expr}, it, selected, nulls)
+			_, _, err := vectorizedFilter(ctx, ctx.GetSessionVars().EnableVectorizedExpression, []Expression{expr}, it, selected, nulls)
 			if err != nil {
 				panic(err)
 			}

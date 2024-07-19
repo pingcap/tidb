@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -80,11 +79,6 @@ type Session interface {
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
 	SetPort(port string)
-
-	// set cur session operations allowed when tikv disk full happens.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	GetDiskFullOpt() kvrpcpb.DiskFullOpt
-	ClearDiskFullOpt()
 
 	// SetExtensions sets the `*extension.SessionExtensions` object
 	SetExtensions(extensions *extension.SessionExtensions)

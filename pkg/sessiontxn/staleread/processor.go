@@ -281,12 +281,12 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 		return 0, nil
 	}
 
-	ts, err := CalculateAsOfTsExpr(ctx, sctx, asOf.TsExpr)
+	ts, err := CalculateAsOfTsExpr(ctx, sctx.GetPlanCtx(), asOf.TsExpr)
 	if err != nil {
 		return 0, err
 	}
 
-	if err = sessionctx.ValidateStaleReadTS(ctx, sctx, ts); err != nil {
+	if err = sessionctx.ValidateStaleReadTS(ctx, sctx.GetSessionVars().StmtCtx, sctx.GetStore(), ts); err != nil {
 		return 0, err
 	}
 
@@ -306,7 +306,7 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 
 func getTSFromExternalTS(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 	if sctx.GetSessionVars().EnableExternalTSRead && !sctx.GetSessionVars().InRestrictedSQL {
-		externalTimestamp, err := GetExternalTimestamp(ctx, sctx)
+		externalTimestamp, err := GetExternalTimestamp(ctx, sctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return 0, err
 		}

@@ -193,3 +193,25 @@ func TestGetConAttrs(t *testing.T) {
 	_, hasClientName = attrs[1]
 	require.False(t, hasClientName)
 }
+
+func TestSeverHealth(t *testing.T) {
+	RunInGoTestChan = make(chan struct{})
+	RunInGoTest = true
+	store := testkit.CreateMockStore(t)
+	tidbdrv := NewTiDBDriver(store)
+	cfg := util.NewTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	require.False(t, server.health.Load(), "server should not be healthy")
+	go func() {
+		err = server.Run(nil)
+		require.NoError(t, err)
+	}()
+	defer server.Close()
+	for range RunInGoTestChan {
+		// wait for server to be healthy
+	}
+	require.True(t, server.health.Load(), "server should be healthy")
+}

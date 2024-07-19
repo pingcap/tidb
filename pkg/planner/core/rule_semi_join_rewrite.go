@@ -20,13 +20,25 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
+// semiJoinRewriter rewrites semi join to inner join with aggregation.
+// Note: This rewriter is only used for exists subquery.
+// And it also requires the hint `SEMI_JOIN_REWRITE` to be set.
+// For example:
+//
+//	select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ * from s where s.a = t.a);
+//
+// will be rewriten to:
+//
+//	select * from t join (select a from s group by a) s on t.a = s.a;
 type semiJoinRewriter struct {
 }
 
-func (smj *semiJoinRewriter) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (smj *semiJoinRewriter) optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newLogicalPlan, err := smj.recursivePlan(p)
 	return newLogicalPlan, planChanged, err
@@ -36,11 +48,11 @@ func (*semiJoinRewriter) name() string {
 	return "semi_join_rewrite"
 }
 
-func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
+func (smj *semiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, error) {
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
 	}
-	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild, err := smj.recursivePlan(child)
 		if err != nil {
@@ -52,11 +64,11 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	join, ok := p.(*LogicalJoin)
 	// If it's not a join, or not a (outer) semi join. We just return it since no optimization is needed.
 	// Actually the check of the preferRewriteSemiJoin is a superset of checking the join type. We remain them for a better understanding.
-	if !ok || !(join.JoinType == SemiJoin || join.JoinType == LeftOuterSemiJoin) || (join.preferJoinType&h.PreferRewriteSemiJoin == 0) {
+	if !ok || !(join.JoinType == SemiJoin || join.JoinType == LeftOuterSemiJoin) || (join.PreferJoinType&h.PreferRewriteSemiJoin == 0) {
 		return p, nil
 	}
 	// The preferRewriteSemiJoin flag only be used here. We should reset it in order to not affect other parts.
-	join.preferJoinType &= ^h.PreferRewriteSemiJoin
+	join.PreferJoinType &= ^h.PreferRewriteSemiJoin
 
 	if join.JoinType == LeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin.")
@@ -93,7 +105,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	aggOutputCols := make([]*expression.Column, 0, len(join.EqualConditions))
 	for i := range join.EqualConditions {
 		innerCol := join.EqualConditions[i].GetArgs()[1].(*expression.Column)
-		firstRow, err := aggregation.NewAggFuncDesc(join.SCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(join.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -107,13 +119,13 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 
 	innerJoin := LogicalJoin{
 		JoinType:        InnerJoin,
-		hintInfo:        join.hintInfo,
-		preferJoinType:  join.preferJoinType,
-		preferJoinOrder: join.preferJoinOrder,
+		HintInfo:        join.HintInfo,
+		PreferJoinType:  join.PreferJoinType,
+		PreferJoinOrder: join.PreferJoinOrder,
 		EqualConditions: make([]*expression.ScalarFunction, 0, len(join.EqualConditions)),
 	}.Init(p.SCtx(), p.QueryBlockOffset())
 	innerJoin.SetChildren(join.Children()[0], subAgg)
-	innerJoin.SetSchema(expression.MergeSchema(join.Children()[0].Schema(), subAgg.schema))
+	innerJoin.SetSchema(expression.MergeSchema(join.Children()[0].Schema(), subAgg.Schema()))
 	innerJoin.AttachOnConds(expression.ScalarFuncs2Exprs(join.EqualConditions))
 
 	proj := LogicalProjection{

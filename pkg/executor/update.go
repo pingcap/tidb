@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -123,6 +124,7 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 	}
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
+	var totalMemDelta int64
 	for i, content := range e.tblColPosInfos {
 		if !e.multiUpdateOnSameTable[content.TblID] {
 			// No need to merge if not multi-updated
@@ -164,8 +166,9 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 
 		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
 		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
-		e.memTracker.Consume(memDelta)
+		totalMemDelta += memDelta
 	}
+	e.memTracker.Consume(totalMemDelta)
 	return nil
 }
 
@@ -175,6 +178,10 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 	for i, flag := range e.assignFlag {
 		bAssignFlag[i] = flag >= 0
 	}
+
+	var totalMemDelta int64
+	defer func() { e.memTracker.Consume(totalMemDelta) }()
+
 	for i, content := range e.tblColPosInfos {
 		if !e.tableUpdatable[i] {
 			// If there's nothing to update, we can just skip current row
@@ -205,7 +212,7 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 			if !exist {
 				memDelta += int64(handle.ExtraMemSize())
 			}
-			e.memTracker.Consume(memDelta)
+			totalMemDelta += memDelta
 			continue
 		}
 
@@ -217,6 +224,9 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 			continue
 		}
 		return err1
+	}
+	if txn, _ := e.Ctx().Txn(false); txn != nil {
+		return txn.MayFlush()
 	}
 	return nil
 }
@@ -282,7 +292,8 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			}
 		}
 		txn, err := e.Ctx().Txn(true)
-		if err == nil {
+		// pipelined dml may already flush in background, don't touch it to avoid race.
+		if err == nil && !txn.IsPipelined() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
 			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 			if sc.KvExecCounter != nil {
@@ -334,7 +345,7 @@ func (*UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
 	}
 
 	if types.ErrDataTooLong.Equal(err) {
-		return resetErrDataTooLong(colName.O, rowIdx+1, err)
+		return errors.AddStack(resetErrDataTooLong(colName.O, rowIdx+1, err))
 	}
 
 	if types.ErrOverflow.Equal(err) {
@@ -352,7 +363,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 			continue
 		}
 		con := assign.Expr.(*expression.Constant)
-		val, err := con.Eval(e.Ctx(), emptyRow)
+		val, err := con.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), emptyRow)
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -379,7 +390,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
-		val, err := assign.Expr.Eval(e.Ctx(), e.evalBuffer.ToRow())
+		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -408,7 +419,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
-		val, err := assign.Expr.Eval(e.Ctx(), e.evalBuffer.ToRow())
+		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}

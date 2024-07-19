@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -285,7 +284,7 @@ func (c *concatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	addBinFlag(bf.tp)
 	bf.tp.SetFlen(0)
 	for i := range args {
-		argType := args[i].GetType()
+		argType := args[i].GetType(ctx.GetEvalCtx())
 
 		if argType.GetFlen() < 0 {
 			bf.tp.SetFlen(mysql.MaxBlobWidth)
@@ -297,12 +296,7 @@ func (c *concatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinConcatSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Concat)
 	return sig, nil
@@ -359,7 +353,7 @@ func (c *concatWSFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 	addBinFlag(bf.tp)
 	for i := range args {
-		argType := args[i].GetType()
+		argType := args[i].GetType(ctx.GetEvalCtx())
 
 		// skip separator param
 		if i != 0 {
@@ -373,18 +367,13 @@ func (c *concatWSFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 	// add separator
 	sepsLen := len(args) - 2
-	bf.tp.SetFlen(bf.tp.GetFlen() + sepsLen*args[0].GetType().GetFlen())
+	bf.tp.SetFlen(bf.tp.GetFlen() + sepsLen*args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 
 	if bf.tp.GetFlen() >= mysql.MaxBlobWidth {
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_ConcatWS)
 	return sig, nil
@@ -460,7 +449,7 @@ func (c *leftFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
@@ -545,7 +534,7 @@ func (c *rightFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
@@ -632,12 +621,8 @@ func (c *repeatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
-	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	SetBinFlagOrBinStr(args[0].GetType(ctx.GetEvalCtx()), bf.tp)
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Repeat)
 	return sig, nil
@@ -694,7 +679,7 @@ func (c *lowerFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType()
+	argTp := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argTp.GetFlen())
 	SetBinFlagOrBinStr(argTp, bf.tp)
 	var sig builtinFunc
@@ -725,7 +710,7 @@ func (b *builtinLowerUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (d stri
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	return enc.ToLower(d), false, nil
 }
 
@@ -763,8 +748,8 @@ func (c *reverseFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		return nil, err
 	}
 
-	argTp := args[0].GetType()
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	argTp := args[0].GetType(ctx.GetEvalCtx())
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	addBinFlag(bf.tp)
 	var sig builtinFunc
 	if types.IsBinaryStr(argTp) || types.IsTypeBit(argTp) {
@@ -831,15 +816,11 @@ func (c *spaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Space)
 	return sig, nil
@@ -890,7 +871,7 @@ func (c *upperFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType()
+	argTp := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argTp.GetFlen())
 	SetBinFlagOrBinStr(argTp, bf.tp)
 	var sig builtinFunc
@@ -921,7 +902,7 @@ func (b *builtinUpperUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (d stri
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	return enc.ToUpper(d), false, nil
 }
 
@@ -1008,9 +989,9 @@ func (c *replaceFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(c.fixLength(args))
+	bf.tp.SetFlen(c.fixLength(ctx.GetEvalCtx(), args))
 	for _, a := range args {
-		SetBinFlagOrBinStr(a.GetType(), bf.tp)
+		SetBinFlagOrBinStr(a.GetType(ctx.GetEvalCtx()), bf.tp)
 	}
 	sig := &builtinReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Replace)
@@ -1018,10 +999,10 @@ func (c *replaceFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 }
 
 // fixLength calculate the flen of the return type.
-func (c *replaceFunctionClass) fixLength(args []Expression) int {
-	charLen := args[0].GetType().GetFlen()
-	oldStrLen := args[1].GetType().GetFlen()
-	diff := args[2].GetType().GetFlen() - oldStrLen
+func (c *replaceFunctionClass) fixLength(ctx EvalContext, args []Expression) int {
+	charLen := args[0].GetType(ctx).GetFlen()
+	oldStrLen := args[1].GetType(ctx).GetFlen()
+	diff := args[2].GetType(ctx).GetFlen() - oldStrLen
 	if diff > 0 && oldStrLen > 0 {
 		charLen += (charLen / oldStrLen) * diff
 	}
@@ -1131,7 +1112,7 @@ func (b *builtinConvertSig) evalString(ctx EvalContext, row chunk.Row) (string, 
 	if isNull || err != nil {
 		return "", true, err
 	}
-	argTp, resultTp := b.args[0].GetType(), b.tp
+	argTp, resultTp := b.args[0].GetType(ctx), b.tp
 	if !charset.IsSupportedEncoding(resultTp.GetCharset()) {
 		return "", false, errUnknownCharacterSet.GenWithStackByArgs(resultTp.GetCharset())
 	}
@@ -1171,7 +1152,7 @@ func (c *substringFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 
@@ -1362,7 +1343,7 @@ func (c *substringIndexFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 	sig := &builtinSubstringIndexSig{bf}
@@ -1403,7 +1384,7 @@ func (b *builtinSubstringIndexSig) evalString(ctx EvalContext, row chunk.Row) (d
 		return "", false, nil
 	}
 	// when count > MaxInt64, returns whole string.
-	if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().GetFlag()) {
+	if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType(ctx).GetFlag()) {
 		return str, false, nil
 	}
 
@@ -1622,14 +1603,14 @@ func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		return nil, err
 	}
 
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argTp {
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
-		argFieldTp := args[0].GetType()
+		argFieldTp := args[0].GetType(ctx.GetEvalCtx())
 		// Use UTF8MB4 as default.
 		bf.tp.SetFlen(argFieldTp.GetFlen() * 4 * 2)
 		sig := &builtinHexStrArgSig{bf}
@@ -1640,15 +1621,15 @@ func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.SetFlen(args[0].GetType().GetFlen() * 2)
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen() * 2)
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		sig := &builtinHexIntArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexIntArg)
 		return sig, nil
 	default:
-		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetType())
+		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetType(ctx.GetEvalCtx()))
 	}
 }
 
@@ -1705,7 +1686,7 @@ func (c *unhexFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	argEvalTp := argType.EvalType()
 	switch argEvalTp {
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
@@ -1770,7 +1751,7 @@ type trimFunctionClass struct {
 
 // getFunction sets trim built-in function signature.
 // The syntax of trim in mysql is 'TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str), TRIM([remstr FROM] str)',
-// but we wil convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
+// but we will convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
 func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -1782,7 +1763,7 @@ func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		if err != nil {
 			return nil, err
 		}
-		argType := args[0].GetType()
+		argType := args[0].GetType(ctx.GetEvalCtx())
 		bf.tp.SetFlen(argType.GetFlen())
 		SetBinFlagOrBinStr(argType, bf.tp)
 		sig := &builtinTrim1ArgSig{bf}
@@ -1794,7 +1775,7 @@ func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		if err != nil {
 			return nil, err
 		}
-		argType := args[0].GetType()
+		argType := args[0].GetType(ctx.GetEvalCtx())
 		SetBinFlagOrBinStr(argType, bf.tp)
 		sig := &builtinTrim2ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Trim2Args)
@@ -1805,7 +1786,7 @@ func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		if err != nil {
 			return nil, err
 		}
-		argType := args[0].GetType()
+		argType := args[0].GetType(ctx.GetEvalCtx())
 		bf.tp.SetFlen(argType.GetFlen())
 		SetBinFlagOrBinStr(argType, bf.tp)
 		sig := &builtinTrim3ArgsSig{bf}
@@ -1921,7 +1902,7 @@ func (c *lTrimFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 	sig := &builtinLTrimSig{bf}
@@ -1961,7 +1942,7 @@ func (c *rTrimFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 	sig := &builtinRTrimSig{bf}
@@ -2011,7 +1992,7 @@ func trimRight(str, remstr string) string {
 
 func getFlen4LpadAndRpad(ctx BuildContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
-		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
+		length, isNull, err := constant.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
 		}
@@ -2038,13 +2019,8 @@ func (c *lpadFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	bf.tp.SetFlen(getFlen4LpadAndRpad(ctx, args[1]))
 	addBinFlag(bf.tp)
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
+	if types.IsBinaryStr(args[0].GetType(ctx.GetEvalCtx())) || types.IsBinaryStr(args[2].GetType(ctx.GetEvalCtx())) {
 		sig := &builtinLpadSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Lpad)
 		return sig, nil
@@ -2168,13 +2144,8 @@ func (c *rpadFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	bf.tp.SetFlen(getFlen4LpadAndRpad(ctx, args[1]))
 	addBinFlag(bf.tp)
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
+	if types.IsBinaryStr(args[0].GetType(ctx.GetEvalCtx())) || types.IsBinaryStr(args[2].GetType(ctx.GetEvalCtx())) {
 		sig := &builtinRpadSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Rpad)
 		return sig, nil
@@ -2340,10 +2311,10 @@ func (c *charFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	// The last argument represents the charset name after "using".
 	if _, ok := args[len(args)-1].(*Constant); !ok {
 		// If we got there, there must be something wrong in other places.
-		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1]))
+		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1].StringWithCtx(ctx.GetEvalCtx())))
 		return nil, errIncorrectArgs
 	}
-	charsetName, isNull, err := args[len(args)-1].EvalString(ctx, chunk.Row{})
+	charsetName, isNull, err := args[len(args)-1].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -2431,7 +2402,7 @@ func (c *charLengthFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	if types.IsBinaryStr(args[0].GetType()) {
+	if types.IsBinaryStr(args[0].GetType(ctx.GetEvalCtx())) {
 		sig := &builtinCharLengthBinarySig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CharLength)
 		return sig, nil
@@ -2547,7 +2518,7 @@ func (c *fieldFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 
 	isAllString, isAllNumber := true, true
 	for i, length := 0, len(args); i < length; i++ {
-		argTp := args[i].GetType().EvalType()
+		argTp := args[i].GetType(ctx.GetEvalCtx()).EvalType()
 		isAllString = isAllString && (argTp == types.ETString)
 		isAllNumber = isAllNumber && (argTp == types.ETInt)
 	}
@@ -2675,11 +2646,11 @@ type makeSetFunctionClass struct {
 func (c *makeSetFunctionClass) getFlen(ctx BuildContext, args []Expression) int {
 	flen, count := 0, 0
 	if constant, ok := args[0].(*Constant); ok {
-		bits, isNull, err := constant.EvalInt(ctx, chunk.Row{})
+		bits, isNull, err := constant.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err == nil && !isNull {
 			for i, length := 1, len(args); i < length; i++ {
 				if (bits & (1 << uint(i-1))) != 0 {
-					flen += args[i].GetType().GetFlen()
+					flen += args[i].GetType(ctx.GetEvalCtx()).GetFlen()
 					count++
 				}
 			}
@@ -2690,7 +2661,7 @@ func (c *makeSetFunctionClass) getFlen(ctx BuildContext, args []Expression) int 
 		}
 	}
 	for i, length := 1, len(args); i < length; i++ {
-		flen += args[i].GetType().GetFlen()
+		flen += args[i].GetType(ctx.GetEvalCtx()).GetFlen()
 	}
 	return flen + len(args) - 1 - 1
 }
@@ -2762,12 +2733,12 @@ func (c *octFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		return nil, err
 	}
 	var sig builtinFunc
-	if IsBinaryLiteral(args[0]) || args[0].GetType().EvalType() == types.ETInt {
+	if IsBinaryLiteral(args[0]) || args[0].GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
 		if err != nil {
 			return nil, err
 		}
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 
@@ -2780,7 +2751,7 @@ func (c *octFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		if err != nil {
 			return nil, err
 		}
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		bf.tp.SetFlen(64)
@@ -2891,7 +2862,7 @@ func (b *builtinOrdSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, er
 	}
 
 	strBytes := hack.Slice(str)
-	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	w := len(charset.EncodingUTF8Impl.Peek(strBytes))
 	res, err := enc.Transform(nil, strBytes[:w], charset.OpEncode)
 	if err != nil {
@@ -2924,8 +2895,8 @@ func (c *quoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	bf.tp.SetFlen(2*args[0].GetType().GetFlen() + 2)
+	SetBinFlagOrBinStr(args[0].GetType(ctx.GetEvalCtx()), bf.tp)
+	bf.tp.SetFlen(2*args[0].GetType(ctx.GetEvalCtx()).GetFlen() + 2)
 	if bf.tp.GetFlen() > mysql.MaxBlobWidth {
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
@@ -2995,7 +2966,7 @@ func (c *binFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -3042,7 +3013,7 @@ func (c *eltFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		return nil, err
 	}
 	for _, arg := range args[1:] {
-		argType := arg.GetType()
+		argType := arg.GetType(ctx.GetEvalCtx())
 		if types.IsBinaryStr(argType) {
 			types.SetBinChsClnFlag(bf.tp)
 		}
@@ -3103,13 +3074,13 @@ func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	// Calculate the flen as MySQL does.
-	l := args[1].GetType().GetFlen()
-	if args[2].GetType().GetFlen() > l {
-		l = args[2].GetType().GetFlen()
+	l := args[1].GetType(ctx.GetEvalCtx()).GetFlen()
+	if args[2].GetType(ctx.GetEvalCtx()).GetFlen() > l {
+		l = args[2].GetType(ctx.GetEvalCtx()).GetFlen()
 	}
 	sepL := 1
 	if len(args) > 3 {
-		sepL = args[3].GetType().GetFlen()
+		sepL = args[3].GetType(ctx.GetEvalCtx()).GetFlen()
 	}
 	bf.tp.SetFlen((l*64 + sepL*63) * 4)
 	switch len(args) {
@@ -3264,7 +3235,7 @@ func (c *formatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 	argTps := make([]types.EvalType, 2, 3)
 	argTps[1] = types.ETInt
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	if argTp == types.ETDecimal || argTp == types.ETInt {
 		argTps[0] = types.ETDecimal
 	} else {
@@ -3277,7 +3248,7 @@ func (c *formatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err != nil {
 		return nil, err
 	}
-	charset, colalte := ctx.GetSessionVars().GetCharsetInfo()
+	charset, colalte := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(colalte)
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
@@ -3300,7 +3271,7 @@ const formatMaxDecimals int64 = 30
 func evalNumDecArgsForFormat(ctx EvalContext, f builtinFunc, row chunk.Row) (string, string, bool, error) {
 	var xStr string
 	arg0, arg1 := f.getArgs()[0], f.getArgs()[1]
-	if arg0.GetType().EvalType() == types.ETDecimal {
+	if arg0.GetType(ctx).EvalType() == types.ETDecimal {
 		x, isNull, err := arg0.EvalDecimal(ctx, row)
 		if isNull || err != nil {
 			return "", "", isNull, err
@@ -3448,21 +3419,16 @@ func (c *fromBase64FunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	// The calculation of flen is the same as MySQL.
-	if args[0].GetType().GetFlen() == types.UnspecifiedLength {
+	if args[0].GetType(ctx.GetEvalCtx()).GetFlen() == types.UnspecifiedLength {
 		bf.tp.SetFlen(types.UnspecifiedLength)
 	} else {
-		bf.tp.SetFlen(args[0].GetType().GetFlen() * 3)
+		bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen() * 3)
 		if bf.tp.GetFlen() > mysql.MaxBlobWidth {
 			bf.tp.SetFlen(mysql.MaxBlobWidth)
 		}
 	}
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_FromBase64)
@@ -3531,22 +3497,17 @@ func (c *toBase64FunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 
-	if bf.args[0].GetType().GetFlen() == types.UnspecifiedLength {
+	if bf.args[0].GetType(ctx.GetEvalCtx()).GetFlen() == types.UnspecifiedLength {
 		bf.tp.SetFlen(types.UnspecifiedLength)
 	} else {
-		bf.tp.SetFlen(base64NeededEncodedLength(bf.args[0].GetType().GetFlen()))
+		bf.tp.SetFlen(base64NeededEncodedLength(bf.args[0].GetType(ctx.GetEvalCtx()).GetFlen()))
 	}
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_ToBase64)
 	return sig, nil
@@ -3644,12 +3605,7 @@ func (c *insertFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	addBinFlag(bf.tp)
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
@@ -3856,7 +3812,7 @@ func (c *loadFileFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -3899,23 +3855,23 @@ type weightStringFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringPadding, int, error) {
+func (c *weightStringFunctionClass) verifyArgs(ctx EvalContext, args []Expression) (weightStringPadding, int, error) {
 	padding := weightStringPaddingNone
 	l := len(args)
 	if l != 1 && l != 3 {
 		return weightStringPaddingNone, 0, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
-	if types.IsTypeNumeric(args[0].GetType().GetType()) {
+	if types.IsTypeNumeric(args[0].GetType(ctx).GetType()) {
 		padding = weightStringPaddingNull
 	}
 	length := 0
 	if l == 3 {
-		if args[1].GetType().EvalType() != types.ETString {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		if args[1].GetType(ctx).EvalType() != types.ETString {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx), c.funcName)
 		}
 		c1, ok := args[1].(*Constant)
 		if !ok {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx), c.funcName)
 		}
 		switch x := c1.Value.GetString(); x {
 		case "CHAR":
@@ -3927,23 +3883,23 @@ func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringP
 		default:
 			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(x, c.funcName)
 		}
-		if args[2].GetType().EvalType() != types.ETInt {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
+		if args[2].GetType(ctx).EvalType() != types.ETInt {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].StringWithCtx(ctx), c.funcName)
 		}
 		c2, ok := args[2].(*Constant)
 		if !ok {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx), c.funcName)
 		}
 		length = int(c2.Value.GetInt64())
 		if length == 0 {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].StringWithCtx(ctx), c.funcName)
 		}
 	}
 	return padding, length, nil
 }
 
 func (c *weightStringFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	padding, length, err := c.verifyArgs(args)
+	padding, length, err := c.verifyArgs(ctx.GetEvalCtx(), args)
 	if err != nil {
 		return nil, err
 	}
@@ -3964,11 +3920,7 @@ func (c *weightStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
-		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
 	}
 	return sig, nil
@@ -4032,7 +3984,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
-		ctor = collate.GetCollator(b.args[0].GetType().GetCollate())
+		ctor = collate.GetCollator(b.args[0].GetType(ctx).GetCollate())
 	case weightStringPaddingAsBinary:
 		lenStr := len(str)
 		if b.length < lenStr {
@@ -4048,7 +4000,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 		}
 		ctor = collate.GetCollator(charset.CollationBin)
 	case weightStringPaddingNone:
-		ctor = collate.GetCollator(b.args[0].GetType().GetCollate())
+		ctor = collate.GetCollator(b.args[0].GetType(ctx).GetCollate())
 	default:
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}
@@ -4074,10 +4026,10 @@ func (c *translateFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
-	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType()) || types.IsBinaryStr(args[2].GetType()) {
+	if types.IsBinaryStr(args[0].GetType(ctx.GetEvalCtx())) || types.IsBinaryStr(args[1].GetType(ctx.GetEvalCtx())) || types.IsBinaryStr(args[2].GetType(ctx.GetEvalCtx())) {
 		sig := &builtinTranslateBinarySig{bf}
 		return sig, nil
 	}

@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -28,7 +27,7 @@ import (
 // VecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
 // It is usually used for streamAgg
 type VecGroupChecker struct {
-	ctx           sessionctx.Context
+	ctx           expression.EvalContext
 	releaseBuffer func(buf *chunk.Column)
 
 	// set these functions for testing
@@ -58,12 +57,16 @@ type VecGroupChecker struct {
 
 	// groupCount is the count of groups in the current chunk
 	groupCount int
+
+	// vecEnabled indicates whether to use vectorized evaluation or not.
+	vecEnabled bool
 }
 
 // NewVecGroupChecker creates a new VecGroupChecker
-func NewVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *VecGroupChecker {
+func NewVecGroupChecker(ctx expression.EvalContext, vecEnabled bool, items []expression.Expression) *VecGroupChecker {
 	return &VecGroupChecker{
 		ctx:          ctx,
+		vecEnabled:   vecEnabled,
 		GroupByItems: items,
 		groupCount:   0,
 		nextGroupID:  0,
@@ -93,14 +96,15 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 			return false, err
 		}
 	}
-	e.firstGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.firstGroupKey, e.firstRowDatums...)
-	err = e.ctx.GetSessionVars().StmtCtx.HandleError(err)
+	ec := e.ctx.ErrCtx()
+	e.firstGroupKey, err = codec.EncodeKey(e.ctx.Location(), e.firstGroupKey, e.firstRowDatums...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}
 
-	e.lastGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.lastGroupKey, e.lastRowDatums...)
-	err = e.ctx.GetSessionVars().StmtCtx.HandleError(err)
+	e.lastGroupKey, err = codec.EncodeKey(e.ctx.Location(), e.lastGroupKey, e.lastRowDatums...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}
@@ -137,7 +141,7 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 	}
 
 	for _, item := range e.GroupByItems {
-		err = e.evalGroupItemsAndResolveGroups(item, chk, numRows)
+		err = e.evalGroupItemsAndResolveGroups(item, e.vecEnabled, chk, numRows)
 		if err != nil {
 			return false, err
 		}
@@ -156,7 +160,7 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 func (e *VecGroupChecker) getFirstAndLastRowDatum(
 	item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	var firstRowDatum, lastRowDatum types.Datum
-	tp := item.GetType()
+	tp := item.GetType(e.ctx)
 	eType := tp.EvalType()
 	switch eType {
 	case types.ETInt:
@@ -323,8 +327,8 @@ func (e *VecGroupChecker) getFirstAndLastRowDatum(
 // evalGroupItemsAndResolveGroups evaluates the chunk according to the expression item.
 // And resolve the rows into groups according to the evaluation results
 func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
-	item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
-	tp := item.GetType()
+	item expression.Expression, vecEnabled bool, chk *chunk.Chunk, numRows int) (err error) {
+	tp := item.GetType(e.ctx)
 	eType := tp.EvalType()
 	if e.allocateBuffer == nil {
 		e.allocateBuffer = expression.GetColumn
@@ -337,7 +341,7 @@ func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
 		return err
 	}
 	defer e.releaseBuffer(col)
-	err = expression.EvalExpr(e.ctx, item, eType, chk, col)
+	err = expression.EvalExpr(e.ctx, vecEnabled, item, eType, chk, col)
 	if err != nil {
 		return err
 	}
@@ -492,6 +496,7 @@ func (e *VecGroupChecker) IsExhausted() bool {
 func (e *VecGroupChecker) Reset() {
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
+		e.groupCount = 0
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]

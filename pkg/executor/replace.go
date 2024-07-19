@@ -120,7 +120,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (rowUnchanged, foundDupKey bool, err error) {
 	for _, uk := range r.uniqueKeys {
-		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
 		if err != nil {
 			return false, false, err
 		}
@@ -161,7 +161,6 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
-	txnSize := txn.Size()
 
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
@@ -187,8 +186,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			return err
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size() - txnSize))
-	return nil
+	return txn.MayFlush()
 }
 
 // Next implements the Executor Next interface.

@@ -1,8 +1,29 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "context",
-    srcs = ["warn.go"],
+    srcs = [
+        "context.go",
+        "plancache.go",
+        "warn.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/context",
     visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/terror",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "context_test",
+    timeout = "short",
+    srcs = ["warn_test.go"],
+    embed = [":context"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/terror",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
 )

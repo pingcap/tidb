@@ -21,6 +21,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
@@ -34,59 +35,59 @@ type ImplementationRule interface {
 	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error)
 }
 
-var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
-	memo.OperandTableDual: {
+var defaultImplementationMap = map[pattern.Operand][]ImplementationRule{
+	pattern.OperandTableDual: {
 		&ImplTableDual{},
 	},
-	memo.OperandMemTableScan: {
+	pattern.OperandMemTableScan: {
 		&ImplMemTableScan{},
 	},
-	memo.OperandProjection: {
+	pattern.OperandProjection: {
 		&ImplProjection{},
 	},
-	memo.OperandTableScan: {
+	pattern.OperandTableScan: {
 		&ImplTableScan{},
 	},
-	memo.OperandIndexScan: {
+	pattern.OperandIndexScan: {
 		&ImplIndexScan{},
 	},
-	memo.OperandTiKVSingleGather: {
+	pattern.OperandTiKVSingleGather: {
 		&ImplTiKVSingleReadGather{},
 	},
-	memo.OperandShow: {
+	pattern.OperandShow: {
 		&ImplShow{},
 	},
-	memo.OperandSelection: {
+	pattern.OperandSelection: {
 		&ImplSelection{},
 	},
-	memo.OperandSort: {
+	pattern.OperandSort: {
 		&ImplSort{},
 	},
-	memo.OperandAggregation: {
+	pattern.OperandAggregation: {
 		&ImplHashAgg{},
 	},
-	memo.OperandLimit: {
+	pattern.OperandLimit: {
 		&ImplLimit{},
 	},
-	memo.OperandTopN: {
+	pattern.OperandTopN: {
 		&ImplTopN{},
 		&ImplTopNAsLimit{},
 	},
-	memo.OperandJoin: {
+	pattern.OperandJoin: {
 		&ImplHashJoinBuildLeft{},
 		&ImplHashJoinBuildRight{},
 		&ImplMergeJoin{},
 	},
-	memo.OperandUnionAll: {
+	pattern.OperandUnionAll: {
 		&ImplUnionAll{},
 	},
-	memo.OperandApply: {
+	pattern.OperandApply: {
 		&ImplApply{},
 	},
-	memo.OperandMaxOneRow: {
+	pattern.OperandMaxOneRow: {
 		&ImplMaxOneRow{},
 	},
-	memo.OperandWindow: {
+	pattern.OperandWindow: {
 		&ImplWindow{},
 	},
 }
@@ -197,7 +198,7 @@ func (*ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 func (*ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
-	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	ts := plannercore.GetPhysicalScan4LogicalTableScan(logicalScan, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		ts.KeepOrder = true
 		ts.Desc = reqProp.SortItems[0].Desc
@@ -219,7 +220,7 @@ func (*ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalScan := expr.ExprNode.(*plannercore.LogicalIndexScan)
-	is := logicalScan.GetPhysicalIndexScan(expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	is := plannercore.GetPhysicalIndexScan4LogicalIndexScan(logicalScan, expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		is.KeepOrder = true
 		if reqProp.SortItems[0].Desc {
@@ -272,9 +273,9 @@ func (*ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.QueryBlockOffset(), reqProp.CloneEssentialFields())
 	switch expr.Group.EngineType {
-	case memo.EngineTiDB:
+	case pattern.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBSelectionImpl(physicalSel)}, nil
-	case memo.EngineTiKV:
+	case pattern.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVSelectionImpl(physicalSel)}, nil
 	default:
 		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
@@ -333,9 +334,9 @@ func (*ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 	)
 	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
 	switch expr.Group.EngineType {
-	case memo.EngineTiDB:
+	case pattern.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBHashAggImpl(hashAgg)}, nil
-	case memo.EngineTiKV:
+	case pattern.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVHashAggImpl(hashAgg)}, nil
 	default:
 		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
@@ -372,7 +373,7 @@ type ImplTopN struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*plannercore.LogicalTopN)
-	if expr.Group.EngineType != memo.EngineTiDB {
+	if expr.Group.EngineType != pattern.EngineTiDB {
 		return prop.IsSortItemEmpty()
 	}
 	return plannercore.MatchItems(prop, topN.ByItems)
@@ -388,9 +389,9 @@ func (*ImplTopN) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty)
 		Offset:  lt.Offset,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.QueryBlockOffset(), resultProp)
 	switch expr.Group.EngineType {
-	case memo.EngineTiDB:
+	case pattern.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBTopNImpl(topN)}, nil
-	case memo.EngineTiKV:
+	case pattern.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVTopNImpl(topN)}, nil
 	default:
 		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
@@ -508,7 +509,7 @@ func (*ImplMergeJoin) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (ma
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplMergeJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
-	physicalMergeJoins := join.GetMergeJoin(reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats, expr.Children[1].Prop.Stats)
+	physicalMergeJoins := plannercore.GetMergeJoin(join, reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats, expr.Children[1].Prop.Stats)
 	mergeJoinImpls := make([]memo.Implementation, 0, len(physicalMergeJoins))
 	for _, physicalPlan := range physicalMergeJoins {
 		physicalMergeJoin := physicalPlan.(*plannercore.PhysicalMergeJoin)

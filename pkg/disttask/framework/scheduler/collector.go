@@ -36,7 +36,7 @@ func init() {
 // added metrics, which is quite troublesome.
 // Therefore, a custom collector is used.
 type collector struct {
-	subtaskInfo atomic.Pointer[[]*proto.Subtask]
+	subtaskInfo atomic.Pointer[[]*proto.SubtaskBase]
 
 	subtasks        *prometheus.Desc
 	subtaskDuration *prometheus.Desc
@@ -102,7 +102,7 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (c *collector) setDistSubtaskDuration(ch chan<- prometheus.Metric, subtask *proto.Subtask) {
+func (c *collector) setDistSubtaskDuration(ch chan<- prometheus.Metric, subtask *proto.SubtaskBase) {
 	switch subtask.State {
 	case proto.SubtaskStatePending:
 		ch <- prometheus.MustNewConstMetric(c.subtaskDuration, prometheus.GaugeValue,

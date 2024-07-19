@@ -19,10 +19,10 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +47,7 @@ type TestDDLCallback struct {
 	*ddl.BaseCallback
 	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
 	// domain to reload schema before your ddl stepping into the next state change.
-	Do ddl.DomainReloader
+	Do ddl.SchemaLoader
 
 	onJobRunBefore          func(*model.Job)
 	OnJobRunBeforeExported  func(*model.Job)
@@ -55,8 +55,8 @@ type TestDDLCallback struct {
 	onJobUpdated            func(*model.Job)
 	OnJobUpdatedExported    atomic.Pointer[func(*model.Job)]
 	onWatched               func(ctx context.Context)
-	OnGetJobBeforeExported  func(string)
-	OnGetJobAfterExported   func(string, *model.Job)
+	OnGetJobBeforeExported  func()
+	OnGetJobAfterExported   func(*model.Job)
 	OnJobSchemaStateChanged func(int64)
 
 	OnUpdateReorgInfoExported func(job *model.Job, pid int64)
@@ -67,11 +67,11 @@ func (tc *TestDDLCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("performing DDL change, must reload")
+	logutil.DDLLogger().Info("performing DDL change, must reload")
 	if tc.Do != nil {
 		err = tc.Do.Reload()
 		if err != nil {
-			logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
+			logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
 		}
 	}
 	return nil
@@ -81,7 +81,7 @@ func (tc *TestDDLCallback) OnChanged(err error) error {
 func (tc *TestDDLCallback) OnSchemaStateChanged(schemaVer int64) {
 	if tc.Do != nil {
 		if err := tc.Do.Reload(); err != nil {
-			logutil.BgLogger().Warn("reload failed on schema state changed", zap.Error(err))
+			logutil.DDLLogger().Warn("reload failed on schema state changed", zap.Error(err))
 		}
 	}
 
@@ -93,7 +93,7 @@ func (tc *TestDDLCallback) OnSchemaStateChanged(schemaVer int64) {
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
-	logutil.BgLogger().Info("on job run before", zap.String("job", job.String()))
+	logutil.DDLLogger().Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
 		return
@@ -108,7 +108,7 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 
 // OnJobRunAfter is used to run the user customized logic of `OnJobRunAfter` first.
 func (tc *TestDDLCallback) OnJobRunAfter(job *model.Job) {
-	logutil.BgLogger().Info("on job run after", zap.String("job", job.String()))
+	logutil.DDLLogger().Info("on job run after", zap.String("job", job.String()))
 	if tc.OnJobRunAfterExported != nil {
 		tc.OnJobRunAfterExported(job)
 		return
@@ -119,7 +119,7 @@ func (tc *TestDDLCallback) OnJobRunAfter(job *model.Job) {
 
 // OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
-	logutil.BgLogger().Info("on job updated", zap.String("job", job.String()))
+	logutil.DDLLogger().Info("on job updated", zap.String("job", job.String()))
 	if onJobUpdatedExportedFunc := tc.OnJobUpdatedExported.Load(); onJobUpdatedExportedFunc != nil {
 		(*onJobUpdatedExportedFunc)(job)
 		return
@@ -143,24 +143,6 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	}
 
 	tc.BaseCallback.OnWatched(ctx)
-}
-
-// OnGetJobBefore implements Callback.OnGetJobBefore interface.
-func (tc *TestDDLCallback) OnGetJobBefore(jobType string) {
-	if tc.OnGetJobBeforeExported != nil {
-		tc.OnGetJobBeforeExported(jobType)
-		return
-	}
-	tc.BaseCallback.OnGetJobBefore(jobType)
-}
-
-// OnGetJobAfter implements Callback.OnGetJobAfter interface.
-func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
-	if tc.OnGetJobAfterExported != nil {
-		tc.OnGetJobAfterExported(jobType, job)
-		return
-	}
-	tc.BaseCallback.OnGetJobAfter(jobType, job)
 }
 
 // Clone copies the callback and take its reference

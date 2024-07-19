@@ -43,7 +43,12 @@ func getDDLSchemaVer(t *testing.T, d ddl.DDL) int64 {
 func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 	err := d.DDL().Stop()
 	require.NoError(t, err)
-	newDDL := ddl.NewDDL(context.Background(), ddl.WithStore(d.Store()), ddl.WithInfoCache(d.InfoCache()), ddl.WithLease(d.DDL().GetLease()))
+	newDDL := ddl.NewDDL(context.Background(),
+		ddl.WithStore(d.Store()),
+		ddl.WithInfoCache(d.InfoCache()),
+		ddl.WithLease(d.DDL().GetLease()),
+		ddl.WithSchemaLoader(d),
+	)
 	d.SetDDL(newDDL)
 	err = newDDL.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
@@ -62,7 +67,7 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.DDL, job *model.Job
 
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	if errors.Is(err, context.Canceled) {
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
@@ -109,6 +114,7 @@ func TestSchemaResume(t *testing.T) {
 	require.NoError(t, err)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{dbInfo},
@@ -116,11 +122,7 @@ func TestSchemaResume(t *testing.T) {
 	testRunInterruptedJob(t, store, dom, job)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
-	job = &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-	}
+	job = buildDropSchemaJob(dbInfo)
 	testRunInterruptedJob(t, store, dom, job)
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
 }
@@ -132,18 +134,7 @@ func TestStat(t *testing.T) {
 	require.NoError(t, err)
 	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
 
-	// TODO: Get this information from etcd.
-	//	m, err := d.Stats(nil)
-	//	c.Assert(err, IsNil)
-	//	c.Assert(m[ddlOwnerID], Equals, d.uuid)
-
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{true},
-	}
-
+	job := buildDropSchemaJob(dbInfo)
 	done := make(chan error, 1)
 	go runInterruptedJob(t, store, dom.DDL(), job, done)
 
@@ -158,8 +149,6 @@ LOOP:
 			restartWorkers(t, store, dom)
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
-			// TODO: Get this information from etcd.
-			// m, err := d.Stats(nil)
 			require.Nil(t, err)
 			break LOOP
 		}
@@ -182,7 +171,9 @@ func TestTableResume(t *testing.T) {
 	require.NoError(t, err)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{tblInfo},
@@ -192,7 +183,9 @@ func TestTableResume(t *testing.T) {
 
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}

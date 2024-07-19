@@ -27,7 +27,7 @@ import (
 )
 
 type taskStripes struct {
-	task    *proto.Task
+	task    *proto.TaskBase
 	stripes int
 }
 
@@ -66,8 +66,8 @@ type SlotManager struct {
 	reservedSlots map[string]int
 	// represents the number of slots taken by task on each node
 	// on some cases it might be larger than capacity:
-	// 	current step of higher priority task A has little subtasks, so we start
-	// 	to schedule lower priority task, but next step of A has many subtasks.
+	// 	current step of higher rank task A has little subtasks, so we start
+	// 	to schedule lower rank task, but next step of A has many subtasks.
 	// once initialized, the length of usedSlots should be equal to number of nodes
 	// managed by dist framework.
 	usedSlots atomic.Pointer[map[string]int]
@@ -91,14 +91,14 @@ func newSlotManager() *SlotManager {
 // Update updates the used slots on each node.
 // TODO: on concurrent call, update once.
 func (sm *SlotManager) update(ctx context.Context, nodeMgr *NodeManager, taskMgr TaskManager) error {
-	nodes := nodeMgr.getManagedNodes()
+	nodes := nodeMgr.getNodes()
 	slotsOnNodes, err := taskMgr.GetUsedSlotsOnNodes(ctx)
 	if err != nil {
 		return err
 	}
 	newUsedSlots := make(map[string]int, len(nodes))
 	for _, node := range nodes {
-		newUsedSlots[node] = slotsOnNodes[node]
+		newUsedSlots[node.ID] = slotsOnNodes[node.ID]
 	}
 
 	sm.usedSlots.Store(&newUsedSlots)
@@ -111,7 +111,7 @@ func (sm *SlotManager) update(ctx context.Context, nodeMgr *NodeManager, taskMgr
 // as usedSlots is updated asynchronously, it might return false even if there
 // are enough resources, or return true on resource shortage when some task
 // scheduled subtasks.
-func (sm *SlotManager) canReserve(task *proto.Task) (execID string, ok bool) {
+func (sm *SlotManager) canReserve(task *proto.TaskBase) (execID string, ok bool) {
 	usedSlots := *sm.usedSlots.Load()
 	capacity := int(sm.capacity.Load())
 	sm.mu.RLock()
@@ -121,14 +121,14 @@ func (sm *SlotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 		return "", false
 	}
 
-	reservedForHigherPriority := 0
+	reservedForHigherRank := 0
 	for _, s := range sm.reservedStripes {
 		if s.task.Compare(task) >= 0 {
 			break
 		}
-		reservedForHigherPriority += s.stripes
+		reservedForHigherRank += s.stripes
 	}
-	if task.Concurrency+reservedForHigherPriority <= capacity {
+	if task.Concurrency+reservedForHigherRank <= capacity {
 		return "", true
 	}
 
@@ -142,7 +142,7 @@ func (sm *SlotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 
 // Reserve reserves resources for a task.
 // Reserve and UnReserve should be called in pair with same parameters.
-func (sm *SlotManager) reserve(task *proto.Task, execID string) {
+func (sm *SlotManager) reserve(task *proto.TaskBase, execID string) {
 	taskClone := *task
 
 	sm.mu.Lock()
@@ -161,7 +161,7 @@ func (sm *SlotManager) reserve(task *proto.Task, execID string) {
 }
 
 // UnReserve un-reserve resources for a task.
-func (sm *SlotManager) unReserve(task *proto.Task, execID string) {
+func (sm *SlotManager) unReserve(task *proto.TaskBase, execID string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	idx, ok := sm.task2Index[task.ID]

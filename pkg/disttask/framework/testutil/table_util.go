@@ -22,13 +22,13 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -40,10 +40,7 @@ func InitTableTest(t *testing.T) (kv.Storage, *storage.TaskManager, context.Cont
 	store, pool := getResourcePool(t)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 	return store, getTaskManager(t, pool), ctx
 }
 
@@ -56,10 +53,7 @@ func InitTableTestWithCancel(t *testing.T) (*storage.TaskManager, context.Contex
 }
 
 func getResourcePool(t *testing.T) (kv.Storage, *pools.ResourcePool) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -144,7 +138,7 @@ func GetTasksFromHistory(ctx context.Context, mgr *storage.TaskManager) (int, er
 // GetTaskEndTime gets task's endTime for test.
 func GetTaskEndTime(ctx context.Context, mgr *storage.TaskManager, taskID int64) (time.Time, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select end_time 
+		`select end_time
 		from mysql.tidb_global_task
 	    where id = %?`, taskID)
 
@@ -160,7 +154,7 @@ func GetTaskEndTime(ctx context.Context, mgr *storage.TaskManager, taskID int64)
 // GetSubtaskEndTime gets subtask's endTime for test.
 func GetSubtaskEndTime(ctx context.Context, mgr *storage.TaskManager, subtaskID int64) (time.Time, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select end_time 
+		`select end_time
 		from mysql.tidb_background_subtask
 	    where id = %?`, subtaskID)
 

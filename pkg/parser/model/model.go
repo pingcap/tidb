@@ -383,13 +383,12 @@ func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bo
 // for use of execution phase.
 const ExtraHandleID = -1
 
-// ExtraPidColID is the column ID of column which store the partitionID decoded in global index values.
-const ExtraPidColID = -2
+// Deprecated: Use ExtraPhysTblID instead.
+// const ExtraPidColID = -2
 
 // ExtraPhysTblID is the column ID of column that should be filled in with the physical table id.
 // Primarily used for table partition dynamic prune mode, to return which partition (physical table id) the row came from.
-// Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
-// Must be after ExtraPidColID!
+// If used with a global index, the partition ID decoded from the key value will be filled in.
 const ExtraPhysTblID = -3
 
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
@@ -435,8 +434,8 @@ const (
 // ExtraHandleName is the name of ExtraHandle Column.
 var ExtraHandleName = NewCIStr("_tidb_rowid")
 
-// ExtraPartitionIdName is the name of ExtraPartitionId Column.
-var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
+// Deprecated: Use ExtraPhysTblIdName instead.
+// var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
 // ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIdName = NewCIStr("_tidb_tid") //nolint:revive
@@ -541,6 +540,9 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
 }
@@ -920,21 +922,6 @@ func NewExtraHandleColInfo() *ColumnInfo {
 	return colInfo
 }
 
-// NewExtraPartitionIDColInfo mocks a column info for extra partition id column.
-func NewExtraPartitionIDColInfo() *ColumnInfo {
-	colInfo := &ColumnInfo{
-		ID:   ExtraPidColID,
-		Name: ExtraPartitionIdName,
-	}
-	colInfo.SetType(mysql.TypeLonglong)
-	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
-	colInfo.SetFlen(flen)
-	colInfo.SetDecimal(decimal)
-	colInfo.SetCharset(charset.CharsetBin)
-	colInfo.SetCollate(charset.CollationBin)
-	return colInfo
-}
-
 // NewExtraPhysTblIDColInfo mocks a column info for extra partition id column.
 func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
@@ -1197,6 +1184,10 @@ type PartitionInfo struct {
 	// rather than pid.
 	Enable bool `json:"enable"`
 
+	// IsEmptyColumns is for syntax like `partition by key()`.
+	// When IsEmptyColums is true, it will not display column name in `show create table` stmt.
+	IsEmptyColumns bool `json:"is_empty_columns"`
+
 	Definitions []PartitionDefinition `json:"definitions"`
 	// AddingDefinitions is filled when adding partitions that is in the mid state.
 	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
@@ -1246,6 +1237,7 @@ func (pi *PartitionInfo) Clone() *PartitionInfo {
 }
 
 // GetNameByID gets the partition name by ID.
+// TODO: Remove the need for this function!
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	definitions := pi.Definitions
 	// do not convert this loop to `for _, def := range definitions`.
@@ -1312,6 +1304,14 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 		}
 	}
 	return false
+}
+
+// ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
+func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLType = PartitionTypeNone
+	pi.DDLExpr = ""
+	pi.DDLColumns = nil
+	pi.NewTableID = 0
 }
 
 // PartitionState is the state of the partition.
@@ -1687,13 +1687,14 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                 int64          `json:"id"`      // Database ID
-	Name               CIStr          `json:"db_name"` // DB name.
-	Charset            string         `json:"charset"`
-	Collate            string         `json:"collate"`
-	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
-	State              SchemaState    `json:"state"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	ID                 int64            `json:"id"`      // Database ID
+	Name               CIStr            `json:"db_name"` // DB name.
+	Charset            string           `json:"charset"`
+	Collate            string           `json:"collate"`
+	Tables             []*TableInfo     `json:"-"` // Tables in the DB.
+	State              SchemaState      `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
+	TableName2ID       map[string]int64 `json:"-"`
 }
 
 // Clone clones DBInfo.
@@ -1767,9 +1768,26 @@ func (cis *CIStr) MemoryUsage() (sum int64) {
 
 // TableItemID is composed by table ID and column/index ID
 type TableItemID struct {
-	TableID int64
-	ID      int64
-	IsIndex bool
+	TableID          int64
+	ID               int64
+	IsIndex          bool
+	IsSyncLoadFailed bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
+// StatsLoadItem represents the load unit for statistics's memory loading.
+type StatsLoadItem struct {
+	TableItemID
+	FullLoad bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (s StatsLoadItem) Key() string {
+	return fmt.Sprintf("%s#%t", s.TableItemID.Key(), s.FullLoad)
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.
@@ -1909,6 +1927,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
+	}
+
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
 	}
 
 	return sb.String()

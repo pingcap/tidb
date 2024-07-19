@@ -15,6 +15,7 @@ go_test(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/parser/model",
+        "//pkg/statistics",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

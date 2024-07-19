@@ -20,9 +20,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
@@ -48,6 +50,33 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
+	sctx, err := h.statsHandler.SPool().Get()
+	if err != nil {
+		return err
+	}
+	defer h.statsHandler.SPool().Put(sctx)
+
+	// ActionFlashbackCluster will not create any new stats info
+	// and it's SchemaID alwayws equals to 0, so skip check it.
+	if t.GetType() != model.ActionFlashbackCluster {
+		if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
+			return err
+		} else if isSysDB {
+			// EXCHANGE PARTITION EVENT NOTES:
+			// 1. When a partition is exchanged with a system table, we need to adjust the global statistics
+			//    based on the count delta and modify count delta. However, due to the involvement of the system table,
+			//    a complete update of the global statistics is not feasible. Therefore, we bypass the statistics update
+			//    for the table in this scenario. Despite this, the table id still changes, so the statistics for the
+			//    system table will still be visible.
+			// 2. If the system table is a partitioned table, we will update the global statistics for the partitioned table.
+			//    It is rare to exchange a partition from a system table, so we can ignore this case. In this case,
+			//    the system table will have statistics, but this is not a significant issue.
+			logutil.StatsLogger().Info("Skip handle system database ddl event", zap.Stringer("event", t))
+			return nil
+		}
+	}
+	logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
+
 	switch t.GetType() {
 	case model.ActionCreateTable:
 		newTableInfo := t.GetCreateTableInfo()

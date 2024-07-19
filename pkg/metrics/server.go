@@ -70,6 +70,7 @@ var (
 	CPUProfileCounter               prometheus.Counter
 	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
+	MemoryLimit                     prometheus.Gauge
 )
 
 // InitServerMetrics initializes server metrics.
@@ -373,6 +374,14 @@ func InitServerMetrics() {
 			Name:      "rc_check_ts_conflict_total",
 			Help:      "Counter of WriteConflict caused by RCCheckTS.",
 		}, []string{LblType})
+
+	MemoryLimit = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_quota_bytes",
+			Help:      "The value of memory quota bytes.",
+		})
 }
 
 // ExecuteErrorToLabel converts an execute error to label.

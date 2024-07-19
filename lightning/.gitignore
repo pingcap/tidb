@@ -1,0 +1,10 @@
+/.idea
+*.swp
+.DS_Store
+/go.mod
+/go.sum
+
+# for the web interface
+web/node_modules/
+web/dist/
+.vscode/

@@ -15,10 +15,12 @@
 package executor_test
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,71 +210,78 @@ select 10;`
 	fileName2 := "tidb-slow-20236-2020-02-16T19-04-05.01.log"
 	fileName3 := "tidb-slow-20236-2020-02-17T18-00-05.01.log"
 	fileName4 := "tidb-slow-20236.log"
-	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName4
 	})
-	prepareLogs(t, logData, fileNames)
-	defer func() {
-		removeFiles(t, fileNames)
-	}()
-	tk := testkit.NewTestKit(t, store)
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	require.NoError(t, err)
-	tk.Session().GetSessionVars().TimeZone = loc
-	tk.MustExec("use information_schema")
-	cases := []struct {
-		prepareSQL string
-		sql        string
-		result     []string
-	}{
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000'",
-			result:     []string{"2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:01:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time",
-			result:     []string{"2020-02-15 18:00:01.000000", "2020-02-15 19:00:05.000000", "2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:01:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time desc",
-			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000", "2020-02-15 19:00:05.000000", "2020-02-15 18:00:01.000000"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select count(*) from cluster_slow_query where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-			result:     []string{"9"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select count(*) from cluster_slow_query where (time > '2020-02-16 18:00:00' and time < '2020-05-14 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-17 20:00:00')",
-			result:     []string{"6"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select count(*) from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
-			result:     []string{"5"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 3",
-			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
-		},
-	}
-	for _, cas := range cases {
-		if len(cas.prepareSQL) > 0 {
-			tk.MustExec(cas.prepareSQL)
+	for k := 0; k < 2; k++ {
+		// k = 0 for normal files
+		// k = 1 for compressed files
+		var fileNames []string
+		if k == 0 {
+			fileNames = []string{fileName0, fileName1, fileName2, fileName3, fileName4}
+		} else {
+			fileNames = []string{fileName0 + ".gz", fileName1 + ".gz", fileName2 + ".gz", fileName3 + ".gz", fileName4}
 		}
-		tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
+		prepareLogs(t, logData, fileNames)
+		tk := testkit.NewTestKit(t, store)
+		loc, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+		tk.Session().GetSessionVars().TimeZone = loc
+		tk.MustExec("use information_schema")
+		cases := []struct {
+			prepareSQL string
+			sql        string
+			result     []string
+		}{
+			{
+				prepareSQL: "set @@time_zone = '+08:00'",
+				sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000'",
+				result:     []string{"2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
+			},
+			{
+				prepareSQL: "set @@time_zone = '+08:00'",
+				sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
+				result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
+			},
+			{
+				prepareSQL: "set @@time_zone = '+08:00'",
+				sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time",
+				result:     []string{"2020-02-15 18:00:01.000000", "2020-02-15 19:00:05.000000", "2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
+			},
+			{
+				prepareSQL: "set @@time_zone = '+08:00'",
+				sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time desc",
+				result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000", "2020-02-15 19:00:05.000000", "2020-02-15 18:00:01.000000"},
+			},
+			{
+				prepareSQL: "set @@time_zone = '+08:00'",
+				sql:        "select count(*) from cluster_slow_query where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
+				result:     []string{"9"},
+			},
+			{
+				prepareSQL: "set @@time_zone = '+08:00'",
+				sql:        "select count(*) from cluster_slow_query where (time > '2020-02-16 18:00:00' and time < '2020-05-14 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-17 20:00:00')",
+				result:     []string{"6"},
+			},
+			{
+				prepareSQL: "set @@time_zone = '+08:00'",
+				sql:        "select count(*) from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
+				result:     []string{"5"},
+			},
+			{
+				prepareSQL: "set @@time_zone = '+08:00'",
+				sql:        "select time from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 3",
+				result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
+			},
+		}
+		for _, cas := range cases {
+			if len(cas.prepareSQL) > 0 {
+				tk.MustExec(cas.prepareSQL)
+			}
+			tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
+		}
+		removeFiles(t, fileNames)
 	}
 }
 
@@ -301,19 +310,34 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 			updateDigest.String(): "",
 		},
 	}
-	err := r.RetrieveLocal(context.Background(), tk.Session())
+
+	err := r.RetrieveLocal(context.Background(), tk.Session().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
 	require.Equal(t, insertNormalized, r.SQLDigestsMap[insertDigest.String()])
 	require.Equal(t, "", r.SQLDigestsMap[updateDigest.String()])
 }
 
 func prepareLogs(t *testing.T, logData []string, fileNames []string) {
+	writeFile := func(file string, data string) {
+		if strings.HasSuffix(file, ".gz") {
+			f, err := os.Create(file)
+			require.NoError(t, err)
+			gz := gzip.NewWriter(f)
+			_, err = gz.Write([]byte(data))
+			require.NoError(t, err)
+			require.NoError(t, gz.Close())
+			require.NoError(t, f.Close())
+		} else {
+			f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			require.NoError(t, err)
+			_, err = f.Write([]byte(data))
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+		}
+	}
+
 	for i, log := range logData {
-		f, err := os.OpenFile(fileNames[i], os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(log))
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
+		writeFile(fileNames[i], log)
 	}
 }
 

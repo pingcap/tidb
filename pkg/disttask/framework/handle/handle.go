@@ -45,17 +45,17 @@ func NotifyTaskChange() {
 	}
 }
 
-// GetCPUCountOfManagedNode gets the CPU count of the managed node.
-func GetCPUCountOfManagedNode(ctx context.Context) (int, error) {
+// GetCPUCountOfNode gets the CPU count of the managed node.
+func GetCPUCountOfNode(ctx context.Context) (int, error) {
 	manager, err := storage.GetTaskManager()
 	if err != nil {
 		return 0, err
 	}
-	return manager.GetCPUCountOfManagedNode(ctx)
+	return manager.GetCPUCountOfNode(ctx)
 }
 
 // SubmitTask submits a task.
-func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
+func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, taskMeta []byte) (*proto.Task, error) {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 		return nil, storage.ErrTaskAlreadyExists
 	}
 
-	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, taskMeta)
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, targetScope, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	if err != nil {
 		return nil, err
 	}
-	metrics.UpdateMetricsForAddTask(task)
+	metrics.UpdateMetricsForAddTask(&task.TaskBase)
 
 	NotifyTaskChange()
 	return task, nil
@@ -87,9 +87,17 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 // this API returns error if task failed or cancelled.
 func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
-	found, err := WaitTask(ctx, id, func(t *proto.Task) bool {
+	_, err := WaitTask(ctx, id, func(t *proto.TaskBase) bool {
 		return t.IsDone() || t.State == proto.TaskStatePaused
 	})
+	if err != nil {
+		return err
+	}
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	found, err := taskManager.GetTaskByIDWithHistory(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -119,14 +127,14 @@ func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 	if err != nil {
 		return err
 	}
-	_, err = WaitTask(ctx, task.ID, func(t *proto.Task) bool {
+	_, err = WaitTask(ctx, task.ID, func(t *proto.TaskBase) bool {
 		return t.IsDone()
 	})
 	return err
 }
 
 // WaitTask waits for a task until it meets the matchFn.
-func WaitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*proto.Task, error) {
+func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) bool) (*proto.TaskBase, error) {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -140,7 +148,7 @@ func WaitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*p
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
-			task, err := taskManager.GetTaskByIDWithHistory(ctx, id)
+			task, err := taskManager.GetTaskBaseByIDWithHistory(ctx, id)
 			if err != nil {
 				logger.Error("cannot get task during waiting", zap.Error(err))
 				continue

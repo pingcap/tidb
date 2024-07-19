@@ -26,14 +26,14 @@ import (
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
 	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
-	// to make sure lower priority tasks can be scheduled if resource is enough.
-	// The returned tasks are sorted by task order, see proto.Task, and only contains
-	// some fields, see row2TaskBasic.
-	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
+	// to make sure lower rank tasks can be scheduled if resource is enough.
+	// The returned tasks are sorted by task order, see proto.Task.
+	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
-	GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, error)
+	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error
 	GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	DeleteDeadNodes(ctx context.Context, nodes []string) error
@@ -73,18 +73,12 @@ type TaskManager interface {
 	// not considered.
 	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
 	// GetActiveSubtasks returns subtasks of the task that are in pending/running state.
-	// the returned subtasks only contains some fields, see row2SubtaskBasic.
-	GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error)
+	GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error)
 	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
 	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
-	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error
-	// GetManagedNodes returns the nodes managed by dist framework and can be used
-	// to execute tasks. If there are any nodes with background role, we use them,
-	// else we use nodes without role.
-	// returned nodes are sorted by node id(host:port).
-	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
+	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error
 
 	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
 	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
@@ -130,15 +124,18 @@ type Extension interface {
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,
 	// then to StepDone, then scheduler will mark it as finished.
-	GetNextStep(task *proto.Task) proto.Step
+	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
+	// initialize required fields on scheduler.Init
+	GetNextStep(task *proto.TaskBase) proto.Step
 }
 
 // Param is used to pass parameters when creating scheduler.
 type Param struct {
-	taskMgr  TaskManager
-	nodeMgr  *NodeManager
-	slotMgr  *SlotManager
-	serverID string
+	taskMgr        TaskManager
+	nodeMgr        *NodeManager
+	slotMgr        *SlotManager
+	serverID       string
+	allocatedSlots bool
 }
 
 // schedulerFactoryFn is used to create a scheduler.

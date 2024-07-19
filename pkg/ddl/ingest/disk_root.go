@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -68,8 +68,7 @@ func (d *diskRootImpl) UpdateUsage() {
 	var capacity, used uint64
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrGetStorageQuota,
-			zap.String("category", "ddl-ingest"), zap.Error(err))
+		logutil.DDLIngestLogger().Error(LitErrGetStorageQuota, zap.Error(err))
 	} else {
 		capacity, used = sz.Capacity, sz.Capacity-sz.Available
 	}
@@ -86,7 +85,7 @@ func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.bcUsed > variable.DDLDiskQuota.Load() {
-		logutil.BgLogger().Info("disk usage is over quota", zap.String("category", "ddl-ingest"),
+		logutil.DDLIngestLogger().Info("disk usage is over quota",
 			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
 			zap.String("usage", d.usageInfo()))
 		return true
@@ -95,10 +94,10 @@ func (d *diskRootImpl) ShouldImport() bool {
 		return false
 	}
 	if float64(d.used) >= float64(d.capacity)*capacityThreshold {
-		logutil.BgLogger().Warn("available disk space is less than 10%, "+
+		logutil.DDLIngestLogger().Warn("available disk space is less than 10%, "+
 			"this may degrade the performance, "+
 			"please make sure the disk available space is larger than @@tidb_ddl_disk_quota before adding index",
-			zap.String("category", "ddl-ingest"), zap.String("usage", d.usageInfo()))
+			zap.String("usage", d.usageInfo()))
 		return true
 	}
 	return false
@@ -129,11 +128,10 @@ func (d *diskRootImpl) PreCheckUsage() error {
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
 	}
 	if RiskOfDiskFull(sz.Available, sz.Capacity) {
-		sortPath := ConfigSortPath()
-		logutil.BgLogger().Warn("available disk space is less than 10%, cannot use ingest mode",
-			zap.String("sort path", sortPath),
+		logutil.DDLIngestLogger().Warn("available disk space is less than 10%, cannot use ingest mode",
+			zap.String("sort path", d.path),
 			zap.String("usage", d.usageInfo()))
-		msg := fmt.Sprintf("no enough space in %s", sortPath)
+		msg := fmt.Sprintf("no enough space in %s", d.path)
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(msg)
 	}
 	return nil
@@ -147,9 +145,8 @@ func (d *diskRootImpl) StartupCheck() error {
 	}
 	quota := variable.DDLDiskQuota.Load()
 	if sz.Available < quota {
-		sortPath := ConfigSortPath()
 		return errors.Errorf("the available disk space(%d) in %s should be greater than @@tidb_ddl_disk_quota(%d)",
-			sz.Available, sortPath, quota)
+			sz.Available, d.path, quota)
 	}
 	return nil
 }

@@ -30,7 +30,7 @@ aliases:
   sig-approvers-executor-import: # approvers for importer part of executor pkg.
     - D3Hunter
     - gmhdbjd
-    - lance6716    
+    - lance6716
   sig-approvers-expression: # approvers for expression pkg
     - windtalker
     - XuHuaiyu
@@ -68,6 +68,8 @@ aliases:
     - gmhdbjd
     - lichunzhu
     - okJiang
+    - lance6716
+    - tangenta
   sig-approvers-infoschema: # approvers for infoschema pkg
     - zimulala
     - wjhuang2016
@@ -121,3 +123,12 @@ aliases:
     - Benjamin2037
     - gmhdbjd
     - lichunzhu
+  sig-approvers-planner: # approvers for planner module
+    - AilinKid
+    - elsa0520
+    - fixdb
+    - hawkingrei
+    - hi-rustin
+    - qw4990
+    - time-and-fate
+    - winoros

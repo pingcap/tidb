@@ -1,0 +1,107 @@
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package systable contains all constants/methods related accessing system tables
+// related to DDL job execution
+package systable
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/parser/model"
+)
+
+var (
+	// ErrNotFound is the error when we can't found the info we are querying related
+	// to some jobID. might happen when there are multiple owners and 1 of them run and delete it.
+	ErrNotFound = errors.New("not found")
+)
+
+// Manager is the interface for DDL job/MDL storage layer, it provides the methods
+// to access the job/MDL related tables.
+type Manager interface {
+	// GetJobByID gets the job by ID, returns ErrNotFound if the job does not exist.
+	GetJobByID(ctx context.Context, jobID int64) (*model.Job, error)
+	// GetMDLVer gets the MDL version by job ID, returns ErrNotFound if the MDL info does not exist.
+	GetMDLVer(ctx context.Context, jobID int64) (int64, error)
+}
+
+type manager struct {
+	sePool *session.Pool
+}
+
+var _ Manager = (*manager)(nil)
+
+// NewManager creates a new Manager.
+func NewManager(pool *session.Pool) Manager {
+	return &manager{
+		sePool: pool,
+	}
+}
+
+func (mgr *manager) withNewSession(fn func(se *session.Session) error) error {
+	se, err := mgr.sePool.Get()
+	if err != nil {
+		return err
+	}
+	defer mgr.sePool.Put(se)
+
+	ddlse := session.NewSession(se)
+	return fn(ddlse)
+}
+
+func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*model.Job, error) {
+	job := model.Job{}
+	if err := mgr.withNewSession(func(se *session.Session) error {
+		sql := fmt.Sprintf(`select job_meta from mysql.tidb_ddl_job where job_id = %d`, jobID)
+		rows, err := se.Execute(ctx, sql, "get-job-by-id")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			return ErrNotFound
+		}
+		jobBinary := rows[0].GetBytes(0)
+		err = job.Decode(jobBinary)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (mgr *manager) GetMDLVer(ctx context.Context, jobID int64) (int64, error) {
+	var ver int64
+	if err := mgr.withNewSession(func(se *session.Session) error {
+		sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d", jobID)
+		rows, err := se.Execute(ctx, sql, "check-mdl-info")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			return ErrNotFound
+		}
+		ver = rows[0].GetInt64(0)
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return ver, nil
+}

@@ -20,10 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -107,6 +105,24 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+	// async merge global stats
+	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAsyncMergeGlobalStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
+
+	// concurrency of save stats to storage
+	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzePartitionConcurrency)
+	if err != nil {
+		return err
+	}
+	c, err := strconv.ParseInt(analyzePartitionConcurrency, 10, 64)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
+
 	// analyzer version
 	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
@@ -197,10 +213,7 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 
 // Exec is a helper function to execute sql and return RecordSet.
 func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
-	sqlExec, ok := sctx.(sqlexec.SQLExecutor)
-	if !ok {
-		return nil, errors.Errorf("invalid sql executor")
-	}
+	sqlExec := sctx.GetSQLExecutor()
 	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
 	return sqlExec.ExecuteInternal(StatsCtx, sql, args...)
 }
@@ -214,37 +227,19 @@ func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 		}
 	}
 
-	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil, errors.Errorf("invalid sql executor")
-	}
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, UseCurrentSessionOpt, sql, args...)
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
 func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil, errors.Errorf("invalid sql executor")
-	}
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }
 
 // DurationToTS converts duration to timestamp.
 func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
-}
-
-// GetFullTableName returns the full table name.
-func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
-	for _, schema := range is.AllSchemas() {
-		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
-			if t.Meta().ID == tblInfo.ID {
-				return schema.Name.O + "." + tblInfo.Name.O
-			}
-		}
-	}
-	return strconv.FormatInt(tblInfo.ID, 10)
 }
 
 // JSONTable is used for dumping statistics.

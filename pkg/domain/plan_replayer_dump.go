@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -156,7 +157,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 	if !isView {
 		return false, nil
 	}
-	viewTbl, err := tne.is.TableByName(schema, table)
+	viewTbl, err := tne.is.TableByName(context.Background(), schema, table)
 	if err != nil {
 		return false, err
 	}
@@ -448,7 +449,7 @@ func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableN
 	for pair := range pairs {
 		dbName := model.NewCIStr(pair.DBName)
 		tableName := model.NewCIStr(pair.TableName)
-		t, err := is.TableByName(dbName, tableName)
+		t, err := is.TableByName(context.Background(), dbName, tableName)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
 				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
@@ -499,7 +500,7 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 		if pair.IsView {
 			continue
 		}
-		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 		if err != nil {
 			return err
 		}
@@ -512,13 +513,15 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 			return errors.AddStack(err)
 		}
 		fmt.Fprintf(statsMemFw, "[INDEX]\n")
-		for _, indice := range tblStats.Indices {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", indice.Info.Name.String(), indice.StatusToString()))
-		}
+		tblStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", idx.Info.Name.String(), idx.StatusToString()))
+			return false
+		})
 		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
-		for _, col := range tblStats.Columns {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", col.Info.Name.String(), col.StatusToString()))
-		}
+		tblStats.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", c.Info.Name.String(), c.StatusToString()))
+			return false
+		})
 	}
 	return nil
 }
@@ -621,7 +624,7 @@ func dumpSessionBindRecords(records []bindinfo.Bindings, zw *zip.Writer) error {
 }
 
 func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show bindings")
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), "show bindings")
 	if err != nil {
 		return err
 	}
@@ -645,7 +648,7 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 }
 
 func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show global bindings")
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), "show global bindings")
 	if err != nil {
 		return err
 	}
@@ -671,7 +674,7 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string) error {
 	var recordSets []sqlexec.RecordSet
 	var err error
-	recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("select tidb_decode_plan('%s')", encodedPlan))
+	recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("select tidb_decode_plan('%s')", encodedPlan))
 	if err != nil {
 		return err
 	}
@@ -707,13 +710,13 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 		var recordSets []sqlexec.RecordSet
 		if isAnalyze {
 			// Explain analyze
-			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
+			recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
 			if err != nil {
 				return nil, err
 			}
 		} else {
 			// Explain
-			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain %s", sql))
+			recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("explain %s", sql))
 			if err != nil {
 				return nil, err
 			}
@@ -754,11 +757,12 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 	return err
 }
 
+// extractTableNames extracts table names from the given stmts.
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	execStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
-		executor: sctx.(sqlexec.RestrictedSQLExecutor),
+		executor: sctx.GetRestrictedSQLExecutor(),
 		is:       GetDomain(sctx).InfoSchema(),
 		curDB:    curDB,
 		names:    make(map[tableNamePair]struct{}),
@@ -776,7 +780,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -788,7 +792,7 @@ func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*u
 }
 
 func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
 	if err != nil {
 		return err
 	}

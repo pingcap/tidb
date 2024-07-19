@@ -393,8 +393,9 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 		ExecSchema:   src.Schema(),
 	}
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		SortExec:    sortExec,
+		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Concurrency: 5,
 	}
 }
 
@@ -459,7 +460,7 @@ func TestSelectionRequiredRows(t *testing.T) {
 		} else {
 			ds = newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
 			f, err := expression.NewFunction(
-				sctx, ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
+				sctx.GetExprCtx(), ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
 					Value:   types.NewDatum(testCase.filtersOfCol1),
 					RetType: types.NewFieldType(mysql.TypeTiny),
 				})
@@ -599,9 +600,10 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
 	return &ProjectionExec{
-		BaseExecutor:  exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		numWorkers:    int64(numWorkers),
-		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		projectionExecutorContext: newProjectionExecutorContext(ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		numWorkers:                int64(numWorkers),
+		evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
 	}
 }
 
@@ -667,7 +669,7 @@ func TestStreamAggRequiredRows(t *testing.T) {
 		childCols := ds.Schema().Columns
 		schema := expression.NewSchema(childCols...)
 		groupBy := []expression.Expression{childCols[1]}
-		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		aggFunc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), testCase.aggFunc, []expression.Expression{childCols[0]}, true)
 		require.NoError(t, err)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 		executor := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)
@@ -724,7 +726,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	innerCols := innerSrc.Schema().Columns
 	outerCols := outerSrc.Schema().Columns
-	j := plannercore.BuildMergeJoinPlan(ctx, joinType, outerCols, innerCols)
+	j := plannercore.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
 	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
@@ -733,10 +735,10 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftJoinKeys))
 	for i := range j.LeftJoinKeys {
-		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(ctx, nil)
 	return b.build(j)
 }
 

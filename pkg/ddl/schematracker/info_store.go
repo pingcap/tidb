@@ -15,6 +15,8 @@
 package schematracker
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -73,7 +75,7 @@ func (i *InfoStore) DeleteSchema(name model.CIStr) bool {
 }
 
 // TableByName returns the TableInfo. It will also return the error like an infoschema.
-func (i *InfoStore) TableByName(schema, table model.CIStr) (*model.TableInfo, error) {
+func (i *InfoStore) TableByName(_ context.Context, schema, table model.CIStr) (*model.TableInfo, error) {
 	schemaKey := i.ciStr2Key(schema)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
@@ -90,7 +92,7 @@ func (i *InfoStore) TableByName(schema, table model.CIStr) (*model.TableInfo, er
 
 // TableClonedByName is like TableByName, plus it will clone the TableInfo.
 func (i *InfoStore) TableClonedByName(schema, table model.CIStr) (*model.TableInfo, error) {
-	tbl, err := i.TableByName(schema, table)
+	tbl, err := i.TableByName(context.Background(), schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -152,32 +154,33 @@ func (i *InfoStore) AllTableNamesOfSchema(schema model.CIStr) ([]string, error) 
 
 // InfoStoreAdaptor convert InfoStore to InfoSchema, it only implements a part of InfoSchema interface to be
 // used by DDL interface.
-// nolint:unused
 type InfoStoreAdaptor struct {
 	infoschema.InfoSchema
 	inner *InfoStore
 }
 
 // SchemaByName implements the InfoSchema interface.
-// nolint:unused
 func (i InfoStoreAdaptor) SchemaByName(schema model.CIStr) (*model.DBInfo, bool) {
 	dbInfo := i.inner.SchemaByName(schema)
 	return dbInfo, dbInfo != nil
 }
 
 // TableExists implements the InfoSchema interface.
-// nolint:unused
 func (i InfoStoreAdaptor) TableExists(schema, table model.CIStr) bool {
-	tableInfo, _ := i.inner.TableByName(schema, table)
+	tableInfo, _ := i.inner.TableByName(context.Background(), schema, table)
 	return tableInfo != nil
 }
 
 // TableByName implements the InfoSchema interface.
-// nolint:unused
-func (i InfoStoreAdaptor) TableByName(schema, table model.CIStr) (t table.Table, err error) {
-	tableInfo, err := i.inner.TableByName(schema, table)
+func (i InfoStoreAdaptor) TableByName(ctx context.Context, schema, table model.CIStr) (t table.Table, err error) {
+	tableInfo, err := i.inner.TableByName(ctx, schema, table)
 	if err != nil {
 		return nil, err
 	}
 	return tables.MockTableFromMeta(tableInfo), nil
+}
+
+// TableInfoByName implements the InfoSchema interface.
+func (i InfoStoreAdaptor) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	return i.inner.TableByName(context.Background(), schema, table)
 }

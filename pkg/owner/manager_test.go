@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func newTestInfo(t *testing.T) *testInfo {
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 4})
 
 	cli := cluster.Client(0)
-	ic := infoschema.NewCache(2)
+	ic := infoschema.NewCache(nil, 2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
 		context.Background(),
@@ -78,6 +79,17 @@ func (ti *testInfo) Close(t *testing.T) {
 	ti.cluster.Terminate(t)
 }
 
+type listener struct {
+	val atomic.Bool
+}
+
+func (l *listener) OnBecomeOwner() {
+	l.val.Store(true)
+}
+func (l *listener) OnRetireOwner() {
+	l.val.Store(false)
+}
+
 func TestSingle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
@@ -87,9 +99,13 @@ func TestSingle(t *testing.T) {
 	tInfo := newTestInfo(t)
 	client, d := tInfo.client, tInfo.ddl
 	defer tInfo.Close(t)
-	require.NoError(t, d.OwnerManager().CampaignOwner())
+	ownerManager := d.OwnerManager()
+	lis := &listener{}
+	ownerManager.SetListener(lis)
+	require.NoError(t, ownerManager.CampaignOwner())
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
+	require.True(t, lis.val.Load())
 
 	// test for newSession failed
 	ctx := context.Background()
@@ -105,9 +121,10 @@ func TestSingle(t *testing.T) {
 	require.True(t, isOwner)
 
 	// The test is used to exit campaign loop.
-	d.OwnerManager().Cancel()
+	ownerManager.Cancel()
 	isOwner = checkOwner(d, false)
 	require.False(t, isOwner)
+	require.False(t, lis.val.Load())
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -231,7 +248,7 @@ func TestCluster(t *testing.T) {
 	require.True(t, isOwner)
 
 	cli1 := cluster.Client(1)
-	ic2 := infoschema.NewCache(2)
+	ic2 := infoschema.NewCache(nil, 2)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d1 := NewDDL(
 		context.Background(),
@@ -256,7 +273,7 @@ func TestCluster(t *testing.T) {
 	d.OwnerManager().Cancel()
 	// d3 (not owner) stop
 	cli3 := cluster.Client(3)
-	ic3 := infoschema.NewCache(2)
+	ic3 := infoschema.NewCache(nil, 2)
 	ic3.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d3 := NewDDL(
 		context.Background(),

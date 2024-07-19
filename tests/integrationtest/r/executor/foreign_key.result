@@ -115,7 +115,7 @@ t1	CREATE TABLE `t1` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `leader` (`leader`),
   KEY `leader2` (`leader2`),
-  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `executor__foreign_key`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */
+  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 set @@global.tidb_enable_foreign_key=1;
 alter table t1 add constraint fk2 foreign key (leader2) references t1 (id);
@@ -128,8 +128,8 @@ t1	CREATE TABLE `t1` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `leader` (`leader`),
   KEY `leader2` (`leader2`),
-  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `executor__foreign_key`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */,
-  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `executor__foreign_key`.`t1` (`id`)
+  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */,
+  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `t1` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t1;
 create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) /* FOREIGN KEY INVALID */);
@@ -416,7 +416,7 @@ select sum(id) from t1;
 sum(id)
 32896
 SET GLOBAL tidb_mem_oom_action='CANCEL';
-set @@tidb_mem_quota_query=40960;
+set @@tidb_mem_quota_query=81920;
 update t1 set id=id+100000 where id=1;
 Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
 select id,pid from t1 where id = 1;
@@ -452,5 +452,29 @@ select * from t2 order by id;
 id
 2
 3
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+create database executor__foreign_key_other_schema;
+use executor__foreign_key_other_schema;
+drop table if exists users;
+CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
+use executor__foreign_key;
+drop table if exists orders;
+CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES executor__foreign_key_other_schema.users(id));
+alter table orders modify user_id int null;
+show create table orders;
+Table	Create Table
+orders	CREATE TABLE `orders` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) DEFAULT NULL,
+  `doc` json DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `fk_user_id` (`user_id`),
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `executor__foreign_key_other_schema`.`users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists orders;
+drop database executor__foreign_key_other_schema;
 set @@global.tidb_enable_foreign_key=default;
 set @@foreign_key_checks=default;

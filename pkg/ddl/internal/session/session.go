@@ -40,8 +40,8 @@ func NewSession(s sessionctx.Context) *Session {
 }
 
 // Begin starts a transaction.
-func (s *Session) Begin() error {
-	err := sessiontxn.NewTxn(context.Background(), s.Context)
+func (s *Session) Begin(ctx context.Context) error {
+	err := sessiontxn.NewTxn(ctx, s.Context)
 	if err != nil {
 		return err
 	}
@@ -50,9 +50,9 @@ func (s *Session) Begin() error {
 }
 
 // Commit commits the transaction.
-func (s *Session) Commit() error {
-	s.StmtCommit(context.Background())
-	return s.CommitTxn(context.Background())
+func (s *Session) Commit(ctx context.Context) error {
+	s.StmtCommit(ctx)
+	return s.CommitTxn(ctx)
 }
 
 // Txn activate and returns the current transaction.
@@ -82,7 +82,7 @@ func (s *Session) Execute(ctx context.Context, query string, label string) ([]ch
 	if ctx.Value(kv.RequestSourceKey) == nil {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	}
-	rs, err := s.Context.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
+	rs, err := s.Context.GetSQLExecutor().ExecuteInternal(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -105,7 +105,7 @@ func (s *Session) Session() sessionctx.Context {
 
 // RunInTxn runs a function in a transaction.
 func (s *Session) RunInTxn(f func(*Session) error) (err error) {
-	err = s.Begin()
+	err = s.Begin(context.Background())
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func (s *Session) RunInTxn(f func(*Session) error) (err error) {
 		s.Rollback()
 		return
 	}
-	return errors.Trace(s.Commit())
+	return errors.Trace(s.Commit(context.Background()))
 }
 
 var (

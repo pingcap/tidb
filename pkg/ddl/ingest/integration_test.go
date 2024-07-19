@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,6 +86,7 @@ func TestIngestError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
@@ -126,20 +128,25 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
-	// Mock panic on coprocessor request sender.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockCopSenderPanic", "return(true)"))
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
-	tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
-	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCopSenderPanic"))
+	tk.MustExec("set global tidb_enable_dist_task = 0")
 
-	// Mock panic on local engine writer.
-	tk.MustExec("drop table t;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic", "return"))
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
-	tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
-	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic"))
+	t.Run("Mock panic on scan record operator", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+			panic("mock panic")
+		})
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
+		tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
+		tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
+	})
+
+	t.Run("Mock panic on local engine writer", func(t *testing.T) {
+		tk.MustExec("drop table if exists t;")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic", "return")
+		tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
+		tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
+		tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
+	})
 }
 
 func TestAddIndexIngestCancel(t *testing.T) {
@@ -175,7 +182,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
 	dom.DDL().SetHook(defHook)
-	ok, err := ingest.LitBackCtxMgr.CheckAvailable()
+	ok, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
 	require.True(t, ok)
 }
@@ -252,7 +259,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook.Clone())
 	tk.MustGetErrCode("alter table t add index idx1(c1)", errno.ErrCancelledDDLJob)
-	available, err := ingest.LitBackCtxMgr.CheckAvailable()
+	available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
 	require.True(t, available)
 }
@@ -339,4 +346,36 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 	require.True(t, runDML)
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1", "2 1 2"))
+}
+
+func TestMultiSchemaAddIndexMerge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	for _, createTableSQL := range []string{
+		"create table t (a int, b int);",
+		"create table t (a int, b int) PARTITION BY HASH (`a`) PARTITIONS 4;",
+	} {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTableSQL)
+		tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+
+		first := true
+		var tk2Err error
+		ingest.MockExecAfterWriteRow = func() {
+			if !first {
+				return
+			}
+			_, tk2Err = tk2.Exec("insert into t values (4, 4), (5, 5);")
+			first = false
+		}
+		tk.MustExec("alter table t add index idx1(a), add index idx2(b);")
+		require.False(t, first)
+		require.NoError(t, tk2Err)
+		tk.MustExec("admin check table t;")
+	}
 }
