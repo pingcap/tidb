@@ -17,6 +17,7 @@ package ingest_test
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -378,4 +379,52 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 		require.NoError(t, tk2Err)
 		tk.MustExec("admin check table t;")
 	}
+}
+
+func TestAddIndexIngestJobWriteConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	injected := false
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterRunIngestReorgJob", func(job *model.Job, done bool) {
+		if done && !injected {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			// Simulate write-conflict on ddl job table.
+			updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+			updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+			injected = true
+		}
+	})
+	rowCnt := atomic.Int32{}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
+		rowCnt.Add(1)
+	})
+	tk.MustExec("alter table t add index idx(b);")
+	require.True(t, injected)
+	// Write conflict error should not retry the whole job.
+	require.Equal(t, 3, int(rowCnt.Load())) // it should not be 6
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
+	for i := 0; i < 20; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%d, %d)", i, i)
+		tk.MustExec(insertSQL)
+	}
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
 }

@@ -330,14 +330,16 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
 		return nil
 	}
-	start, end, pid, err := getCheckpointReorgHandle(sess, job)
+	start, pid, err := getCheckpointReorgHandle(sess, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if pid > 0 {
+	if pid != reorgInfo.PhysicalTableID {
+		// Partition may not match, does not resume checkpoint.
+		return nil
+	}
+	if len(start) > 0 {
 		reorgInfo.StartKey = start
-		reorgInfo.EndKey = end
-		reorgInfo.PhysicalTableID = pid
 	}
 	return nil
 }

@@ -61,8 +61,6 @@ type BackendCtx interface {
 	FinishAndUnregisterEngines() error
 
 	FlushController
-	Done() bool
-	SetDone()
 
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
@@ -99,7 +97,6 @@ type litBackendCtx struct {
 	ctx      context.Context
 	cfg      *lightning.Config
 	sysVars  map[string]string
-	done     bool
 
 	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
@@ -329,16 +326,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport
-}
-
-// Done returns true if the lightning backfill is done.
-func (bc *litBackendCtx) Done() bool {
-	return bc.done
-}
-
-// SetDone sets the done flag.
-func (bc *litBackendCtx) SetDone() {
-	bc.done = true
 }
 
 // AttachCheckpointManager attaches a checkpoint manager to the backend context.

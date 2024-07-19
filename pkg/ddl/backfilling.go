@@ -689,6 +689,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	cpMgr, err := ingest.NewCheckpointManager(
 		ctx,
 		sessPool,
+		reorgInfo.PhysicalTableID,
 		job.ID,
 		indexIDs,
 		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
@@ -700,7 +701,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Error(err))
 	} else {
 		defer cpMgr.Close()
-		cpMgr.Reset(t.GetPhysicalID(), reorgInfo.StartKey, reorgInfo.EndKey)
 		bcCtx.AttachCheckpointManager(cpMgr)
 	}
 

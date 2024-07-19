@@ -340,13 +340,13 @@ func (src *TableScanTaskSource) Open() error {
 
 // adjustStartKey adjusts the start key so that we can skip the ranges that have been processed
 // according to the information of checkpoint manager.
-func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
+func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) (adjusted kv.Key, done bool) {
 	if src.cpMgr == nil {
-		return start
+		return start, false
 	}
 	cpKey := src.cpMgr.LastProcessedKey()
 	if len(cpKey) == 0 {
-		return start
+		return start, false
 	}
 	if cpKey.Cmp(start) < 0 || cpKey.Cmp(end) > 0 {
 		logutil.Logger(src.ctx).Error("invalid checkpoint key",
@@ -357,16 +357,23 @@ func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
 		if intest.InTest {
 			panic("invalid checkpoint key")
 		}
-		return start
+		return start, false
 	}
-	return cpKey.Next()
+	if cpKey.Cmp(end) == 0 {
+		return cpKey, true
+	}
+	return cpKey.Next(), false
 }
 
 func (src *TableScanTaskSource) generateTasks() error {
 	taskIDAlloc := newTaskIDAllocator()
 	defer src.sink.Finish()
 
-	startKey := src.adjustStartKey(src.startKey, src.endKey)
+	startKey, done := src.adjustStartKey(src.startKey, src.endKey)
+	if done {
+		// All table data are done.
+		return nil
+	}
 	for {
 		kvRanges, err := loadTableRanges(
 			src.ctx,

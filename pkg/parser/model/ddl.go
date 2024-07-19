@@ -527,7 +527,7 @@ type Job struct {
 	// Now it's the TS when we actually start the job.
 	RealStartTS uint64 `json:"real_start_ts"`
 	// StartTS uses timestamp allocated by TSO.
-	// Now it's the TS when we put the job to TiKV queue.
+	// Now it's the TS when we put the job to job table.
 	StartTS uint64 `json:"start_ts"`
 	// DependencyID is the largest job ID before current job and current job depends on.
 	DependencyID int64 `json:"dependency_id"`
