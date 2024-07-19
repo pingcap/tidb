@@ -69,6 +69,32 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	child := p.children[0]
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
+	allPruned := true
+
+	for i, usedByParent := range used {
+		if usedByParent || exprHasSetVarOrSleep(p.Exprs[i]) {
+			used[i] = true
+			allPruned = false
+			break
+		}
+	}
+	if allPruned && len(p.Exprs) > 0 {
+		if _, ok := child.(*LogicalTableDual); ok {
+			// TableDual may legitimately have zero columns, so keep a safe dummy output here.
+			zero := expression.NewZero()
+			p.Exprs = p.Exprs[:1]
+			p.schema.Columns = p.schema.Columns[:1]
+			p.Exprs[0] = zero
+			p.schema.Columns[0] = &expression.Column{
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  zero.GetType(),
+			}
+			used = []bool{true}
+		} else {
+			// Keep one output so the projection does not expose a zero-column layout.
+			used[smallestColumnIndex(p.schema.Columns)] = true
+		}
+	}
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
