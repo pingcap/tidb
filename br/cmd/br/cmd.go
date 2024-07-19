@@ -198,7 +198,8 @@ func Init(cmd *cobra.Command) (err error) {
 				return
 			}
 			if memused >= memtotal {
-				log.Warn("failed to obtain memory size, skip setting memory limit", zap.Uint64("memused", memused), zap.Uint64("memtotal", memtotal))
+				log.Warn("failed to obtain memory size, skip setting memory limit",
+					zap.Uint64("memused", memused), zap.Uint64("memtotal", memtotal))
 			} else {
 				memleft := memtotal - memused
 				memlimit := calculateMemoryLimit(memleft)
@@ -207,7 +208,7 @@ func Init(cmd *cobra.Command) (err error) {
 				memlimit = mathutil.Max(memlimit, quarterGiB)
 				log.Info("calculate the rest memory and set memory limit",
 					zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
-				debug.SetMemoryLimit(int64(memlimit))
+				debug.SetMemoryLimit(int64(memlimit & math.MaxInt64))
 			}
 		}
 
