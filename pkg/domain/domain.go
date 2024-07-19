@@ -2403,7 +2403,9 @@ func (do *Domain) syncStatsWorker() {
 		logutil.BgLogger().Info("syncStatsWorker exited.")
 	}()
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	do.cancelFns = append(do.cancelFns, cancelFunc)
+	do.cancelFns.mu.Lock()
+	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
+	do.cancelFns.mu.Unlock()
 	for {
 		select {
 		case <-do.exit:
