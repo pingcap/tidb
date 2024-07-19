@@ -177,7 +177,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		ctx = context.TODO()
 	}
 	vars := sctx.GetSessionVars()
-	writeBufs := vars.GetWriteStmtBufs()
+	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	skipCheck := vars.StmtCtx.BatchCheck
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
