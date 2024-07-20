@@ -3885,8 +3885,10 @@ func (s *SessionVars) UseLowResolutionTSO() bool {
 	return !s.InRestrictedSQL && s.lowResolutionTSO
 }
 
-// PessimisticLockRequired indicates whether pessimistic locks are required for the following execution.
-func (s *SessionVars) PessimisticLockRequired() bool {
+// PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current
+// statement execution. There are cases the `for update` clause should not take effect, like autocommit
+// statements with “pessimistic-auto-commit disabled.
+func (s *SessionVars) PessimisticLockEligible() bool {
 	if !s.IsAutocommit() || s.InTxn() || (config.GetGlobalConfig().
 		PessimisticTxn.PessimisticAutoCommit.Load() && !s.BulkDMLEnabled) {
 		return true
