@@ -209,7 +209,8 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 // compatible with mysql.
 func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
 	if avgRetType.GetType() == mysql.TypeNewDecimal {
-		a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
+		a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()))
+		// a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
 	}
 }
 
