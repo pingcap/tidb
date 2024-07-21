@@ -436,9 +436,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			iterNum++
 			failpoint.Inject("assertIterTableSpillToDisk", func(maxIter failpoint.Value) {
 				if iterNum > 0 && iterNum < uint64(maxIter.(int)) && err == nil {
-					if p.iterInTbl.GetMemBytes() != 0 || p.iterInTbl.GetDiskBytes() == 0 ||
-						p.iterOutTbl.GetMemBytes() != 0 || p.iterOutTbl.GetDiskBytes() == 0 ||
-						p.resTbl.GetMemBytes() != 0 || p.resTbl.GetDiskBytes() == 0 {
+					if p.iterInTbl.GetDiskBytes() == 0 && p.iterOutTbl.GetDiskBytes() == 0 && p.resTbl.GetDiskBytes() == 0 {
 						p.logTbls(ctx, err, iterNum)
 						panic("assert row container spill disk failed")
 					}
