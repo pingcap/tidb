@@ -222,7 +222,8 @@ func (a *baseFuncDesc) TypeInfer4FinalCount(finalCountRetType *types.FieldType) 
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
-	divPrecIncre := ctx.GetDivPrecisionIncrement()
+	// divPrecIncre := ctx.GetDivPrecisionIncrement()
+	var divPrecIncre int
 	switch a.Args[0].GetType(ctx).GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
