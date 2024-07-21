@@ -367,11 +367,37 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 	return nil, err
 }
 
+<<<<<<< HEAD:br/pkg/lightning/restore/checksum.go
 func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+=======
+var retryGetTSInterval = time.Second
+
+// Checksum implements the ChecksumManager interface.
+func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+>>>>>>> 04f6570f1a7 (lightning: retry for leader change error when GetTS (#44478) (#44856) (#45330)):br/pkg/lightning/backend/local/checksum.go
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
-	physicalTS, logicalTS, err := e.manager.pdClient.GetTS(ctx)
-	if err != nil {
-		return nil, errors.Annotate(err, "fetch tso from pd failed")
+	var (
+		physicalTS, logicalTS int64
+		err                   error
+		retryTime             int
+	)
+	physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
+	for err != nil {
+		if !pd.IsLeaderChange(errors.Cause(err)) {
+			return nil, errors.Annotate(err, "fetch tso from pd failed")
+		}
+		retryTime++
+		if retryTime%60 == 0 {
+			log.FromContext(ctx).Warn("fetch tso from pd failed and retrying",
+				zap.Int("retryTime", retryTime),
+				zap.Error(err))
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-time.After(retryGetTSInterval):
+			physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
+		}
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 	if err := e.manager.addOneJob(ctx, tbl, ts); err != nil {
