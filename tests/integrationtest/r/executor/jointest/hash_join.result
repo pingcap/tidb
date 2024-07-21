@@ -1,0 +1,334 @@
+drop table if exists t, s;
+create table t(a int, index(a));
+create table s(a int, index(a));
+insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18), (19), (20), (21), (22), (23), (24), (25), (26), (27), (28), (29), (30), (31), (32), (33), (34), (35), (36), (37), (38), (39), (40), (41), (42), (43), (44), (45), (46), (47), (48), (49), (50), (51), (52), (53), (54), (55), (56), (57), (58), (59), (60), (61), (62), (63), (64), (65), (66), (67), (68), (69), (70), (71), (72), (73), (74), (75), (76), (77), (78), (79), (80), (81), (82), (83), (84), (85), (86), (87), (88), (89), (90), (91), (92), (93), (94), (95), (96), (97), (98), (99), (100), (101), (102), (103), (104), (105), (106), (107), (108), (109), (110), (111), (112), (113), (114), (115), (116), (117), (118), (119), (120), (121), (122), (123), (124), (125), (126), (127), (128);
+insert into s values(1), (128);
+set @@tidb_max_chunk_size=32;
+set @@tidb_index_lookup_join_concurrency=1;
+set @@tidb_index_join_batch_size=32;
+desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
+id	estRows	task	access object	operator info
+IndexHashJoin	12487.50	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a)
+├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+│ └─IndexFullScan	9990.00	cop[tikv]	table:t, index:a(a)	keep order:true, stats:pseudo
+└─IndexReader(Probe)	12487.50	root		index:Selection
+  └─Selection	12487.50	cop[tikv]		not(isnull(executor__jointest__hash_join.s.a))
+    └─IndexRangeScan	12500.00	cop[tikv]	table:s, index:a(a)	range: decided by [eq(executor__jointest__hash_join.s.a, executor__jointest__hash_join.t.a)], keep order:false, stats:pseudo
+select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
+a	a
+1	1
+128	128
+set @@tidb_max_chunk_size=default;
+set @@tidb_index_lookup_join_concurrency=default;
+set @@tidb_index_join_batch_size=default;
+drop table if exists t1, t2;
+create table t1 (id int);
+create table t2 (id int, name varchar(255), ts timestamp);
+insert into t1 values (1);
+insert into t2 values (1, 'xxx', '2003-06-09 10:51:26');
+select ts from t1 inner join t2 where t2.name = 'xxx';
+ts
+2003-06-09 10:51:26
+set tidb_cost_model_version=2;
+set @@tidb_init_chunk_size=2;
+DROP TABLE IF EXISTS t;
+CREATE TABLE `t` (`a` int, pk integer auto_increment,`b` char (20),primary key (pk));
+CREATE INDEX idx_t_a ON t(`a`);
+CREATE INDEX idx_t_b ON t(`b`);
+INSERT INTO t VALUES (148307968, DEFAULT, 'nndsjofmpdxvhqv') ,  (-1327693824, DEFAULT, 'pnndsjofmpdxvhqvfny') ,  (-277544960, DEFAULT, 'fpnndsjo');
+DROP TABLE IF EXISTS s;
+CREATE TABLE `s` (`a` int, `b` char (20));
+CREATE INDEX idx_s_a ON s(`a`);
+INSERT INTO s VALUES (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (2, 'vtdiockfpn'), (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (6, 'ckfp');
+select /*+ INL_JOIN(t, s) */ t.a from t join s on t.a = s.a;
+a
+-277544960
+-277544960
+select /*+ INL_HASH_JOIN(t, s) */ t.a from t join s on t.a = s.a;
+a
+-277544960
+-277544960
+select /*+ INL_MERGE_JOIN(t, s) */ t.a from t join s on t.a = s.a;
+a
+-277544960
+-277544960
+select /*+ INL_JOIN(t, s) */ t.a from t left join s on t.a = s.a;
+a
+-1327693824
+-277544960
+-277544960
+148307968
+select /*+ INL_HASH_JOIN(t, s) */ t.a from t left join s on t.a = s.a;
+a
+-1327693824
+-277544960
+-277544960
+148307968
+select /*+ INL_MERGE_JOIN(t, s) */ t.a from t left join s on t.a = s.a;
+a
+-1327693824
+-277544960
+-277544960
+148307968
+select /*+ INL_JOIN(t, s) */ t.a from t left join s on t.a = s.a where t.a = -277544960;
+a
+-277544960
+-277544960
+select /*+ INL_HASH_JOIN(t, s) */ t.a from t left join s on t.a = s.a where t.a = -277544960;
+a
+-277544960
+-277544960
+select /*+ INL_MERGE_JOIN(t, s) */ t.a from t left join s on t.a = s.a where t.a = -277544960;
+a
+-277544960
+-277544960
+select /*+ INL_JOIN(t, s) */ t.a from t right join s on t.a = s.a;
+a
+NULL
+NULL
+NULL
+NULL
+-277544960
+-277544960
+select /*+ INL_HASH_JOIN(t, s) */ t.a from t right join s on t.a = s.a;
+a
+NULL
+NULL
+NULL
+NULL
+-277544960
+-277544960
+select /*+ INL_MERGE_JOIN(t, s) */ t.a from t right join s on t.a = s.a;
+a
+NULL
+NULL
+NULL
+NULL
+-277544960
+-277544960
+select /*+ INL_JOIN(t, s) */ t.a from t left join s on t.a = s.a order by t.a desc;
+a
+148307968
+-277544960
+-277544960
+-1327693824
+select /*+ INL_HASH_JOIN(t, s) */ t.a from t left join s on t.a = s.a order by t.a desc;
+a
+148307968
+-277544960
+-277544960
+-1327693824
+select /*+ INL_MERGE_JOIN(t, s) */ t.a from t left join s on t.a = s.a order by t.a desc;
+a
+148307968
+-277544960
+-277544960
+-1327693824
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);
+INSERT INTO t VALUES(1, 2);
+SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a UNION ALL SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a;
+a	b	a	b
+1	2	1	2
+1	2	1	2
+SELECT /*+ INL_HASH_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a UNION ALL SELECT /*+ INL_HASH_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a;
+a	b	a	b
+1	2	1	2
+1	2	1	2
+SELECT /*+ INL_MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a UNION ALL SELECT /*+ INL_MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a;
+a	b	a	b
+1	2	1	2
+1	2	1	2
+drop table if exists t;
+create table t(a decimal(6,2), index idx(a));
+insert into t values(1.01), (2.02), (NULL);
+select /*+ INL_JOIN(t2) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;
+a
+1.01
+2.02
+select /*+ INL_HASH_JOIN(t2) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;
+a
+1.01
+2.02
+select /*+ INL_MERGE_JOIN(t2) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;
+a
+1.01
+2.02
+drop table if exists t;
+create table t(a bigint, b bigint, unique key idx1(a, b));
+insert into t values(1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6);
+set @@tidb_init_chunk_size = 2;
+select /*+ INL_JOIN(t2) */ * from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b + 4;
+a	b	a	b
+1	1	NULL	NULL
+1	2	NULL	NULL
+1	3	NULL	NULL
+1	4	NULL	NULL
+1	5	1	1
+1	6	1	2
+select /*+ INL_HASH_JOIN(t2) */ * from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b + 4;
+a	b	a	b
+1	1	NULL	NULL
+1	2	NULL	NULL
+1	3	NULL	NULL
+1	4	NULL	NULL
+1	5	1	1
+1	6	1	2
+select /*+ INL_MERGE_JOIN(t2) */ * from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b + 4;
+a	b	a	b
+1	1	NULL	NULL
+1	2	NULL	NULL
+1	3	NULL	NULL
+1	4	NULL	NULL
+1	5	1	1
+1	6	1	2
+drop table if exists t1, t2, t3;
+create table t1(a int primary key, b int);
+insert into t1 values(1, 0), (2, null);
+create table t2(a int primary key);
+insert into t2 values(0);
+select /*+ INL_JOIN(t2)*/ * from t1 left join t2 on t1.b = t2.a;
+a	b	a
+1	0	0
+2	NULL	NULL
+select /*+ INL_HASH_JOIN(t2)*/ * from t1 left join t2 on t1.b = t2.a;
+a	b	a
+1	0	0
+2	NULL	NULL
+select /*+ INL_MERGE_JOIN(t2)*/ * from t1 left join t2 on t1.b = t2.a;
+a	b	a
+1	0	0
+2	NULL	NULL
+create table t3(a int, key(a));
+insert into t3 values(0);
+select /*+ INL_JOIN(t3)*/ * from t1 left join t3 on t1.b = t3.a;
+a	b	a
+1	0	0
+2	NULL	NULL
+select /*+ INL_HASH_JOIN(t3)*/ * from t1 left join t3 on t1.b = t3.a;
+a	b	a
+1	0	0
+2	NULL	NULL
+select /*+ INL_MERGE_JOIN(t3)*/ * from t1 left join t3 on t1.b = t3.a;
+a	b	a
+1	0	0
+2	NULL	NULL
+drop table if exists t,s;
+create table t(a int primary key auto_increment, b time);
+create table s(a int, b time);
+alter table s add index idx(a,b);
+set @@tidb_index_join_batch_size=4;
+set @@tidb_init_chunk_size=1;
+set @@tidb_max_chunk_size=32;
+set @@tidb_index_lookup_join_concurrency=15;
+set @@session.tidb_executor_concurrency = 4;
+set @@session.tidb_hash_join_concurrency = 5;
+insert into t values(0, '01:01:01');
+insert into t select 0, b + 1 from t;
+insert into t select 0, b + 1 from t;
+insert into t select 0, b + 1 from t;
+insert into t select 0, b + 1 from t;
+insert into t select 0, b + 1 from t;
+insert into t select 0, b + 1 from t;
+insert into s select a, b - 1 from t;
+analyze table t;
+analyze table s;
+desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(1)->Column#6
+└─IndexJoin	64.00	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a), other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
+  ├─TableReader(Build)	64.00	root		data:Selection
+  │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
+  │   └─TableFullScan	64.00	cop[tikv]	table:t	keep order:false
+  └─IndexReader(Probe)	64.00	root		index:Selection
+    └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.s.a)), not(isnull(executor__jointest__hash_join.s.b))
+      └─IndexRangeScan	64.00	cop[tikv]	table:s, index:idx(a, b)	range: decided by [eq(executor__jointest__hash_join.s.a, executor__jointest__hash_join.t.a) lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)], keep order:false
+select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+count(*)
+64
+set @@tidb_index_lookup_join_concurrency=1;
+select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+count(*)
+64
+desc format = 'brief' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(1)->Column#6
+└─IndexMergeJoin	64.00	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
+  ├─TableReader(Build)	64.00	root		data:Selection
+  │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
+  │   └─TableFullScan	64.00	cop[tikv]	table:t	keep order:false
+  └─IndexReader(Probe)	64.00	root		index:Selection
+    └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.s.a)), not(isnull(executor__jointest__hash_join.s.b))
+      └─IndexRangeScan	64.00	cop[tikv]	table:s, index:idx(a, b)	range: decided by [eq(executor__jointest__hash_join.s.a, executor__jointest__hash_join.t.a) lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)], keep order:true
+select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+count(*)
+64
+set @@tidb_index_lookup_join_concurrency=1;
+select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+count(*)
+64
+desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(1)->Column#6
+└─IndexHashJoin	64.00	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a), other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
+  ├─TableReader(Build)	64.00	root		data:Selection
+  │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
+  │   └─TableFullScan	64.00	cop[tikv]	table:t	keep order:false
+  └─IndexReader(Probe)	64.00	root		index:Selection
+    └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.s.a)), not(isnull(executor__jointest__hash_join.s.b))
+      └─IndexRangeScan	64.00	cop[tikv]	table:s, index:idx(a, b)	range: decided by [eq(executor__jointest__hash_join.s.a, executor__jointest__hash_join.t.a) lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)], keep order:false
+select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+count(*)
+64
+set @@tidb_index_lookup_join_concurrency=1;
+select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+count(*)
+64
+drop table t1, t2;
+create table t1(id int primary key);
+create table t2(a int, b int);
+insert into t1 values(1);
+insert into t2 values(1,1),(2,1);
+select /*+ inl_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
+id	a	b
+1	1	1
+select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
+id	a	b
+1	1	1
+select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
+id	a	b
+1	1	1
+set tidb_cost_model_version=default;
+set @@tidb_init_chunk_size=default;
+set @@tidb_index_join_batch_size=default;
+set @@tidb_init_chunk_size=default;
+set @@tidb_max_chunk_size=default;
+set @@tidb_index_lookup_join_concurrency=default;
+set @@session.tidb_executor_concurrency = default;
+set @@session.tidb_hash_join_concurrency = default;
+create table tbl_3 ( col_11 mediumint  unsigned not null default 8346281 ,col_12 enum ( 'Alice','Bob','Charlie','David' ) ,col_13 time   not null default '07:10:30.00' ,col_14 timestamp ,col_15 varbinary ( 194 )   not null default '-ZpCzjqdl4hsyo' , key idx_5 ( col_14 ,col_11 ,col_12 ) ,primary key  ( col_11 ,col_15 ) /*T![clustered_index] clustered */ ) charset utf8mb4 collate utf8mb4_bin partition by range ( col_11 ) ( partition p0 values less than (530262), partition p1 values less than (9415740), partition p2 values less than (11007444), partition p3 values less than (maxvalue) );
+insert into tbl_3 values ( 8838143,'David','23:41:27.00','1993-02-23','g0q~Z0b*PpMPKJxYbIE' );
+insert into tbl_3 values ( 9082223,'Alice','02:25:16.00','2035-11-08','i' );
+insert into tbl_3 values ( 2483729,'Charlie','14:43:13.00','1970-09-10','w6o6WFYyL5' );
+insert into tbl_3 values ( 4135401,'Charlie','19:30:34.00','2017-06-07','2FZmy9lanL8' );
+insert into tbl_3 values ( 1479390,'Alice','20:40:08.00','1984-06-10','LeoVONgN~iJz&inj' );
+insert into tbl_3 values ( 10427825,'Charlie','15:27:35.00','1986-12-25','tWJ' );
+insert into tbl_3 values ( 12794792,'Charlie','04:10:08.00','2034-08-08','hvpXVQyuP' );
+insert into tbl_3 values ( 4696775,'Charlie','05:07:43.00','1984-07-31','SKOW9I^sM$4xNk' );
+insert into tbl_3 values ( 8963236,'Alice','08:18:31.00','2022-04-17','v4DsE' );
+insert into tbl_3 values ( 9048951,'Alice','05:19:47.00','2018-09-22','sJ!vs' );
+SELECT `col_14`
+FROM
+tbl_3
+WHERE
+(
+(`tbl_3`.`col_15` < 'dV')
+AND `tbl_3`.`col_12` IN (
+SELECT `col_12` FROM `tbl_3` WHERE NOT (ISNULL(`tbl_3`.`col_12`))
+)
+)
+ORDER BY IF(ISNULL(`col_14`),0,1),`col_14`;
+col_14
+1984-06-10 00:00:00
+1984-07-31 00:00:00
+2017-06-07 00:00:00
