@@ -75,7 +75,34 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
+<<<<<<< HEAD
 		if err = col.HandleBadNull(&newData[i], sc); err != nil {
+=======
+		if err = col.HandleBadNull(&newData[i], sc, 0); err != nil {
+			return false, err
+		}
+	}
+
+	// Handle exchange partition
+	tbl := t.Meta()
+	if tbl.ExchangePartitionInfo != nil {
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return false, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return false, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(
+			sctx,
+			pt.Meta().Partition,
+			newData,
+			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
+		)
+		if err != nil {
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 			return false, err
 		}
 	}
