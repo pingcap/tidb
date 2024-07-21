@@ -570,10 +570,17 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	dom := domain.GetDomain(e.ctx)
 	var job *model.Job
 	var tblInfo *model.TableInfo
+<<<<<<< HEAD:executor/ddl.go
 	if s.JobID != 0 {
 		job, tblInfo, err = e.getRecoverTableByJobID(s, t, dom)
 	} else {
+=======
+	// Let check table first. Related isssue #46296.
+	if s.Table != nil {
+>>>>>>> f9f6bb35c2e (ddl: fix recover table by JobID bug when JobID is set to 0 tidb-server panic (#46343)):pkg/executor/ddl.go
 		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
+	} else {
+		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	}
 	if err != nil {
 		return err
