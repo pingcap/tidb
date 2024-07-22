@@ -244,8 +244,9 @@ func TestVectorConversion(t *testing.T) {
 	tk.MustQueryToErr("SELECT CAST(VEC_FROM_TEXT('[1,2,3]') AS DATE);")
 	tk.MustQueryToErr("SELECT CAST(VEC_FROM_TEXT('[1,2,3]') AS TIME);")
 
-	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR);").Check(testkit.Rows("[1,2,3]"))
-	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>);").Check(testkit.Rows("[1,2,3]"))
+	// expect error result
+	tk.MustExecToErr("SELECT CAST('[1,2,3]' AS VECTOR);")
+	tk.MustExecToErr("SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>);")
 	tk.MustExecToErr("SELECT CAST('[1,2,3]' AS VECTOR<DOUBLE>);")
 
 	// CONVERT
