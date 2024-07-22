@@ -729,11 +729,14 @@ func (p *UserPrivileges) checkPassword(password, hash, method string) bool {
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		authok, err := auth.CheckHashingPassword([]byte(hash), password, method)
 		if err != nil {
+			logutil.BgLogger().Error("failed to check hashing password", zap.Error(err))
 			return false
 		}
 		if authok {
 			return true
 		}
+	default:
+		logutil.BgLogger().Error("Unknown authentication method", zap.String("method", method))
 	}
 
 	return false
