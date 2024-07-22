@@ -167,64 +167,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	return ds, nil
 }
 
-func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
-	for _, eqCond := range p.EqualConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
-	}
-	for _, leftCond := range p.LeftConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
-	}
-	for _, rightCond := range p.RightConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
-	}
-	for _, otherCond := range p.OtherConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
-	}
-	for _, naeqCond := range p.NAEQConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
-	}
-	lChild := p.Children()[0]
-	rChild := p.Children()[1]
-	for _, col := range parentUsedCols {
-		if lChild.Schema().Contains(col) {
-			leftCols = append(leftCols, col)
-		} else if rChild.Schema().Contains(col) {
-			rightCols = append(rightCols, col)
-		}
-	}
-	return leftCols, rightCols
-}
-
-func (p *LogicalJoin) mergeSchema() {
-	p.SetSchema(buildLogicalJoinSchema(p.JoinType, p))
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
-
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	addConstOneForEmptyProjection(p.Children()[0])
-
-	p.Children()[1], err = p.Children()[1].PruneColumns(rightCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	addConstOneForEmptyProjection(p.Children()[1])
-
-	p.mergeSchema()
-	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		joinCol := p.Schema().Columns[len(p.Schema().Columns)-1]
-		parentUsedCols = append(parentUsedCols, joinCol)
-	}
-	p.InlineProjection(parentUsedCols, opt)
-	return p, nil
-}
-
 // PruneColumns implements base.LogicalPlan interface.
 func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	leftCols, rightCols := la.extractUsedCols(parentUsedCols)

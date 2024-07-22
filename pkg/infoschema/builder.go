@@ -55,6 +55,7 @@ type Builder struct {
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
 	infoData *Data
+	store    kv.Storage
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -1000,6 +1001,12 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		builder.enableV2 = true
 	}
 	return builder
+}
+
+// WithStore attaches the given store to builder.
+func (b *Builder) WithStore(s kv.Storage) *Builder {
+	b.store = s
+	return b
 }
 
 func tableBucketIdx(tableID int64) int {

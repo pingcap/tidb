@@ -1171,6 +1171,9 @@ const (
 	// The value can be STANDARD, BULK.
 	// Currently, the BULK mode only affects auto-committed DML.
 	TiDBDMLType = "tidb_dml_type"
+	// TiDBEnableLazyCursorFetch defines whether to enable the lazy cursor fetch. If it's `OFF`, all results of
+	// of a cursor will be stored in the tidb node in `EXECUTE` command.
+	TiDBEnableLazyCursorFetch = "tidb_enable_lazy_cursor_fetch"
 )
 
 // TiDB intentional limits
@@ -1503,6 +1506,7 @@ const (
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
+	DefTiDBEnableLazyCursorFetch                      = false
 )
 
 // Process global variables.

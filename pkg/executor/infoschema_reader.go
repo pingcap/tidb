@@ -2547,7 +2547,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx
 			progressString := types.TruncateFloatToString(progress, 2)
 			progress, _ = strconv.ParseFloat(progressString, 64)
 			record := types.MakeDatums(
-				schema,                          // TABLE_SCHEMA
+				schema.O,                        // TABLE_SCHEMA
 				tbl.Name.O,                      // TABLE_NAME
 				tbl.ID,                          // TABLE_ID
 				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT

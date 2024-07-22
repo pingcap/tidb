@@ -1622,6 +1622,9 @@ type SessionVars struct {
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
+
+	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
+	EnableLazyCursorFetch bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

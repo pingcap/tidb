@@ -2412,10 +2412,15 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 		if err2 != nil {
 			logutil.BgLogger().Error("close detached record set failed", zap.Error(err2))
 		}
-		return nil, false, err
+		return nil, true, err
 	}
 
 	return crs, true, nil
+}
+
+// GetExecutor4Test exports the internal executor for test purpose.
+func (rs *execStmtResult) GetExecutor4Test() any {
+	return rs.RecordSet.(interface{ GetExecutor4Test() any }).GetExecutor4Test()
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.

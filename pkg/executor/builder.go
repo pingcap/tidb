@@ -1532,13 +1532,13 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		ProbeWorkers:          make([]*join.ProbeWorkerV2, v.Concurrency),
 		BuildWorkers:          make([]*join.BuildWorkerV2, v.Concurrency),
 		HashJoinCtxV2: &join.HashJoinCtxV2{
-			OtherCondition:  v.OtherConditions,
-			PartitionNumber: min(int(v.Concurrency), 16),
+			OtherCondition: v.OtherConditions,
 		},
 	}
 	e.HashJoinCtxV2.SessCtx = b.ctx
 	e.HashJoinCtxV2.JoinType = v.JoinType
 	e.HashJoinCtxV2.Concurrency = v.Concurrency
+	e.HashJoinCtxV2.SetupPartitionInfo()
 	e.ChunkAllocPool = e.AllocPool
 	e.HashJoinCtxV2.RightAsBuildSide = true
 	if v.InnerChildIdx == 1 && v.UseOuterToBuild {
@@ -1963,8 +1963,9 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.
 		return nil
 	}
 	e := &SelectionExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		filters:      v.Conditions,
+		selectionExecutorContext: newSelectionExecutorContext(b.ctx),
+		BaseExecutorV2:           exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		filters:                  v.Conditions,
 	}
 	return e
 }
@@ -4265,8 +4266,9 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 			return nil, err
 		}
 		exec := &SelectionExec{
-			BaseExecutor: exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
-			filters:      v.Conditions,
+			selectionExecutorContext: newSelectionExecutorContext(builder.ctx),
+			BaseExecutorV2:           exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+			filters:                  v.Conditions,
 		}
 		err = exec.open(ctx)
 		return exec, err

@@ -57,6 +57,7 @@ type Executor interface {
 	RegisterSQLAndPlanInExecForTopSQL()
 
 	AllChildren() []Executor
+	SetAllChildren([]Executor)
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.Chunk) error
 
@@ -66,6 +67,12 @@ type Executor interface {
 	RetFieldTypes() []*types.FieldType
 	InitCap() int
 	MaxChunkSize() int
+
+	// Detach detaches the current executor from the session context without considering its children.
+	//
+	// It has to make sure, no matter whether it returns true or false, both the original executor and the returning executor
+	// should be able to be used correctly.
+	Detach() (Executor, bool)
 }
 
 var _ Executor = &BaseExecutor{}
@@ -164,6 +171,11 @@ func (e *executorMeta) AllChildren() []Executor {
 	return e.children
 }
 
+// SetAllChildren sets the children for an executor.
+func (e *executorMeta) SetAllChildren(children []Executor) {
+	e.children = children
+}
+
 // ChildrenLen returns the length of children.
 func (e *executorMeta) ChildrenLen() int {
 	return len(e.children)
@@ -174,7 +186,7 @@ func (e *executorMeta) EmptyChildren() bool {
 	return len(e.children) == 0
 }
 
-// SetChildren sets the children for an executor.
+// SetChildren sets a child for an executor.
 func (e *executorMeta) SetChildren(idx int, ex Executor) {
 	e.children[idx] = ex
 }
@@ -307,6 +319,11 @@ func (e *BaseExecutorV2) Close() error {
 // Next fills multiple rows into a chunk.
 func (*BaseExecutorV2) Next(_ context.Context, _ *chunk.Chunk) error {
 	return nil
+}
+
+// Detach detaches the current executor from the session context.
+func (*BaseExecutorV2) Detach() (Executor, bool) {
+	return nil, false
 }
 
 // BaseExecutor holds common information for executors.
