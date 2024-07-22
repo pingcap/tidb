@@ -2235,164 +2235,38 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 
 	dom.Close()
 }
-<<<<<<< HEAD
-=======
 
-func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
+func TestTiDBUpgradeToVer181(t *testing.T) {
 	store, _ := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
-	ver178 := version178
-	seV178 := CreateSessionAndSetID(t, store)
+	ver180 := version180
+	seV180 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(ver178))
+	err = m.FinishBootstrap(int64(ver180))
 	require.NoError(t, err)
-	revertVersionAndVariables(t, seV178, ver178)
-	MustExec(t, seV178, injectQuery)
+	MustExec(t, seV180, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver180))
+	MustExec(t, seV180, "alter table mysql.tidb_background_subtask_history drop column summary;")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
 	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV178)
+	ver, err := getBootstrapVersion(seV180)
 	require.NoError(t, err)
-	require.Equal(t, int64(ver178), ver)
-
-	conf := new(log.Config)
-	lg, p, e := log.InitLogger(conf, zap.WithFatalHook(zapcore.WriteThenPanic))
-	require.NoError(t, e)
-	rs := log.ReplaceGlobals(lg, p)
-	defer func() {
-		rs()
-	}()
-
-	var dom *domain.Domain
-
-	fatal2panic := false
-	fc := func() {
-		defer func() {
-			if err := recover(); err != nil {
-				fatal2panic = true
-			}
-		}()
-		dom, _ = BootstrapSession(store)
-	}
-	fc()
-
-	if fatal {
-		dom = domain.GetDomain(seV178)
-	}
-	dom.Close()
-	require.Equal(t, fatal, fatal2panic)
-}
-
-func TestTiDBUpgradeToVer209(t *testing.T) {
-	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	// bootstrap as version198, version 199~208 is reserved for v8.1.x bugfix patch.
-	ver198 := version198
-	seV198 := CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(ver198))
-	require.NoError(t, err)
-	revertVersionAndVariables(t, seV198, ver198)
-	// simulate a real ver198 where `tidb_resource_control_strict_mode` doesn't exist yet
-	MustExec(t, seV198, "delete from mysql.GLOBAL_VARIABLES where variable_name='tidb_resource_control_strict_mode'")
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	unsetStoreBootstrapped(store.UUID())
-
-	// upgrade to ver209
-	domCurVer, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domCurVer.Close()
-	seCurVer := CreateSessionAndSetID(t, store)
-	ver, err := getBootstrapVersion(seCurVer)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-
-	// the value in the table is set to OFF automatically
-	res := MustExecToRecodeSet(t, seCurVer, "select * from mysql.GLOBAL_VARIABLES where variable_name='tidb_resource_control_strict_mode'")
-	chk := res.NewChunk(nil)
-	require.NoError(t, res.Next(ctx, chk))
-	require.Equal(t, 1, chk.NumRows())
-	row := chk.GetRow(0)
-	require.Equal(t, "OFF", row.GetString(1))
-
-	// the global variable is also OFF
-	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_resource_control_strict_mode")
-	chk = res.NewChunk(nil)
-	require.NoError(t, res.Next(ctx, chk))
-	require.Equal(t, 1, chk.NumRows())
-	row = chk.GetRow(0)
-	require.Equal(t, int64(0), row.GetInt64(0))
-	require.Equal(t, false, variable.EnableResourceControlStrictMode.Load())
-}
-
-func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
-	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", true) })
-	t.Run("test disable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 0", false) })
-}
-
-func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
-	t.Run("test dist task running", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", true)
-	})
-	t.Run("test dist task succeed", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'succeed'", false)
-	})
-	t.Run("test dist task failed", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'failed'", false)
-	})
-	t.Run("test dist task reverted", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'reverted'", false)
-	})
-	t.Run("test dist task paused", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", true)
-	})
-	t.Run("test dist task other", func(t *testing.T) {
-		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", true)
-	})
-}
-
-func TestTiDBUpgradeToVer211(t *testing.T) {
-	ctx := context.Background()
-	store, _ := CreateStoreAndBootstrap(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-	ver210 := version210
-	seV210 := CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(ver210))
-	require.NoError(t, err)
-	revertVersionAndVariables(t, seV210, ver210)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-
-	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV210)
-	require.NoError(t, err)
-	require.Equal(t, int64(ver210), ver)
-	MustExec(t, seV210, "alter table mysql.tidb_background_subtask_history drop column summary;")
+	require.Equal(t, int64(ver180), ver)
 
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV210)
+	ver, err = getBootstrapVersion(seV180)
 	require.NoError(t, err)
-	require.Less(t, int64(ver210), ver)
+	require.Less(t, int64(ver180), ver)
 
-	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	r := MustExecToRecodeSet(t, seV180, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
-	err = r.Next(ctx, req)
+	err = r.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
 	require.NoError(t, r.Close())
@@ -2430,4 +2304,3 @@ func TestTiDBHistoryTableConsistent(t *testing.T) {
 
 	dom.Close()
 }
->>>>>>> 60cc666072c (session: add summary field to tidb_background_subtask_history (#54787))
