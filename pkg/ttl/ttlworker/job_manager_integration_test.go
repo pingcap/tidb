@@ -228,7 +228,7 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, created_at datetime) ttl = `created_at` + interval 1 day")
+	tk.MustExec("create table t (id int, created_at datetime, index idx(id, created_at)) ttl = `created_at` + interval 1 day")
 
 	// insert ten rows, the 2,3,4,6,9,10 of them are expired
 	for i := 1; i <= 10; i++ {
@@ -265,7 +265,7 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	require.True(t, h.HandleAutoAnalyze())
 }
 

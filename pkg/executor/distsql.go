@@ -1415,12 +1415,12 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
-			sctx := w.idxLookup.Ctx().GetSessionVars().StmtCtx
+			tc := w.idxLookup.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 			for i := range vals {
 				col := w.idxTblCols[i]
 				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := tables.CompareIndexAndVal(sctx, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
+				cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
 				if err != nil {
 					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
 						handle,

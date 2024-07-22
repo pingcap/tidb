@@ -263,6 +263,18 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(ctx co
 		// is used, the commitTS of this transaction may exceed the max timestamp
 		// that PD allocates. Then, the change may be invisible to a new transaction,
 		// which means linearizability is broken.
+		// suppose the following scenario:
+		// - Txn1/2/3 get start-ts
+		// - Txn1/2 all get min-commit-ts as required by async commit from PD in order
+		// - now max ts on PD is PD-max-ts
+		// - Txn2 commit with calculated commit-ts = PD-max-ts + 1
+		// - Txn3 try lock a key committed by Txn2 and get write conflict and use
+		//   conflict commit-ts as forUpdateTS, lock and read, TiKV will update its
+		//   max-ts to PD-max-ts + 1
+		// - Txn1 commit with calculated commit-ts = PD-max-ts + 2
+		// - suppose Txn4 after Txn1 on same session, it gets start-ts = PD-max-ts + 1 from PD
+		// - Txn4 cannot see Txn1's changes because its start-ts is less than Txn1's commit-ts
+		//   which breaks linearizability.
 		errStr := lockErr.Error()
 		forUpdateTS := txnCtx.GetForUpdateTS()
 

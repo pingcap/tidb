@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -330,11 +331,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	// this variable might affect the plan
-	if vars.ForeignKeyChecks {
-		hash = append(hash, '1')
-	} else {
-		hash = append(hash, '0')
-	}
+	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
@@ -386,7 +383,21 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			hash = codec.EncodeInt(hash, id)
 		}
 	}
+
+	// txn status
+	hash = append(hash, '|')
+	hash = append(hash, bool2Byte(vars.InTxn()))
+	hash = append(hash, bool2Byte(vars.IsAutocommit()))
+	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
+
 	return string(hash), binding, true, "", nil
+}
+
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
+	}
+	return '0'
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
@@ -514,6 +525,9 @@ type PointGetExecutorCache struct {
 	pointPlan      base.Plan
 	pointPlanHints *hint.StmtHints
 	columnNames    types.NameSlice
+
+	// the cache key for this statement, have to check whether the cache key changes before reusing this plan for safety.
+	planCacheKey string
 
 	ColumnInfos any
 	// Executor is only used for point get scene.

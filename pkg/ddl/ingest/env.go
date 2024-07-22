@@ -175,7 +175,7 @@ func filterProcessingJobIDs(ctx context.Context, se *sess.Session, jobIDs []int6
 		sb.WriteString(strconv.FormatInt(id, 10))
 	}
 	sql := fmt.Sprintf(
-		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s) AND processing",
+		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s)",
 		sb.String())
 	rows, err := se.Execute(ctx, sql, "filter_processing_job_ids")
 	if err != nil {

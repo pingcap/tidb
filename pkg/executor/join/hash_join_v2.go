@@ -71,7 +71,7 @@ func (htc *hashTableContext) reset() {
 	htc.memoryTracker.Detach()
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool) *rowTableSegment {
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
 		htc.rowTables[workerID][partitionID] = newRowTable(tableMeta)
 	}
@@ -80,7 +80,12 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 		if !allowCreate {
 			panic("logical error, should not reach here")
 		}
-		seg := newRowTableSegment()
+		// do not pre-allocate too many memory for the first seg because for query that only has a few rows, it may waste memory and may hurt the performance in high concurrency scenarios
+		rowSizeHint := maxRowTableSegmentSize
+		if segNum == 0 {
+			rowSizeHint = int(firstSegSizeHint)
+		}
+		seg := newRowTableSegment(uint(rowSizeHint))
 		htc.rowTables[workerID][partitionID].segments = append(htc.rowTables[workerID][partitionID].segments, seg)
 		segNum++
 	}
@@ -88,18 +93,16 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 }
 
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
-	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false)
-	seg.rowStartOffset = append(seg.rowStartOffset, builder.startPosInRawData[partitionID]...)
-	builder.crrntSizeOfRowTable[partitionID] = 0
-	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]
+	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false, 0)
+	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.finalized = true
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber int) int {
+func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber uint) int {
 	rowTables := make([]*rowTable, partitionNumber)
-	for i := 0; i < partitionNumber; i++ {
+	for i := 0; i < int(partitionNumber); i++ {
 		rowTables[i] = newRowTable(tableMeta)
 	}
 	totalSegmentCnt := 0
@@ -112,7 +115,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 			totalSegmentCnt += len(rt.segments)
 		}
 	}
-	for i := 0; i < partitionNumber; i++ {
+	for i := 0; i < int(partitionNumber); i++ {
 		htc.hashTable.tables[i] = newSubTable(rowTables[i])
 	}
 	htc.rowTables = nil
@@ -122,10 +125,11 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
 type HashJoinCtxV2 struct {
 	hashJoinCtxBase
-	PartitionNumber int
-	ProbeKeyTypes   []*types.FieldType
-	BuildKeyTypes   []*types.FieldType
-	stats           *hashJoinRuntimeStatsV2
+	partitionNumber     uint
+	partitionMaskOffset int
+	ProbeKeyTypes       []*types.FieldType
+	BuildKeyTypes       []*types.FieldType
+	stats               *hashJoinRuntimeStatsV2
 
 	RightAsBuildSide               bool
 	BuildFilter                    expression.CNFExprs
@@ -139,16 +143,54 @@ type HashJoinCtxV2 struct {
 	LUsedInOtherCondition, RUsedInOtherCondition []int
 }
 
+// partitionNumber is always power of 2
+func genHashJoinPartitionNumber(partitionHint uint) uint {
+	prevRet := uint(16)
+	currentRet := uint(8)
+	for currentRet != 0 {
+		if currentRet < partitionHint {
+			return prevRet
+		}
+		prevRet = currentRet
+		currentRet = currentRet >> 1
+	}
+	return 1
+}
+
+func getPartitionMaskOffset(partitionNumber uint) int {
+	getMSBPos := func(num uint64) int {
+		ret := 0
+		for num&1 != 1 {
+			num = num >> 1
+			ret++
+		}
+		if num != 1 {
+			// partitionNumber is always pow of 2
+			panic("should not reach here")
+		}
+		return ret
+	}
+	msbPos := getMSBPos(uint64(partitionNumber))
+	// top MSB bits in hash value will be used to partition data
+	return 64 - msbPos
+}
+
+// SetupPartitionInfo set up partitionNumber and partitionMaskOffset based on concurrency
+func (hCtx *HashJoinCtxV2) SetupPartitionInfo() {
+	hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency)
+	hCtx.partitionMaskOffset = getPartitionMaskOffset(hCtx.partitionNumber)
+}
+
 // initHashTableContext create hashTableContext for current HashJoinCtxV2
 func (hCtx *HashJoinCtxV2) initHashTableContext() {
 	hCtx.hashTableContext = &hashTableContext{}
 	hCtx.hashTableContext.rowTables = make([][]*rowTable, hCtx.Concurrency)
 	for index := range hCtx.hashTableContext.rowTables {
-		hCtx.hashTableContext.rowTables[index] = make([]*rowTable, hCtx.PartitionNumber)
+		hCtx.hashTableContext.rowTables[index] = make([]*rowTable, hCtx.partitionNumber)
 	}
 	hCtx.hashTableContext.hashTable = &hashTableV2{
-		tables:          make([]*subTable, hCtx.PartitionNumber),
-		partitionNumber: uint64(hCtx.PartitionNumber),
+		tables:          make([]*subTable, hCtx.partitionNumber),
+		partitionNumber: uint64(hCtx.partitionNumber),
 	}
 	hCtx.hashTableContext.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
 }
@@ -252,10 +294,6 @@ func (e *HashJoinV2Exec) Close() error {
 	return err
 }
 
-func (e *HashJoinV2Exec) needUsedFlag() bool {
-	return e.JoinType == plannercore.LeftOuterJoin && !e.RightAsBuildSide
-}
-
 // Open implements the Executor Open interface.
 func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
@@ -264,14 +302,15 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
+	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
+	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = needScanRowTableAfterProbeDone
 	if e.RightAsBuildSide {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
-			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, e.needUsedFlag())
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, needScanRowTableAfterProbeDone)
 	} else {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
-			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, e.needUsedFlag())
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, needScanRowTableAfterProbeDone)
 	}
-	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.ChunkAllocPool = e.AllocPool
 	if e.memTracker != nil {
 		e.memTracker.Reset()
@@ -313,7 +352,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 			setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
 		}
 	}()
-	partitionNumber := w.HashJoinCtx.PartitionNumber
+	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
 	builder := createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
@@ -579,11 +618,11 @@ func (e *HashJoinV2Exec) handleFetchAndBuildHashTablePanic(r any) {
 
 // checkBalance checks whether the segment count of each partition is balanced.
 func (e *HashJoinV2Exec) checkBalance(totalSegmentCnt int) bool {
-	isBalanced := e.Concurrency == uint(e.PartitionNumber)
+	isBalanced := e.Concurrency == e.partitionNumber
 	if !isBalanced {
 		return false
 	}
-	avgSegCnt := totalSegmentCnt / e.PartitionNumber
+	avgSegCnt := totalSegmentCnt / int(e.partitionNumber)
 	balanceThreshold := int(float64(avgSegCnt) * 0.8)
 	subTables := e.HashJoinCtxV2.hashTableContext.hashTable.tables
 
@@ -605,23 +644,43 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 	}
 	failpoint.Inject("createTasksPanic", nil)
 
-	for partIdx, subTable := range subTables {
-		segmentsLen := len(subTable.rowData.segments)
-		if isBalanced {
+	if isBalanced {
+		for partIdx, subTable := range subTables {
+			segmentsLen := len(subTable.rowData.segments)
 			select {
 			case <-doneCh:
 				return
 			case buildTaskCh <- createBuildTask(partIdx, 0, segmentsLen):
 			}
-			continue
 		}
-		for startIdx := 0; startIdx < segmentsLen; startIdx += segStep {
-			endIdx := min(startIdx+segStep, segmentsLen)
-			select {
-			case <-doneCh:
-				return
-			case buildTaskCh <- createBuildTask(partIdx, startIdx, endIdx):
+		return
+	}
+
+	partitionStartIndex := make([]int, len(subTables))
+	partitionSegmentLength := make([]int, len(subTables))
+	for i := 0; i < len(subTables); i++ {
+		partitionStartIndex[i] = 0
+		partitionSegmentLength[i] = len(subTables[i].rowData.segments)
+	}
+
+	for {
+		hasNewTask := false
+		for partIdx := range subTables {
+			// create table by round-robin all the partitions so the build thread is likely to build different partition at the same time
+			if partitionStartIndex[partIdx] < partitionSegmentLength[partIdx] {
+				startIndex := partitionStartIndex[partIdx]
+				endIndex := min(startIndex+segStep, partitionSegmentLength[partIdx])
+				select {
+				case <-doneCh:
+					return
+				case buildTaskCh <- createBuildTask(partIdx, startIndex, endIndex):
+				}
+				partitionStartIndex[partIdx] = endIndex
+				hasNewTask = true
 			}
+		}
+		if !hasNewTask {
+			break
 		}
 	}
 }
@@ -655,7 +714,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 		return
 	}
 
-	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.PartitionNumber)
+	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.partitionNumber)
 
 	wg = new(sync.WaitGroup)
 	errCh = make(chan error, 1+e.Concurrency)

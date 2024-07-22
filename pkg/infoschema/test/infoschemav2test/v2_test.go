@@ -16,6 +16,7 @@ package infoschemav2test
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -307,4 +308,23 @@ func TestTrace(t *testing.T) {
 	// Evict the table cache and check the trace information can catch this calling.
 	raw.EvictTable("test", "t_trace")
 	tk.MustQuery("trace select * from information_schema.tables").CheckContain("infoschema.loadTableInfo")
+}
+
+func BenchmarkTableByName(t *testing.B) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("create table t%d (id int)", i))
+	}
+	is := dom.InfoSchema()
+	db := model.NewCIStr("test")
+	tbl := model.NewCIStr("t123")
+	t.ResetTimer()
+	for i := 0; i < t.N; i++ {
+		_, err := is.TableByName(context.Background(), db, tbl)
+		require.NoError(t, err)
+	}
+	t.StopTimer()
 }

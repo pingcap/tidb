@@ -33,7 +33,7 @@ func findCTEs(
 	isRootTree bool,
 ) {
 	if cteReader, ok := p.(*LogicalCTE); ok {
-		cte := cteReader.cte
+		cte := cteReader.Cte
 		if !isRootTree {
 			// Set it to false since it's referenced by other CTEs.
 			cte.isOuterMostCTE = false

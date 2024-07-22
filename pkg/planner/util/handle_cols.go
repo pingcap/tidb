@@ -60,6 +60,8 @@ type HandleCols interface {
 	GetFieldsTypes() []*types.FieldType
 	// MemoryUsage return the memory usage
 	MemoryUsage() int64
+	// Clone clones the HandleCols.
+	Clone(newCtx *stmtctx.StatementContext) HandleCols
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -68,6 +70,20 @@ type CommonHandleCols struct {
 	idxInfo *model.IndexInfo
 	columns []*expression.Column
 	sc      *stmtctx.StatementContext
+}
+
+// Clone implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) Clone(newCtx *stmtctx.StatementContext) HandleCols {
+	newCols := make([]*expression.Column, len(cb.columns))
+	for i, col := range cb.columns {
+		newCols[i] = col.Clone().(*expression.Column)
+	}
+	return &CommonHandleCols{
+		tblInfo: cb.tblInfo.Clone(),
+		idxInfo: cb.idxInfo.Clone(),
+		columns: newCols,
+		sc:      newCtx,
+	}
 }
 
 // GetColumns returns all the internal columns out.
@@ -244,6 +260,11 @@ func NewCommonHandlesColsWithoutColsAlign(sc *stmtctx.StatementContext, tblInfo 
 // IntHandleCols implements the kv.HandleCols interface.
 type IntHandleCols struct {
 	col *expression.Column
+}
+
+// Clone implements the kv.HandleCols interface.
+func (ib *IntHandleCols) Clone(*stmtctx.StatementContext) HandleCols {
+	return &IntHandleCols{col: ib.col.Clone().(*expression.Column)}
 }
 
 // BuildHandle implements the kv.HandleCols interface.

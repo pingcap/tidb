@@ -1532,13 +1532,13 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		ProbeWorkers:          make([]*join.ProbeWorkerV2, v.Concurrency),
 		BuildWorkers:          make([]*join.BuildWorkerV2, v.Concurrency),
 		HashJoinCtxV2: &join.HashJoinCtxV2{
-			OtherCondition:  v.OtherConditions,
-			PartitionNumber: min(int(v.Concurrency), 16),
+			OtherCondition: v.OtherConditions,
 		},
 	}
 	e.HashJoinCtxV2.SessCtx = b.ctx
 	e.HashJoinCtxV2.JoinType = v.JoinType
 	e.HashJoinCtxV2.Concurrency = v.Concurrency
+	e.HashJoinCtxV2.SetupPartitionInfo()
 	e.ChunkAllocPool = e.AllocPool
 	e.HashJoinCtxV2.RightAsBuildSide = true
 	if v.InnerChildIdx == 1 && v.UseOuterToBuild {
@@ -1963,8 +1963,9 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.
 		return nil
 	}
 	e := &SelectionExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		filters:      v.Conditions,
+		selectionExecutorContext: newSelectionExecutorContext(b.ctx),
+		BaseExecutorV2:           exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		filters:                  v.Conditions,
 	}
 	return e
 }
@@ -1975,10 +1976,11 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 		return nil
 	}
 	e := &ProjectionExec{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay: v.CalculateNoDelay,
+		projectionExecutorContext: newProjectionExecutorContext(b.ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		numWorkers:                int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
+		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		calculateNoDelay:          v.CalculateNoDelay,
 	}
 
 	// If the calculation row count for this Projection operator is smaller
@@ -3609,7 +3611,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3840,7 +3842,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 	}
 
 	if is.Index.Global {
-		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), &v.PlanPartInfo)
+		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -3850,7 +3852,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 
 	tmp, _ := b.is.TableByID(is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4025,7 +4027,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	if is.Index.Global {
-		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), &v.PlanPartInfo)
+		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -4040,7 +4042,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 	tmp, _ := b.is.TableByID(is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4195,7 +4197,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	}
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
-	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), &v.PlanPartInfo)
+	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4264,8 +4266,9 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 			return nil, err
 		}
 		exec := &SelectionExec{
-			BaseExecutor: exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
-			filters:      v.Conditions,
+			selectionExecutorContext: newSelectionExecutorContext(builder.ctx),
+			BaseExecutorV2:           exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+			filters:                  v.Conditions,
 		}
 		err = exec.open(ctx)
 		return exec, err
@@ -4341,7 +4344,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
-	usedPartitionList, err := builder.partitionPruning(pt, &v.PlanPartInfo)
+	usedPartitionList, err := builder.partitionPruning(pt, v.PlanPartInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4598,7 +4601,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	if is.Index.Global {
-		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), &v.PlanPartInfo)
+		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4612,7 +4615,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PlanPartInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4660,7 +4663,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	if is.Index.Global {
-		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), &v.PlanPartInfo)
+		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4675,7 +4678,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PlanPartInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4732,10 +4735,11 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	}()
 
 	e := &ProjectionExec{
-		BaseExecutor:     exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay: v.CalculateNoDelay,
+		projectionExecutorContext: newProjectionExecutorContext(builder.ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
+		numWorkers:                int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
+		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
+		calculateNoDelay:          v.CalculateNoDelay,
 	}
 
 	// If the calculation row count for this Projection operator is smaller
@@ -5290,7 +5294,17 @@ func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, p
 }
 
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
-	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, planPartInfo.PruningConds, planPartInfo.PartitionNames, planPartInfo.Columns, planPartInfo.ColumnNames)
+	var pruningConds []expression.Expression
+	var partitionNames []model.CIStr
+	var columns []*expression.Column
+	var columnNames types.NameSlice
+	if planPartInfo != nil {
+		pruningConds = planPartInfo.PruningConds
+		partitionNames = planPartInfo.PartitionNames
+		columns = planPartInfo.Columns
+		columnNames = planPartInfo.ColumnNames
+	}
+	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, pruningConds, partitionNames, columns, columnNames)
 	if err != nil {
 		return nil, err
 	}

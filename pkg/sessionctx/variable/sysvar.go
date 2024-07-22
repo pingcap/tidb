@@ -3158,7 +3158,9 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			if SchemaCacheSize.Load() != bt && ChangeSchemaCacheSize != nil {
-				ChangeSchemaCacheSize(bt)
+				if err := ChangeSchemaCacheSize(ctx, bt); err != nil {
+					return err
+				}
 			}
 			SchemaCacheSize.Store(bt)
 			SchemaCacheSizeOriginText.Store(str)
@@ -3259,6 +3261,10 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableVectorType.Load()), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLazyCursorFetch, Value: BoolToOnOff(DefTiDBEnableLazyCursorFetch), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLazyCursorFetch = TiDBOptOn(val)
+		return nil
 	}},
 }
 

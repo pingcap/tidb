@@ -190,7 +190,10 @@ func TestCheckRowBuffer(t *testing.T) {
 	buffer.AddColVal(types.NewIntDatum(1))
 	buffer.AddColVal(types.NewIntDatum(2))
 	require.Equal(t, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)}, buffer.rowToCheck)
-	require.Equal(t, buffer.rowToCheck, buffer.GetRowToCheck())
+	rowToCheck := buffer.GetRowToCheck()
+	require.Equal(t, 2, rowToCheck.Len())
+	require.Equal(t, int64(1), rowToCheck.GetInt64(0))
+	require.Equal(t, int64(2), rowToCheck.GetInt64(1))
 
 	// reset should not shrink the capacity
 	buffer.Reset(2)
@@ -203,10 +206,23 @@ func TestColSizeDeltaBuffer(t *testing.T) {
 	buffer.Reset(6)
 	require.Equal(t, 0, len(buffer.delta))
 	require.Equal(t, 6, cap(buffer.delta))
+	require.Nil(t, buffer.UpdateColSizeMap(nil))
+
 	buffer.AddColSizeDelta(1, 2)
-	buffer.AddColSizeDelta(3, 4)
-	require.Equal(t, []variable.ColSize{{ColID: 1, Size: 2}, {ColID: 3, Size: 4}}, buffer.delta)
-	require.Equal(t, buffer.delta, buffer.GetColSizeDelta())
+	buffer.AddColSizeDelta(3, -4)
+	buffer.AddColSizeDelta(10, 11)
+	require.Equal(t, []variable.ColSize{{ColID: 1, Size: 2}, {ColID: 3, Size: -4}, {ColID: 10, Size: 11}}, buffer.delta)
+
+	require.Equal(t, map[int64]int64{1: 2, 3: -4, 10: 11}, buffer.UpdateColSizeMap(nil))
+	m := make(map[int64]int64)
+	m2 := buffer.UpdateColSizeMap(m)
+	require.Equal(t, map[int64]int64{1: 2, 3: -4, 10: 11}, m2)
+	require.Equal(t, m2, m)
+
+	m = map[int64]int64{1: 3, 3: 5, 5: 7}
+	m2 = buffer.UpdateColSizeMap(m)
+	require.Equal(t, map[int64]int64{1: 5, 3: 1, 5: 7, 10: 11}, m2)
+	require.Equal(t, m2, m)
 
 	// reset should not shrink the capacity
 	buffer.Reset(2)
@@ -227,6 +243,8 @@ func TestMutateBuffersGetter(t *testing.T) {
 
 	colSize := buffers.GetColSizeDeltaBufferWithCap(6)
 	require.Equal(t, 6, cap(colSize.delta))
+
+	require.Same(t, stmtBufs, buffers.GetWriteStmtBufs())
 }
 
 func TestEnsureCapacityAndReset(t *testing.T) {

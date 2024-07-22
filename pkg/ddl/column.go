@@ -1384,7 +1384,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		newColumnIDs = append(newColumnIDs, colID)
 		newRow = append(newRow, val)
 	}
-	rd := &w.tblCtx.GetSessionVars().RowEncoder
+	rd := w.tblCtx.GetRowEncodingConfig().RowEncoder
 	ec := w.exprCtx.GetEvalCtx().ErrCtx()
 	var checksum rowcodec.Checksum
 	if w.checksumNeeded {

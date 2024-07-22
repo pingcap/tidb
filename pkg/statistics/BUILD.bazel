@@ -91,6 +91,7 @@ go_test(
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/testkit",
+        "//pkg/testkit/analyzehelper",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",

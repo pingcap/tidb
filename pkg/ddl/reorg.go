@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -86,9 +87,11 @@ func newReorgExprCtx() exprctx.ExprContext {
 		contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
 	)
 
+	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
+
 	return contextstatic.NewStaticExprContext(
 		contextstatic.WithEvalCtx(evalCtx),
-		contextstatic.WithUseCache(false),
+		contextstatic.WithPlanCacheTracker(&planCacheTracker),
 	)
 }
 

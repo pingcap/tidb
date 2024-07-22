@@ -1173,6 +1173,9 @@ const (
 	// The value can be STANDARD, BULK.
 	// Currently, the BULK mode only affects auto-committed DML.
 	TiDBDMLType = "tidb_dml_type"
+	// TiDBEnableLazyCursorFetch defines whether to enable the lazy cursor fetch. If it's `OFF`, all results of
+	// of a cursor will be stored in the tidb node in `EXECUTE` command.
+	TiDBEnableLazyCursorFetch = "tidb_enable_lazy_cursor_fetch"
 )
 
 // TiDB intentional limits
@@ -1382,7 +1385,7 @@ const (
 	DefTiDBMemQuotaAnalyze                         = -1
 	DefTiDBEnableAutoAnalyze                       = true
 	DefTiDBEnableAutoAnalyzePriorityQueue          = true
-	DefTiDBAnalyzeColumnOptions                    = "ALL"
+	DefTiDBAnalyzeColumnOptions                    = "PREDICATE"
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
@@ -1506,6 +1509,7 @@ const (
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
+	DefTiDBEnableLazyCursorFetch                      = false
 )
 
 // Process global variables.
@@ -1654,7 +1658,7 @@ var (
 	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
 	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
 	// ChangeSchemaCacheSize is called when tidb_schema_cache_size is changed.
-	ChangeSchemaCacheSize func(size uint64)
+	ChangeSchemaCacheSize func(ctx context.Context, size uint64) error
 )
 
 // Hooks functions for Cluster Resource Control.
