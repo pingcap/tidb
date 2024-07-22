@@ -1018,6 +1018,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
 	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
+	// It is to build the range info which is used in explain. It is necessary to redact the range info.
 	redact := ectx.GetTiDBRedactLog()
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
