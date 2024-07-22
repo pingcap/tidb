@@ -2360,3 +2360,34 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 
 	dom.Close()
 }
+
+func TestTiDBHistoryTableConsistent(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	se := CreateSessionAndSetID(t, store)
+	query := `select (select group_concat(column_name) from information_schema.columns where table_name='tidb_background_subtask' order by ordinal_position)
+	               = (select group_concat(column_name) from information_schema.columns where table_name='tidb_background_subtask_history' order by ordinal_position);`
+	r := MustExecToRecodeSet(t, se, query)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, int64(1), row.GetInt64(0))
+
+	query = `select (select group_concat(column_name) from information_schema.columns where table_name='tidb_global_task' order by ordinal_position) 
+	              = (select group_concat(column_name) from information_schema.columns where table_name='tidb_global_task_history' order by ordinal_position);`
+	r = MustExecToRecodeSet(t, se, query)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row = req.GetRow(0)
+	require.Equal(t, int64(1), row.GetInt64(0))
+
+	dom.Close()
+}
