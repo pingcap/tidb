@@ -1827,7 +1827,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
-
 			// Only use `REPLACE <pwd>` when changing the current user
 			if spec.User.Username == user.Username && spec.User.Hostname == user.Hostname {
 				err = checker.CheckCurrentPassword(spec.User.Username, spec.User.Hostname, spec.AuthOpt.ReplaceString, e.Ctx().GetSessionVars())
