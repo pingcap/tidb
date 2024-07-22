@@ -149,7 +149,6 @@ go_library(
         "//pkg/util/slice",
         "//pkg/util/sqlexec",
         "//pkg/util/stringutil",
-        "//pkg/util/syncutil",
         "//pkg/util/timeutil",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
