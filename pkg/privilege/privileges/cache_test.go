@@ -429,7 +429,7 @@ func TestAbnormalMySQLTable(t *testing.T) {
   password_lifetime		SMALLINT UNSIGNED,
   PRIMARY KEY (Host,User)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Users and global privileges';`)
-	tk.MustExec(`INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','', '', 'null', 'N', current_timestamp(), null);
+	tk.MustExec(`INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','', '', '', 'null', 'N', current_timestamp(), null);
 `)
 	var p privileges.MySQLPrivilege
 	require.NoError(t, p.LoadUserTable(tk.Session()))
