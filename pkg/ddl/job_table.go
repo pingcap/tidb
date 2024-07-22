@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -97,12 +97,14 @@ var _ owner.Listener = (*ownerListener)(nil)
 
 func (l *ownerListener) OnBecomeOwner() {
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
+	sysTblMgr := systable.NewManager(l.ddl.sessPool)
 	l.scheduler = &jobScheduler{
-		schCtx:       ctx,
-		cancel:       cancelFunc,
-		runningJobs:  newRunningJobs(),
-		sysTblMgr:    systable.NewManager(l.ddl.sessPool),
-		schemaLoader: l.ddl.schemaLoader,
+		schCtx:            ctx,
+		cancel:            cancelFunc,
+		runningJobs:       newRunningJobs(),
+		sysTblMgr:         sysTblMgr,
+		schemaLoader:      l.ddl.schemaLoader,
+		minJobIDRefresher: l.ddl.minJobIDRefresher,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -122,12 +124,13 @@ func (l *ownerListener) OnRetireOwner() {
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
 	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
-	schCtx       context.Context
-	cancel       context.CancelFunc
-	wg           tidbutil.WaitGroupWrapper
-	runningJobs  *runningJobs
-	sysTblMgr    systable.Manager
-	schemaLoader SchemaLoader
+	schCtx            context.Context
+	cancel            context.CancelFunc
+	wg                tidbutil.WaitGroupWrapper
+	runningJobs       *runningJobs
+	sysTblMgr         systable.Manager
+	schemaLoader      SchemaLoader
+	minJobIDRefresher *systable.MinJobIDRefresher
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -381,12 +384,12 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 
 	defer s.runningJobs.resetAllPending()
 
-	const getJobSQL = `select reorg, job_meta from mysql.tidb_ddl_job %s order by job_id`
+	const getJobSQL = `select reorg, job_meta from mysql.tidb_ddl_job where job_id >= %d %s order by job_id`
 	var whereClause string
 	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
-		whereClause = fmt.Sprintf("where job_id not in (%s)", ids)
+		whereClause = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
-	sql := fmt.Sprintf(getJobSQL, whereClause)
+	sql := fmt.Sprintf(getJobSQL, s.minJobIDRefresher.GetCurrMinJobID(), whereClause)
 	rows, err := se.Execute(context.Background(), sql, "load_ddl_jobs")
 	if err != nil {
 		return errors.Trace(err)

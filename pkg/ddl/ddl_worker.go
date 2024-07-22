@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -411,16 +411,17 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 		return nil
 	}
 
+	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
 	se, err := d.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
-	flashClusterJobs, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	found, err := d.sysTblMgr.HasFlashbackClusterJob(ctx, d.minJobIDRefresher.GetCurrMinJobID())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(flashClusterJobs) != 0 {
+	if found {
 		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
@@ -429,7 +430,6 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 		bdrRole = string(ast.BDRRoleNone)
 	)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 
