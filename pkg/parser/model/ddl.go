@@ -1199,6 +1199,9 @@ type SchemaDiff struct {
 	OldSchemaID int64 `json:"old_schema_id"`
 	// RegenerateSchemaMap means whether to rebuild the schema map when applying to the schema diff.
 	RegenerateSchemaMap bool `json:"regenerate_schema_map"`
+	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
+	// infoschema should read latest meta directly.
+	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

@@ -420,7 +420,7 @@ func TestHiddenColumn(t *testing.T) {
 	colInfo[3].Hidden = true
 	colInfo[5].Hidden = true
 	tc := tb.(*tables.TableCommon)
-	tc.ClearColumnsCache()
+	tc.ResetColumnsCache()
 	// Basic test
 	cols := tb.VisibleCols()
 	require.NotNil(t, table.FindCol(cols, "a"))
@@ -434,8 +434,11 @@ func TestHiddenColumn(t *testing.T) {
 	require.Nil(t, table.FindCol(hiddenCols, "c"))
 	require.NotNil(t, table.FindCol(hiddenCols, "d"))
 	require.Nil(t, table.FindCol(hiddenCols, "e"))
+
 	colInfo[1].State = model.StateDeleteOnly
 	colInfo[2].State = model.StateDeleteOnly
+	tc.ResetColumnsCache()
+
 	fullHiddenColsAndVisibleColumns := tb.FullHiddenColsAndVisibleCols()
 	require.NotNil(t, table.FindCol(fullHiddenColsAndVisibleColumns, "a"))
 	require.NotNil(t, table.FindCol(fullHiddenColsAndVisibleColumns, "b"))
@@ -445,6 +448,7 @@ func TestHiddenColumn(t *testing.T) {
 	// Reset schema states.
 	colInfo[1].State = model.StatePublic
 	colInfo[2].State = model.StatePublic
+	tc.ResetColumnsCache()
 
 	// Test show create table
 	tk.MustQuery("show create table t;").Check(testkit.Rows(

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -230,7 +231,7 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		onExist = ddl.OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, onExist)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
 // CreateTableWithInfo implements the DDL interface.
@@ -239,9 +240,9 @@ func (d SchemaTracker) CreateTableWithInfo(
 	dbName model.CIStr,
 	info *model.TableInfo,
 	_ []model.InvolvingSchemaInfo,
-	cs ...ddl.CreateTableWithInfoConfigurier,
+	cs ...ddl.CreateTableOption,
 ) error {
-	c := ddl.GetCreateTableWithInfoConfig(cs)
+	c := ddl.GetCreateTableConfig(cs)
 
 	schema := d.SchemaByName(dbName)
 	if schema == nil {
@@ -291,7 +292,7 @@ func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt)
 		onExist = ddl.OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, onExist)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
 // DropTable implements the DDL interface.
@@ -1188,7 +1189,7 @@ func (SchemaTracker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResour
 }
 
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
-func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	for _, tableInfo := range info {
 		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, nil, cs...); err != nil {
 			return err
@@ -1273,5 +1274,15 @@ func (SchemaTracker) GetInfoSchemaWithInterceptor(_ sessionctx.Context) infosche
 
 // DoDDLJob implements the DDL interface, it's no-op in DM's case.
 func (SchemaTracker) DoDDLJob(_ sessionctx.Context, _ *model.Job) error {
+	return nil
+}
+
+// GetMinJobIDRefresher implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
+	panic("not implemented")
+}
+
+// DoDDLJobWrapper implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) DoDDLJobWrapper(_ sessionctx.Context, _ *ddl.JobWrapper) error {
 	return nil
 }

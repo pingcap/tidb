@@ -90,7 +90,7 @@ func BRIECreateTable(
 	dbName model.CIStr,
 	table *model.TableInfo,
 	brComment string,
-	cs ...ddl.CreateTableWithInfoConfigurier,
+	cs ...ddl.CreateTableOption,
 ) error {
 	d := domain.GetDomain(sctx).DDL()
 	query, err := showRestoredCreateTable(sctx, table, brComment)
@@ -109,7 +109,7 @@ func BRIECreateTable(
 
 	table = table.Clone()
 
-	return d.CreateTableWithInfo(sctx, dbName, table, nil, append(cs, ddl.OnExistIgnore)...)
+	return d.CreateTableWithInfo(sctx, dbName, table, nil, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
 }
 
 // BRIECreateTables creates the tables with OnExistIgnore option in batch
@@ -117,7 +117,7 @@ func BRIECreateTables(
 	sctx sessionctx.Context,
 	tables map[string][]*model.TableInfo,
 	brComment string,
-	cs ...ddl.CreateTableWithInfoConfigurier,
+	cs ...ddl.CreateTableOption,
 ) error {
 	// Disable foreign key check when batch create tables.
 	originForeignKeyChecks := sctx.GetSessionVars().ForeignKeyChecks
@@ -159,10 +159,10 @@ func BRIECreateTables(
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
 func splitBatchCreateTable(sctx sessionctx.Context, schema model.CIStr,
-	infos []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	infos []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	var err error
 	d := domain.GetDomain(sctx).DDL()
-	err = d.BatchCreateTableWithInfo(sctx, schema, infos, append(cs, ddl.OnExistIgnore)...)
+	err = d.BatchCreateTableWithInfo(sctx, schema, infos, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
 	if kv.ErrEntryTooLarge.Equal(err) {
 		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))
 		if len(infos) == 1 {

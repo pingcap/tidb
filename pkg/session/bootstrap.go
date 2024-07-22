@@ -1108,13 +1108,15 @@ const (
 	version209 = 209
 	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
 	version210 = 210
-	// version211 adds the Password_require_current column to mysql.user
-	version211 = 211
+    // version211 add column `summary` to `mysql.tidb_background_subtask_history`.
+    version211 = 211
+	// version212 adds the Password_require_current column to mysql.user
+	version212 = 212
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version211
+var currentBootstrapVersion int64 = version212
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1281,6 +1283,7 @@ var (
 		upgradeToVer209,
 		upgradeToVer210,
 		upgradeToVer211,
+		upgradeToVer212,
 	}
 )
 
@@ -3069,6 +3072,13 @@ func upgradeToVer210(s sessiontypes.Session, ver int64) {
 
 func upgradeToVer211(s sessiontypes.Session, ver int64) {
 	if ver >= version211 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer212(s sessiontypes.Session, ver int64) {
+	if ver >= version212 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_require_current` enum('N','Y') DEFAULT NULL AFTER `Password_reuse_time`")
