@@ -4365,6 +4365,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_juju_errors",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/juju/errors",
+        sha256 = "173184fb7ca66d681a8ba3ced7446ea22a4e4fa125f0fd39c587a545e1184fcd",
+        strip_prefix = "github.com/juju/errors@v1.0.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/juju/errors/com_github_juju_errors-v1.0.0.zip",
+            "http://ats.apps.svc/gomod/github.com/juju/errors/com_github_juju_errors-v1.0.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/juju/errors/com_github_juju_errors-v1.0.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/juju/errors/com_github_juju_errors-v1.0.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_julienschmidt_httprouter",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/julienschmidt/httprouter",
@@ -5484,6 +5497,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/ncw/directio/com_github_ncw_directio-v1.0.5.zip",
             "https://cache.hawkingrei.com/gomod/github.com/ncw/directio/com_github_ncw_directio-v1.0.5.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ncw/directio/com_github_ncw_directio-v1.0.5.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_ngaut_log",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/ngaut/log",
+        sha256 = "4fee22ca336773eda7c2c8030b4d8b6d32bc5a8feeba7566e76d74b5feddd30a",
+        strip_prefix = "github.com/ngaut/log@v0.0.0-20221012222132-f3329cba28a5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ngaut/log/com_github_ngaut_log-v0.0.0-20221012222132-f3329cba28a5.zip",
+            "http://ats.apps.svc/gomod/github.com/ngaut/log/com_github_ngaut_log-v0.0.0-20221012222132-f3329cba28a5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ngaut/log/com_github_ngaut_log-v0.0.0-20221012222132-f3329cba28a5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ngaut/log/com_github_ngaut_log-v0.0.0-20221012222132-f3329cba28a5.zip",
         ],
     )
     go_repository(
