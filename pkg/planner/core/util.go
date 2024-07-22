@@ -137,6 +137,9 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 
 // inlineProjection prunes unneeded columns inline a executor.
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
+	if len(parentUsedCols) == 0 {
+		return
+	}
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
