@@ -24,12 +24,17 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -761,35 +766,35 @@ func TestCheckSpecialAttributes(t *testing.T) {
 	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(string(b)))
+	require.True(t, meta.CheckSpecialAttributes(b))
 
 	tableInfo = &model.TableInfo{
 		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(string(b)))
+	require.True(t, meta.CheckSpecialAttributes(b))
 
 	tableInfo = &model.TableInfo{
 		PlacementPolicyRef: &model.PolicyRefInfo{ID: 1},
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(string(b)))
+	require.True(t, meta.CheckSpecialAttributes(b))
 
 	tableInfo = &model.TableInfo{
 		Partition: &model.PartitionInfo{Expr: "a"},
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(string(b)))
+	require.True(t, meta.CheckSpecialAttributes(b))
 
 	tableInfo = &model.TableInfo{
 		ID: 123,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.False(t, meta.CheckSpecialAttributes(string(b)))
+	require.False(t, meta.CheckSpecialAttributes(b))
 }
 
 func TestTableNameExtract(t *testing.T) {
@@ -830,4 +835,54 @@ func TestTableNameExtract(t *testing.T) {
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
+}
+
+func BenchmarkCheckSpecialAttributes(b *testing.B) {
+	benchCases := [][2]string{
+		{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
+		{"wide", `
+CREATE TABLE t (
+	c BIGINT PRIMARY KEY AUTO_RANDOM,
+	c2 TINYINT,
+	c3 BLOB,
+	c4 VARCHAR(255) DEFAULT 'ohsdfihusdfihusdfiuh',
+	c5 FLOAT,
+	c6 BIGINT UNSIGNED,
+	c7 DECIMAL(10, 2),
+	c8 CHAR(10),
+	c9 TEXT,
+	c10 DATE,
+	c11 TIME,
+	c12 TIMESTAMP,
+	c13 DATETIME,
+	INDEX idx(c2),
+	INDEX idx2(c4, c5),
+	INDEX idx3(c6, c2),
+    UNIQUE INDEX idx4(c12),
+    INDEX idx5((c + c2))
+);`},
+	}
+
+	for _, benchCase := range benchCases {
+		b.Run(benchCase[0], func(b *testing.B) {
+			benchCheckSpecialAttributes(b, benchCase[1])
+		})
+	}
+}
+
+func benchCheckSpecialAttributes(b *testing.B, sql string) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(b, err)
+	se := mock.NewContext()
+	tblInfo, err := ddl.MockTableInfo(se, stmt.(*ast.CreateTableStmt), 1)
+	require.NoError(b, err)
+	data, err := json.Marshal(tblInfo)
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		got := meta.CheckSpecialAttributes(data)
+		intest.Assert(!got)
+	}
 }
