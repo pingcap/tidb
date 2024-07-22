@@ -164,11 +164,12 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+	} else if joinResult.err != nil {
+		handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, joinResult.err)
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
-
 	}
 }
 

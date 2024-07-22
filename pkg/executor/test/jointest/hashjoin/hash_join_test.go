@@ -614,17 +614,17 @@ func TestKillDuringProbe(t *testing.T) {
 	}()
 	// inner join
 	err := tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.c1 = t1.c1")
-	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted.Error(), err.Error())
 	// left outer join with outer to build
 	err = tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted.Error(), err.Error())
 	// left outer join with inner to build
 	err = tk.QueryToErr("select /*+ HASH_JOIN_BUILD(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted.Error(), err.Error())
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
 	// left outer join with inner to build
 	err = tk.QueryToErr("select /*+ HASH_JOIN_BUILD(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted.Error(), err.Error())
 }
 
 func TestKillDuringBuild(t *testing.T) {
@@ -647,11 +647,11 @@ func TestKillDuringBuild(t *testing.T) {
 	}()
 	// inner join
 	err := tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.c1 = t1.c1")
-	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted.Error(), err.Error())
 	// left outer join with outer to build
 	err = tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t left join t1 on t.c1 = t1.c1")
-	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted.Error(), err.Error())
 	// left outer join with inner to build
 	err = tk.QueryToErr("select /*+ HASH_JOIN_BUILD(t) */ * from t left outer join t1 on t.c1 = t1.c1")
-	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted.Error(), err.Error())
 }
