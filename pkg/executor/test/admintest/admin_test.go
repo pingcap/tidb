@@ -1666,13 +1666,12 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-	sc := ctx.GetSessionVars().StmtCtx
 
 	pattern := "handle:\\s(\\d+)"
 	r := regexp.MustCompile(pattern)
 
 	getCommonHandle := func(randomRow int) *kv.CommonHandle {
-		h, err := codec.EncodeKey(sc.TimeZone(), nil, types.MakeDatums(randomRow)...)
+		h, err := codec.EncodeKey(ctx.GetExprCtx().GetEvalCtx().Location(), nil, types.MakeDatums(randomRow)...)
 		require.NoError(t, err)
 		ch, err := kv.NewCommonHandle(h)
 		require.NoError(t, err)

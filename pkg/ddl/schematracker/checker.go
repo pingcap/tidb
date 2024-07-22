@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -463,13 +464,13 @@ func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInf
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
+func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -558,6 +559,16 @@ func (d *Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschem
 // DoDDLJob implements the DDL interface.
 func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return d.realDDL.DoDDLJob(ctx, job)
+}
+
+// GetMinJobIDRefresher implements the DDL interface.
+func (d *Checker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
+	return d.realDDL.GetMinJobIDRefresher()
+}
+
+// DoDDLJobWrapper implements the DDL interface.
+func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
+	return d.realDDL.DoDDLJobWrapper(ctx, jobW)
 }
 
 type storageAndMore interface {

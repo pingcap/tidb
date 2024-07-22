@@ -212,13 +212,13 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return errors.Trace(executor.BRIECreateTables(gs.se, tables, brComment, cs...))
 }
 
 // CreateTable implements glue.Session.
 func (gs *tidbSession) CreateTable(_ context.Context, dbName model.CIStr,
-	table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
 }
 

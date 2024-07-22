@@ -182,6 +182,16 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 				return i
 			}
 		}
+	case ast.IsNull:
+		c, ok := f.GetArgs()[0].(*expression.Column)
+		if !ok {
+			return -1
+		}
+		for i, col := range cols {
+			if col.EqualColumn(c) {
+				return i
+			}
+		}
 	}
 	return -1
 }
@@ -635,27 +645,34 @@ func allEqOrIn(expr expression.Expression) bool {
 			}
 		}
 		return true
-	case ast.EQ, ast.NullEQ, ast.In:
+	case ast.EQ, ast.NullEQ, ast.In, ast.IsNull:
 		return true
 	}
 	return false
 }
 
 func extractValueInfo(expr expression.Expression) *valueInfo {
-	if f, ok := expr.(*expression.ScalarFunction); ok && (f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ) {
-		getValueInfo := func(c *expression.Constant) *valueInfo {
-			mutable := c.ParamMarker != nil || c.DeferredExpr != nil
-			var value *types.Datum
-			if !mutable {
-				value = &c.Value
+	if f, ok := expr.(*expression.ScalarFunction); ok {
+		if f.FuncName.L == ast.IsNull {
+			val := &types.Datum{}
+			val.SetNull()
+			return &valueInfo{value: val, mutable: false}
+		}
+		if f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ {
+			getValueInfo := func(c *expression.Constant) *valueInfo {
+				mutable := c.ParamMarker != nil || c.DeferredExpr != nil
+				var value *types.Datum
+				if !mutable {
+					value = &c.Value
+				}
+				return &valueInfo{value, mutable}
 			}
-			return &valueInfo{value, mutable}
-		}
-		if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
-			return getValueInfo(c)
-		}
-		if c, ok := f.GetArgs()[1].(*expression.Constant); ok {
-			return getValueInfo(c)
+			if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				return getValueInfo(c)
+			}
+			if c, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				return getValueInfo(c)
+			}
 		}
 	}
 	return nil
@@ -714,8 +731,12 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		if ma == nil {
 			if accesses[i] != nil {
 				if allEqOrIn(accesses[i]) {
-					newConditions = append(newConditions, accesses[i])
 					columnValues[i] = extractValueInfo(accesses[i])
+					if columnValues[i] != nil && columnValues[i].value != nil && columnValues[i].value.IsNull() {
+						accesses[i] = nil
+					} else {
+						newConditions = append(newConditions, accesses[i])
+					}
 				} else {
 					accesses[i] = nil
 				}

@@ -238,6 +238,48 @@ func TestLoadPartitionStats(t *testing.T) {
 	requireTableEqual(t, originGlobalStats, dom.StatsHandle().GetTableStats(tableInfo))
 }
 
+func TestLoadPredicateColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a), index idx(b))")
+	tk.MustExec("insert into t values (1, 2, 3), (2, 3, 4), (3, 4, 5)")
+	tk.MustExec("select * from t where b = 1")
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.DumpColStatsUsageToKV())
+	tk.MustExec("analyze table t")
+
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil, true)
+	require.NoError(t, err)
+
+	// remove all statistics
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.column_stats_usage")
+	h.Clear()
+
+	// load stats back
+	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0))
+
+	// check column stats usage
+	rows := tk.MustQuery("select table_id, column_id, last_used_at, last_analyzed_at from mysql.column_stats_usage order by column_id").Rows()
+	require.Equal(t, 2, len(rows))
+	require.Equal(t, "1", rows[0][1].(string))
+	require.Equal(t, "<nil>", rows[0][2], "It hasn't been used since last analyze")
+	require.NotEqual(t, "<nil>", rows[0][3])
+	require.Equal(t, "2", rows[1][1].(string))
+	require.NotEqual(t, "<nil>", rows[1][2])
+	require.NotEqual(t, "<nil>", rows[1][3])
+}
+
 func TestLoadPartitionStatsErrPanic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -666,6 +708,7 @@ PARTITION BY RANGE ( a ) (
 	persistStats(ctx, t, dom, "test", "t1", func(ctx context.Context, jsonTable *handleutil.JSONTable, physicalID int64) error {
 		require.True(t, physicalID > 0)
 		require.NotNil(t, jsonTable)
+		require.NotNil(t, jsonTable.PredicateColumns)
 		statsCnt += 1
 		return nil
 	})
@@ -674,6 +717,7 @@ PARTITION BY RANGE ( a ) (
 	persistStats(ctx, t, dom, "test", "t2", func(ctx context.Context, jsonTable *handleutil.JSONTable, physicalID int64) error {
 		require.True(t, physicalID > 0)
 		require.NotNil(t, jsonTable)
+		require.NotNil(t, jsonTable.PredicateColumns)
 		statsCnt += 1
 		return nil
 	})

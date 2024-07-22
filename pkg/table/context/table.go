@@ -56,8 +56,15 @@ type MutateContext interface {
 	// TxnRecordTempTable record the temporary table to the current transaction.
 	// This method will be called when the temporary table is modified or should allocate id in the transaction.
 	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
+	// ConnectionID returns the id of the current connection.
+	// If the current environment is not in a query from the client, the return value is 0.
+	ConnectionID() uint64
 	// InRestrictedSQL returns whether the current context is used in restricted SQL.
 	InRestrictedSQL() bool
+	// TxnAssertionLevel returns the assertion level of the current transaction.
+	TxnAssertionLevel() variable.AssertionLevel
+	// EnableMutationChecker returns whether to check data consistency for mutations.
+	EnableMutationChecker() bool
 	// GetRowEncodingConfig returns the RowEncodingConfig.
 	GetRowEncodingConfig() RowEncodingConfig
 	// GetMutateBuffers returns the MutateBuffers,

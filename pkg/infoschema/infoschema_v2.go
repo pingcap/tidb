@@ -455,6 +455,28 @@ func (is *infoschemaV2) EvictTable(schema, tbl string) {
 	is.tableCache.Remove(tableCacheKey{itm.tableID, itm.schemaVersion})
 }
 
+type tableByNameHelper struct {
+	end           tableItem
+	schemaVersion int64
+	found         bool
+	res           tableItem
+}
+
+func (h *tableByNameHelper) onItem(item tableItem) bool {
+	if item.dbName != h.end.dbName || item.tableName != h.end.tableName {
+		h.found = false
+		return false
+	}
+	if item.schemaVersion <= h.schemaVersion {
+		if !item.tomb { // If the item is a tomb record, the database is dropped.
+			h.found = true
+			h.res = item
+		}
+		return false
+	}
+	return true
+}
+
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
 	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
@@ -467,11 +489,16 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	}
 
 	start := time.Now()
-	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
-	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
-	if !ok {
+
+	var h tableByNameHelper
+	h.end = tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}
+	h.schemaVersion = is.infoSchema.schemaMetaVersion
+	is.byName.Descend(h.end, h.onItem)
+
+	if !h.found {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
+	itm := h.res
 
 	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
@@ -917,6 +944,25 @@ func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
 }
 
 func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if diff.ReadTableFromMeta {
+		// recover tables under the database and set them to diff.AffectedOpts
+		s := b.store.GetSnapshot(kv.MaxVersion)
+		recoverMeta := meta.NewSnapshotMeta(s)
+		tables, err := recoverMeta.ListSimpleTables(diff.SchemaID)
+		if err != nil {
+			return nil, err
+		}
+		diff.AffectedOpts = make([]*model.AffectedOption, 0, len(tables))
+		for _, t := range tables {
+			diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+				SchemaID:    diff.SchemaID,
+				OldSchemaID: diff.SchemaID,
+				TableID:     t.ID,
+				OldTableID:  t.ID,
+			})
+		}
+	}
+
 	if b.enableV2 {
 		return b.applyRecoverSchemaV2(m, diff)
 	}

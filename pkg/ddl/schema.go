@@ -319,18 +319,9 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			}
 		}
 		schemaInfo.State = model.StatePublic
-		diffInfos := make([]schemaIDAndTableInfo, 0, len(recoverTbls))
-		for _, recoverInfo := range recoverTbls {
-			recoverInfo.TableInfo.State = model.StatePublic
-			recoverInfo.TableInfo.UpdateTS = t.StartTS
-			diffInfos = append(diffInfos, schemaIDAndTableInfo{
-				schemaID: schemaInfo.ID,
-				tblInfo:  recoverInfo.TableInfo,
-			})
-		}
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
-		ver, err = updateSchemaVersion(d, t, job, diffInfos...)
+		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

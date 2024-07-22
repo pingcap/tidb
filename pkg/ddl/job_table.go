@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -97,12 +97,14 @@ var _ owner.Listener = (*ownerListener)(nil)
 
 func (l *ownerListener) OnBecomeOwner() {
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
+	sysTblMgr := systable.NewManager(l.ddl.sessPool)
 	l.scheduler = &jobScheduler{
-		schCtx:       ctx,
-		cancel:       cancelFunc,
-		runningJobs:  newRunningJobs(),
-		sysTblMgr:    systable.NewManager(l.ddl.sessPool),
-		schemaLoader: l.ddl.schemaLoader,
+		schCtx:            ctx,
+		cancel:            cancelFunc,
+		runningJobs:       newRunningJobs(),
+		sysTblMgr:         sysTblMgr,
+		schemaLoader:      l.ddl.schemaLoader,
+		minJobIDRefresher: l.ddl.minJobIDRefresher,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -122,12 +124,13 @@ func (l *ownerListener) OnRetireOwner() {
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
 	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
-	schCtx       context.Context
-	cancel       context.CancelFunc
-	wg           tidbutil.WaitGroupWrapper
-	runningJobs  *runningJobs
-	sysTblMgr    systable.Manager
-	schemaLoader SchemaLoader
+	schCtx            context.Context
+	cancel            context.CancelFunc
+	wg                tidbutil.WaitGroupWrapper
+	runningJobs       *runningJobs
+	sysTblMgr         systable.Manager
+	schemaLoader      SchemaLoader
+	minJobIDRefresher *systable.MinJobIDRefresher
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -252,11 +255,11 @@ func (d *ddl) startLocalWorkerLoop() {
 		select {
 		case <-d.ctx.Done():
 			return
-		case task, ok := <-d.localJobCh:
+		case jobW, ok := <-d.localJobCh:
 			if !ok {
 				return
 			}
-			d.delivery2LocalWorker(d.localWorkerPool, task)
+			d.delivery2LocalWorker(d.localWorkerPool, jobW)
 		}
 	}
 }
@@ -381,12 +384,12 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 
 	defer s.runningJobs.resetAllPending()
 
-	const getJobSQL = `select reorg, job_meta from mysql.tidb_ddl_job %s order by job_id`
+	const getJobSQL = `select reorg, job_meta from mysql.tidb_ddl_job where job_id >= %d %s order by job_id`
 	var whereClause string
 	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
-		whereClause = fmt.Sprintf("where job_id not in (%s)", ids)
+		whereClause = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
-	sql := fmt.Sprintf(getJobSQL, whereClause)
+	sql := fmt.Sprintf(getJobSQL, s.minJobIDRefresher.GetCurrMinJobID(), whereClause)
 	rows, err := se.Execute(context.Background(), sql, "load_ddl_jobs")
 	if err != nil {
 		return errors.Trace(err)
@@ -469,11 +472,11 @@ func (s *jobScheduler) mustReloadSchemas() {
 // delivery2LocalWorker runs the DDL job of v2 in local.
 // send the result to the error channels in the task.
 // delivery2Localworker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
-	job := task.job
+func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
+	job := jobW.Job
 	wk, err := pool.get()
 	if err != nil {
-		task.NotifyError(err)
+		jobW.NotifyError(err)
 		return
 	}
 	for wk == nil {
@@ -484,7 +487,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		}
 		wk, err = pool.get()
 		if err != nil {
-			task.NotifyError(err)
+			jobW.NotifyError(err)
 			return
 		}
 	}
@@ -507,7 +510,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		if err != nil {
 			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		}
-		task.NotifyError(err)
+		jobW.NotifyError(err)
 	})
 }
 
@@ -667,26 +670,28 @@ const (
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
-func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobs ...*model.Job) error {
+func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWrapper) error {
 	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
 		}
 	})
-	if len(jobs) == 0 {
+	if len(jobWs) == 0 {
 		return nil
 	}
 	var sql bytes.Buffer
 	sql.WriteString(addDDLJobSQL)
-	for i, job := range jobs {
-		b, err := job.Encode(true)
+	for i, jobW := range jobWs {
+		b, err := jobW.Encode(true)
 		if err != nil {
 			return err
 		}
 		if i != 0 {
 			sql.WriteString(",")
 		}
-		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", job.ID, job.MayNeedReorg(), strconv.Quote(job2SchemaIDs(job)), strconv.Quote(job2TableIDs(job)), util.WrapKey2String(b), job.Type, !job.NotStarted())
+		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
+			strconv.Quote(job2SchemaIDs(jobW.Job)), strconv.Quote(job2TableIDs(jobW.Job)),
+			util.WrapKey2String(b), jobW.Type, !jobW.NotStarted())
 	}
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(ctx, sql.String(), "insert_job")
