@@ -191,28 +191,6 @@ func (*columnPruner) name() string {
 	return "column_prune"
 }
 
-// By add const one, we can avoid empty Projection is eliminated.
-// Because in some cases, Projectoin cannot be eliminated even its output is empty.
-func addConstOneForEmptyProjection(p base.LogicalPlan) {
-	proj, ok := p.(*LogicalProjection)
-	if !ok {
-		return
-	}
-	if proj.Schema().Len() != 0 {
-		return
-	}
-
-	constOne := expression.NewOne()
-	proj.Schema().Append(&expression.Column{
-		UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
-		RetType:  constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-	})
-	proj.Exprs = append(proj.Exprs, &expression.Constant{
-		Value:   constOne.Value,
-		RetType: constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-	})
-}
-
 func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
 	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
 	var resultColumnInfo *model.ColumnInfo
