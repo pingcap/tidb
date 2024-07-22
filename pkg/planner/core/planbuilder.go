@@ -2271,19 +2271,31 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	}
 
 	isAnalyzeTable := len(as.PartitionNames) == 0
-	isAnalyzeIndex := len(as.IndexNames) != 0
 	allSpecialGlobalIndex := true
-	for _, idxName := range as.IndexNames {
-		idx := tbl.TableInfo.FindIndexByName(idxName.L)
-		if idx == nil || idx.State != model.StatePublic {
-			return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
-		}
-		if statsutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
-			if !isAnalyzeTable {
-				return errors.NewNoStackErrorf("Analyze special global index %s can't work with analyze partition", idxName.O)
+	if as.IndexFlag && len(as.IndexNames) == 0 {
+		for _, idx := range tbl.TableInfo.Indices {
+			if idx.State != model.StatePublic {
+				continue
 			}
-		} else {
-			allSpecialGlobalIndex = false
+			if !statsutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+				allSpecialGlobalIndex = false
+				break
+			}
+		}
+	} else {
+		for _, idxName := range as.IndexNames {
+			idx := tbl.TableInfo.FindIndexByName(idxName.L)
+			if idx == nil || idx.State != model.StatePublic {
+				return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
+			}
+			if statsutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+				if !isAnalyzeTable {
+					return errors.NewNoStackErrorf("Analyze special global index %s can't work with analyze partition", idxName.O)
+				}
+			} else {
+				allSpecialGlobalIndex = false
+				break
+			}
 		}
 	}
 
@@ -2318,10 +2330,10 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	var indexes, independentIndexes, specialGlobalIndexes []*model.IndexInfo
 
-	needAnalyzeCols := !(isAnalyzeIndex && allSpecialGlobalIndex)
+	needAnalyzeCols := !(as.IndexFlag && allSpecialGlobalIndex)
 
 	if needAnalyzeCols {
-		if isAnalyzeIndex {
+		if as.IndexFlag {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 would collect all statistics not only the selected indexes"))
 		}
 		// Build tasks for each partition.
@@ -2374,7 +2386,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	}
 
 	if isAnalyzeTable {
-		if !isAnalyzeIndex {
+		if !as.IndexFlag {
 			for _, indexInfo := range specialGlobalIndexes {
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
 			}
