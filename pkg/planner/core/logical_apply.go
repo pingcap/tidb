@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
@@ -35,6 +37,12 @@ type LogicalApply struct {
 	CorCols []*expression.CorrelatedColumn
 	// NoDecorrelate is from /*+ no_decorrelate() */ hint.
 	NoDecorrelate bool
+}
+
+// Init initializes LogicalApply.
+func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
+	la.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
+	return &la
 }
 
 // *************************** start implementation of Plan interface ***************************

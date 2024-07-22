@@ -26,12 +26,6 @@ func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	return &ds
 }
 
-// Init initializes LogicalApply.
-func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
-	la.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
-	return &la
-}
-
 // Init initializes LogicalProjection.
 func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
