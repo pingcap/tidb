@@ -3088,6 +3088,9 @@ func upgradeToVer210(s sessiontypes.Session, ver int64) {
 	if ver >= version210 {
 		return
 	}
+	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
+	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
 }
 
 func upgradeToVer211(s sessiontypes.Session, ver int64) {
@@ -3101,10 +3104,6 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	if ver >= version212 {
 		return
 	}
-
-	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
-	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
 	mustExecute(s, CreateBrJobs)
 }
 
