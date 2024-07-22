@@ -72,16 +72,16 @@ type ErrorHandlingResult struct {
 type ErrorHandlingStrategy int
 
 const (
-	// Retry error can be retried but will consume the backoff attempt quota.
-	Retry ErrorHandlingStrategy = iota
-	// GiveUp means unrecoverable error happened and the BR should exit
+	// StrategyRetry error can be retried but will consume the backoff attempt quota.
+	StrategyRetry ErrorHandlingStrategy = iota
+	// StrategyGiveUp means unrecoverable error happened and the BR should exit
 	// for example:
 	// 1. permission not valid.
 	// 2. data not found.
 	// 3. retry too many times
-	GiveUp
-	// Unknown for Unknown error
-	Unknown
+	StrategyGiveUp
+	// StrategyUnknown for StrategyUnknown error
+	StrategyUnknown
 )
 
 type ErrorContext struct {
@@ -113,11 +113,11 @@ func NewDefaultContext() *ErrorContext {
 
 func HandleBackupError(err *backuppb.Error, storeId uint64, ec *ErrorContext) ErrorHandlingResult {
 	if err == nil {
-		return ErrorHandlingResult{Retry, unreachableRetryMsg}
+		return ErrorHandlingResult{StrategyRetry, unreachableRetryMsg}
 	}
 	res := handleBackupProtoError(err)
 	// try the best effort handle unknown error based on their error message
-	if res.Strategy == Unknown && len(err.Msg) != 0 {
+	if res.Strategy == StrategyUnknown && len(err.Msg) != 0 {
 		return HandleUnknownBackupError(err.Msg, storeId, ec)
 	}
 	return res
@@ -126,13 +126,13 @@ func HandleBackupError(err *backuppb.Error, storeId uint64, ec *ErrorContext) Er
 func handleBackupProtoError(e *backuppb.Error) ErrorHandlingResult {
 	switch e.Detail.(type) {
 	case *backuppb.Error_KvError:
-		return ErrorHandlingResult{Retry, retryOnKvErrorMsg}
+		return ErrorHandlingResult{StrategyRetry, retryOnKvErrorMsg}
 	case *backuppb.Error_RegionError:
-		return ErrorHandlingResult{Retry, retryOnRegionErrorMsg}
+		return ErrorHandlingResult{StrategyRetry, retryOnRegionErrorMsg}
 	case *backuppb.Error_ClusterIdError:
-		return ErrorHandlingResult{GiveUp, clusterIdMismatchMsg}
+		return ErrorHandlingResult{StrategyGiveUp, clusterIdMismatchMsg}
 	}
-	return ErrorHandlingResult{Unknown, unknownErrorMsg}
+	return ErrorHandlingResult{StrategyUnknown, unknownErrorMsg}
 }
 
 // HandleUnknownBackupError UNSAFE! TODO: remove this method and map all the current unknown errors to error types
@@ -143,22 +143,22 @@ func HandleUnknownBackupError(msg string, uuid uint64, ec *ErrorContext) ErrorHa
 		reason := fmt.Sprintf("File or directory not found on TiKV Node (store id: %v). "+
 			"workaround: please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
 			uuid)
-		return ErrorHandlingResult{GiveUp, reason}
+		return ErrorHandlingResult{StrategyGiveUp, reason}
 	}
 	if messageIsPermissionDeniedStorageError(msg) {
 		reason := fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v). "+
 			"workaround: please ensure tikv has permission to read from & write to the storage.",
 			uuid)
-		return ErrorHandlingResult{GiveUp, reason}
+		return ErrorHandlingResult{StrategyGiveUp, reason}
 	}
 	msgLower := strings.ToLower(msg)
 	if strings.Contains(msgLower, contextCancelledMsg) {
-		return ErrorHandlingResult{GiveUp, contextCancelledMsg}
+		return ErrorHandlingResult{StrategyGiveUp, contextCancelledMsg}
 	}
 
 	if MessageIsRetryableStorageError(msg) {
 		logger.Warn(retryableStorageErrorMsg, zap.String("error", msg))
-		return ErrorHandlingResult{Retry, retryableStorageErrorMsg}
+		return ErrorHandlingResult{StrategyRetry, retryableStorageErrorMsg}
 	}
 
 	// retry enough on same store
@@ -166,9 +166,9 @@ func HandleUnknownBackupError(msg string, uuid uint64, ec *ErrorContext) ErrorHa
 	defer ec.mu.Unlock()
 	ec.encounterTimes[uuid]++
 	if ec.encounterTimes[uuid] <= ec.encounterTimesLimitation {
-		return ErrorHandlingResult{Retry, retryOnUnknownErrorMsg}
+		return ErrorHandlingResult{StrategyRetry, retryOnUnknownErrorMsg}
 	}
-	return ErrorHandlingResult{GiveUp, noRetryOnUnknownErrorMsg}
+	return ErrorHandlingResult{StrategyGiveUp, noRetryOnUnknownErrorMsg}
 }
 
 // messageIsNotFoundStorageError checks whether the message returning from TiKV is "NotFound" storage I/O error
