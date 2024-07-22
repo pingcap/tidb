@@ -737,6 +737,7 @@ func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *M
 	}
 }
 
+// applyMetaEditToMeta applies the modifications in the `MetaEdit` to the real meta file.
 func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdit) (err error) {
 	if medit.DestructSelf {
 		return m.s.DeleteFile(ctx, medit.Path)
@@ -817,6 +818,7 @@ func (m MigrationExt) tryRemovePrefix(ctx context.Context, pfx string, out *Migr
 	}
 }
 
+// doTruncating tries to remove outdated compaction, filling the not-yet removed compactions to the new migration.
 func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
 	// NOTE: Execution of truncation wasn't implemented here.
 	// If we are going to truncate some files, for now we still need to use `br log truncate`.
@@ -857,6 +859,10 @@ func physicalFileCanBeDeleted(fs *pb.DeleteSpansOfFile) bool {
 	return lastOffset == fs.WholeFileLength
 }
 
+// mergeMetaEdits merges two meta edits.
+//
+// If the spans in the `DeleteLogicalFiles` consist a physical file,
+// they will be transformed to `DeletePhysicalFiles`.
 func mergeMetaEdits(s1, s2 []*pb.MetaEdit) []*pb.MetaEdit {
 	edits := map[string]*pb.MetaEdit{}
 	for _, edit := range s1 {
@@ -932,6 +938,9 @@ func migIdOf(s string) (int, error) {
 	return result, nil
 }
 
+// isInsane checks whether deleting a prefix is insane: say, going to destroy the whole backup storage.
+//
+// This would be useful when a compaction's output dir is absent or modified.
 func isInsane(pfx string) bool {
 	normalized := path.Clean(pfx)
 	switch normalized {
