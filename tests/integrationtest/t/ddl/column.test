@@ -18,3 +18,7 @@ show create table t1;
 CREATE TABLE `t2`( `id` INTEGER PRIMARY KEY, `authorId` int(11) AUTO_INCREMENT, UNIQUE KEY `authorIdx` (`authorId`));
 show create table t2;
 
+# TestIssue53779
+drop table if exists t;
+create table t(a decimal(0,0), b decimal(0));
+show create table t;
