@@ -1316,7 +1316,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 		return base * uint64(ratio*10) / 10
 	}
 	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
-	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.3)
+	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
 	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
 
 	err = utils.WithRetry(ctx, func() error {
