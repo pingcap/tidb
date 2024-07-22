@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -218,10 +219,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		Params:              extractor.markers,
 	}
 
-	stmtProcessor := &planCacheStmtProcessor{is: is, stmt: preparedObj}
+	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
 	paramStmt.Accept(stmtProcessor)
 
-	if err = checkPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
+	if err = checkPreparedPriv(ctx, sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
 	return preparedObj, p, paramCount, nil
@@ -330,11 +331,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	// this variable might affect the plan
-	if vars.ForeignKeyChecks {
-		hash = append(hash, '1')
-	} else {
-		hash = append(hash, '0')
-	}
+	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
@@ -386,7 +383,21 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			hash = codec.EncodeInt(hash, id)
 		}
 	}
+
+	// txn status
+	hash = append(hash, '|')
+	hash = append(hash, bool2Byte(vars.InTxn()))
+	hash = append(hash, bool2Byte(vars.IsAutocommit()))
+	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
+
 	return string(hash), binding, true, "", nil
+}
+
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
+	}
+	return '0'
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
@@ -402,10 +413,17 @@ type PlanCacheValue struct {
 // CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
 // Since PlanCacheValue.Plan is not read-only, to solve the concurrency problem when sharing the same PlanCacheValue
 // across multiple sessions, we need to clone the PlanCacheValue for each session.
-func (v *PlanCacheValue) CloneForInstancePlanCache(newCtx base.PlanContext) (*PlanCacheValue, bool) {
-	clonedPlan, ok := v.Plan.CloneForPlanCache(newCtx)
+func (v *PlanCacheValue) CloneForInstancePlanCache(ctx context.Context, newCtx base.PlanContext) (*PlanCacheValue, bool) {
+	phyPlan, ok := v.Plan.(base.PhysicalPlan)
 	if !ok {
 		return nil, false
+	}
+	clonedPlan, err := phyPlan.Clone(newCtx)
+	if err != nil {
+		return nil, false
+	}
+	if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
+		ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(phyPlan, clonedPlan)
 	}
 	cloned := new(PlanCacheValue)
 	*cloned = *v
@@ -472,6 +490,7 @@ func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
 
 // planCacheStmtProcessor records all query features which may affect plan selection.
 type planCacheStmtProcessor struct {
+	ctx  context.Context
 	is   infoschema.InfoSchema
 	stmt *PlanCacheStmt
 }
@@ -484,7 +503,7 @@ func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren 
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		f.stmt.hasSubquery = true
 	case *ast.TableName:
-		t, err := f.is.TableByName(node.Schema, node.Name)
+		t, err := f.is.TableByName(f.ctx, node.Schema, node.Name)
 		if err == nil {
 			f.stmt.tables = append(f.stmt.tables, t)
 		}
@@ -506,6 +525,9 @@ type PointGetExecutorCache struct {
 	pointPlan      base.Plan
 	pointPlanHints *hint.StmtHints
 	columnNames    types.NameSlice
+
+	// the cache key for this statement, have to check whether the cache key changes before reusing this plan for safety.
+	planCacheKey string
 
 	ColumnInfos any
 	// Executor is only used for point get scene.

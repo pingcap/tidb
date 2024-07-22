@@ -249,14 +249,14 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 type basePhysicalPlan struct {
 	baseimpl.Plan
 
-	childrenReqProps []*property.PhysicalProperty
+	childrenReqProps []*property.PhysicalProperty `plan-cache-clone:"shallow"`
 	self             base.PhysicalPlan
 	children         []base.PhysicalPlan
 
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
-	planCostVer2 costusage.CostVer2
+	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
@@ -268,15 +268,47 @@ type basePhysicalPlan struct {
 	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
-func (p *basePhysicalPlan) cloneWithSelf(newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
+func (p *basePhysicalPlan) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, bool) {
+	cloned := new(basePhysicalPlan)
+	*cloned = *p
+	cloned.SetSCtx(newCtx)
+	cloned.self = newSelf
+	cloned.children = make([]base.PhysicalPlan, 0, len(p.children))
+	for _, child := range p.children {
+		clonedChild, ok := child.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		clonedPP, ok := clonedChild.(base.PhysicalPlan)
+		if !ok {
+			return nil, false
+		}
+		cloned.children = append(cloned.children, clonedPP)
+	}
+	for _, probe := range p.probeParents {
+		clonedProbe, ok := probe.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		clonedPP, ok := clonedProbe.(base.PhysicalPlan)
+		if !ok {
+			return nil, false
+		}
+		cloned.probeParents = append(cloned.probeParents, clonedPP)
+	}
+	return cloned, true
+}
+
+func (p *basePhysicalPlan) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
 		Plan:                                 p.Plan,
 		self:                                 newSelf,
 		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		probeParents:                         p.probeParents,
 	}
+	base.SetSCtx(newCtx)
 	for _, child := range p.children {
-		cloned, err := child.Clone()
+		cloned, err := child.Clone(newCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -292,7 +324,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf base.PhysicalPlan) (*basePhysic
 }
 
 // Clone implements op.PhysicalPlan interface.
-func (p *basePhysicalPlan) Clone() (base.PhysicalPlan, error) {
+func (p *basePhysicalPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.self)
 }
 

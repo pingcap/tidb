@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -22,15 +23,18 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
@@ -77,16 +81,12 @@ type Data struct {
 	//
 	// It means as long as we can find an item in it, the item is available, even through the
 	// schema version maybe smaller than required.
-	//
-	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	byName *btree.BTreeG[tableItem]
 
 	// For the TableByID API, sorted by {tableID, schemaVersion} => dbID
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
 	// It provides the tableID => databaseID mapping.
-	//
-	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
-	// But this mapping MUST be synced with byName.
+	// This mapping MUST be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
@@ -404,7 +404,6 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
 	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
-		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, false
 	}
 
@@ -427,25 +426,59 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := loadTableInfo(context.Background(), is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil || ret == nil {
 		return nil, false
 	}
 
 	if !noRefill {
-		is.tableCache.Set(key, ret)
+		is.tableCache.Set(oldKey, ret)
 	}
 	return ret, true
 }
 
-func isSpecialDB(dbName string) bool {
+// IsSpecialDB tells whether the database is a special database.
+func IsSpecialDB(dbName string) bool {
 	return dbName == util.InformationSchemaName.L ||
 		dbName == util.PerformanceSchemaName.L ||
 		dbName == util.MetricSchemaName.L
 }
 
-func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
-	if isSpecialDB(schema.L) {
+// EvictTable is exported for testing only.
+func (is *infoschemaV2) EvictTable(schema, tbl string) {
+	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
+	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
+	if !ok {
+		return
+	}
+	is.tableCache.Remove(tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion})
+	is.tableCache.Remove(tableCacheKey{itm.tableID, itm.schemaVersion})
+}
+
+type tableByNameHelper struct {
+	end           tableItem
+	schemaVersion int64
+	found         bool
+	res           tableItem
+}
+
+func (h *tableByNameHelper) onItem(item tableItem) bool {
+	if item.dbName != h.end.dbName || item.tableName != h.end.tableName {
+		h.found = false
+		return false
+	}
+	if item.schemaVersion <= h.schemaVersion {
+		if !item.tomb { // If the item is a tomb record, the database is dropped.
+			h.found = true
+			h.res = item
+		}
+		return false
+	}
+	return true
+}
+
+func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
+	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
 			tbNames := raw.(*schemaTables)
 			if t, ok = tbNames.tables[tbl.L]; ok {
@@ -455,40 +488,39 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
-	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
-	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
-	if !ok {
-		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
+	start := time.Now()
+
+	var h tableByNameHelper
+	h.end = tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}
+	h.schemaVersion = is.infoSchema.schemaMetaVersion
+	is.byName.Descend(h.end, h.onItem)
+
+	if !h.found {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
+	itm := h.res
 
-	// Get from the cache.
-	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
-	res, found := is.tableCache.Get(key)
-	if found && res != nil {
-		return res, nil
-	}
-
-	// get cache with old key
+	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	res, found = is.tableCache.Get(oldKey)
+	res, found := is.tableCache.Get(oldKey)
 	if found && res != nil {
-		is.tableCache.Set(key, res)
+		metrics.TableByNameHitDuration.Observe(float64(time.Since(start)))
 		return res, nil
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := loadTableInfo(ctx, is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	is.tableCache.Set(key, ret)
+	is.tableCache.Set(oldKey, ret)
+	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
 	return ret, nil
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
 func (is *infoschemaV2) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
-	tbl, err := is.TableByName(schema, table)
+	tbl, err := is.TableByName(context.Background(), schema, table)
 	return getTableInfo(tbl), err
 }
 
@@ -498,9 +530,9 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return getTableInfo(tbl), ok
 }
 
-// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
+// SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
-	if isSpecialDB(schema.L) {
+	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
 			schTbls := raw.(*schemaTables)
@@ -541,6 +573,52 @@ retry:
 	return tblInfos
 }
 
+// SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
+func (is *infoschemaV2) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
+	if IsSpecialDB(schema.L) {
+		raw, ok := is.Data.specials.Load(schema.L)
+		if ok {
+			schTbls := raw.(*schemaTables)
+			ret := make([]*model.TableNameInfo, 0, len(schTbls.tables))
+			for _, tbl := range schTbls.tables {
+				ret = append(ret, &model.TableNameInfo{
+					ID:   tbl.Meta().ID,
+					Name: tbl.Meta().Name,
+				})
+			}
+			return ret
+		}
+		return nil // something wrong?
+	}
+
+retry:
+	dbInfo, ok := is.SchemaByName(schema)
+	if !ok {
+		return nil
+	}
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	m := meta.NewSnapshotMeta(snapshot)
+	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return nil
+		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
+		}
+		// TODO: error could happen, so do not panic!
+		panic(err)
+	}
+	return tblInfos
+}
+
 // FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
 func (is *infoschemaV2) FindTableInfoByPartitionID(
 	partitionID int64,
@@ -550,7 +628,7 @@ func (is *infoschemaV2) FindTableInfoByPartitionID(
 }
 
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	if isSpecialDB(schema.L) {
+	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if !ok {
 			return nil, false
@@ -677,7 +755,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
-	_, err := is.TableByName(schema, table)
+	_, err := is.TableByName(context.Background(), schema, table)
 	return err == nil
 }
 
@@ -723,7 +801,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	if isSpecialDB(schema.L) {
+	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
 			schTbls := raw.(*schemaTables)
@@ -773,7 +851,11 @@ retry:
 	return
 }
 
-func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
+func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
+	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
+	failpoint.Inject("mockLoadTableInfoError", func(_ failpoint.Value) {
+		failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
+	})
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:
@@ -862,6 +944,25 @@ func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
 }
 
 func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if diff.ReadTableFromMeta {
+		// recover tables under the database and set them to diff.AffectedOpts
+		s := b.store.GetSnapshot(kv.MaxVersion)
+		recoverMeta := meta.NewSnapshotMeta(s)
+		tables, err := recoverMeta.ListSimpleTables(diff.SchemaID)
+		if err != nil {
+			return nil, err
+		}
+		diff.AffectedOpts = make([]*model.AffectedOption, 0, len(tables))
+		for _, t := range tables {
+			diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+				SchemaID:    diff.SchemaID,
+				OldSchemaID: diff.SchemaID,
+				TableID:     t.ID,
+				OldTableID:  t.ID,
+			})
+		}
+	}
+
 	if b.enableV2 {
 		return b.applyRecoverSchemaV2(m, diff)
 	}

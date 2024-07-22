@@ -71,52 +71,6 @@ func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Sch
 	return false
 }
 
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
-	switch p.JoinType {
-	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
-		selfSchema.Keys = childSchema[0].Clone().Keys
-	case InnerJoin, LeftOuterJoin, RightOuterJoin:
-		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
-		if len(p.EqualConditions) == 0 {
-			return
-		}
-		lOk := false
-		rOk := false
-		// Such as 'select * from t1 join t2 where t1.a = t2.a and t1.b = t2.b'.
-		// If one sides (a, b) is a unique key, then the unique key information is remained.
-		// But we don't consider this situation currently.
-		// Only key made by one column is considered now.
-		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-		for _, expr := range p.EqualConditions {
-			ln := expr.GetArgs()[0].(*expression.Column)
-			rn := expr.GetArgs()[1].(*expression.Column)
-			for _, key := range childSchema[0].Keys {
-				if len(key) == 1 && key[0].Equal(evalCtx, ln) {
-					lOk = true
-					break
-				}
-			}
-			for _, key := range childSchema[1].Keys {
-				if len(key) == 1 && key[0].Equal(evalCtx, rn) {
-					rOk = true
-					break
-				}
-			}
-		}
-		// For inner join, if one side of one equal condition is unique key,
-		// another side's unique key information will all be reserved.
-		// If it's an outer join, NULL value will fill some position, which will destroy the unique key information.
-		if lOk && p.JoinType != LeftOuterJoin {
-			selfSchema.Keys = append(selfSchema.Keys, childSchema[1].Keys...)
-		}
-		if rOk && p.JoinType != RightOuterJoin {
-			selfSchema.Keys = append(selfSchema.Keys, childSchema[0].Keys...)
-		}
-	}
-}
-
 // checkIndexCanBeKey checks whether an Index can be a Key in schema.
 func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) (uniqueKey, newKey expression.KeyInfo) {
 	if !idx.Unique {

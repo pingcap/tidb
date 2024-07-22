@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"unsafe"
 
@@ -367,7 +368,7 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 }
 
 func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSchema, referredFK *model.ReferredFKInfo, tp FKCascadeType) (*FKCheck, *FKCascade, error) {
-	childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+	childTable, err := is.TableByName(context.Background(), referredFK.ChildSchema, referredFK.ChildTable)
 	if err != nil {
 		return nil, nil, nil
 	}
@@ -407,7 +408,7 @@ func isMapContainAnyCols(colsMap map[string]struct{}, cols ...model.CIStr) bool 
 }
 
 func buildFKCheckOnModifyChildTable(ctx base.PlanContext, is infoschema.InfoSchema, fk *model.FKInfo, failedErr error) (*FKCheck, error) {
-	referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+	referTable, err := is.TableByName(context.Background(), fk.RefSchema, fk.RefTable)
 	if err != nil {
 		return nil, nil
 	}

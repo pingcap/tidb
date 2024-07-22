@@ -20,12 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
-// Init initializes LogicalJoin.
-func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)
-	return &p
-}
-
 // Init initializes DataSource.
 func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	ds.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)
@@ -38,50 +32,8 @@ func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
 	return &la
 }
 
-// Init initializes LogicalUnionScan.
-func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnionScan {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)
-	return &p
-}
-
 // Init initializes LogicalProjection.
 func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalShow.
-func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
-	return &p
-}
-
-// Init initializes LogicalShowDDLJobs.
-func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
-	return &p
-}
-
-// Init initializes LogicalMemTable.
-func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p LogicalCTE) Init(ctx base.PlanContext, offset int) *LogicalCTE {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalSequence
-func (p LogicalSequence) Init(ctx base.PlanContext, offset int) *LogicalSequence {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSequence, &p, offset)
 	return &p
 }

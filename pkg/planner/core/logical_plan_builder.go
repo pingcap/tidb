@@ -492,142 +492,6 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	}
 }
 
-// pushDownConstExpr checks if the condition is from filter condition, if true, push it down to both
-// children of join, whatever the join type is; if false, push it down to inner child of outer join,
-// and both children of non-outer-join.
-func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []expression.Expression,
-	rightCond []expression.Expression, filterCond bool) ([]expression.Expression, []expression.Expression) {
-	switch p.JoinType {
-	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		if filterCond {
-			leftCond = append(leftCond, expr)
-			// Append the expr to right join condition instead of `rightCond`, to make it able to be
-			// pushed down to children of join.
-			p.RightConditions = append(p.RightConditions, expr)
-		} else {
-			rightCond = append(rightCond, expr)
-		}
-	case RightOuterJoin:
-		if filterCond {
-			rightCond = append(rightCond, expr)
-			p.LeftConditions = append(p.LeftConditions, expr)
-		} else {
-			leftCond = append(leftCond, expr)
-		}
-	case SemiJoin, InnerJoin:
-		leftCond = append(leftCond, expr)
-		rightCond = append(rightCond, expr)
-	case AntiSemiJoin:
-		if filterCond {
-			leftCond = append(leftCond, expr)
-		}
-		rightCond = append(rightCond, expr)
-	}
-	return leftCond, rightCond
-}
-
-func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
-	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
-	rightCond []expression.Expression, otherCond []expression.Expression) {
-	return p.ExtractOnCondition(conditions, p.Children()[0].Schema(), p.Children()[1].Schema(), deriveLeft, deriveRight)
-}
-
-// ExtractOnCondition divide conditions in CNF of join node into 4 groups.
-// These conditions can be where conditions, join conditions, or collection of both.
-// If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
-func (p *LogicalJoin) ExtractOnCondition(
-	conditions []expression.Expression,
-	leftSchema *expression.Schema,
-	rightSchema *expression.Schema,
-	deriveLeft bool,
-	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
-	rightCond []expression.Expression, otherCond []expression.Expression) {
-	ctx := p.SCtx()
-	for _, expr := range conditions {
-		// For queries like `select a in (select a from s where s.b = t.b) from t`,
-		// if subquery is empty caused by `s.b = t.b`, the result should always be
-		// false even if t.a is null or s.a is null. To make this join "empty aware",
-		// we should differentiate `t.a = s.a` from other column equal conditions, so
-		// we put it into OtherConditions instead of EqualConditions of join.
-		if expression.IsEQCondFromIn(expr) {
-			otherCond = append(otherCond, expr)
-			continue
-		}
-		binop, ok := expr.(*expression.ScalarFunction)
-		if ok && len(binop.GetArgs()) == 2 {
-			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
-			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
-			if lOK && rOK {
-				leftCol := leftSchema.RetrieveColumn(arg0)
-				rightCol := rightSchema.RetrieveColumn(arg1)
-				if leftCol == nil || rightCol == nil {
-					leftCol = leftSchema.RetrieveColumn(arg1)
-					rightCol = rightSchema.RetrieveColumn(arg0)
-					arg0, arg1 = arg1, arg0
-				}
-				if leftCol != nil && rightCol != nil {
-					if deriveLeft {
-						if util.IsNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
-							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), leftCol)
-							leftCond = append(leftCond, notNullExpr)
-						}
-					}
-					if deriveRight {
-						if util.IsNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
-							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), rightCol)
-							rightCond = append(rightCond, notNullExpr)
-						}
-					}
-					if binop.FuncName.L == ast.EQ {
-						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
-						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-						continue
-					}
-				}
-			}
-		}
-		columns := expression.ExtractColumns(expr)
-		// `columns` may be empty, if the condition is like `correlated_column op constant`, or `constant`,
-		// push this kind of constant condition down according to join type.
-		if len(columns) == 0 {
-			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, deriveLeft || deriveRight)
-			continue
-		}
-		allFromLeft, allFromRight := true, true
-		for _, col := range columns {
-			if !leftSchema.Contains(col) {
-				allFromLeft = false
-			}
-			if !rightSchema.Contains(col) {
-				allFromRight = false
-			}
-		}
-		if allFromRight {
-			rightCond = append(rightCond, expr)
-		} else if allFromLeft {
-			leftCond = append(leftCond, expr)
-		} else {
-			// Relax expr to two supersets: leftRelaxedCond and rightRelaxedCond, the expression now is
-			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
-			// children as much as possible.
-			if deriveLeft {
-				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(ctx.GetExprCtx(), expr, leftSchema)
-				if leftRelaxedCond != nil {
-					leftCond = append(leftCond, leftRelaxedCond)
-				}
-			}
-			if deriveRight {
-				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(ctx.GetExprCtx(), expr, rightSchema)
-				if rightRelaxedCond != nil {
-					rightCond = append(rightCond, rightRelaxedCond)
-				}
-			}
-			otherCond = append(otherCond, expr)
-		}
-	}
-	return
-}
-
 // extractTableAlias returns table alias of the base.LogicalPlan's columns.
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the base.LogicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
@@ -656,150 +520,6 @@ func extractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}
 	return nil
-}
-
-func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.PlanHints) {
-	if hintInfo == nil {
-		return
-	}
-
-	lhsAlias := extractTableAlias(p.Children()[0], p.QueryBlockOffset())
-	rhsAlias := extractTableAlias(p.Children()[1], p.QueryBlockOffset())
-	if hintInfo.IfPreferMergeJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferMergeJoin
-		p.LeftPreferJoinType |= h.PreferMergeJoin
-	}
-	if hintInfo.IfPreferMergeJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferMergeJoin
-		p.RightPreferJoinType |= h.PreferMergeJoin
-	}
-	if hintInfo.IfPreferNoMergeJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferNoMergeJoin
-		p.LeftPreferJoinType |= h.PreferNoMergeJoin
-	}
-	if hintInfo.IfPreferNoMergeJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferNoMergeJoin
-		p.RightPreferJoinType |= h.PreferNoMergeJoin
-	}
-	if hintInfo.IfPreferBroadcastJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferBCJoin
-		p.LeftPreferJoinType |= h.PreferBCJoin
-	}
-	if hintInfo.IfPreferBroadcastJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferBCJoin
-		p.RightPreferJoinType |= h.PreferBCJoin
-	}
-	if hintInfo.IfPreferShuffleJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferShuffleJoin
-		p.LeftPreferJoinType |= h.PreferShuffleJoin
-	}
-	if hintInfo.IfPreferShuffleJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferShuffleJoin
-		p.RightPreferJoinType |= h.PreferShuffleJoin
-	}
-	if hintInfo.IfPreferHashJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferHashJoin
-		p.LeftPreferJoinType |= h.PreferHashJoin
-	}
-	if hintInfo.IfPreferHashJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferHashJoin
-		p.RightPreferJoinType |= h.PreferHashJoin
-	}
-	if hintInfo.IfPreferNoHashJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferNoHashJoin
-		p.LeftPreferJoinType |= h.PreferNoHashJoin
-	}
-	if hintInfo.IfPreferNoHashJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferNoHashJoin
-		p.RightPreferJoinType |= h.PreferNoHashJoin
-	}
-	if hintInfo.IfPreferINLJ(lhsAlias) {
-		p.PreferJoinType |= h.PreferLeftAsINLJInner
-		p.LeftPreferJoinType |= h.PreferINLJ
-	}
-	if hintInfo.IfPreferINLJ(rhsAlias) {
-		p.PreferJoinType |= h.PreferRightAsINLJInner
-		p.RightPreferJoinType |= h.PreferINLJ
-	}
-	if hintInfo.IfPreferINLHJ(lhsAlias) {
-		p.PreferJoinType |= h.PreferLeftAsINLHJInner
-		p.LeftPreferJoinType |= h.PreferINLHJ
-	}
-	if hintInfo.IfPreferINLHJ(rhsAlias) {
-		p.PreferJoinType |= h.PreferRightAsINLHJInner
-		p.RightPreferJoinType |= h.PreferINLHJ
-	}
-	if hintInfo.IfPreferINLMJ(lhsAlias) {
-		p.PreferJoinType |= h.PreferLeftAsINLMJInner
-		p.LeftPreferJoinType |= h.PreferINLMJ
-	}
-	if hintInfo.IfPreferINLMJ(rhsAlias) {
-		p.PreferJoinType |= h.PreferRightAsINLMJInner
-		p.RightPreferJoinType |= h.PreferINLMJ
-	}
-	if hintInfo.IfPreferNoIndexJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferNoIndexJoin
-		p.LeftPreferJoinType |= h.PreferNoIndexJoin
-	}
-	if hintInfo.IfPreferNoIndexJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferNoIndexJoin
-		p.RightPreferJoinType |= h.PreferNoIndexJoin
-	}
-	if hintInfo.IfPreferNoIndexHashJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferNoIndexHashJoin
-		p.LeftPreferJoinType |= h.PreferNoIndexHashJoin
-	}
-	if hintInfo.IfPreferNoIndexHashJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferNoIndexHashJoin
-		p.RightPreferJoinType |= h.PreferNoIndexHashJoin
-	}
-	if hintInfo.IfPreferNoIndexMergeJoin(lhsAlias) {
-		p.PreferJoinType |= h.PreferNoIndexMergeJoin
-		p.LeftPreferJoinType |= h.PreferNoIndexMergeJoin
-	}
-	if hintInfo.IfPreferNoIndexMergeJoin(rhsAlias) {
-		p.PreferJoinType |= h.PreferNoIndexMergeJoin
-		p.RightPreferJoinType |= h.PreferNoIndexMergeJoin
-	}
-	if hintInfo.IfPreferHJBuild(lhsAlias) {
-		p.PreferJoinType |= h.PreferLeftAsHJBuild
-		p.LeftPreferJoinType |= h.PreferHJBuild
-	}
-	if hintInfo.IfPreferHJBuild(rhsAlias) {
-		p.PreferJoinType |= h.PreferRightAsHJBuild
-		p.RightPreferJoinType |= h.PreferHJBuild
-	}
-	if hintInfo.IfPreferHJProbe(lhsAlias) {
-		p.PreferJoinType |= h.PreferLeftAsHJProbe
-		p.LeftPreferJoinType |= h.PreferHJProbe
-	}
-	if hintInfo.IfPreferHJProbe(rhsAlias) {
-		p.PreferJoinType |= h.PreferRightAsHJProbe
-		p.RightPreferJoinType |= h.PreferHJProbe
-	}
-	hasConflict := false
-	if !p.SCtx().GetSessionVars().EnableAdvancedJoinHint || p.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
-		if containDifferentJoinTypes(p.PreferJoinType) {
-			hasConflict = true
-		}
-	} else if p.SCtx().GetSessionVars().EnableAdvancedJoinHint {
-		if containDifferentJoinTypes(p.LeftPreferJoinType) || containDifferentJoinTypes(p.RightPreferJoinType) {
-			hasConflict = true
-		}
-	}
-	if hasConflict {
-		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-			"Join hints are conflict, you can only specify one type of join")
-		p.PreferJoinType = 0
-	}
-	// set the join order
-	if hintInfo.LeadingJoinOrder != nil {
-		p.PreferJoinOrder = hintInfo.MatchTableName([]*h.HintedTable{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
-	}
-	// set hintInfo for further usage if this hint info can be used.
-	if p.PreferJoinType != 0 || p.PreferJoinOrder {
-		p.HintInfo = hintInfo
-	}
 }
 
 func setPreferredJoinTypeFromOneSide(preferJoinType uint, isLeft bool) (resJoinType uint) {
@@ -848,19 +568,6 @@ func setPreferredJoinTypeFromOneSide(preferJoinType uint, isLeft bool) (resJoinT
 	}
 	resJoinType |= preferJoinType
 	return
-}
-
-// setPreferredJoinType generates hint information for the logicalJoin based on the hint information of its left and right children.
-func (p *LogicalJoin) setPreferredJoinType() {
-	if p.LeftPreferJoinType == 0 && p.RightPreferJoinType == 0 {
-		return
-	}
-	p.PreferJoinType = setPreferredJoinTypeFromOneSide(p.LeftPreferJoinType, true) | setPreferredJoinTypeFromOneSide(p.RightPreferJoinType, false)
-	if containDifferentJoinTypes(p.PreferJoinType) {
-		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-			"Join hints conflict after join reorder phase, you can only specify one type of join")
-		p.PreferJoinType = 0
-	}
 }
 
 func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
@@ -953,7 +660,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
 	if lc, ok := rightPlan.(*LogicalCTETable); ok && joinNode.Tp == ast.LeftJoin {
-		return nil, plannererrors.ErrCTERecursiveForbiddenJoinOrder.GenWithStackByArgs(lc.name)
+		return nil, plannererrors.ErrCTERecursiveForbiddenJoinOrder.GenWithStackByArgs(lc.Name)
 	}
 
 	handleMap1 := b.handleHelper.popMap()
@@ -1027,7 +734,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	}
 
 	// Set preferred join algorithm if some join hints is specified by user.
-	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
+	joinPlan.SetPreferredJoinTypeAndOrder(b.TableHints())
 
 	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
 	//
@@ -4350,11 +4057,11 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p base.LogicalPlan) ba
 	lctes := make([]base.LogicalPlan, 0, len(ctes)+1)
 	for _, cte := range ctes {
 		lcte := LogicalCTE{
-			cte:               cte.cteClass,
-			cteAsName:         cte.def.Name,
-			cteName:           cte.def.Name,
-			seedStat:          cte.seedStat,
-			onlyUsedAsStorage: true,
+			Cte:               cte.cteClass,
+			CteAsName:         cte.def.Name,
+			CteName:           cte.def.Name,
+			SeedStat:          cte.seedStat,
+			OnlyUsedAsStorage: true,
 		}.Init(b.ctx, b.getSelectOffset())
 		lcte.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 		lctes = append(lctes, lcte)
@@ -4563,7 +4270,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 
 				cte.recursiveRef = true
-				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat, seedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
+				p := LogicalCTETable{Name: cte.def.Name.String(), IDForStorage: cte.storageID, SeedStat: cte.seedStat, SeedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				return p, nil
@@ -4602,7 +4309,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 			}
 			var p base.LogicalPlan
-			lp := LogicalCTE{cteAsName: tn.Name, cteName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+			lp := LogicalCTE{CteAsName: tn.Name, CteName: tn.Name, Cte: cte.cteClass, SeedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
@@ -4628,12 +4335,12 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 
 			for i, col := range lp.Schema().Columns {
-				lp.cte.ColumnMap[string(col.HashCode())] = prevSchema.Columns[i]
+				lp.Cte.ColumnMap[string(col.HashCode())] = prevSchema.Columns[i]
 			}
 			p = lp
 			p.SetOutputNames(cte.seedLP.OutputNames())
 			if len(asName.String()) > 0 {
-				lp.cteAsName = *asName
+				lp.CteAsName = *asName
 				var on types.NameSlice
 				for _, name := range p.OutputNames() {
 					cpOn := *name
@@ -4725,12 +4432,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
-	tbl, err := is.TableByName(dbName, tn.Name)
+	tbl, err := is.TableByName(ctx, dbName, tn.Name)
 	if err != nil {
 		return nil, err
 	}
 
-	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(b.ctx, dbName, tbl, b.is)
+	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, b.ctx, dbName, tbl, b.is)
 	if err != nil {
 		return nil, err
 	}
@@ -5064,7 +4771,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var result base.LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+		us := LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		if tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
@@ -5165,13 +4872,13 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
 		if len(ds.AllConds) != 0 {
 			// extract the not null attributes from selection conditions.
-			notnullColsUniqueIDs := extractNotNullFromConds(ds.AllConds, ds)
+			notnullColsUniqueIDs := ExtractNotNullFromConds(ds.AllConds, ds)
 
 			// extract the constant cols from selection conditions.
-			constUniqueIDs := extractConstantCols(ds.AllConds, ds.SCtx(), fds)
+			constUniqueIDs := ExtractConstantCols(ds.AllConds, ds.SCtx(), fds)
 
 			// extract equivalence cols.
-			equivUniqueIDs := extractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
+			equivUniqueIDs := ExtractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
 
 			// apply conditions to FD.
 			fds.MakeNotNull(notnullColsUniqueIDs)
@@ -5322,7 +5029,16 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		case infoschema.TableTables,
 			infoschema.TableReferConst,
 			infoschema.TableKeyColumn,
-			infoschema.TableStatistics:
+			infoschema.TableStatistics,
+			infoschema.TablePartitions,
+			infoschema.TableSequences,
+			infoschema.TableCheckConstraints,
+			infoschema.TableTiDBCheckConstraints,
+			infoschema.TableTiDBIndexUsage,
+			infoschema.TableTiDBIndexes,
+			infoschema.TableViews,
+			infoschema.TableConstraints,
+			infoschema.TableSchemata:
 			p.Extractor = &InfoSchemaTablesExtractor{}
 		case infoschema.TableTiKVRegionStatus:
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
@@ -5545,7 +5261,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPl
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.OutputNames()[i] = types.EmptyName
 	}
-	ap.LogicalJoin.setPreferredJoinTypeAndOrder(b.TableHints())
+	ap.LogicalJoin.SetPreferredJoinTypeAndOrder(b.TableHints())
 	return ap
 }
 
@@ -5573,11 +5289,11 @@ func setIsInApplyForCTE(p base.LogicalPlan, apSchema *expression.Schema) {
 	switch x := p.(type) {
 	case *LogicalCTE:
 		if len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(p, apSchema)) > 0 {
-			x.cte.IsInApply = true
+			x.Cte.IsInApply = true
 		}
-		setIsInApplyForCTE(x.cte.seedPartLogicalPlan, apSchema)
-		if x.cte.recursivePartLogicalPlan != nil {
-			setIsInApplyForCTE(x.cte.recursivePartLogicalPlan, apSchema)
+		setIsInApplyForCTE(x.Cte.seedPartLogicalPlan, apSchema)
+		if x.Cte.recursivePartLogicalPlan != nil {
+			setIsInApplyForCTE(x.Cte.recursivePartLogicalPlan, apSchema)
 		}
 	default:
 		for _, child := range p.Children() {
@@ -5625,7 +5341,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 		}
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
-	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
+	joinPlan.SetPreferredJoinTypeAndOrder(b.TableHints())
 	if forceRewrite {
 		joinPlan.PreferJoinType |= h.PreferRewriteSemiJoin
 		b.optFlag |= flagSemiJoinRewrite

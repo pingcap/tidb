@@ -60,7 +60,7 @@ create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by
  partition p8bb values less than ("bb"),
  partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba");
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = "AA" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = "AA" collate utf8mb4_general_ci;
@@ -89,7 +89,7 @@ create table t (a varchar(255) charset utf8mb4 collate utf8mb4_general_ci) parti
  partition p5 values less than ("bb"),
  partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ");
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
 --sorted_result
 select * from t where a = "aa" collate utf8mb4_general_ci;
@@ -318,7 +318,7 @@ drop table if exists t;
 create table t (b int, a varchar(255)) partition by list columns (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10));
 show create table t;
 insert into t values (1, "1"), (2, "2"), (3,'3'), (null, null), (4, "4"), (11, "11");
-analyze table t;
+analyze table t all columns;
 --sorted_result
 select * from t partition(p0);
 --sorted_result
@@ -1404,7 +1404,7 @@ set @@session.tidb_enable_list_partition = ON;
 create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));
 create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));
 insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');
-analyze table t11;
+analyze table t11 all columns;
 select * from t11 order by a;
 select * from t11 partition (p0);
 select * from t11 partition (p1);

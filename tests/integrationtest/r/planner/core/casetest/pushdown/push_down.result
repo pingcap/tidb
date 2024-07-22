@@ -5,7 +5,7 @@ set @@session.tidb_distsql_scan_concurrency = 15;
 drop table if exists tbl;
 create table tbl(a int, b int, c int, key idx_b_c(b,c));
 insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5);
-analyze table tbl;
+analyze table tbl all columns;
 explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 limit 2,1;
 id	estRows	task	access object	operator info
 IndexLookUp	1.00	root		limit embedded(offset:2, count:1)

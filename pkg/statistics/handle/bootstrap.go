@@ -53,10 +53,17 @@ type MaxTidRecord struct {
 	tid atomic.Int64
 }
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsMeta4Chunk(ctx context.Context, is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
+
+		// Detect the context cancel signal, since it may take a long time for the loop.
+		// TODO: add context to TableInfoByID and remove this code block?
+		if ctx.Err() != nil {
+			return
+		}
+
 		// The table is read-only. Please do not modify it.
 		table, ok := h.TableInfoByID(is, physicalID)
 		if !ok {
@@ -66,11 +73,22 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		tableInfo := table.Meta()
 		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
+		snapshot := row.GetUint64(4)
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 			IsPkIsHandle:          tableInfo.PKIsHandle,
+			// During the initialization phase, we need to initialize LastAnalyzeVersion with the snapshot,
+			// which ensures that we don't duplicate the auto-analyze of a particular type of table.
+			// When the predicate columns feature is turned on, if a table has neither predicate columns nor indexes,
+			// then auto-analyze will only analyze the _row_id and refresh stats_meta,
+			// but since we don't have any histograms or topn's created for _row_id at the moment.
+			// So if we don't initialize LastAnalyzeVersion with the snapshot here,
+			// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
+			// But in the future, we maybe will create some records for _row_id, see:
+			// https://github.com/pingcap/tidb/issues/51098
+			LastAnalyzeVersion: snapshot,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -81,9 +99,9 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 	}
 }
 
-func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
+func (h *Handle) initStatsMeta(ctx context.Context, is infoschema.InfoSchema) (statstypes.StatsCache, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -103,7 +121,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsMeta4Chunk(is, tables, iter)
+		h.initStatsMeta4Chunk(ctx, is, tables, iter)
 	}
 	return tables, nil
 }
@@ -273,14 +291,14 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
-func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsLite(ctx context.Context, is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	sql := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -705,7 +723,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
 // 2. Column/index stats are loaded. (only histogram)
 // 3. TopN, Bucket, FMSketch are not loaded.
-func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
+func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema) (err error) {
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
@@ -717,13 +735,14 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 		return err
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
-	cache, err := h.initStatsMeta(is)
+	cache, err := h.initStatsMeta(ctx, is)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
-	err = h.initStatsHistogramsLite(is, cache)
+	err = h.initStatsHistogramsLite(ctx, is, cache)
 	if err != nil {
+		cache.Close()
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("complete to load the histogram in the lite mode")
@@ -734,7 +753,7 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 // InitStats initiates the stats cache.
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
 // 2. Column/index stats are loaded. (histogram, topn, buckets, FMSketch)
-func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
+func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err error) {
 	totalMemory, err := memory.MemTotal()
 	if err != nil {
 		return err
@@ -751,7 +770,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		return err
 	}
 	failpoint.Inject("beforeInitStats", func() {})
-	cache, err := h.initStatsMeta(is)
+	cache, err := h.initStatsMeta(ctx, is)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -134,7 +134,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 				Collate: "utf8mb4_bin",
 			},
 		}
-		err = se.CreateTable(ctx, tables[i].DB.Name, tables[i].Info, ddl.OnExistIgnore)
+		err = se.CreateTable(ctx, tables[i].DB.Name, tables[i].Info, ddl.WithOnExist(ddl.OnExistIgnore))
 		require.NoError(t, err)
 	}
 
@@ -282,7 +282,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
 	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
-	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
+	tableInfo, err := infoSchema.TableByName(context.Background(), model.NewCIStr("test_db"), model.NewCIStr("test_table"))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,
@@ -347,7 +347,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
 	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
 	require.Truef(t, ok, "DB info not exist")
-	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
+	tableInfo, err := infoSchema.TableByName(context.Background(), model.NewCIStr("test_db"), model.NewCIStr("test_table"))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	tables := []*metautil.Table{{
 		DB:   dbInfo,
@@ -419,6 +419,68 @@ func TestFilterDDLJobByRules(t *testing.T) {
 	for i, ddlJob := range ddlJobs {
 		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
 	}
+}
+
+func TestCheckDDLJobByRules(t *testing.T) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+		{
+			Type: model.ActionReorganizePartition,
+		},
+	}
+
+	filteredDDlJobs := task.FilterDDLJobByRules(ddlJobs, task.DDLJobLogIncrementalCompactBlockListRule)
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionSetTiFlashReplica,
+		model.ActionAddPrimaryKey,
+		model.ActionUpdateTiFlashReplicaStatus,
+		model.ActionCreateTable,
+		model.ActionLockTable,
+		model.ActionUnlockTable,
+		model.ActionCreateSchema,
+	}
+
+	require.Equal(t, len(expectedDDLTypes), len(filteredDDlJobs))
+	expectedDDLJobs := make([]*model.Job, 0, len(expectedDDLTypes))
+	for i, ddlJob := range filteredDDlJobs {
+		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+		expectedDDLJobs = append(expectedDDLJobs, ddlJob)
+	}
+
+	require.NoError(t, task.CheckDDLJobByRules(expectedDDLJobs, task.DDLJobLogIncrementalCompactBlockListRule))
+	require.Error(t, task.CheckDDLJobByRules(ddlJobs, task.DDLJobLogIncrementalCompactBlockListRule))
+}
+
+// NOTICE: Once there is a new backfilled type ddl, BR needs to ensure that it is correctly cover by the rules:
+func TestMonitorTheIncrementalUnsupportDDLType(t *testing.T) {
+	require.Equal(t, int(5), ddl.BackupFillerTypeCount())
 }
 
 func TestTikvUsage(t *testing.T) {

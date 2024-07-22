@@ -68,6 +68,7 @@ type Context struct {
 	sm            util.SessionManager
 	is            infoschema.MetaOnlyInfoSchema
 	values        map[fmt.Stringer]any
+	Mutations     map[int64]*binlog.TableMutation
 	sessionVars   *variable.SessionVars
 	tblctx        *tbctximpl.TableContextImpl
 	cancel        context.CancelFunc
@@ -480,8 +481,16 @@ func (*Context) StmtCommit(context.Context) {}
 func (*Context) StmtRollback(context.Context, bool) {}
 
 // StmtGetMutation implements the sessionctx.Context interface.
-func (*Context) StmtGetMutation(_ int64) *binlog.TableMutation {
-	return nil
+func (c *Context) StmtGetMutation(tblID int64) *binlog.TableMutation {
+	if c.Mutations == nil {
+		return nil
+	}
+	m, ok := c.Mutations[tblID]
+	if !ok {
+		m = &binlog.TableMutation{}
+		c.Mutations[tblID] = m
+	}
+	return m
 }
 
 // AddTableLock implements the sessionctx.Context interface.
@@ -624,7 +633,7 @@ func NewContext() *Context {
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
 	sctx.SessionExprContext = exprctximpl.NewSessionExprContext(sctx)
-	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
+	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC
@@ -639,6 +648,7 @@ func NewContext() *Context {
 	vars.MinPagingSize = variable.DefMinPagingSize
 	vars.CostModelVersion = variable.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
+	vars.EnableListTablePartition = true
 	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

@@ -39,10 +39,6 @@ func newDDLWorkerPool(resPool *pools.ResourcePool, tp jobType) *workerPool {
 // get gets workerPool from context resource pool.
 // Please remember to call put after you finished using workerPool.
 func (wp *workerPool) get() (*worker, error) {
-	if wp.resPool == nil {
-		return nil, nil
-	}
-
 	if wp.exit.Load() {
 		return nil, errors.Errorf("workerPool is closed")
 	}
@@ -63,7 +59,7 @@ func (wp *workerPool) get() (*worker, error) {
 
 // put returns workerPool to context resource pool.
 func (wp *workerPool) put(wk *worker) {
-	if wp.resPool == nil || wp.exit.Load() {
+	if wp.exit.Load() {
 		return
 	}
 
@@ -75,7 +71,7 @@ func (wp *workerPool) put(wk *worker) {
 // close clean up the workerPool.
 func (wp *workerPool) close() {
 	// prevent closing resPool twice.
-	if wp.exit.Load() || wp.resPool == nil {
+	if wp.exit.Load() {
 		return
 	}
 	wp.exit.Store(true)
@@ -86,4 +82,8 @@ func (wp *workerPool) close() {
 // tp return the type of backfill worker pool.
 func (wp *workerPool) tp() jobType {
 	return wp.t
+}
+
+func (wp *workerPool) available() int {
+	return int(wp.resPool.Available())
 }

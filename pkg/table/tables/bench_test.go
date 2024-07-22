@@ -43,7 +43,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 
 	variable.EnableMDL.Store(true)
@@ -97,7 +97,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 
 	variable.EnableMDL.Store(true)
@@ -160,7 +160,7 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 
 	// Pre-create data to be inserted and then updated

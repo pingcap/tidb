@@ -59,10 +59,6 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
-	// OnGetJobBefore is called before getting job.
-	OnGetJobBefore()
-	// OnGetJobAfter is called after getting job.
-	OnGetJobAfter(job *model.Job)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -99,16 +95,6 @@ func (*BaseCallback) OnWatched(_ context.Context) {
 	// Nothing to do.
 }
 
-// OnGetJobBefore implements Callback.OnGetJobBefore interface.
-func (*BaseCallback) OnGetJobBefore() {
-	// Nothing to do.
-}
-
-// OnGetJobAfter implements Callback.OnGetJobAfter interface.
-func (*BaseCallback) OnGetJobAfter(_ *model.Job) {
-	// Nothing to do.
-}
-
 // OnUpdateReorgInfo implements ReorgCallback interface.
 func (*BaseCallback) OnUpdateReorgInfo(_ *model.Job, _ int64) {
 }
@@ -132,29 +118,6 @@ type DefaultCallback struct {
 	do SchemaLoader
 }
 
-// OnChanged overrides ddl Callback interface.
-func (c *DefaultCallback) OnChanged(err error) error {
-	if err != nil {
-		return err
-	}
-	logutil.DDLLogger().Info("performing DDL change, must reload")
-
-	err = c.do.Reload()
-	if err != nil {
-		logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
-	}
-
-	return nil
-}
-
-// OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *DefaultCallback) OnSchemaStateChanged(_ int64) {
-	err := c.do.Reload()
-	if err != nil {
-		logutil.DDLLogger().Error("domain callback failed on schema state changed", zap.Error(err))
-	}
-}
-
 func newDefaultCallBack(do SchemaLoader) Callback {
 	return &DefaultCallback{BaseCallback: &BaseCallback{}, do: do}
 }
@@ -168,28 +131,6 @@ func newDefaultCallBack(do SchemaLoader) Callback {
 type ctcCallback struct {
 	*BaseCallback
 	do SchemaLoader
-}
-
-// OnChanged overrides ddl Callback interface.
-func (c *ctcCallback) OnChanged(err error) error {
-	if err != nil {
-		return err
-	}
-	logutil.DDLLogger().Info("performing DDL change, must reload")
-
-	err = c.do.Reload()
-	if err != nil {
-		logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
-	}
-	return nil
-}
-
-// OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *ctcCallback) OnSchemaStateChanged(_ int64) {
-	err := c.do.Reload()
-	if err != nil {
-		logutil.DDLLogger().Error("domain callback failed on schema state changed", zap.Error(err))
-	}
 }
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
