@@ -1466,6 +1466,11 @@ func init() {
 			return nil, err
 		}
 
+		tm := sessiontxn.GetTxnManager(sctx)
+		err = tm.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{})
+		if err != nil {
+			return nil, err
+		}
 		e := newExecutorBuilder(sctx, is)
 		executor := e.build(p)
 		if e.err != nil {
