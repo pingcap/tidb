@@ -3526,15 +3526,16 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				// Non-clustered table / not unique _tidb_rowid for the whole table
 				// Generate new _tidb_rowid if exists.
 				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
-				stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
-				if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
+				if reserved, ok := w.tblCtx.GetReservedRowIDAlloc(); ok && reserved.Exhausted() {
 					// TODO: Which autoid allocator to use?
 					ids := uint64(max(1, w.batchCnt-len(w.rowRecords)))
 					// Keep using the original table's allocator
-					stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
+					var baseRowID, maxRowID int64
+					baseRowID, maxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
 					if err != nil {
 						return false, errors.Trace(err)
 					}
+					reserved.Reset(baseRowID, maxRowID)
 				}
 				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 				if err != nil {

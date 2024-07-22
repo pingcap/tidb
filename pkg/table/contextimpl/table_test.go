@@ -82,4 +82,11 @@ func TestMutateContextImplFields(t *testing.T) {
 	require.Equal(t, sctx.GetSessionVars().IsRowLevelChecksumEnabled(), cfg.IsRowLevelChecksumEnabled)
 	// mutate buffers
 	require.NotNil(t, ctx.GetMutateBuffers())
+	// RowIDShardGenerator
+	sctx.GetSessionVars().TxnCtx.StartTS = 123
+	require.Same(t, sctx.GetSessionVars().GetRowIDShardGenerator(), ctx.GetRowIDShardGenerator())
+	// ReservedRowIDAlloc
+	reserved, ok := ctx.GetReservedRowIDAlloc()
+	require.True(t, ok)
+	require.Same(t, &sctx.GetSessionVars().StmtCtx.ReservedRowIDAlloc, reserved)
 }
