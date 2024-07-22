@@ -777,25 +777,20 @@ func (p *UserPrivileges) CheckCurrentPassword(user, host, password string, sessi
 		if password == "" {
 			return ErrMissingCurrentPassword
 		}
-		if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
-			return nil
-		}
 	case pwRequireCurrentOptional:
 		if password == "" {
-			return nil
-		}
-		if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
 			return nil
 		}
 	case pwRequireCurrent:
 		if password == "" {
 			return ErrMissingCurrentPassword
 		}
-		if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
-			return nil
-		}
 	default:
 		return errors.New("invalid value for Password_require_current")
+	}
+
+	if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
+		return nil
 	}
 
 	return ErrIncorrectCurrentPassword
