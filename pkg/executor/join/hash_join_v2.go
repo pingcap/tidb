@@ -294,10 +294,6 @@ func (e *HashJoinV2Exec) Close() error {
 	return err
 }
 
-func (e *HashJoinV2Exec) needUsedFlag() bool {
-	return e.JoinType == plannercore.LeftOuterJoin && !e.RightAsBuildSide
-}
-
 // Open implements the Executor Open interface.
 func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
@@ -306,14 +302,15 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
+	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
+	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = needScanRowTableAfterProbeDone
 	if e.RightAsBuildSide {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
-			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, e.needUsedFlag())
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, needScanRowTableAfterProbeDone)
 	} else {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
-			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, e.needUsedFlag())
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, needScanRowTableAfterProbeDone)
 	}
-	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.ChunkAllocPool = e.AllocPool
 	if e.memTracker != nil {
 		e.memTracker.Reset()
