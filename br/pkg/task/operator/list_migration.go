@@ -32,7 +32,9 @@ func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
 		return err
 	}
 	if cfg.JSONOutput {
-		json.NewEncoder(os.Stdout).Encode(migs)
+		if err := json.NewEncoder(os.Stdout).Encode(migs); err != nil {
+			return err
+		}
 	} else {
 		console := glue.ConsoleOperations{ConsoleGlue: glue.StdIOGlue{}}
 		console.Println(statusOK(fmt.Sprintf("Total %d Migrations.", len(migs.Layers)+1)))

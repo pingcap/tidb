@@ -57,10 +57,7 @@ func TestBatched(t *testing.T) {
 				if err := bat.WriteFile(ctx, "file6.txt", []byte("new content")); err != nil {
 					return err
 				}
-				if err := bat.Rename(ctx, "file6.txt", "fileRenamed.txt"); err != nil {
-					return err
-				}
-				return nil
+				return bat.Rename(ctx, "file6.txt", "fileRenamed.txt")
 			},
 			expected: []Effect{
 				EffDeleteFile("file5.txt"),
@@ -108,5 +105,4 @@ func TestJSONEffects(t *testing.T) {
     ]`
 
 	require.JSONEq(t, expectedJSON, string(buf), "Output JSON should match expected JSON")
-
 }

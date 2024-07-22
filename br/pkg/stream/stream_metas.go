@@ -454,9 +454,18 @@ func AddMigrationToTable(m *pb.Migration, table *glue.Table) {
 				totalDeleteLgcFile += len(dl.Spans)
 			}
 		}
-		table.Add("edit-meta-files", fmt.Sprintf("%s meta files will be edited.", rd(len(m.EditMeta))))
-		table.Add("delete-physical-file", fmt.Sprintf("%s physical files will be deleted.", rd(totalDeletePhyFile)))
-		table.Add("delete-logical-file", fmt.Sprintf("%s logical segments may be deleted, if possible.", rd(totalDeleteLgcFile)))
+		table.Add(
+			"edit-meta-files",
+			fmt.Sprintf("%s meta files will be edited.", rd(len(m.EditMeta))),
+		)
+		table.Add(
+			"delete-physical-file",
+			fmt.Sprintf("%s physical files will be deleted.", rd(totalDeletePhyFile)),
+		)
+		table.Add(
+			"delete-logical-file",
+			fmt.Sprintf("%s logical segments may be deleted, if possible.", rd(totalDeleteLgcFile)),
+		)
 	}
 	for i, c := range m.DestructPrefix {
 		table.Add(fmt.Sprintf("destruct-prefix[%02d]", i), rd(c))
@@ -631,7 +640,10 @@ func (migs Migrations) MergeTo(seq int) *pb.Migration {
 func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, seq int) (result MergeAndMigratedTo) {
 	migs, err := m.Load(ctx)
 	if err != nil {
-		result.MigratedTo = MigratedTo{Warnings: []error{errors.Annotate(err, "failed to load migrations, nothing will happen")}}
+		result.MigratedTo = MigratedTo{
+			Warnings: []error{
+				errors.Annotate(err, "failed to load migrations, nothing will happen"),
+			}}
 		return
 	}
 	result.Base = migs.Base
@@ -658,7 +670,10 @@ func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, seq int) (result Me
 	for _, mig := range result.Source {
 		err = m.s.DeleteFile(ctx, mig.Path)
 		if err != nil {
-			migTo.Warnings = append(migTo.Warnings, errors.Annotatef(err, "failed to delete the merged migration %s", migs.Layers[0].Path))
+			migTo.Warnings = append(
+				migTo.Warnings,
+				errors.Annotatef(err, "failed to delete the merged migration %s", migs.Layers[0].Path),
+			)
 		}
 	}
 	return
@@ -769,12 +784,19 @@ func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdi
 				return medit.DeleteLogicalFiles[idx].Spans[i].Offset < medit.DeleteLogicalFiles[idx].Spans[j].Offset
 			})
 			group.DataFilesInfo = slices.DeleteFunc(group.DataFilesInfo, func(dfi *pb.DataFileInfo) bool {
-				received, ok := slices.BinarySearchFunc(medit.DeleteLogicalFiles[idx].Spans, dfi.RangeOffset, func(s *pb.Span, u uint64) int {
-					return int(s.Offset - u)
-				})
+				received, ok := slices.BinarySearchFunc(
+					medit.DeleteLogicalFiles[idx].Spans,
+					dfi.RangeOffset,
+					func(s *pb.Span, u uint64) int {
+						return int(s.Offset - u)
+					})
 				if ok && medit.DeleteLogicalFiles[idx].Spans[received].Length != dfi.RangeLength {
-					err = errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "trying to delete a span that mismatches with metadata: to delete is %v, found %v",
-						medit.DeleteLogicalFiles[idx].Spans[received], dfi)
+					err = errors.Annotatef(
+						berrors.ErrPiTRMalformedMetadata,
+						"trying to delete a span that mismatches with metadata: to delete is %v, found %v",
+						medit.DeleteLogicalFiles[idx].Spans[received],
+						dfi,
+					)
 				}
 				return ok
 			})
@@ -804,7 +826,11 @@ func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdi
 func (m MigrationExt) tryRemovePrefix(ctx context.Context, pfx string, out *MigratedTo) {
 	enumerateAndDelete := func(prefix string) error {
 		if isInsane(prefix) {
-			return errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "trying to delete a prefix %q that is too wide, skipping deleting", prefix)
+			return errors.Annotatef(
+				berrors.ErrPiTRMalformedMetadata,
+				"trying to delete a prefix %q that is too wide, skipping deleting",
+				prefix,
+			)
 		}
 		files, err := m.loadFilesOfPrefix(ctx, prefix)
 		if err != nil {

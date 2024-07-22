@@ -183,7 +183,6 @@ func (cfg *MigrateToConfig) Verify() error {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"the --%s and ( --%s or --%s ) flag cannot be used at the same time",
 			flagBase, flagTo, flagRecent)
-
 	}
 	return nil
 }

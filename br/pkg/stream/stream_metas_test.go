@@ -611,10 +611,10 @@ func mDel(mPath string, files ...string) migOP {
 	}
 }
 
-func sp(off, len uint64) *backuppb.Span {
+func sp(offset, length uint64) *backuppb.Span {
 	return &backuppb.Span{
-		Offset: off,
-		Length: len,
+		Offset: offset,
+		Length: length,
 	}
 }
 
@@ -2564,7 +2564,7 @@ func TestCalculateShiftTS(t *testing.T) {
 
 func TestBasicMigration(t *testing.T) {
 	s := tmp(t)
-	dsp := func(off, len uint64) *backuppb.DataFileInfo { return dFile(sp(off, len)) }
+	dsp := func(o, l uint64) *backuppb.DataFileInfo { return dFile(sp(o, l)) }
 
 	pmt(s, "00001.meta", mt(mtGroup("foo.log"), mtGroup("bar.log")))
 	pmt(s, "00002.meta", mt(
@@ -2630,7 +2630,7 @@ func TestBasicMigration(t *testing.T) {
 
 func TestMergeAndMigrateTo(t *testing.T) {
 	s := tmp(t)
-	dfi := func(off, len uint64) *backuppb.DataFileInfo { return dFile(sp(off, len)) }
+	dfi := func(o, l uint64) *backuppb.DataFileInfo { return dFile(sp(o, l)) }
 	lN := func(n uint64) string { return fmt.Sprintf("%05d.log", n) }
 	mN := func(n uint64) string { return fmt.Sprintf("%05d.meta", n) }
 
@@ -2749,7 +2749,7 @@ func TestRetry(t *testing.T) {
 	s := tmp(t)
 	lN := func(n uint64) string { return fmt.Sprintf("%05d.log", n) }
 	mN := func(n uint64) string { return fmt.Sprintf("%05d.meta", n) }
-	dfi := func(off, len uint64) *backuppb.DataFileInfo { return dFile(sp(off, len)) }
+	dfi := func(o, l uint64) *backuppb.DataFileInfo { return dFile(sp(o, l)) }
 
 	pmt(s, mN(1), mt(
 		mtGroup(lN(1), dfi(0, 41)), mtGroup(lN(2), dfi(0, 42)), mtGroup(lN(3), dfi(0, 43))))

@@ -16,11 +16,11 @@ func (cfg *MigrateToConfig) getTargetVersion(migs stream.Migrations) (int, bool)
 			return 0, false
 		}
 		return migs.Layers[0].SeqNum, true
-	} else if cfg.Base {
-		return 0, true
-	} else {
-		return cfg.MigrateTo, true
 	}
+	if cfg.Base {
+		return 0, true
+	}
+	return cfg.MigrateTo, true
 }
 
 type migrateToCtx struct {
@@ -49,7 +49,6 @@ func (cx migrateToCtx) estlimateByLog(migs stream.Migrations, targetVersion int)
 		return errors.Annotatef(context.Canceled, "the user aborted the operation")
 	}
 	return nil
-
 }
 
 func (cx migrateToCtx) dryRun(ctx context.Context, migs stream.Migrations, targetVersion int) error {
