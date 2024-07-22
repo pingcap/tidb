@@ -1108,8 +1108,8 @@ const (
 	version209 = 209
 	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
 	version210 = 210
-    // version211 add column `summary` to `mysql.tidb_background_subtask_history`.
-    version211 = 211
+	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
+	version211 = 211
 	// version212 adds the Password_require_current column to mysql.user
 	version212 = 212
 )
