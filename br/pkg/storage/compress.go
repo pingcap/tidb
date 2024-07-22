@@ -86,6 +86,7 @@ type compressReader struct {
 	io.Reader
 	io.Seeker
 	io.Closer
+	readBytes int64
 }
 
 // InterceptDecompressReader intercepts the reader and wraps it with a decompress
@@ -130,10 +131,18 @@ func NewLimitedInterceptReader(
 	return InterceptDecompressReader(newFileReader, compressType, cfg)
 }
 
+func (c *compressReader) Read(p []byte) (int, error) {
+	n, err := c.Reader.Read(p)
+	if err != nil {
+		c.readBytes += int64(n)
+	}
+	return n, err
+}
+
 func (c *compressReader) Seek(offset int64, whence int) (int64, error) {
 	// only support get original reader's current offset
 	if offset == 0 && whence == io.SeekCurrent {
-		return c.Seeker.Seek(offset, whence)
+		return c.readBytes, nil
 	}
 	return int64(0), errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now, offset %d, whence %d", offset, whence)
 }
