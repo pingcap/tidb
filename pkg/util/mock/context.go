@@ -481,6 +481,11 @@ func NewContext() *Context {
 	vars.MinPagingSize = variable.DefMinPagingSize
 	vars.CostModelVersion = variable.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
+<<<<<<< HEAD
+=======
+	vars.EnableListTablePartition = true
+	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
+>>>>>>> 504960d51b2 (util, schematracker: mock sctx turn on EnableListTablePartition (#54761))
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
