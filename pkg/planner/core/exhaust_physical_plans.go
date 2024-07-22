@@ -2748,6 +2748,7 @@ func GetHashJoin(la *LogicalApply, prop *property.PhysicalProperty) *PhysicalHas
 	return getHashJoin(&la.LogicalJoin, prop, 1, false)
 }
 
+// ExhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
 func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(

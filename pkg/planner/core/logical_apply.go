@@ -48,8 +48,8 @@ func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
 // *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalApply) ExplainInfo() string {
-	return p.LogicalJoin.ExplainInfo()
+func (la *LogicalApply) ExplainInfo() string {
+	return la.LogicalJoin.ExplainInfo()
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
