@@ -553,7 +553,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
-		if sctx.GetSessionVars().ConnectionID != 0 {
+		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
 				failpoint.Return(err)
@@ -561,7 +561,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		}
 	})
 
-	if t.shouldAssert(sessVars.AssertionLevel) {
+	if t.shouldAssert(sctx.TxnAssertionLevel()) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 	} else {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
@@ -573,7 +573,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
-	if sessVars.EnableMutationChecker {
+	if sctx.EnableMutationChecker() {
 		if err = CheckDataConsistency(txn, tc, t, newData, oldData, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
@@ -948,7 +948,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	if setPresume {
 		flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 		if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic && sessVars.InTxn() &&
-			!sessVars.InRestrictedSQL && sessVars.ConnectionID > 0 {
+			!sctx.InRestrictedSQL() && sctx.ConnectionID() > 0 {
 			flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 		}
 	}
@@ -962,7 +962,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		// Assert the key exists while it actually doesn't. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
-		if sctx.GetSessionVars().ConnectionID != 0 {
+		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
 				failpoint.Return(nil, err)
@@ -996,7 +996,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return nil, err
 	}
-	if sessVars.EnableMutationChecker {
+	if sctx.EnableMutationChecker() {
 		if err = CheckDataConsistency(txn, tc, t, r, nil, memBuffer, sh); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1048,7 +1048,7 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
 func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opts []table.CreateIdxOptFunc) (kv.Handle, error) {
-	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
+	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	for _, v := range t.Indices() {
@@ -1264,7 +1264,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	}
 
 	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
-	if ctx.GetSessionVars().EnableMutationChecker {
+	if ctx.EnableMutationChecker() {
 		if err = CheckDataConsistency(txn, tc, t, nil, r, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
@@ -1406,14 +1406,14 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, h kv.Handle) error 
 		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
-		if ctx.GetSessionVars().ConnectionID != 0 {
+		if ctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
-	if t.shouldAssert(ctx.GetSessionVars().AssertionLevel) {
+	if t.shouldAssert(ctx.TxnAssertionLevel()) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 	} else {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)

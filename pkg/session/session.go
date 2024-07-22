@@ -2418,6 +2418,11 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 	return crs, true, nil
 }
 
+// GetExecutor4Test exports the internal executor for test purpose.
+func (rs *execStmtResult) GetExecutor4Test() any {
+	return rs.RecordSet.(interface{ GetExecutor4Test() any }).GetExecutor4Test()
+}
+
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
 func (s *session) rollbackOnError(ctx context.Context) {
 	if !s.sessionVars.InTxn() {

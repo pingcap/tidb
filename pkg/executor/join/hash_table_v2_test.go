@@ -72,16 +72,15 @@ func createRowTable(rows int) (*rowTable, error) {
 		}
 	}
 
-	partitionNumber := 1
 	chk := testutil.GenRandomChunks(buildTypes, rows)
 	hashJoinCtx := &HashJoinCtxV2{
-		PartitionNumber: partitionNumber,
-		hashTableMeta:   meta,
+		hashTableMeta: meta,
 	}
 	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, false, false)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, false, false)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	if err != nil {
 		return nil, err
@@ -91,22 +90,22 @@ func createRowTable(rows int) (*rowTable, error) {
 }
 
 func TestHashTableSize(t *testing.T) {
-	rowTable := createMockRowTable(10, 5, true)
+	rowTable := createMockRowTable(2, 5, true)
 	subTable := newSubTable(rowTable)
-	// min hash table size is 1024
-	require.Equal(t, 1024, len(subTable.hashTable))
-	rowTable = createMockRowTable(1024, 1, true)
+	// min hash table size is 32
+	require.Equal(t, 32, len(subTable.hashTable))
+	rowTable = createMockRowTable(32, 1, true)
 	subTable = newSubTable(rowTable)
-	require.Equal(t, 2048, len(subTable.hashTable))
-	rowTable = createMockRowTable(1025, 1, true)
+	require.Equal(t, 64, len(subTable.hashTable))
+	rowTable = createMockRowTable(33, 1, true)
 	subTable = newSubTable(rowTable)
-	require.Equal(t, 2048, len(subTable.hashTable))
-	rowTable = createMockRowTable(2048, 1, true)
+	require.Equal(t, 64, len(subTable.hashTable))
+	rowTable = createMockRowTable(64, 1, true)
 	subTable = newSubTable(rowTable)
-	require.Equal(t, 4096, len(subTable.hashTable))
-	rowTable = createMockRowTable(2049, 1, true)
+	require.Equal(t, 128, len(subTable.hashTable))
+	rowTable = createMockRowTable(65, 1, true)
 	subTable = newSubTable(rowTable)
-	require.Equal(t, 4096, len(subTable.hashTable))
+	require.Equal(t, 128, len(subTable.hashTable))
 }
 
 func TestBuild(t *testing.T) {
@@ -246,7 +245,7 @@ func checkRowIter(t *testing.T, table *hashTableV2, scanConcurrency int) {
 }
 
 func TestRowIter(t *testing.T) {
-	partitionNumbers := []int{1, 5, 10}
+	partitionNumbers := []int{1, 4, 8}
 	// normal case
 	for _, partitionNumber := range partitionNumbers {
 		// create row tables

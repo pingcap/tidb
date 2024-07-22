@@ -65,6 +65,10 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	}
 
 	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
+	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
+	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
+	// are derived from sample data processed within TiDB.
+	// The reason is that we want to keep the same row sampling for all columns.
 	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))
 	specialIndexesOffsets := make([]int, 0, len(e.indexes))
 	for i, idx := range e.indexes {
@@ -142,8 +146,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 	}
 }
 
-// decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
-// If it failed, it would return false to trigger normal decoding way without the virtual column.
+// decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the decoded normal columns.
 func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	collector statistics.RowSampleCollector,
 	fieldTps []*types.FieldType,
@@ -304,6 +307,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 
 	// Decode the data from sample collectors.
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
+	// Filling virtual columns is necessary here because these samples are used to build statistics for indexes that constructed by virtual columns.
 	if len(virtualColIdx) > 0 {
 		fieldTps := make([]*types.FieldType, 0, len(virtualColIdx))
 		for _, colOffset := range virtualColIdx {
@@ -314,7 +318,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	} else {
-		// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
+		// If there's no virtual column, normal decode way is enough.
 		for _, sample := range rootRowCollector.Base().Samples {
 			for i := range sample.Columns {
 				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone())
