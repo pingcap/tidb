@@ -71,6 +71,12 @@ var dynamicPrivs = []string{
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
 
+const (
+	pwRequireCurrent = iota
+	pwRequireCurrentOptional
+	pwRequireCurrentDefault
+)
+
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
 type UserPrivileges struct {
@@ -760,7 +766,7 @@ func (p *UserPrivileges) CheckCurrentPassword(user, host, password string, sessi
 	record := mysqlPriv.connectionVerification(user, host)
 
 	switch record.PasswordRequireCurrent {
-	case -1: // PASSWORD REQUIRE CURRENT DEFAULT
+	case pwRequireCurrentDefault:
 		requireCurrentVar, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.PasswordRequireCurrent)
 		if err != nil {
 			return err
@@ -774,14 +780,14 @@ func (p *UserPrivileges) CheckCurrentPassword(user, host, password string, sessi
 		if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
 			return nil
 		}
-	case 0: // PASSWORD REQUIRE CURRENT OPTIONAL
+	case pwRequireCurrentOptional:
 		if password == "" {
 			return nil
 		}
 		if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
 			return nil
 		}
-	case 1: // PASSWORD REQUIRE CURRENT
+	case pwRequireCurrent:
 		if password == "" {
 			return ErrMissingCurrentPassword
 		}

@@ -725,14 +725,13 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			}
 			value.PasswordLifeTime = row.GetInt64(i)
 		case f.ColumnAsName.L == "password_require_current":
-			// NULL = -1 = PASSWORD REQUIRE CURRENT DEFAULT
-			// 'N'  =  0 = PASSWORD REQUIRE CURRENT OPTIONAL
-			// 'Y'  =  1 = PASSWORD REQUIRE CURRENT
 			if row.IsNull(i) {
-				value.PasswordRequireCurrent = -1
+				value.PasswordRequireCurrent = pwRequireCurrentDefault
 				continue
 			} else if row.GetEnum(i).String() == "Y" {
-				value.PasswordRequireCurrent = 1
+				value.PasswordRequireCurrent = pwRequireCurrent
+			} else if row.GetEnum(i).String() == "N" {
+				value.PasswordRequireCurrent = pwRequireCurrentOptional
 			}
 		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
