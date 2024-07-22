@@ -498,8 +498,6 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 
 	memBuffer := txn.GetMemBuffer()
-	memBuffer.EnableCache()
-	defer memBuffer.DisableCache()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
@@ -911,8 +909,6 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	mutateBuffers := sctx.GetMutateBuffers()
 	encodeRowBuffer := mutateBuffers.GetEncodeRowBufferWithCap(len(r))
 	memBuffer := txn.GetMemBuffer()
-	memBuffer.EnableCache()
-	defer memBuffer.DisableCache()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
@@ -1281,8 +1277,6 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	}
 
 	memBuffer := txn.GetMemBuffer()
-	memBuffer.EnableCache()
-	defer memBuffer.DisableCache()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
