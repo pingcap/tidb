@@ -119,7 +119,7 @@ func getPlacementPolicyByName(d *ddlCtx, t *meta.Meta, policyName model.CIStr) (
 	}
 
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		// Use cached policy.
 		policy, ok := is.PolicyByName(policyName)
 		if ok {
@@ -346,7 +346,7 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 		return err
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
 	} else {
 		err = CheckPlacementPolicyNotInUseFromMeta(t, policy)
