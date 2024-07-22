@@ -2321,3 +2321,42 @@ func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", true)
 	})
 }
+
+func TestTiDBUpgradeToVer211(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver210 := version210
+	seV210 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver210))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV210, ver210)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV210)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver210), ver)
+	MustExec(t, seV210, "alter table mysql.tidb_background_subtask_history drop column summary;")
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV210)
+	require.NoError(t, err)
+	require.Less(t, int64(ver210), ver)
+
+	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NoError(t, r.Close())
+
+	dom.Close()
+}
