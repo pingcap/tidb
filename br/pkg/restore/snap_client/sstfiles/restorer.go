@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Restorer is the minimal methods required for restoring.
-// It contains the primitive APIs extract from `restore.Client`, so some of arguments may seem redundant.
-// Maybe TODO: make a better abstraction?
 package sstfiles
 
 import (
@@ -43,6 +40,11 @@ func NewEmptyRuleFilesInfo(files []*backuppb.File) []SstFilesInfo {
 	}}
 }
 
+// FileRestorer is the minimal methods required for restoring sst, including
+// 1. Raw backup ssts
+// 2. Txn backup ssts
+// 3. TiDB backup ssts
+// 4. Log compacted ssts
 type FileRestorer interface {
 	// SplitRanges split regions implicated by the ranges and rewrite rules.
 	// After spliting, it also scatters the fresh regions.

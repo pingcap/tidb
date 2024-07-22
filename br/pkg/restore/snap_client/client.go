@@ -434,7 +434,8 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) error {
+func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool,
+	RawStartKey, RawEndKey []byte) error {
 	var fileImporter *sstfiles.SnapFileImporter
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
@@ -449,7 +450,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 		createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
-			return importer.SetRawRange([]byte(""), []byte(""))
+			return importer.SetRawRange(RawStartKey, RawEndKey)
 		})
 	}
 	createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
@@ -534,7 +535,10 @@ func (rc *SnapClient) InitBackupMeta(
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader,
-	loadStats bool) error {
+	loadStats bool,
+	RawStartKey []byte,
+	RawEndKey []byte,
+) error {
 	if rc.needLoadSchemas(backupMeta) {
 		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
@@ -559,7 +563,7 @@ func (rc *SnapClient) InitBackupMeta(
 	rc.backupMeta = backupMeta
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
+	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey)
 }
 
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.
