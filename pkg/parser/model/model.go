@@ -553,13 +553,6 @@ type TableNameInfo struct {
 	Name CIStr `json:"name"`
 }
 
-// TablePartitionNameInfo provides meta data describing a table info only with name and partition.
-type TablePartitionNameInfo struct {
-	ID        int64          `json:"id"`
-	Name      CIStr          `json:"name"`
-	Partition *PartitionInfo `json:"partition"`
-}
-
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
 func (t *TableInfo) SepAutoInc() bool {
 	return t.Version >= TableInfoVersion5 && t.AutoIdCache == 1
@@ -724,14 +717,6 @@ func (tr *TiFlashReplicaInfo) IsPartitionAvailable(pid int64) bool {
 
 // GetPartitionInfo returns the partition information.
 func (t *TableInfo) GetPartitionInfo() *PartitionInfo {
-	if t.Partition != nil && t.Partition.Enable {
-		return t.Partition
-	}
-	return nil
-}
-
-// GetPartitionInfo returns the partition information.
-func (t *TablePartitionNameInfo) GetPartitionInfo() *PartitionInfo {
 	if t.Partition != nil && t.Partition.Enable {
 		return t.Partition
 	}

@@ -759,7 +759,7 @@ func BuildBackupRangeAndInitSchema(
 		}
 
 		hasTable := false
-		err = meta.IterTables(m, dbInfo.ID, func(tableInfo *model.TableInfo) error {
+		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if tableInfo.Version > version.CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION {
 				// normally this shouldn't happen in a production env.
 				// because we had a unit test to avoid table info version update silencly.
@@ -841,7 +841,7 @@ func BuildBackupSchemas(
 		}
 
 		hasTable := false
-		err = meta.IterTables(m, dbInfo.ID, func(tableInfo *model.TableInfo) error {
+		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
@@ -948,8 +948,7 @@ func BuildFullSchema(storage kv.Storage, backupTS uint64, fn func(dbInfo *model.
 
 	for _, db := range dbs {
 		hasTable := false
-		err = meta.IterTables(m, db.ID, func(table *model.TableInfo) error {
-			table.DBID = db.ID
+		err = m.IterTables(db.ID, func(table *model.TableInfo) error {
 			// add table
 			fn(db, table)
 			hasTable = true

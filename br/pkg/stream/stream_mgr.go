@@ -59,7 +59,7 @@ func appendTableObserveRanges(tblIDs []int64) []kv.KeyRange {
 }
 
 // buildObserveTableRange builds key ranges to observe data KV that belongs to `table`.
-func buildObserveTableRange(table *model.TablePartitionNameInfo) []kv.KeyRange {
+func buildObserveTableRange(table *model.TableInfo) []kv.KeyRange {
 	pis := table.GetPartitionInfo()
 	if pis == nil {
 		// Short path, no partition.
@@ -94,7 +94,7 @@ func buildObserveTableRanges(
 			continue
 		}
 
-		if err := meta.IterTables(m, dbInfo.ID, func(tableInfo *model.TablePartitionNameInfo) error {
+		if err := m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
@@ -134,6 +134,8 @@ func BuildObserveDataRanges(
 	if len(filterStr) == 1 && filterStr[0] == string("*.*") {
 		return buildObserverAllRange(), nil
 	}
+	// TODO: currently it's a dead code, the iterator metakvs can be optimized
+	//  to marshal only necessary fields.
 	return buildObserveTableRanges(storage, tableFilter, backupTS)
 }
 

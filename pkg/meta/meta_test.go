@@ -281,8 +281,7 @@ func TestMeta(t *testing.T) {
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
 	{
 		idx := 0
-		err := meta.IterTables(m, 1, func(info *model.TableInfo) error {
-			info.DBID = 1
+		err := m.IterTables(1, func(info *model.TableInfo) error {
 			require.Less(t, idx, 2)
 			if idx == 0 {
 				require.Equal(t, tbInfo, info)
@@ -320,8 +319,7 @@ func TestMeta(t *testing.T) {
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
 	{
 		idx := 0
-		err := meta.IterTables(m, 1, func(info *model.TableInfo) error {
-			info.DBID = 1
+		err := m.IterTables(1, func(info *model.TableInfo) error {
 			require.Less(t, idx, 1)
 			require.Equal(t, tbInfo, info)
 			idx += 1
