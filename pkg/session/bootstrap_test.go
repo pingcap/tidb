@@ -2235,3 +2235,72 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 
 	dom.Close()
 }
+
+func TestTiDBUpgradeToVer181(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver180 := version180
+	seV180 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver180))
+	require.NoError(t, err)
+	MustExec(t, seV180, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver180))
+	MustExec(t, seV180, "alter table mysql.tidb_background_subtask_history drop column summary;")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV180)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver180), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV180)
+	require.NoError(t, err)
+	require.Less(t, int64(ver180), ver)
+
+	r := MustExecToRecodeSet(t, seV180, "select count(summary) from mysql.tidb_background_subtask_history;")
+	req := r.NewChunk(nil)
+	err = r.Next(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NoError(t, r.Close())
+
+	dom.Close()
+}
+
+func TestTiDBHistoryTableConsistent(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	se := CreateSessionAndSetID(t, store)
+	query := `select (select group_concat(column_name) from information_schema.columns where table_name='tidb_background_subtask' order by ordinal_position)
+	               = (select group_concat(column_name) from information_schema.columns where table_name='tidb_background_subtask_history' order by ordinal_position);`
+	r := MustExecToRecodeSet(t, se, query)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, int64(1), row.GetInt64(0))
+
+	query = `select (select group_concat(column_name) from information_schema.columns where table_name='tidb_global_task' order by ordinal_position) 
+	              = (select group_concat(column_name) from information_schema.columns where table_name='tidb_global_task_history' order by ordinal_position);`
+	r = MustExecToRecodeSet(t, se, query)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row = req.GetRow(0)
+	require.Equal(t, int64(1), row.GetInt64(0))
+
+	dom.Close()
+}
