@@ -3854,7 +3854,7 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
 		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = TRUE"},
-		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=UNLIMITED", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
 		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
 		{"alter resource group x ru_per_sec=unlimited, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
 		{"alter resource group x ru_per_sec='check', BURSTABLE", false, ""},
