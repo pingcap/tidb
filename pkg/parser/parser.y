@@ -1866,6 +1866,10 @@ DirectResourceGroupOption:
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
+|	"RU_PER_SEC" EqOpt "UNLIMITED"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, RUUnlimited: true}
+	}
 |	"PRIORITY" EqOpt ResourceGroupPriorityOption
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourcePriority, UintValue: $3.(uint64)}

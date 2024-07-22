@@ -3565,7 +3565,7 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	resourceGroupSettings := groupInfo.ResourceGroupSettings
 	switch opt.Tp {
 	case ast.ResourceRURate:
-		resourceGroupSettings.RURate = opt.UintValue
+		return SetDirectResourceGroupRUSecondOption(resourceGroupSettings, opt.UintValue, opt.RUUnlimited)
 	case ast.ResourcePriority:
 		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:
@@ -3608,6 +3608,17 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 		}
 	default:
 		return errors.Trace(errors.New("unknown resource unit type"))
+	}
+	return nil
+}
+
+// SetDirectResourceGroupRUSecondOption tries to set ru second part of the ResourceGroupSettings.
+func SetDirectResourceGroupRUSecondOption(resourceGroupSettings *model.ResourceGroupSettings, intVal uint64, unlimted bool) error {
+	if unlimted {
+		resourceGroupSettings.RURate = uint64(math.MaxInt32)
+		resourceGroupSettings.BurstLimit = -1
+	} else {
+		resourceGroupSettings.RURate = intVal
 	}
 	return nil
 }

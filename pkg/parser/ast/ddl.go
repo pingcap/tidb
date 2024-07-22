@@ -2176,6 +2176,7 @@ type ResourceGroupOption struct {
 	StrValue          string
 	UintValue         uint64
 	BoolValue         bool
+	RUUnlimited       bool
 	RunawayOptionList []*ResourceGroupRunawayOption
 	BackgroundOptions []*ResourceGroupBackgroundOption
 }
@@ -2202,7 +2203,11 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	case ResourceRURate:
 		ctx.WriteKeyWord("RU_PER_SEC ")
 		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
+		if n.RUUnlimited {
+			ctx.WriteKeyWord("UNLIMITED")
+		} else {
+			ctx.WritePlainf("%d", n.UintValue)
+		}
 	case ResourcePriority:
 		ctx.WriteKeyWord("PRIORITY ")
 		ctx.WritePlain("= ")
