@@ -68,7 +68,7 @@ func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Ran
 	return splitter.ExecuteSplit(ctx, ranges)
 }
 
-func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, updateCh glue.Progress, files []SstFilesInfo) error {
+func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesInfo, updateCh glue.Progress) error {
 	errCh := make(chan error, len(files))
 	eg, ectx := errgroup.WithContext(ctx)
 	defer close(errCh)

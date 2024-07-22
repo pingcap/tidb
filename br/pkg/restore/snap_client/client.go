@@ -478,7 +478,6 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		}
 		createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
 			return setFn(ctx, importer, rc.rateLimit)
-
 		})
 		closeCallBacks = append(closeCallBacks, func(importer *sstfiles.SnapFileImporter) error {
 			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
@@ -520,7 +519,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = sstfiles.NewCompleteFileRestorer(fileImporter, metaClient, rc.workerPool, rc.checkpointRunner)
+		rc.restorer = sstfiles.NewMultiTablesRestorer(fileImporter, metaClient, rc.workerPool, rc.checkpointRunner)
 	}
 	return nil
 }
@@ -1074,7 +1073,7 @@ func (rc *SnapClient) RestoreRaw(
 			zap.Duration("take", elapsed))
 	}()
 
-	err := rc.restorer.RestoreFiles(ctx, updateCh, files)
+	err := rc.restorer.RestoreFiles(ctx, files, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}

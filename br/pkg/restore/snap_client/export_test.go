@@ -47,7 +47,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.Im
 	rc.SetRateLimit(42)
 	rc.workerPool = tidbutil.NewWorkerPool(128, "set-speed-limit")
 	rc.hasSpeedLimited = false
-	rc.fileImporter, err = NewSnapFileImporter(ctx, nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128)
+	rc.restorer, err = NewSnapFileImporter(ctx, nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128)
 	if err != nil {
 		return errors.Trace(err)
 	}

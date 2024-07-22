@@ -40,20 +40,20 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type CompleteFileRestorer struct {
+type MultiTablesRestorer struct {
 	workerPool       *tidbutil.WorkerPool
 	splitter         split.SplitClient
 	fileImporter     *SnapFileImporter
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
-func NewCompleteFileRestorer(
+func NewMultiTablesRestorer(
 	fileImporter *SnapFileImporter,
 	splitter split.SplitClient,
 	workerPool *tidbutil.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) FileRestorer {
-	return &CompleteFileRestorer{
+	return &MultiTablesRestorer{
 		workerPool:       workerPool,
 		splitter:         splitter,
 		fileImporter:     fileImporter,
@@ -61,16 +61,15 @@ func NewCompleteFileRestorer(
 	}
 }
 
-func (s *CompleteFileRestorer) Close() error {
+func (s *MultiTablesRestorer) Close() error {
 	return s.fileImporter.Close()
 }
 
 // SplitRanges implements FileRestorer. It splits region by
 // data range after rewrite.
 // updateCh is used to record progress.
-func (s *CompleteFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
-	var splitClientOpt split.ClientOptionalParameter
-	splitClientOpt = split.WithOnSplit(func(keys [][]byte) {
+func (s *MultiTablesRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
+	splitClientOpt := split.WithOnSplit(func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}
@@ -82,7 +81,7 @@ func (s *CompleteFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.R
 
 // RestoreSSTFiles tries to restore the files.
 // updateCh is used to record progress.
-func (s *CompleteFileRestorer) RestoreFiles(ctx context.Context, updateCh glue.Progress, sstFiles []SstFilesInfo) (err error) {
+func (s *MultiTablesRestorer) RestoreFiles(ctx context.Context, sstFiles []SstFilesInfo, updateCh glue.Progress) (err error) {
 	start := time.Now()
 	fileCount := 0
 	defer func() {

@@ -44,14 +44,14 @@ func NewEmptyRuleFilesInfo(files []*backuppb.File) []SstFilesInfo {
 // 1. Raw backup ssts
 // 2. Txn backup ssts
 // 3. TiDB backup ssts
-// 4. Log compacted ssts
+// 4. Log Compacted ssts
 type FileRestorer interface {
 	// SplitRanges split regions implicated by the ranges and rewrite rules.
 	// After spliting, it also scatters the fresh regions.
 	SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error
 
 	// RestoreSSTFiles import the files to the TiKV.
-	RestoreFiles(ctx context.Context, updateCh glue.Progress, files []SstFilesInfo) error
+	RestoreFiles(ctx context.Context, files []SstFilesInfo, updateCh glue.Progress) error
 
 	// Close release the resources.
 	Close() error
