@@ -2288,13 +2288,12 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			if idx == nil || idx.State != model.StatePublic {
 				return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
 			}
-			if statsutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
-				if !isAnalyzeTable {
-					return errors.NewNoStackErrorf("Analyze special global index %s can't work with analyze partition", idxName.O)
-				}
-			} else {
+			if !statsutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
 				allSpecialGlobalIndex = false
 				break
+			}
+			if !isAnalyzeTable {
+				return errors.NewNoStackErrorf("Analyze special global index %s can't work with analyze partition", idxName.O)
 			}
 		}
 	}
