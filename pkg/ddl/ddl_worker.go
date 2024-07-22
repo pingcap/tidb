@@ -240,10 +240,19 @@ func (d *ddl) limitDDLJobs(ch chan *JobWrapper, handler func([]*JobWrapper)) {
 // addBatchDDLJobsV1 gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
 	startTime := time.Now()
-	var err error
+	var (
+		err   error
+		newWs []*JobWrapper
+	)
 	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
 	toTable := !variable.DDLForce2Queue.Load()
 	if toTable {
+		newWs, err = combineBatchCreateTableJobs(jobWs)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to combine batch create table jobs", zap.Error(err))
+		} else {
+			jobWs = newWs
+		}
 		err = d.addBatchDDLJobs(jobWs)
 	} else {
 		err = d.addBatchDDLJobs2Queue(jobWs)
@@ -253,7 +262,7 @@ func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
 		if err == nil {
 			err = jobW.cacheErr
 		}
-		jobW.NotifyError(err)
+		jobW.NotifyResult(err)
 		jobs += jobW.Job.String() + "; "
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, jobW.Job.Type.String(),
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -276,7 +285,7 @@ func (d *ddl) addBatchLocalDDLJobs(jobWs []*JobWrapper) {
 	err := d.addBatchDDLJobs(jobWs)
 	if err != nil {
 		for _, jobW := range jobWs {
-			jobW.NotifyError(err)
+			jobW.NotifyResult(err)
 		}
 		logutil.DDLLogger().Error("add DDL jobs failed", zap.Bool("local_mode", true), zap.Error(err))
 	} else {
@@ -739,12 +748,12 @@ func combineBatchCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 	logutil.DDLLogger().Info("combine jobs to batch create table job", zap.Int("len", len(jobWs)))
 
 	newJobW := &JobWrapper{
-		Job:    job,
-		ErrChs: []chan error{},
+		Job:      job,
+		ResultCh: []chan jobSubmitResult{},
 	}
 	// combine the error chans.
 	for _, j := range jobWs {
-		newJobW.ErrChs = append(newJobW.ErrChs, j.ErrChs...)
+		newJobW.ResultCh = append(newJobW.ResultCh, j.ResultCh...)
 	}
 	return []*JobWrapper{newJobW}, nil
 }

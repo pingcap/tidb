@@ -200,6 +200,12 @@ type DDL interface {
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 }
 
+type jobSubmitResult struct {
+	err    error
+	jobID  int64
+	merged bool
+}
+
 // JobWrapper is used to wrap a job and some other information.
 // exported for testing.
 type JobWrapper struct {
@@ -210,7 +216,7 @@ type JobWrapper struct {
 	// job submission is run in async, we use this channel to notify the caller.
 	// for local job we might combine multiple jobs into one, append the ErrChs to
 	// this slice.
-	ErrChs   []chan error
+	ResultCh []chan jobSubmitResult
 	cacheErr error
 }
 
@@ -220,14 +226,18 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
-		ErrChs:      []chan error{make(chan error)},
+		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
 
-// NotifyError notifies the error to all error channels.
-func (t *JobWrapper) NotifyError(err error) {
-	for _, errCh := range t.ErrChs {
-		errCh <- err
+func (t *JobWrapper) NotifyResult(err error) {
+	merged := len(t.ResultCh) > 1
+	for _, resultCh := range t.ResultCh {
+		resultCh <- jobSubmitResult{
+			err:    err,
+			jobID:  t.ID,
+			merged: merged,
+		}
 	}
 }
 
@@ -584,11 +594,8 @@ func (e *executor) delJobDoneCh(jobID int64) {
 }
 
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
-	if ch, ok := dc.ddlJobDoneChMap.Load(jobID); ok {
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
+	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
+		close(ch)
 	}
 }
 
@@ -1103,11 +1110,7 @@ func setDDLJobMode(job *model.Job) {
 }
 
 func (e *executor) deliverJobTask(task *JobWrapper) {
-	if task.LocalMode {
-		e.limitJobChV2 <- task
-	} else {
-		e.limitJobCh <- task
-	}
+	e.limitJobCh <- task
 }
 
 // DoDDLJob will return
@@ -1131,12 +1134,12 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	setDDLJobMode(job)
+	//setDDLJobMode(job)
 	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
-			<-jobW.ErrChs[0]
+			<-jobW.ResultCh[0]
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
 			newJobW := NewJobWrapper(job, jobW.IDAllocated)
@@ -1147,9 +1150,10 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	})
 
 	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
-	err := <-jobW.ErrChs[0]
+	result := <-jobW.ResultCh[0]
 	// job.ID must be allocated after previous channel receive returns nil.
-	defer e.delJobDoneCh(job.ID)
+	jobID, err := result.jobID, result.err
+	defer e.delJobDoneCh(jobID)
 	if err != nil {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
@@ -1160,8 +1164,12 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
-	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
+	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, jobID, job.Type.String())
+	if result.merged {
+		logutil.DDLLogger().Info("start DDL job", zap.Int64("job_id", jobID), zap.String("query", job.Query), zap.String("merged", "true"))
+	} else {
+		logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
+	}
 
 	// for local mode job, we add the history job directly now, so no need to check it.
 	// fast-create doesn't wait schema version synced, we must reload info-schema
@@ -1171,7 +1179,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	}
 
 	var historyJob *model.Job
-	jobID := job.ID
 
 	// Attach the context of the jobId to the calling session so that
 	// KILL can cancel this DDL job.
@@ -1191,7 +1198,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
-	notifyCh, _ := e.getJobDoneCh(job.ID)
+	notifyCh, _ := e.getJobDoneCh(jobID)
 	for {
 		failpoint.InjectCall("storeCloseInLoop")
 		select {

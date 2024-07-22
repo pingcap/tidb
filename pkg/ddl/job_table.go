@@ -472,7 +472,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
 	job := jobW.Job
 	wk, err := pool.get()
 	if err != nil {
-		jobW.NotifyError(err)
+		jobW.NotifyResult(err)
 		return
 	}
 	for wk == nil {
@@ -483,7 +483,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
 		}
 		wk, err = pool.get()
 		if err != nil {
-			jobW.NotifyError(err)
+			jobW.NotifyResult(err)
 			return
 		}
 	}
@@ -506,7 +506,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
 		if err != nil {
 			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		}
-		jobW.NotifyError(err)
+		jobW.NotifyResult(err)
 	})
 }
 
