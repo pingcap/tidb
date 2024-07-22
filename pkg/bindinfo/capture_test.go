@@ -15,6 +15,7 @@
 package bindinfo_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -288,16 +289,11 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	domSession := domain.GetDomain(tk.Session())
 	is := domSession.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 	// Here the plan is the TiFlash plan.
 	rows := tk.MustQuery("explain select * from t").Rows()

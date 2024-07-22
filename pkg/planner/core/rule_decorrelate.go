@@ -224,7 +224,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			//	upper OP (depend on column8)   --> lower layer OP
 			//	          |                             ^
 			//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
-			hasFail := apply.columnSubstituteAll(proj.Schema(), proj.Exprs)
+			hasFail := apply.ColumnSubstituteAll(proj.Schema(), proj.Exprs)
 			if hasFail {
 				goto NoOptimize
 			}
@@ -232,7 +232,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
-			apply.decorrelate(outerPlan.Schema())
+			apply.Decorrelate(outerPlan.Schema())
 
 			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)

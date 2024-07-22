@@ -699,9 +699,10 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 		buildKeyTypes = append(buildKeyTypes, innerTypes[i])
 	}
 	hashJoinCtx := &join.HashJoinCtxV2{
-		OtherCondition:  nil,
-		PartitionNumber: min(testCase.concurrency, 16),
+		OtherCondition: nil,
 	}
+	hashJoinCtx.Concurrency = uint(testCase.concurrency)
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.SessCtx = testCase.ctx
 	hashJoinCtx.JoinType = testCase.joinType
 	hashJoinCtx.Concurrency = uint(testCase.concurrency)
@@ -1803,9 +1804,10 @@ func benchmarkLimitExec(b *testing.B, cas *testutil.LimitCase) {
 			}
 		}
 		proj := &ProjectionExec{
-			BaseExecutor:  exec.NewBaseExecutor(cas.Ctx, expression.NewSchema(usedCols...), 0, limit),
-			numWorkers:    1,
-			evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+			projectionExecutorContext: newProjectionExecutorContext(cas.Ctx),
+			BaseExecutorV2:            exec.NewBaseExecutorV2(cas.Ctx.GetSessionVars(), expression.NewSchema(usedCols...), 0, limit),
+			numWorkers:                1,
+			evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
 		}
 		exe = proj
 	}

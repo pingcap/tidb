@@ -135,6 +135,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
 		stmt.PointGet.pointPlan = nil
+		stmt.PointGet.planCacheKey = ""
 		stmt.PointGet.columnNames = nil
 		stmt.PointGet.pointPlanHints = nil
 		stmt.PointGet.Executor = nil
@@ -219,7 +220,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if stmtCtx.UseCache() {
 		var cachedVal *PlanCacheValue
 		var hit, isPointPlan bool
-		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use paramTypes
+		if stmt.PointGet.pointPlan != nil && stmt.PointGet.planCacheKey == cacheKey { // if it's PointGet Plan, no need to use paramTypes
 			cachedVal = &PlanCacheValue{
 				Plan:          stmt.PointGet.pointPlan,
 				OutputColumns: stmt.PointGet.columnNames,
@@ -322,6 +323,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 			stmt.PointGet.pointPlan = p
 			stmt.PointGet.columnNames = names
 			stmt.PointGet.pointPlanHints = stmtCtx.StmtHints.Clone()
+			stmt.PointGet.planCacheKey = cacheKey
 		}
 	}
 	sessVars.FoundInPlanCache = false

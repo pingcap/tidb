@@ -682,11 +682,11 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 
 	// test for tidb_analyze_column_options
-	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
-	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
-	tk.MustExec("set global tidb_analyze_column_options = 'all'")
+	tk.MustExec("set global tidb_analyze_column_options = 'ALL'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
+	tk.MustExec("set global tidb_analyze_column_options = 'predicate'")
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
 	require.Error(t, tk.ExecToErr("set global tidb_analyze_column_options = 'UNKNOWN'"))
 
 	// test for tidb_ignore_prepared_cache_close_stmt
@@ -1626,6 +1626,8 @@ func TestSetClusterConfig(t *testing.T) {
 		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
 		{ServerType: "tikv", Address: "127.0.0.1:6666", StatusAddr: "127.0.0.1:6666"},
 		{ServerType: "tiflash", Address: "127.0.0.1:3933", StatusAddr: "127.0.0.1:7777"},
+		{ServerType: "tso", Address: "127.0.0.1:22379", StatusAddr: "127.0.0.1:22379"},
+		{ServerType: "scheduling", Address: "127.0.0.1:22479", StatusAddr: "127.0.0.1:22479"},
 	}
 	var serverInfoErr error
 	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
@@ -1635,6 +1637,8 @@ func TestSetClusterConfig(t *testing.T) {
 
 	require.EqualError(t, tk.ExecToErr("set config xxx log.level='info'"), "unknown type xxx")
 	require.EqualError(t, tk.ExecToErr("set config tidb log.level='info'"), "TiDB doesn't support to change configs online, please use SQL variables")
+	require.EqualError(t, tk.ExecToErr("set config tso log.level='info'"), "tso doesn't support to change configs online")
+	require.EqualError(t, tk.ExecToErr("set config scheduling log.level='info'"), "scheduling doesn't support to change configs online")
 	require.EqualError(t, tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), "TiDB doesn't support to change configs online, please use SQL variables")
 	require.EqualError(t, tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), "invalid instance 127.a.b.c:1234")                          // name doesn't resolve.
 	require.EqualError(t, tk.ExecToErr("set config 'example.com:1111' log.level='info'"), "instance example.com:1111 is not found in this cluster") // name resolves.

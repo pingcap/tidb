@@ -44,7 +44,6 @@ import (
 type CheckpointManager struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	flushCtrl     FlushController
 	sessPool      *sess.Pool
 	jobID         int64
 	indexIDs      []int64
@@ -103,7 +102,6 @@ type FlushController interface {
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(
 	ctx context.Context,
-	flushCtrl FlushController,
 	sessPool *sess.Pool,
 	jobID int64,
 	indexIDs []int64,
@@ -118,7 +116,6 @@ func NewCheckpointManager(
 	cm := &CheckpointManager{
 		ctx:           ctx2,
 		cancel:        cancel,
-		flushCtrl:     flushCtrl,
 		sessPool:      sessPool,
 		jobID:         jobID,
 		indexIDs:      indexIDs,
@@ -215,15 +212,17 @@ func (s *CheckpointManager) UpdateTotalKeys(taskID int, delta int, last bool) {
 
 // UpdateWrittenKeys updates the written keys of the task.
 // This is called by the writer after writing the local engine to update the current number of rows written.
-func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
+func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 	s.mu.Lock()
 	cp := s.checkpoints[taskID]
 	cp.writtenKeys += delta
 	s.mu.Unlock()
+}
 
-	flushed, imported, err := s.flushCtrl.Flush(FlushModeAuto)
-	if !flushed || err != nil {
-		return err
+// AdvanceWatermark advances the watermark according to flushed or imported status.
+func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
+	if !flushed {
+		return
 	}
 
 	failpoint.Inject("resignAfterFlush", func() {
@@ -238,17 +237,10 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.afterFlush()
-	if imported && s.importedKeyLowWatermark.Cmp(s.flushedKeyLowWatermark) != 0 {
-		// TODO(lance6716): add warning log if cmp > 0
-		s.importedKeyLowWatermark = s.flushedKeyLowWatermark
-		s.importedKeyCnt = s.flushedKeyCnt
-		s.dirty = true
 
-		s.pidImported = s.pidFlushed
-		s.startKeyImported = s.startKeyFlushed
-		s.endKeyImported = s.endKeyFlushed
+	if imported {
+		s.afterImport()
 	}
-	return nil
 }
 
 // afterFlush should be called after all engine is flushed.
@@ -266,10 +258,28 @@ func (s *CheckpointManager) afterFlush() {
 	}
 }
 
+func (s *CheckpointManager) afterImport() {
+	if s.importedKeyLowWatermark.Cmp(s.flushedKeyLowWatermark) > 0 {
+		s.logger.Warn("lower watermark of flushed key is less than imported key",
+			zap.String("flushed", hex.EncodeToString(s.flushedKeyLowWatermark)),
+			zap.String("imported", hex.EncodeToString(s.importedKeyLowWatermark)),
+		)
+		return
+	}
+	s.importedKeyLowWatermark = s.flushedKeyLowWatermark
+	s.importedKeyCnt = s.flushedKeyCnt
+	s.dirty = true
+
+	s.startKeyImported = s.startKeyFlushed
+	s.pidImported = s.pidFlushed
+	s.endKeyImported = s.endKeyFlushed
+}
+
 // Close closes the checkpoint manager.
 func (s *CheckpointManager) Close() {
 	s.mu.Lock()
 	s.afterFlush()
+	s.afterImport()
 	s.mu.Unlock()
 
 	err := s.updateCheckpoint()

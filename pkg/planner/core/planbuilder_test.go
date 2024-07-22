@@ -416,11 +416,6 @@ func checkPhysicalPlanClone(p base.PhysicalPlan) error {
 	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), nil, whiteList, nil)
 }
 
-// CheckPlanDeepClone checks if p2 is deep cloned from p1, which means they should share no same pointer / map / slice.
-func CheckPlanDeepClone(p1, p2 base.Plan) error {
-	return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, nil, nil)
-}
-
 // checkDeepClonedCore is used to check if v2 is deep cloned from v1.
 // It's modified from reflect.deepValueEqual. We cannot use reflect.DeepEqual here since they have different
 // logic, for example, if two pointers point the same address, they will pass the DeepEqual check while failing in the DeepClone check.
@@ -708,22 +703,17 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 		Columns: columns,
 	}
 
-	// Test case 1: DefaultChoice.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.DefaultChoice, nil, nil, nil, false, false)
-	require.NoError(t, err)
-	require.Equal(t, columns, cols)
-
-	// Test case 2: AllColumns.
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
+	// Test case 1: AllColumns.
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
 	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
 
 	// TODO(hi-rustin): Find a better way to mock SQL execution.
-	// Test case 3: PredicateColumns.
+	// Test case 2: PredicateColumns(default)
 
-	// Test case 4: ColumnList.
+	// Test case 3: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
 	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)

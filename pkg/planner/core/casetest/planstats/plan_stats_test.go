@@ -62,8 +62,8 @@ func TestPlanStatsLoad(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
-	tk.MustExec("analyze table pt")
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table pt all columns")
 
 	testCases := []struct {
 		sql   string
@@ -208,7 +208,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		}
 		is := dom.InfoSchema()
 		dom.StatsHandle().Clear() // clear statsCache
-		require.NoError(t, dom.StatsHandle().Update(is))
+		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 		stmt, err := p.ParseOneStmt(testCase.sql, "", "")
 		require.NoError(t, err)
 		err = executor.ResetContextOfStmt(ctx, stmt)
@@ -264,9 +264,9 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
-	require.NoError(t, dom.StatsHandle().Update(is))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -432,10 +432,10 @@ func TestPartialStatsInExplain(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table t2")
-	tk.MustExec("analyze table tp")
-	tk.RequireNoError(dom.StatsHandle().Update(dom.InfoSchema()))
+	tk.MustExec("analyze table tp all columns")
+	tk.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain select * from tp where a = 1")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	var (

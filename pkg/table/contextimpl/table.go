@@ -55,9 +55,24 @@ func (ctx *TableContextImpl) GetExprCtx() exprctx.ExprContext {
 	return ctx.Context.GetExprCtx()
 }
 
+// ConnectionID implements the MutateContext interface.
+func (ctx *TableContextImpl) ConnectionID() uint64 {
+	return ctx.vars().ConnectionID
+}
+
 // InRestrictedSQL returns whether the current context is used in restricted SQL.
 func (ctx *TableContextImpl) InRestrictedSQL() bool {
-	return ctx.vars().StmtCtx.InRestrictedSQL
+	return ctx.vars().InRestrictedSQL
+}
+
+// TxnAssertionLevel implements the MutateContext interface.
+func (ctx *TableContextImpl) TxnAssertionLevel() variable.AssertionLevel {
+	return ctx.vars().AssertionLevel
+}
+
+// EnableMutationChecker implements the MutateContext interface.
+func (ctx *TableContextImpl) EnableMutationChecker() bool {
+	return ctx.vars().EnableMutationChecker
 }
 
 // BinlogEnabled returns whether the binlog is enabled.
