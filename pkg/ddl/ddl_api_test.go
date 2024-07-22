@@ -163,18 +163,18 @@ func TestCreateViewConcurrently(t *testing.T) {
 		counterErr error
 		counter    int
 	)
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onDDLCreateView", func(job *model.Job) {
+	ddl.OnDDLCreateViewForTest = func(job *model.Job) {
 		counter++
 		if counter > 1 {
 			counterErr = fmt.Errorf("create view job should not run concurrently")
 			return
 		}
-	})
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) {
+	}
+	ddl.AfterDeliverToWorkerForTest = func(job *model.Job) {
 		if job.Type == model.ActionCreateView {
 			counter--
 		}
-	})
+	}
 	var eg errgroup.Group
 	for i := 0; i < 5; i++ {
 		eg.Go(func() error {

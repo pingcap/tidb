@@ -64,12 +64,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
-=======
-	"github.com/pingcap/tidb/pkg/util/generic"
->>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720))
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"

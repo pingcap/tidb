@@ -270,6 +270,9 @@ func repairTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 	return t.UpdateTable(schemaID, tbInfo)
 }
 
+// OnDDLCreateViewForTest is only used for test.
+var OnDDLCreateViewForTest func(*model.Job)
+
 func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
@@ -286,7 +289,9 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
-	failpoint.InjectCall("onDDLCreateView", job)
+	if OnDDLCreateViewForTest != nil {
+		OnDDLCreateViewForTest(job)
+	}
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -308,13 +313,8 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-<<<<<<< HEAD
-		if oldTbInfoID > 0 && orReplace {
-			err = t.DropTableOrView(schemaID, oldTbInfoID)
-=======
 		if oldTableID > 0 && orReplace {
-			err = t.DropTableOrView(schemaID, job.SchemaName, oldTableID, tbInfo.Name.L)
->>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720))
+			err = t.DropTableOrView(schemaID, oldTableID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -1490,44 +1490,6 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
 }
 
-<<<<<<< HEAD
-=======
-func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaName, tableName string) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
-	is := d.infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
-	}
-	return t.CheckTableNameNotExists(t.TableNameKey(schemaName, tableName))
-}
-
-func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
-	if len(constraints) == 0 {
-		return nil
-	}
-	tbInfos, err := t.ListTables(schemaID)
-	if err != nil {
-		return err
-	}
-
-	for _, tb := range tbInfos {
-		for _, constraint := range constraints {
-			if constraint.State != model.StateWriteOnly {
-				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
-					return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraint.Name.L)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
->>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720))
 func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
 	tbl, err := t.GetTable(schemaID, tableID)
 	if err != nil {
