@@ -875,6 +875,9 @@ uuid
 uuid_short
 uuid_to_bin
 validate_password_strength
+vec_as_text
+vec_dims
+vec_from_text
 version
 vitess_hash
 week
@@ -884,9 +887,6 @@ weight_string
 xor
 year
 yearweek
-vec_as_text
-vec_dims
-vec_from_text
 SHOW INDEX FROM performance_schema.events_statements_summary_by_digest;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
 events_statements_summary_by_digest	0	SCHEMA_NAME	1	SCHEMA_NAME	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
