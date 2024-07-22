@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -451,19 +450,14 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 
 	e.ProbeSideTupleFetcher.closeProbeResultChs()
 
-	log.Info("xzxdebug probe fetcher waits for the finish of probe workers...")
 	fetcherAndWorkerSyncer.Wait()
-	log.Info("xzxdebug probe fetcher waits for the finish of probe workers... done")
 
-	log.Info("xzxdebug probe fetcher wakes up final worker")
 	// Wake up final worker
 	pfAndFWSync <- struct{}{}
 
 	for {
-		log.Info("xzxdebug probe fetcher enter sleep")
 		// We use buildFinished as the syncer between build task dispatcher and probe fetcher
 		<-e.hashJoinCtxBase.buildFinished
-		log.Info("xzxdebug probe fetcher is waked up")
 
 		if e.hashJoinCtxBase.finished.Load() {
 			return
@@ -776,7 +770,6 @@ func (e *HashJoinV2Exec) dispatchBuildTasks(syncer chan struct{}) {
 		ifContinue = e.dispatchBuildTasksImpl(syncer)
 		// TODO check spill when build is done
 
-		log.Info("xzxdebug dispatcher wakes up probe fetcher")
 		// TODO set configs for probe fetcher and workers
 		// Wake up probe fetcher, we do not pass error by buildFinished in hash join v2
 		e.buildFinished <- nil
