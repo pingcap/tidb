@@ -881,11 +881,6 @@ func formatWindowFuncDescs(ctx expression.EvalContext, buffer *bytes.Buffer, des
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalApply) ExplainInfo() string {
-	return p.LogicalJoin.ExplainInfo()
-}
-
-// ExplainInfo implements Plan interface.
 func (ds *DataSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := ds.TableInfo.Name.O

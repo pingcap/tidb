@@ -35,9 +35,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -262,6 +263,8 @@ type DDL interface {
 	GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
+	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
+	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 	// DoDDLJobWrapper similar to DoDDLJob, but with JobWrapper as input.
 	// exported for testing.
 	// TODO remove it after decouple components of DDL.
@@ -314,7 +317,9 @@ type ddl struct {
 	// used in the concurrency ddl.
 	localWorkerPool *workerPool
 	// get notification if any DDL job submitted or finished.
-	ddlJobNotifyCh chan struct{}
+	ddlJobNotifyCh    chan struct{}
+	sysTblMgr         systable.Manager
+	minJobIDRefresher *systable.MinJobIDRefresher
 
 	// localJobCh is used to delivery job in local TiDB nodes.
 	localJobCh chan *JobWrapper
@@ -855,13 +860,18 @@ func (d *ddl) prepareLocalModeWorkers() {
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
+	d.sessPool = sess.NewSessionPool(ctxPool)
+	d.sysTblMgr = systable.NewManager(d.sessPool)
+	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
 	d.wg.Run(func() {
 		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobsV1)
 	})
 	d.wg.Run(func() {
 		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
 	})
-	d.sessPool = sess.NewSessionPool(ctxPool)
+	d.wg.Run(func() {
+		d.minJobIDRefresher.Start(d.ctx)
+	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
@@ -1378,6 +1388,10 @@ func (d *ddl) SetHook(h Callback) {
 	defer d.mu.Unlock()
 
 	d.mu.hook = h
+}
+
+func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
+	return d.minJobIDRefresher
 }
 
 func (d *ddl) startCleanDeadTableLock() {

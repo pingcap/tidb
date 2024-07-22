@@ -44,6 +44,10 @@ var (
 	enableHashJoinV2 = atomic.Bool{}
 )
 
+func init() {
+	enableHashJoinV2.Store(true)
+}
+
 // IsHashJoinV2Enabled return true if hash join v2 is enabled
 func IsHashJoinV2Enabled() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
@@ -294,10 +298,6 @@ func (e *HashJoinV2Exec) Close() error {
 	return err
 }
 
-func (e *HashJoinV2Exec) needUsedFlag() bool {
-	return e.JoinType == plannercore.LeftOuterJoin && !e.RightAsBuildSide
-}
-
 // Open implements the Executor Open interface.
 func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
@@ -306,14 +306,15 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
+	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
+	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = needScanRowTableAfterProbeDone
 	if e.RightAsBuildSide {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
-			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, e.needUsedFlag())
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, needScanRowTableAfterProbeDone)
 	} else {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
-			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, e.needUsedFlag())
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, needScanRowTableAfterProbeDone)
 	}
-	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.ChunkAllocPool = e.AllocPool
 	if e.memTracker != nil {
 		e.memTracker.Reset()
@@ -862,20 +863,12 @@ func (*hashJoinRuntimeStatsV2) Tp() int {
 func (e *hashJoinRuntimeStatsV2) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{concurrency:")
-		buf.WriteString(strconv.Itoa(e.concurrent))
-		buf.WriteString(", total:")
+		buf.WriteString("build_hash_table:{total:")
 		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(int64(e.fetchAndBuildHashTable) - e.maxBuildHashTable - e.maxPartitionData)))
-		buf.WriteString(", partition:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.partitionData)))
-		buf.WriteString(", max partition:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxPartitionData)))
 		buf.WriteString(", build:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.buildHashTable)))
-		buf.WriteString(", max build:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable)))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
