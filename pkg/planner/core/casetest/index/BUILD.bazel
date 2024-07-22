@@ -9,11 +9,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
     shard_count = 14,
-=======
-    shard_count = 6,
->>>>>>> 41ed0e508d9 (planner: use ordered index with is null predicate (#54253))
     deps = [
         "//pkg/sessionctx/variable",
         "//pkg/testkit",

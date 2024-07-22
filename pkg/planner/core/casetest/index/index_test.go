@@ -451,29 +451,6 @@ func TestIndexMergeIssue50382(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func TestIndexMergeSingleCaseCouldFeelIndexMergeHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as unsigned array))));")
-	tk.MustQuery("explain format=\"brief\" SELECT /*+ use_index_merge(t, nslc) */ * FROM t WHERE 57260686 member of (fpi) AND \"OC8p1763XTkt.org/s/link\" member of (nslc) LIMIT 1;").Check(
-		testkit.Rows("Limit 1.00 root  offset:0, count:1",
-			"└─IndexMerge 1.00 root  type: union",
-			"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:nslc(cast(`nslc` as char(1000) array), point_of_sale_country) range:[\"OC8p1763XTkt.org/s/link\",\"OC8p1763XTkt.org/s/link\"], keep order:false, stats:pseudo",
-			"  └─Limit(Probe) 1.00 cop[tikv]  offset:0, count:1",
-			"    └─Selection 1.00 cop[tikv]  json_memberof(cast(57260686, json BINARY), test.t.fpi)",
-			"      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustQuery("explain format=\"brief\" SELECT /*+ use_index_merge(t, fpi) */ * FROM t WHERE 57260686 member of (fpi) AND \"OC8p1763XTkt.org/s/link\" member of (nslc) LIMIT 1;").Check(
-		testkit.Rows("Limit 1.00 root  offset:0, count:1",
-			"└─IndexMerge 1.00 root  type: union",
-			"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:fpi(cast(`fpi` as unsigned array)) range:[57260686,57260686], keep order:false, stats:pseudo",
-			"  └─Limit(Probe) 1.00 cop[tikv]  offset:0, count:1",
-			"    └─Selection 1.00 cop[tikv]  json_memberof(cast(\"OC8p1763XTkt.org/s/link\", json BINARY), test.t.nslc)",
-			"      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-=======
 func TestOrderedIndexWithIsNull(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -484,5 +461,4 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 		"└─IndexReader_12 10.00 root  index:IndexRangeScan_11",
 		"  └─IndexRangeScan_11 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
 	))
->>>>>>> 41ed0e508d9 (planner: use ordered index with is null predicate (#54253))
 }
