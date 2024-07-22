@@ -422,6 +422,7 @@ func TestAbnormalMySQLTable(t *testing.T) {
   plugin char(64) COLLATE utf8_bin DEFAULT 'mysql_native_password',
   authentication_string text COLLATE utf8_bin,
   token_issuer varchar(255),
+  password_require_current ENUM('N','Y') DEFAULT NULL,
   user_attributes json,
   password_expired		ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),

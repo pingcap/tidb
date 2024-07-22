@@ -1829,7 +1829,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if spec.AuthOpt != nil {
 			// Only use `REPLACE <pwd>` when changing the current user
-			if user != nil && (spec.User.Username == user.Username && spec.User.Hostname == user.Hostname) {
+			if user != nil && (spec.User.Username == user.AuthUsername && spec.User.Hostname == user.AuthHostname) {
 				err = checker.CheckCurrentPassword(spec.User.Username, spec.User.Hostname, spec.AuthOpt.ReplaceString, e.Ctx().GetSessionVars())
 				if err != nil {
 					return err
