@@ -37,8 +37,16 @@ type LocalStorage struct {
 	IgnoreEnoentForDelete bool
 }
 
+// Base returns the base dir used by this local storage.
+func (l *LocalStorage) Base() string {
+	return l.base
+}
+
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
+	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
 	path := filepath.Join(l.base, name)
 	err := os.Remove(path)
 	if err != nil &&
