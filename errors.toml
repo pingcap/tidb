@@ -1731,9 +1731,9 @@ error = '''
 Cannot use these credentials for '%s@%s' because they contradict the password history policy.
 '''
 
-["executor:3891"]
+["executor:3893"]
 error = '''
-Incorrect current password. Specify the correct password which has to be replaced.
+Do not specify the current password while changing it for other users.
 '''
 
 ["executor:3929"]
@@ -2664,6 +2664,16 @@ Your password has expired. To log in you must change it using a client that supp
 ["privilege:3530"]
 error = '''
 %s is not granted to %s
+'''
+
+["privilege:3891"]
+error = '''
+Incorrect current password. Specify the correct password which has to be replaced.
+'''
+
+["privilege:3892"]
+error = '''
+Current password needs to be specified in the REPLACE clause in order to change it.
 '''
 
 ["schema:1007"]
