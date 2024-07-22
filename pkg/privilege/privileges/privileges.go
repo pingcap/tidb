@@ -720,6 +720,65 @@ func (p *UserPrivileges) AuthSuccess(authUser, authHost string) {
 	p.host = authHost
 }
 
+func (p *UserPrivileges) checkPassword(password, hash, method string) bool {
+	switch method {
+	case mysql.AuthNativePassword:
+		if hash == auth.EncodePassword(password) {
+			return true
+		}
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		authok, err := auth.CheckHashingPassword([]byte(hash), password, method)
+		if err != nil {
+			return false
+		}
+		if authok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (p *UserPrivileges) CheckCurrentPassword(user, host, password string, sessionVars *variable.SessionVars) error {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+
+	switch record.PasswordRequireCurrent {
+	case -1: // PASSWORD REQUIRE CURRENT DEFAULT
+		requireCurrentVar, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.PasswordRequireCurrent)
+		if err != nil {
+			return err
+		}
+		if requireCurrentVar == "OFF" && password == "" {
+			return nil
+		}
+		if password == "" {
+			return ErrMissingCurrentPassword
+		}
+		if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
+			return nil
+		}
+	case 0: // PASSWORD REQUIRE CURRENT OPTIONAL
+		if password == "" {
+			return nil
+		}
+		if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
+			return nil
+		}
+	case 1: // PASSWORD REQUIRE CURRENT
+		if password == "" {
+			return ErrMissingCurrentPassword
+		}
+		if p.checkPassword(password, record.AuthenticationString, record.AuthPlugin) {
+			return nil
+		}
+	default:
+		return errors.New("invalid value for Password_require_current")
+	}
+
+	return ErrIncorrectCurrentPassword
+}
+
 type checkResult int
 
 const (

@@ -1813,7 +1813,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			RequireAuthTokenOptions
 		)
 		authTokenOptionHandler := noNeedAuthTokenOptions
-		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
+		currentAuthPlugin, err := checker.GetAuthPlugin(spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1827,6 +1827,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		var fields []alterField
 		if spec.AuthOpt != nil {
+
+			// Only use `REPLACE <pwd>` when changing the current user
+			if spec.User.Username == user.Username && spec.User.Hostname == user.Hostname {
+				err = checker.CheckCurrentPassword(spec.User.Username, spec.User.Hostname, spec.AuthOpt.ReplaceString, e.Ctx().GetSessionVars())
+				if err != nil {
+					return err
+				}
+			} else if spec.AuthOpt.ReplaceString != "" {
+				return exeerrors.ErrCurrentPasswordNotRequired
+			}
+
 			fields = append(fields, alterField{"password_last_changed=current_timestamp()", nil})
 			if spec.AuthOpt.AuthPlugin == "" {
 				spec.AuthOpt.AuthPlugin = currentAuthPlugin

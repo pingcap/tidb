@@ -62,7 +62,7 @@ var (
 	ErrLazyUniquenessCheckFailure           = dbterror.ClassExecutor.NewStd(mysql.ErrLazyUniquenessCheckFailure)
 	ErrMemoryExceedForQuery                 = dbterror.ClassExecutor.NewStd(mysql.ErrMemoryExceedForQuery)
 	ErrMemoryExceedForInstance              = dbterror.ClassExecutor.NewStd(mysql.ErrMemoryExceedForInstance)
-	ErrIncorrectCurrentPassword             = dbterror.ClassExecutor.NewStd(mysql.ErrIncorrectCurrentPassword)
+	ErrCurrentPasswordNotRequired           = dbterror.ClassExecutor.NewStd(mysql.ErrCurrentPasswordNotRequired)
 
 	ErrBRIEBackupFailed               = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)

@@ -928,6 +928,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCannotConvertString:                                   mysql.Message("Cannot convert string '%.64s' from %s to %s", nil),
 	ErrInvalidJSONType:                                       mysql.Message("Invalid JSON type in argument %d to function %s; an %s is required.", nil),
 	ErrIncorrectCurrentPassword:                              mysql.Message("Incorrect current password. Specify the correct password which has to be replaced.", nil),
+	ErrMissingCurrentPassword:                                mysql.Message("Current password needs to be specified in the REPLACE clause in order to change it.", nil),
+	ErrCurrentPasswordNotRequired:                            mysql.Message("Do not specify the current password while changing it for other users.", nil),
 	ErrInvalidJSONValueForFuncIndex:                          mysql.Message("Invalid JSON value for CAST for expression index '%s'", nil),
 	ErrJSONValueOutOfRangeForFuncIndex:                       mysql.Message("Out of range JSON value for CAST for expression index '%s'", nil),
 	ErrFunctionalIndexDataIsTooLong:                          mysql.Message("Data too long for expression index '%s'", nil),
