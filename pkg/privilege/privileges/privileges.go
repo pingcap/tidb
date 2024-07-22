@@ -744,14 +744,14 @@ func (p *UserPrivileges) checkPassword(password, hash, method string) bool {
 
 // CheckCurrentPassword checks the current password when changing the users password based on the policy
 //
-// | Account Setting                 | password_require_current sysvar | Current password required? |
-// |---------------------------------|---------------------------------|----------------------------|
-// PASSWORD REQUIRE CURRENT          | OFF                             | Yes                        |
-// PASSWORD REQUIRE CURRENT          | ON                              | Yes                        |
-// PASSWORD REQUIRE CURRENT OPTIONAL | OFF                             | No                         |
-// PASSWORD REQUIRE CURRENT OPTIONAL | ON                              | No                         |
-// PASSWORD REQUIRE CURRENT DEFAULT  | OFF                             | No                         |
-// PASSWORD REQUIRE CURRENT DEFAULT  | ON                              | Yes                        |
+// | Account Setting                   | password_require_current sysvar | Current password required? |
+// |-----------------------------------|---------------------------------|----------------------------|
+// | PASSWORD REQUIRE CURRENT          | OFF                             | Yes                        |
+// | PASSWORD REQUIRE CURRENT          | ON                              | Yes                        |
+// | PASSWORD REQUIRE CURRENT OPTIONAL | OFF                             | No                         |
+// | PASSWORD REQUIRE CURRENT OPTIONAL | ON                              | No                         |
+// | PASSWORD REQUIRE CURRENT DEFAULT  | OFF                             | No                         |
+// | PASSWORD REQUIRE CURRENT DEFAULT  | ON                              | Yes                        |
 //
 // - If a replacement password is specified it must be correct
 // - A replacement password is only allowed when changing the current user, not when changing other users.
