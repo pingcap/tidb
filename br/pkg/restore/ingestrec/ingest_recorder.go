@@ -147,19 +147,20 @@ func (i *IngestRecorder) UpdateIndexInfo(infoSchema infoschema.InfoSchema) error
 		log.Info("finish updating index information for ingest index", zap.Duration("takes", time.Since(start)))
 	}()
 
-	for tableID, tableindexes := range i.items {
+	for tableID, tableIndexes := range i.items {
 		tblInfo, tblexists := infoSchema.TableInfoByID(tableID)
 		if !tblexists || tblInfo == nil {
 			log.Info("skip repair ingest index, table is dropped", zap.Int64("table id", tableID))
 			continue
 		}
+		// TODO: here only need an interface function like `SchemaNameByID`
 		dbInfo, dbexists := infoSchema.SchemaByID(tblInfo.DBID)
 		if !dbexists || dbInfo == nil {
 			return errors.Errorf("failed to repair ingest index because table exists but cannot find database."+
 				"[table-id:%d][db-id:%d]", tableID, tblInfo.DBID)
 		}
 		for _, indexInfo := range tblInfo.Indices {
-			index, idxexists := tableindexes[indexInfo.ID]
+			index, idxexists := tableIndexes[indexInfo.ID]
 			if !idxexists {
 				continue
 			}

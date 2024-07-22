@@ -69,19 +69,15 @@ func GetTableSchema(
 	return table.Meta(), nil
 }
 
-const MAX_USERTABLES_NUM = 10
+const maxUserTablesNum = 10
 
 // AssertUserDBsEmpty check whether user dbs exist in the cluster
 func AssertUserDBsEmpty(dom *domain.Domain) error {
 	databases := dom.InfoSchema().AllSchemas()
-	ver, err := dom.Store().CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	m := meta.NewSnapshotMeta(dom.Store().GetSnapshot(kv.NewVersion(ver.Ver)))
-	userTables := make([]string, 0, MAX_USERTABLES_NUM)
+	m := meta.NewSnapshotMeta(dom.Store().GetSnapshot(kv.MaxVersion))
+	userTables := make([]string, 0, maxUserTablesNum)
 	appendTables := func(dbName, tableName string) bool {
-		if len(userTables) >= MAX_USERTABLES_NUM {
+		if len(userTables) >= maxUserTablesNum {
 			userTables = append(userTables, "...")
 			return true
 		}
