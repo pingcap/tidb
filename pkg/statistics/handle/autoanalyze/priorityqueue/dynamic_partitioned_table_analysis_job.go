@@ -157,7 +157,7 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 			"\tAnalyzeType: %s\n"+
 			"\tPartitions: %s\n"+
 			"\tPartitionIndexes: %v\n"+
-			"\tGlobalIndexes: %v\n"+
+			"\tSpecialIndexes: %v\n"+
 			"\tSchema: %s\n"+
 			"\tGlobal Table: %s\n"+
 			"\tGlobal TableID: %d\n"+
