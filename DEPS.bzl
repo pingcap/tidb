@@ -7180,13 +7180,13 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "defa521ad48fa8c153b7693a24afccafd3e3467559cbad05b7a20631eff49629",
-        strip_prefix = "github.com/ekexium/client-go/v2@v2.0.0-alpha.0.20240722131507-b67ba477073f",
+        sha256 = "cb3153f135f639ea8b974f0d3cc35090143fcc05b63180d24296874ed8b945e3",
+        strip_prefix = "github.com/ekexium/client-go/v2@v2.0.0-alpha.0.20240723041804-58889fa6e3da",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ekexium/client-go/v2/com_github_ekexium_client_go_v2-v2.0.0-alpha.0.20240722131507-b67ba477073f.zip",
-            "http://ats.apps.svc/gomod/github.com/ekexium/client-go/v2/com_github_ekexium_client_go_v2-v2.0.0-alpha.0.20240722131507-b67ba477073f.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ekexium/client-go/v2/com_github_ekexium_client_go_v2-v2.0.0-alpha.0.20240722131507-b67ba477073f.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ekexium/client-go/v2/com_github_ekexium_client_go_v2-v2.0.0-alpha.0.20240722131507-b67ba477073f.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ekexium/client-go/v2/com_github_ekexium_client_go_v2-v2.0.0-alpha.0.20240723041804-58889fa6e3da.zip",
+            "http://ats.apps.svc/gomod/github.com/ekexium/client-go/v2/com_github_ekexium_client_go_v2-v2.0.0-alpha.0.20240723041804-58889fa6e3da.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ekexium/client-go/v2/com_github_ekexium_client_go_v2-v2.0.0-alpha.0.20240723041804-58889fa6e3da.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ekexium/client-go/v2/com_github_ekexium_client_go_v2-v2.0.0-alpha.0.20240723041804-58889fa6e3da.zip",
         ],
     )
     go_repository(
