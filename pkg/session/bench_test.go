@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
@@ -1949,6 +1950,8 @@ var batchNum = 100
 var batchSize = 100
 
 func BenchmarkPipelinedSimpleInsert(b *testing.B) {
+	failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return")
+	defer failpoint.Disable("tikvclient/pipelinedSkipResolveLock")
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -1977,6 +1980,8 @@ func BenchmarkPipelinedSimpleInsert(b *testing.B) {
 }
 
 func BenchmarkPipelinedInsertIgnoreNoDuplicates(b *testing.B) {
+	failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return")
+	defer failpoint.Disable("tikvclient/pipelinedSkipResolveLock")
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -2006,6 +2011,8 @@ func BenchmarkPipelinedInsertIgnoreNoDuplicates(b *testing.B) {
 }
 
 func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
+	failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return")
+	defer failpoint.Disable("tikvclient/pipelinedSkipResolveLock")
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -2040,6 +2047,8 @@ func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
 }
 
 func BenchmarkPipelinedDelete(b *testing.B) {
+	failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return")
+	defer failpoint.Disable("tikvclient/pipelinedSkipResolveLock")
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -2058,7 +2067,7 @@ func BenchmarkPipelinedDelete(b *testing.B) {
 	}
 
 	se.GetSessionVars().BulkDMLEnabled = true
-	se.GetSessionVars().StmtCtx.InInsertStmt = true
+	se.GetSessionVars().StmtCtx.InDeleteStmt = true
 	b.StopTimer()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -2072,6 +2081,8 @@ func BenchmarkPipelinedDelete(b *testing.B) {
 }
 
 func BenchmarkPipelinedReplaceNoDuplicates(b *testing.B) {
+	failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return")
+	defer failpoint.Disable("tikvclient/pipelinedSkipResolveLock")
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
