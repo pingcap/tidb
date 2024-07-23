@@ -547,10 +547,15 @@ type Job struct {
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
 
-	// SeqNum is the total order in all DDLs, it's used to identify the order of
-	// moving the job into DDL history, not the order of the job execution.
-	// fast create table doesn't honor this field, there might duplicate seq_num in this case.
-	// TODO: deprecated it, as it forces 'moving jobs into DDL history' part to be serial.
+	// SeqNum is used to identify the order of moving the job into DDL history, it's
+	// not the order of the job execution. for jobs with dependency, or if they are
+	// run in the same session, their SeqNum will be in increasing order.
+	// when using fast create table, there might duplicate seq_num as any TiDB can
+	// execute the DDL in this case.
+	// since 8.3, we only honor previous semantic when DDL owner not changed, on
+	// owner change, new owner will start it from 1. as previous semantic forces
+	// 'moving jobs into DDL history' part to be serial, it hurts performance, and
+	// has very limited usage scenario.
 	SeqNum uint64 `json:"seq_num"`
 
 	// Charset is the charset when the DDL Job is created.
@@ -1016,6 +1021,7 @@ func (job *Job) MayNeedReorg() bool {
 }
 
 // IsRollbackable checks whether the job can be rollback.
+// TODO(lance6716): should make sure it's the same as convertJob2RollbackJob
 func (job *Job) IsRollbackable() bool {
 	switch job.Type {
 	case ActionDropIndex, ActionDropPrimaryKey:
@@ -1087,7 +1093,8 @@ const (
 	// is in `done` state and version synchronized, the job will be deleted from
 	// tidb_ddl_job table, and we insert a `synced` job to the history table and queue directly.
 	JobStateSynced JobState = 6
-	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
+	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but
+	// the DDL worker hasn't handled it.
 	JobStateCancelling JobState = 7
 	// JobStateQueueing means the job has not yet been started.
 	JobStateQueueing JobState = 8

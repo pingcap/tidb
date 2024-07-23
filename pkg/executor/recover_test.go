@@ -576,12 +576,8 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("insert into t_flashback values (1),(2),(3)")
 	tk.MustExec("drop database test_flashback")
 
-	// test PD connection issue causes failure after tidb_ddl_error_count_limit
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `return()`)
-	// TODO(lance6716): fix it later
-	//tk.MustGetErrMsg("flashback database test_flashback", "[ddl:-1]DDL job rollback, error msg: mock error for clearTablePlacementAndBundles")
-	tk.MustExecToErr("flashback database test_flashback")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `1*return()`)
+	// even PD is down, the job can not be canceled for now.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `4*return()`)
 	tk.MustExec("flashback database test_flashback")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
 
