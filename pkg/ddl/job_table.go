@@ -494,7 +494,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
 		}()
 
 		for i := int64(0); i < variable.GetDDLErrorCountLimit(); i++ {
-			err := wk.HandleLocalDDLJob(d.ddlCtx, job)
+			err = wk.HandleLocalDDLJob(d.ddlCtx, job)
 			// since local the job is not inserted into the ddl job queue, we need to add retry logic here.
 			if err == nil || !isRetryableError(err) {
 				break
