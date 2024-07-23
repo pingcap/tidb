@@ -3522,9 +3522,8 @@ func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *mod
 	}
 	if res > 0 {
 		return 1, nil
-	} else {
-		return -1, nil
 	}
+	return -1, nil
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
