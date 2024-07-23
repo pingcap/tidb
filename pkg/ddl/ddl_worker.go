@@ -108,7 +108,7 @@ type worker struct {
 	sess            *sess.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	logCtx          context.Context
-	seqNumLocked    bool
+	seqAllocator    *atomic.Uint64
 
 	*ddlCtx
 }
@@ -942,18 +942,11 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		// Notice: warnings is used to support non-strict mode.
 		updateRawArgs = false
 	}
-	w.writeDDLSeqNum(job)
+	job.SeqNum = w.seqAllocator.Add(1)
 	w.removeJobCtx(job)
 	failpoint.InjectCall("afterFinishDDLJob", job)
 	err = AddHistoryDDLJob(w.ctx, w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
-}
-
-func (w *worker) writeDDLSeqNum(job *model.Job) {
-	w.ddlSeqNumMu.Lock()
-	w.ddlSeqNumMu.seqNum++
-	w.seqNumLocked = true
-	job.SeqNum = w.ddlSeqNumMu.seqNum
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
@@ -1003,17 +996,6 @@ func (w *JobContext) setDDLLabelForTopSQL(jobQuery string) {
 		w.ddlJobCtx = topsql.AttachAndRegisterSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, false)
 	} else {
 		topsql.AttachAndRegisterSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, false)
-	}
-}
-
-func (w *worker) unlockSeqNum(err error) {
-	if w.seqNumLocked {
-		if err != nil {
-			// if meet error, we should reset seqNum.
-			w.ddlSeqNumMu.seqNum--
-		}
-		w.seqNumLocked = false
-		w.ddlSeqNumMu.Unlock()
 	}
 }
 
@@ -1099,9 +1081,6 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	var (
 		err error
 	)
-	defer func() {
-		w.unlockSeqNum(err)
-	}()
 
 	txn, err := w.prepareTxn(job)
 	if err != nil {
@@ -1229,10 +1208,6 @@ func (w *worker) checkBeforeCommit() error {
 // 2. no need to wait schema version(only support create table now).
 // 3. no register mdl info(only support create table now).
 func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
-	defer func() {
-		w.unlockSeqNum(err)
-	}()
-
 	txn, err := w.prepareTxn(job)
 	if err != nil {
 		return err

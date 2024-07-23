@@ -428,12 +428,6 @@ type ddlCtx struct {
 		hook        Callback
 		interceptor Interceptor
 	}
-
-	// TODO merge with *waitSchemaSyncedController into another new struct.
-	ddlSeqNumMu struct {
-		sync.Mutex
-		seqNum uint64
-	}
 }
 
 // the schema synchronization mechanism now requires strict incremental schema versions.
@@ -832,6 +826,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 }
 
 func (d *ddl) prepareLocalModeWorkers() {
+	var idAllocator atomic.Uint64
 	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx)
@@ -841,6 +836,7 @@ func (d *ddl) prepareLocalModeWorkers() {
 			}
 			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			wk.sess = sess.NewSession(sessForJob)
+			wk.seqAllocator = &idAllocator
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
@@ -967,19 +963,6 @@ func (d *ddl) DisableDDL() error {
 	// disable campaign by interrupting campaignLoop
 	d.ownerManager.CampaignCancel()
 	return nil
-}
-
-// GetNextDDLSeqNum return the next DDL seq num.
-func (s *jobScheduler) GetNextDDLSeqNum() (uint64, error) {
-	var count uint64
-	ctx := kv.WithInternalSourceType(s.schCtx, kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err error
-		count, err = t.GetHistoryDDLCount()
-		return err
-	})
-	return count, err
 }
 
 func (d *ddl) close() {
