@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
