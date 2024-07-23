@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/ddl",
         "//pkg/ddl/syncer",
+        "//pkg/ddl/systable",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/autoid",

@@ -135,6 +135,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util/table-filter",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",

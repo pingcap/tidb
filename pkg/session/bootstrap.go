@@ -1107,11 +1107,14 @@ const (
 	version209 = 209
 	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
 	version210 = 210
+
+	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
+	version211 = 211
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version210
+var currentBootstrapVersion int64 = version211
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1277,6 +1280,7 @@ var (
 		upgradeToVer198,
 		upgradeToVer209,
 		upgradeToVer210,
+		upgradeToVer211,
 	}
 )
 
@@ -3061,6 +3065,13 @@ func upgradeToVer210(s sessiontypes.Session, ver int64) {
 	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
 	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
 	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
+}
+
+func upgradeToVer211(s sessiontypes.Session, ver int64) {
+	if ver >= version211 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

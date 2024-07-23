@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -871,8 +871,14 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 	return true, ver, err
 }
 
-func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+func doReorgWorkForCreateIndex(
+	w *worker,
+	d *ddlCtx,
+	t *meta.Meta,
+	job *model.Job,
+	tbl table.Table,
+	allIndexInfos []*model.IndexInfo,
+) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
 	reorgTp, err = pickBackfillType(job)
 	if err != nil {
@@ -1011,8 +1017,15 @@ func errorIsRetryable(err error, job *model.Job) bool {
 	return true
 }
 
-func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
+func runReorgJobAndHandleErr(
+	w *worker,
+	d *ddlCtx,
+	t *meta.Meta,
+	job *model.Job,
+	tbl table.Table,
+	allIndexInfos []*model.IndexInfo,
+	mergingTmpIdx bool,
+) (done bool, ver int64, err error) {
 	elements := make([]*meta.Element, 0, len(allIndexInfos))
 	for _, indexInfo := range allIndexInfos {
 		elements = append(elements, &meta.Element{ID: indexInfo.ID, TypeKey: meta.IndexElementKey})

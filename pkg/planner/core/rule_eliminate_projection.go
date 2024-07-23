@@ -253,17 +253,6 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, sc
 	return expr
 }
 
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column) {
-	la.LogicalJoin.ReplaceExprColumns(replace)
-	for _, coCol := range la.CorCols {
-		dst := replace[string(coCol.Column.HashCode())]
-		if dst != nil {
-			coCol.Column = *dst
-		}
-	}
-}
-
 func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }
