@@ -90,6 +90,7 @@ func (sf *ScalarFunction) Vectorized() bool {
 	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
 }
 
+<<<<<<< HEAD
 // SupportReverseEval returns if this expression supports reversed evaluation.
 func (sf *ScalarFunction) SupportReverseEval() bool {
 	switch sf.RetType.GetType() {
@@ -112,18 +113,30 @@ func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
+=======
+// StringWithCtx implements Expression interface.
+func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
+<<<<<<< HEAD
 			buffer.WriteString(arg.String())
+=======
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			buffer.WriteString(", ")
 			buffer.WriteString(sf.RetType.String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
+<<<<<<< HEAD
 			buffer.WriteString(arg.String())
+=======
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -133,9 +146,15 @@ func (sf *ScalarFunction) String() string {
 	return buffer.String()
 }
 
+<<<<<<< HEAD
 // MarshalJSON implements json.Marshaler interface.
 func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("%q", sf)), nil
+=======
+// String returns the string representation of the function
+func (sf *ScalarFunction) String() string {
+	return sf.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type

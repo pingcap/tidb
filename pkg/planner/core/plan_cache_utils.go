@@ -733,3 +733,27 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 	}
 	return true
 }
+<<<<<<< HEAD
+=======
+
+// parseParamTypes get parameters' types in PREPARE statement
+func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	paramTypes = make([]*types.FieldType, 0, len(params))
+	for _, param := range params {
+		if c, ok := param.(*expression.Constant); ok { // from binary protocol
+			paramTypes = append(paramTypes, c.GetType(ectx))
+			continue
+		}
+
+		// from text protocol, there must be a GetVar function
+		name := param.(*expression.ScalarFunction).GetArgs()[0].StringWithCtx(ectx, errors.RedactLogDisable)
+		tp, ok := sctx.GetSessionVars().GetUserVarType(name)
+		if !ok {
+			tp = types.NewFieldType(mysql.TypeNull)
+		}
+		paramTypes = append(paramTypes, tp)
+	}
+	return
+}
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))

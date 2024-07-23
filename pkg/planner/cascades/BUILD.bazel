@@ -26,6 +26,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/ranger",
         "//pkg/util/set",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 

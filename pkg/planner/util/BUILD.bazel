@@ -19,6 +19,7 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/ranger",
         "//pkg/util/size",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 

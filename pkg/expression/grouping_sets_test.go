@@ -17,6 +17,11 @@ package expression
 import (
 	"testing"
 
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -354,9 +359,15 @@ func TestDistinctGroupingSets(t *testing.T) {
 	rawRollupExprs = []Expression{a, b, b, c}
 	deduplicateExprs, pos = DeduplicateGbyExpression(mockCtx, rawRollupExprs)
 	require.Equal(t, len(deduplicateExprs), 3)
+<<<<<<< HEAD
 	require.Equal(t, deduplicateExprs[0].String(), "Column#1")
 	require.Equal(t, deduplicateExprs[1].String(), "Column#2")
 	require.Equal(t, deduplicateExprs[2].String(), "Column#3")
+=======
+	require.Equal(t, deduplicateExprs[0].StringWithCtx(ctx, errors.RedactLogDisable), "Column#1")
+	require.Equal(t, deduplicateExprs[1].StringWithCtx(ctx, errors.RedactLogDisable), "Column#2")
+	require.Equal(t, deduplicateExprs[2].StringWithCtx(ctx, errors.RedactLogDisable), "Column#3")
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	deduplicateColumns := make([]*Column, 0, len(deduplicateExprs))
 	for _, one := range deduplicateExprs {
 		deduplicateColumns = append(deduplicateColumns, one.(*Column))
@@ -374,10 +385,17 @@ func TestDistinctGroupingSets(t *testing.T) {
 	// so that why restore gby expression according to their pos is necessary.
 	restoreGbyExpressions := RestoreGbyExpression(deduplicateColumns, pos)
 	require.Equal(t, len(restoreGbyExpressions), 4)
+<<<<<<< HEAD
 	require.Equal(t, restoreGbyExpressions[0].String(), "Column#1")
 	require.Equal(t, restoreGbyExpressions[1].String(), "Column#2")
 	require.Equal(t, restoreGbyExpressions[2].String(), "Column#2")
 	require.Equal(t, restoreGbyExpressions[3].String(), "Column#3")
+=======
+	require.Equal(t, restoreGbyExpressions[0].StringWithCtx(ctx, errors.RedactLogDisable), "Column#1")
+	require.Equal(t, restoreGbyExpressions[1].StringWithCtx(ctx, errors.RedactLogDisable), "Column#2")
+	require.Equal(t, restoreGbyExpressions[2].StringWithCtx(ctx, errors.RedactLogDisable), "Column#2")
+	require.Equal(t, restoreGbyExpressions[3].StringWithCtx(ctx, errors.RedactLogDisable), "Column#3")
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 
 	// rollup grouping sets (build grouping sets on the restored gby expression, because all the
 	// complicated expressions have been projected as simple columns at this time).

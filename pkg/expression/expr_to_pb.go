@@ -39,7 +39,30 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
+<<<<<<< HEAD
 			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+=======
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
+		}
+		pbExpr = append(pbExpr, v)
+	}
+	return
+}
+
+// ProjectionExpressionsToPBList converts PhysicalProjection's expressions to tipb.Expr list for new plan.
+// It doesn't check type for top level column expression, since top level column expression doesn't imply any calculations
+func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+	pc := PbConverter{client: client, ctx: ctx}
+	for _, expr := range exprs {
+		var v *tipb.Expr
+		if column, ok := expr.(*Column); ok {
+			v = pc.columnToPBExpr(column, false)
+		} else {
+			v = pc.ExprToPB(expr)
+		}
+		if v == nil {
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		}
 		pbExpr = append(pbExpr, v)
 	}
