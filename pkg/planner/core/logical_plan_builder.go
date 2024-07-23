@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -5153,15 +5152,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
-		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrFieldNotInGroupBy) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrMixOfGroupFuncAndFields) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrViewNoExplain) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrNotSupportedYet) {
-			err = plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
-		}
 		return nil, err
 	}
 	pm := privilege.GetPrivilegeManager(b.ctx)
