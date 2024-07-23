@@ -47,7 +47,7 @@ check-setup:tools/bin/revive
 precheck: fmt bazel_prepare
 
 .PHONY: check
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
+check: check-bazel-prepare parser_yacc parser_genkeywords check-parallel lint tidy testSuite errdoc license
 
 .PHONY: fmt
 fmt:
@@ -129,7 +129,7 @@ test_part_1: checklist integrationtest
 test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test
 
 .PHONY: test_part_parser
-test_part_parser: parser_yacc test_part_parser_dev
+test_part_parser: parser_yacc parser_genkeywords test_part_parser_dev
 
 .PHONY: test_part_parser_dev
 test_part_parser_dev: parser_fmt parser_unit_test
@@ -141,6 +141,10 @@ parser:
 .PHONY: parser_yacc
 parser_yacc:
 	@cd pkg/parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
+
+.PHONY: parser_genkeywords
+parser_genkeywords:
+	@cd pkg/parser && mv keywords.go keywords.go.committed && make generate && diff -u keywords.go.committed keywords.go && rm keywords.go.committed
 
 .PHONY: parser_fmt
 parser_fmt:
