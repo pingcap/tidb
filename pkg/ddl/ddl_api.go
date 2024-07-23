@@ -209,15 +209,7 @@ func (d *ddl) CreateSchemaWithInfo(
 		return errors.Trace(err)
 	}
 
-	// FIXME: support `tryRetainID`.
-	genIDs, err := d.genGlobalIDs(1)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	dbInfo.ID = genIDs[0]
-
 	job := &model.Job{
-		SchemaID:       dbInfo.ID,
 		SchemaName:     dbInfo.Name.L,
 		Type:           model.ActionCreateSchema,
 		BinlogInfo:     &model.HistoryInfo{},
@@ -236,7 +228,7 @@ func (d *ddl) CreateSchemaWithInfo(
 		})
 	}
 
-	err = d.DoDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 
 	if infoschema.ErrDatabaseExists.Equal(err) && onExist == OnExistIgnore {
@@ -2716,15 +2708,6 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	return tbInfo, nil
 }
 
-func (d *ddl) assignTableID(tbInfo *model.TableInfo) error {
-	genIDs, err := d.genGlobalIDs(1)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tbInfo.ID = genIDs[0]
-	return nil
-}
-
 func (d *ddl) assignPartitionIDs(defs []model.PartitionDefinition) error {
 	genIDs, err := d.genGlobalIDs(len(defs))
 	if err != nil {
@@ -2788,7 +2771,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, onExist)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
 }
 
 func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
@@ -2809,15 +2792,12 @@ func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.Crea
 
 // createTableWithInfoJob returns the table creation job.
 // WARNING: it may return a nil job, which means you don't need to submit any DDL job.
-// WARNING!!!: if retainID == true, it will not allocate ID by itself. That means if the caller
-// can not promise ID is unique, then we got inconsistency.
 func (d *ddl) createTableWithInfoJob(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
 	involvingRef []model.InvolvingSchemaInfo,
 	onExist OnExist,
-	retainID bool,
 ) (job *model.Job, err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(dbName)
@@ -2849,18 +2829,6 @@ func (d *ddl) createTableWithInfoJob(
 			return nil, err
 		default:
 			return nil, err
-		}
-	}
-
-	if !retainID {
-		if err := d.assignTableID(tbInfo); err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		if tbInfo.Partition != nil {
-			if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
-				return nil, errors.Trace(err)
-			}
 		}
 	}
 
@@ -2896,7 +2864,6 @@ func (d *ddl) createTableWithInfoJob(
 
 	job = &model.Job{
 		SchemaID:            schema.ID,
-		TableID:             tbInfo.ID,
 		SchemaName:          schema.Name.L,
 		TableName:           tbInfo.Name.L,
 		Type:                actionType,
@@ -2972,12 +2939,12 @@ func (d *ddl) CreateTableWithInfo(
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
 	involvingRef []model.InvolvingSchemaInfo,
-	cs ...CreateTableWithInfoConfigurier,
+	cs ...CreateTableOption,
 ) (err error) {
-	c := GetCreateTableWithInfoConfig(cs)
+	c := GetCreateTableConfig(cs)
 
 	job, err := d.createTableWithInfoJob(
-		ctx, dbName, tbInfo, involvingRef, c.OnExist, !c.ShouldAllocTableID(tbInfo),
+		ctx, dbName, tbInfo, involvingRef, c.OnExist,
 	)
 	if err != nil {
 		return err
@@ -2986,7 +2953,9 @@ func (d *ddl) CreateTableWithInfo(
 		return nil
 	}
 
-	err = d.DoDDLJob(ctx, job)
+	jobW := NewJobWrapper(job, c.IDAllocated)
+
+	err = d.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
@@ -3004,7 +2973,7 @@ func (d *ddl) CreateTableWithInfo(
 func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName model.CIStr,
 	infos []*model.TableInfo,
-	cs ...CreateTableWithInfoConfigurier,
+	cs ...CreateTableOption,
 ) error {
 	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
 		injectBatchSize := val.(int)
@@ -3012,21 +2981,23 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			failpoint.Return(kv.ErrEntryTooLarge)
 		}
 	})
-	c := GetCreateTableWithInfoConfig(cs)
+	c := GetCreateTableConfig(cs)
 
-	jobs := &model.Job{
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
-	}
+	jobW := NewJobWrapper(
+		&model.Job{
+			BinlogInfo:     &model.HistoryInfo{},
+			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+			SQLMode:        ctx.GetSessionVars().SQLMode,
+		},
+		c.IDAllocated,
+	)
 	args := make([]*model.TableInfo, 0, len(infos))
 
 	var err error
 
-	// 1. counts how many IDs are there
-	// 2. if there is any duplicated table name
-	totalID := 0
+	// check if there are any duplicated table names
 	duplication := make(map[string]struct{})
+	// TODO filter those duplicated info out.
 	for _, info := range infos {
 		if _, ok := duplication[info.Name.L]; ok {
 			err = infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
@@ -3040,31 +3011,10 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		}
 
 		duplication[info.Name.L] = struct{}{}
-
-		totalID++
-		parts := info.GetPartitionInfo()
-		if parts != nil {
-			totalID += len(parts.Definitions)
-		}
-	}
-
-	genIDs, err := d.genGlobalIDs(totalID)
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	for _, info := range infos {
-		if c.ShouldAllocTableID(info) {
-			info.ID, genIDs = genIDs[0], genIDs[1:]
-
-			if parts := info.GetPartitionInfo(); parts != nil {
-				for i := range parts.Definitions {
-					parts.Definitions[i].ID, genIDs = genIDs[0], genIDs[1:]
-				}
-			}
-		}
-
-		job, err := d.createTableWithInfoJob(ctx, dbName, info, nil, c.OnExist, true)
+		job, err := d.createTableWithInfoJob(ctx, dbName, info, nil, c.OnExist)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3072,12 +3022,12 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			continue
 		}
 
-		// if jobs.Type == model.ActionCreateTables, it is initialized
-		// if not, initialize jobs by job.XXXX
-		if jobs.Type != model.ActionCreateTables {
-			jobs.Type = model.ActionCreateTables
-			jobs.SchemaID = job.SchemaID
-			jobs.SchemaName = job.SchemaName
+		// if jobW.Type == model.ActionCreateTables, it is initialized
+		// if not, initialize jobW by job.XXXX
+		if jobW.Type != model.ActionCreateTables {
+			jobW.Type = model.ActionCreateTables
+			jobW.SchemaID = job.SchemaID
+			jobW.SchemaName = job.SchemaName
 		}
 
 		// append table job args
@@ -3086,37 +3036,37 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			return errors.Trace(fmt.Errorf("except table info"))
 		}
 		args = append(args, info)
+		jobW.InvolvingSchemaInfo = append(jobW.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
+			Database: dbName.L,
+			Table:    info.Name.L,
+		})
 		if sharedInv := getSharedInvolvingSchemaInfo(info); len(sharedInv) > 0 {
-			jobs.InvolvingSchemaInfo = append(jobs.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
-				Database: dbName.L,
-				Table:    info.Name.L,
-			})
-			jobs.InvolvingSchemaInfo = append(jobs.InvolvingSchemaInfo, sharedInv...)
+			jobW.InvolvingSchemaInfo = append(jobW.InvolvingSchemaInfo, sharedInv...)
 		}
 	}
 	if len(args) == 0 {
 		return nil
 	}
-	jobs.Args = append(jobs.Args, args)
-	jobs.Args = append(jobs.Args, ctx.GetSessionVars().ForeignKeyChecks)
+	jobW.Args = append(jobW.Args, args)
+	jobW.Args = append(jobW.Args, ctx.GetSessionVars().ForeignKeyChecks)
 
-	err = d.DoDDLJob(ctx, jobs)
+	err = d.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
-		return errors.Trace(d.callHookOnChanged(jobs, err))
+		return errors.Trace(d.callHookOnChanged(jobW.Job, err))
 	}
 
 	for j := range args {
-		if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
-			return errors.Trace(d.callHookOnChanged(jobs, err))
+		if err = d.createTableWithInfoPost(ctx, args[j], jobW.SchemaID); err != nil {
+			return errors.Trace(d.callHookOnChanged(jobW.Job, err))
 		}
 	}
 
-	return d.callHookOnChanged(jobs, err)
+	return d.callHookOnChanged(jobW.Job, err)
 }
 
 // BuildQueryStringFromJobs takes a slice of Jobs and concatenates their
@@ -3389,7 +3339,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		onExist = OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, onExist)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, WithOnExist(onExist))
 }
 
 // BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
@@ -8769,7 +8719,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, nil, onExist)
+	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, nil, WithOnExist(onExist))
 }
 
 func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {

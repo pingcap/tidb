@@ -190,7 +190,10 @@ func TestCheckRowBuffer(t *testing.T) {
 	buffer.AddColVal(types.NewIntDatum(1))
 	buffer.AddColVal(types.NewIntDatum(2))
 	require.Equal(t, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)}, buffer.rowToCheck)
-	require.Equal(t, buffer.rowToCheck, buffer.GetRowToCheck())
+	rowToCheck := buffer.GetRowToCheck()
+	require.Equal(t, 2, rowToCheck.Len())
+	require.Equal(t, int64(1), rowToCheck.GetInt64(0))
+	require.Equal(t, int64(2), rowToCheck.GetInt64(1))
 
 	// reset should not shrink the capacity
 	buffer.Reset(2)
@@ -240,6 +243,8 @@ func TestMutateBuffersGetter(t *testing.T) {
 
 	colSize := buffers.GetColSizeDeltaBufferWithCap(6)
 	require.Equal(t, 6, cap(colSize.delta))
+
+	require.Same(t, stmtBufs, buffers.GetWriteStmtBufs())
 }
 
 func TestEnsureCapacityAndReset(t *testing.T) {

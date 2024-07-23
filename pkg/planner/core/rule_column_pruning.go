@@ -23,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 )
@@ -165,98 +163,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		return proj, nil
 	}
 	return ds, nil
-}
-
-func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
-	for _, eqCond := range p.EqualConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
-	}
-	for _, leftCond := range p.LeftConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
-	}
-	for _, rightCond := range p.RightConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
-	}
-	for _, otherCond := range p.OtherConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
-	}
-	for _, naeqCond := range p.NAEQConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
-	}
-	lChild := p.Children()[0]
-	rChild := p.Children()[1]
-	for _, col := range parentUsedCols {
-		if lChild.Schema().Contains(col) {
-			leftCols = append(leftCols, col)
-		} else if rChild.Schema().Contains(col) {
-			rightCols = append(rightCols, col)
-		}
-	}
-	return leftCols, rightCols
-}
-
-func (p *LogicalJoin) mergeSchema() {
-	p.SetSchema(buildLogicalJoinSchema(p.JoinType, p))
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
-
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	addConstOneForEmptyProjection(p.Children()[0])
-
-	p.Children()[1], err = p.Children()[1].PruneColumns(rightCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	addConstOneForEmptyProjection(p.Children()[1])
-
-	p.mergeSchema()
-	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		joinCol := p.Schema().Columns[len(p.Schema().Columns)-1]
-		parentUsedCols = append(parentUsedCols, joinCol)
-	}
-	p.InlineProjection(parentUsedCols, opt)
-	return p, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
-	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
-	var err error
-	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {
-		logicaltrace.ApplyEliminateTraceStep(la.Children()[1], opt)
-		resultPlan := la.Children()[0]
-		// reEnter the new child's column pruning, returning child[0] as a new child here.
-		return resultPlan.PruneColumns(parentUsedCols, opt)
-	}
-
-	// column pruning for child-1.
-	la.Children()[1], err = la.Children()[1].PruneColumns(rightCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	addConstOneForEmptyProjection(la.Children()[1])
-
-	la.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(la.Children()[1], la.Children()[0].Schema())
-	for _, col := range la.CorCols {
-		leftCols = append(leftCols, &col.Column)
-	}
-
-	// column pruning for child-0.
-	la.Children()[0], err = la.Children()[0].PruneColumns(leftCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	addConstOneForEmptyProjection(la.Children()[0])
-	la.mergeSchema()
-	return la, nil
 }
 
 func (*columnPruner) name() string {

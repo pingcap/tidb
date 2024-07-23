@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"go/format"
 	"reflect"
+	"strings"
 )
 
 // genPlanCloneForPlanCacheCode generates CloneForPlanCache for all physical plan nodes in plan_clone_generated.go.
@@ -30,7 +31,9 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func genPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{}}
+	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{},
+		PhysicalSort{}, PhysicalTopN{}, PhysicalStreamAgg{}, PhysicalHashAgg{},
+		PhysicalHashJoin{}, PhysicalMergeJoin{}}
 	c := new(codeGen)
 	c.write(codeGenPrefix)
 	for _, s := range structures {
@@ -63,18 +66,13 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
-		case "core.physicalSchemaProducer":
-			c.write(`basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+		case "core.physicalSchemaProducer", "core.basePhysicalPlan", "core.basePhysicalAgg", "core.basePhysicalJoin":
+			fieldName := strings.Split(f.Type.String(), ".")[1]
+			c.write(`basePlan, baseOK := op.%v.cloneForPlanCacheWithSelf(newCtx, cloned)
 							if !baseOK {
 								return nil, false
 							}
-							cloned.physicalSchemaProducer = *basePlan`)
-		case "core.basePhysicalPlan":
-			c.write(`basePlan, baseOK := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned)
-							if !baseOK {
-								return nil, false
-							}
-							cloned.basePhysicalPlan = *basePlan`)
+							cloned.%v = *basePlan`, fieldName, fieldName)
 		case "[]expression.Expression":
 			c.write("cloned.%v = util.CloneExprs(op.%v)", f.Name, f.Name)
 		case "[]*ranger.Range":
@@ -83,6 +81,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = util.CloneByItems(op.%v)", f.Name, f.Name)
 		case "[]*expression.Column":
 			c.write("cloned.%v = util.CloneCols(op.%v)", f.Name, f.Name)
+		case "[]*expression.ScalarFunction":
+			c.write("cloned.%v = util.CloneScalarFunctions(op.%v)", f.Name, f.Name)
+		case "[]property.SortItem":
+			c.write("cloned.%v = util.CloneSortItem(op.%v)", f.Name, f.Name)
 		case "util.HandleCols":
 			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
 		case "*core.PhysPlanPartInfo":
@@ -90,7 +92,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "*expression.Column":
 			c.write("cloned.%v = op.%v.Clone().(*expression.Column)", f.Name, f.Name)
 		default:
-			return nil, fmt.Errorf("can't generate Clone method for type: %v", f.Type.String())
+			return nil, fmt.Errorf("can't generate Clone method for type %v in %v", f.Type.String(), vType.String())
 		}
 	}
 	c.write("return cloned, true")

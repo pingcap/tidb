@@ -467,6 +467,19 @@ func TestSetPwd(t *testing.T) {
 	tk.MustExec(setPwdSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
+
+	// Test running SET PASSWORD FOR without sufficient privileges.
+	// Create user u1 with super privilege.
+	tk.MustExec("create user 'u1'")
+	tk.MustExec("grant super on *.* to u1")
+	// Create user u2 with create user privilege.
+	tk.MustExec("create user 'u2'")
+	tk.MustExec("grant create user on *.* to u2")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
+	// Should have the correct error message saying u2 does not have enough privileges.
+	tk2.MustContainErrMsg("set password for 'u1'='randompassword'", "[executor:1044]Access denied for user 'u2'")
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {

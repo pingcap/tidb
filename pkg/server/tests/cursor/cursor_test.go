@@ -190,7 +190,7 @@ outerLoop:
 		require.NoError(t, err)
 		stmt := rawStmt.(mysqlcursor.Statement)
 
-		// This query will return 10000 rows and use cursor fetch.
+		// This query will return `rowCount` rows and use cursor fetch.
 		rows, err := stmt.QueryContext(context.Background(), nil)
 		require.NoError(t, err)
 
@@ -223,6 +223,69 @@ outerLoop:
 				require.NoError(t, err)
 				require.NoError(t, rows.Close())
 			}
+		}
+	}
+}
+
+func TestSerialLazyExecuteAndFetch(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	mysqldriver := &mysqlcursor.MySQLDriver{}
+	rawConn, err := mysqldriver.Open(ts.GetDSNWithCursor(10))
+	require.NoError(t, err)
+	conn := rawConn.(mysqlcursor.Connection)
+	defer conn.Close()
+
+	_, err = conn.ExecContext(context.Background(), "drop table if exists t1", nil)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
+	require.NoError(t, err)
+	rowCount := 1000
+	for i := 0; i < rowCount; i++ {
+		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
+		require.NoError(t, err)
+	}
+
+	_, err = conn.ExecContext(context.Background(), "set tidb_enable_lazy_cursor_fetch = 'ON'", nil)
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/avoidEagerCursorFetch", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/avoidEagerCursorFetch"))
+	}()
+
+	// Normal execute. Simple table reader.
+	execTimes := 0
+outerLoop:
+	for execTimes < 50 {
+		execTimes++
+		rawStmt, err := conn.Prepare("select * from t1")
+		require.NoError(t, err)
+		stmt := rawStmt.(mysqlcursor.Statement)
+
+		// This query will return `rowCount` rows and use cursor fetch.
+		rows, err := stmt.QueryContext(context.Background(), nil)
+		require.NoError(t, err)
+
+		dest := make([]driver.Value, 2)
+		fetchRowCount := int64(0)
+
+		for {
+			// it'll send `FETCH` commands for every 10 rows.
+			err := rows.Next(dest)
+			if err != nil {
+				switch err {
+				case io.EOF:
+					require.Equal(t, int64(rowCount), fetchRowCount)
+					rows.Close()
+					break outerLoop
+				default:
+					require.NoError(t, err)
+				}
+			}
+			require.Equal(t, fetchRowCount, dest[0])
+			require.Equal(t, fetchRowCount, dest[1])
+			fetchRowCount++
 		}
 	}
 }
