@@ -886,7 +886,7 @@ func buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx()))
+			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -1018,13 +1018,15 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
 	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
+	// It is to build the range info which is used in explain. It is necessary to redact the range info.
+	redact := ectx.GetTiDBRedactLog()
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx))
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx, redact))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
