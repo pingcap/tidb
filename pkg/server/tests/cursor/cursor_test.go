@@ -163,6 +163,11 @@ func TestCursorFetchExecuteCheck(t *testing.T) {
 }
 
 func TestConcurrentExecuteAndFetch(t *testing.T) {
+	runTestConcurrentExecuteAndFetch(t, false)
+	runTestConcurrentExecuteAndFetch(t, true)
+}
+
+func runTestConcurrentExecuteAndFetch(t *testing.T, lazy bool) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	mysqldriver := &mysqlcursor.MySQLDriver{}
@@ -179,6 +184,16 @@ func TestConcurrentExecuteAndFetch(t *testing.T) {
 	for i := 0; i < rowCount; i++ {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
+	}
+
+	if lazy {
+		_, err = conn.ExecContext(context.Background(), "set tidb_enable_lazy_cursor_fetch = 'ON'", nil)
+		require.NoError(t, err)
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/avoidEagerCursorFetch", "return"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/avoidEagerCursorFetch"))
+		}()
 	}
 
 	// Normal execute. Simple table reader.
@@ -259,7 +274,7 @@ func TestSerialLazyExecuteAndFetch(t *testing.T) {
 outerLoop:
 	for execTimes < 50 {
 		execTimes++
-		rawStmt, err := conn.Prepare("select * from t1")
+		rawStmt, err := conn.Prepare("select * from t1 order by id")
 		require.NoError(t, err)
 		stmt := rawStmt.(mysqlcursor.Statement)
 

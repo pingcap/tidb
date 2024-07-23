@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -169,7 +170,11 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
 				authPlugin = user.AuthOpt.AuthPlugin
 			}
-			authPluginImpl, _ := e.Ctx().GetExtensions().GetAuthPlugin(authPlugin)
+			extensions, extErr := extension.GetExtensions()
+			if extErr != nil {
+				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(extErr.Error())
+			}
+			authPluginImpl := extensions.GetAuthPlugins()[authPlugin]
 			pwd, ok := encodePassword(user, authPluginImpl)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)

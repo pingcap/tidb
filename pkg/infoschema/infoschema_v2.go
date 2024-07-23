@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
@@ -531,7 +532,7 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 }
 
 // SchemaTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
+func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -540,15 +541,15 @@ func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 			for _, tbl := range schTbls.tables {
 				tables = append(tables, tbl)
 			}
-			return getTableInfoList(tables)
+			return getTableInfoList(tables), nil
 		}
-		return nil // something wrong?
+		return nil, nil // something wrong?
 	}
 
 retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
@@ -558,7 +559,7 @@ retry:
 	tblInfos, err := m.ListTables(dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			return nil
+			return nil, nil
 		}
 		// Flashback statement could cause such kind of error.
 		// In theory that error should be handled in the lower layer, like client-go.
@@ -567,14 +568,13 @@ retry:
 			time.Sleep(200 * time.Millisecond)
 			goto retry
 		}
-		// TODO: error could happen, so do not panic!
-		panic(err)
+		return nil, errors.Trace(err)
 	}
-	return tblInfos
+	return tblInfos, nil
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
+func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model.CIStr) []*model.TableNameInfo {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -798,57 +798,6 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return nil, false
 	}
 	return is.SchemaByName(model.NewCIStr(name))
-}
-
-func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	if IsSpecialDB(schema.L) {
-		raw, ok := is.Data.specials.Load(schema.L)
-		if ok {
-			schTbls := raw.(*schemaTables)
-			tables := make([]table.Table, 0, len(schTbls.tables))
-			for _, tbl := range schTbls.tables {
-				tables = append(tables, tbl)
-			}
-			return tables
-		}
-	}
-
-retry:
-	dbInfo, ok := is.SchemaByName(schema)
-	if !ok {
-		return
-	}
-	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
-	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
-	// the meta region leader is slow.
-	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-	m := meta.NewSnapshotMeta(snapshot)
-	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			return nil
-		}
-		// Flashback statement could cause such kind of error.
-		// In theory that error should be handled in the lower layer, like client-go.
-		// But it's not done, so we retry here.
-		if strings.Contains(err.Error(), "in flashback progress") {
-			time.Sleep(200 * time.Millisecond)
-			goto retry
-		}
-		// TODO: error could happen, so do not panic!
-		panic(err)
-	}
-
-	tables = make([]table.Table, 0, len(tblInfos))
-	for _, tblInfo := range tblInfos {
-		tbl, ok := is.tableByID(tblInfo.ID, true)
-		if !ok {
-			// what happen?
-			continue
-		}
-		tables = append(tables, tbl)
-	}
-	return
 }
 
 func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
@@ -1078,9 +1027,9 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 	}
 
 	tableIDs := make([]int64, 0, len(di.Tables))
-	tables := b.infoschemaV2.SchemaTables(di.Name)
-	for _, table := range tables {
-		tbl := table.Meta()
+	tables, err := b.infoschemaV2.SchemaTableInfos(context.Background(), di.Name)
+	terror.Log(err)
+	for _, tbl := range tables {
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
 	}
 
