@@ -564,7 +564,9 @@ func (s *statsSyncLoad) updateCachedItem(tbleInfo table.Table, item model.TableI
 		}
 		if tbl.ColAndIdxExistenceMap.IsColEmpty() {
 			for _, col := range tbleInfo.Meta().Columns {
-				tbl.ColAndIdxExistenceMap.InsertCol(col.ID, col, colHist.StatsAvailable())
+				if colHist.ID == col.ID {
+					tbl.ColAndIdxExistenceMap.InsertCol(col.ID, col, colHist.StatsAvailable())
+				}
 			}
 		}
 		// If the column is analyzed we refresh the map for the possible change.
