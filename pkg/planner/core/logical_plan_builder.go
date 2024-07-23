@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 const (
@@ -5783,6 +5784,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
+<<<<<<< HEAD
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, ErrInternal) &&
@@ -5791,6 +5793,17 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 			terror.ErrorNotEqual(err, ErrViewNoExplain) &&
 			terror.ErrorNotEqual(err, ErrNotSupportedYet) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+=======
+		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
+		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
+			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&
+			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&
+			terror.ErrorNotEqual(err, plannererrors.ErrFieldNotInGroupBy) &&
+			terror.ErrorNotEqual(err, plannererrors.ErrMixOfGroupFuncAndFields) &&
+			terror.ErrorNotEqual(err, plannererrors.ErrViewNoExplain) &&
+			terror.ErrorNotEqual(err, plannererrors.ErrNotSupportedYet) {
+			err = plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+>>>>>>> b19a91817c5 (*: isolate more variables for `runWithSystemSession` (#54791))
 		}
 		return nil, err
 	}
