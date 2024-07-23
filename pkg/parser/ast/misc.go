@@ -121,6 +121,10 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" AS ")
 		ctx.WriteString(n.HashString)
 	}
+	if n.ReplaceString != "" {
+		ctx.WriteKeyWord(" REPLACE ")
+		ctx.WriteString(n.ReplaceString)
+	}
 	return nil
 }
 
