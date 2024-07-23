@@ -4890,6 +4890,7 @@ func TestPrivilege(t *testing.T) {
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED BY 'new-password', `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER USER() IDENTIFIED BY 'new-password'"},
+		{`ALTER USER USER() IDENTIFIED BY 'new-password' REPLACE 'oldsecret'`, true, "ALTER USER USER() IDENTIFIED BY 'new-password' REPLACE 'oldsecret'"},
 		{`ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER IF EXISTS USER() IDENTIFIED BY 'new-password'"},
 		{"alter user 'test@localhost' password expire;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE"},
 		{"alter user 'test@localhost' password expire never;", true, "ALTER USER `test@localhost`@`%` PASSWORD EXPIRE NEVER"},
