@@ -277,7 +277,7 @@ func resetByIDBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
 			}
 			pivot = item
 			items = append(items, pivot)
-			if len(items) == cap(items) {
+			if len(items) == cap(items) { // #nosec S1008
 				return false
 			}
 			return true
@@ -318,7 +318,7 @@ func resetByNameBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64)
 			}
 			pivot = item
 			items = append(items, pivot)
-			if len(items) == cap(items) {
+			if len(items) == cap(items) { // #nosec S1008
 				return false
 			}
 			return true
