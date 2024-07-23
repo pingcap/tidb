@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -290,7 +291,11 @@ func (b *builtinExpSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 		}
 		exp := math.Exp(f64s[i])
 		if math.IsInf(exp, 0) || math.IsNaN(exp) {
+<<<<<<< HEAD
 			s := fmt.Sprintf("exp(%s)", b.args[0].String())
+=======
+			s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", s); err != nil {
 				return err
 			}
