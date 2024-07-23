@@ -71,12 +71,21 @@ func (a *baseFuncDesc) clone() *baseFuncDesc {
 	return &clone
 }
 
+<<<<<<< HEAD
 // String implements the fmt.Stringer interface.
 func (a *baseFuncDesc) String() string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	for i, arg := range a.Args {
 		buffer.WriteString(arg.String())
+=======
+// StringWithCtx returns the string within given context.
+func (a *baseFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) string {
+	buffer := bytes.NewBufferString(a.Name)
+	buffer.WriteString("(")
+	for i, arg := range a.Args {
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		if i+1 != len(a.Args) {
 			buffer.WriteString(", ")
 		}
@@ -150,7 +159,11 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
+<<<<<<< HEAD
 		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String())
+=======
+		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].StringWithCtx(ctx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	}
 	if percent <= 0 || percent > 100 || isNull {
 		if isNull {

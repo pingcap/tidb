@@ -19,6 +19,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -1542,8 +1543,12 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		exprType := args[1-conIdx].GetType()
 		exprEvalType := exprType.EvalType()
 		if exprType.GetType() == mysql.TypeYear {
+<<<<<<< HEAD
 			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+=======
+			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", args[conIdx].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			return true
 		}
 
@@ -1552,8 +1557,12 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		conEvalType := args[conIdx].GetType().EvalType()
 		if exprEvalType == types.ETInt &&
 			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
+<<<<<<< HEAD
 			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+=======
+			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", args[conIdx].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			return true
 		}
 
@@ -1562,8 +1571,12 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		// see https://github.com/pingcap/tidb/issues/38361 for more details
 		_, exprIsCon := args[1-conIdx].(*Constant)
 		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
+<<<<<<< HEAD
 			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+=======
+			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to datetime", args[conIdx].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			return true
 		}
 	}

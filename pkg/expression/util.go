@@ -1017,7 +1017,16 @@ func containOuterNot(expr Expression, not bool) bool {
 // Contains tests if `exprs` contains `e`.
 func Contains(exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
+<<<<<<< HEAD
 		if e == expr {
+=======
+		// Check string equivalence if one of the expressions is a clone.
+		sameString := false
+		if e != nil && expr != nil {
+			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		if e == expr || sameString {
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			return true
 		}
 	}
@@ -1848,7 +1857,11 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
+<<<<<<< HEAD
 				strconv.Quote(cond.String()),
+=======
+				strconv.Quote(cond.StringWithCtx(ctx, errors.RedactLogDisable)),
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 				quote),
 			quote)
 	}

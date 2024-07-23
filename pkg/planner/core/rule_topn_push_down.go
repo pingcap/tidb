@@ -19,9 +19,16 @@ import (
 	"context"
 	"fmt"
 
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
+=======
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 )
 
 // pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -258,7 +265,11 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 			if i > 0 {
 				buffer.WriteString(",")
 			}
+<<<<<<< HEAD
 			buffer.WriteString(item.String())
+=======
+			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		}
 		buffer.WriteString("] contained in ")
 		if idx == 0 {
@@ -279,7 +290,11 @@ func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *l
 			if i > 0 {
 				buffer.WriteString(",")
 			}
+<<<<<<< HEAD
 			buffer.WriteString(item.String())
+=======
+			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		}
 		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
 		return buffer.String()

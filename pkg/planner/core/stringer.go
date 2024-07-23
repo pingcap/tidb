@@ -19,6 +19,13 @@ import (
 	"fmt"
 	"strings"
 
+<<<<<<< HEAD
+=======
+	perrors "github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -116,8 +123,13 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
 		}
 		for _, eq := range x.EqualConditions {
+<<<<<<< HEAD
 			l := eq.GetArgs()[0].String()
 			r := eq.GetArgs()[1].String()
+=======
+			l := eq.GetArgs()[0].StringWithCtx(ectx, perrors.RedactLogDisable)
+			r := eq.GetArgs()[1].StringWithCtx(ectx, perrors.RedactLogDisable)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *PhysicalMergeJoin:
@@ -145,8 +157,13 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
 		for i := range x.LeftJoinKeys {
+<<<<<<< HEAD
 			l := x.LeftJoinKeys[i].String()
 			r := x.RightJoinKeys[i].String()
+=======
+			l := x.LeftJoinKeys[i].StringWithCtx(ectx, perrors.RedactLogDisable)
+			r := x.RightJoinKeys[i].StringWithCtx(ectx, perrors.RedactLogDisable)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
@@ -186,8 +203,13 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 		for _, eq := range x.EqualConditions {
+<<<<<<< HEAD
 			l := eq.GetArgs()[0].String()
 			r := eq.GetArgs()[1].String()
+=======
+			l := eq.GetArgs()[0].StringWithCtx(ectx, perrors.RedactLogDisable)
+			r := eq.GetArgs()[1].StringWithCtx(ectx, perrors.RedactLogDisable)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
@@ -238,7 +260,11 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
+<<<<<<< HEAD
 			str += aggFunc.String()
+=======
+			str += aggFunc.StringWithCtx(ectx, perrors.RedactLogDisable)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			if i != len(x.AggFuncs)-1 {
 				str += ","
 			}
@@ -306,7 +332,11 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, col := range x.ColTasks {
 			var colNames []string
 			if col.HandleCols != nil {
+<<<<<<< HEAD
 				colNames = append(colNames, col.HandleCols.String())
+=======
+				colNames = append(colNames, col.HandleCols.StringWithCtx(ectx, perrors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			}
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, c.Name.O)

@@ -64,15 +64,24 @@ func NewAggFuncDescForWindowFunc(ctx sessionctx.Context, desc *WindowFuncDesc, h
 	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
 }
 
+<<<<<<< HEAD
 // String implements the fmt.Stringer interface.
 func (a *AggFuncDesc) String() string {
+=======
+// StringWithCtx returns the string representation within given ctx.
+func (a *AggFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) string {
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	if a.HasDistinct {
 		buffer.WriteString("distinct ")
 	}
 	for i, arg := range a.Args {
+<<<<<<< HEAD
 		buffer.WriteString(arg.String())
+=======
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		if i+1 != len(a.Args) {
 			buffer.WriteString(", ")
 		}
@@ -81,7 +90,11 @@ func (a *AggFuncDesc) String() string {
 		buffer.WriteString(" order by ")
 	}
 	for i, arg := range a.OrderByItems {
+<<<<<<< HEAD
 		buffer.WriteString(arg.String())
+=======
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		if i+1 != len(a.OrderByItems) {
 			buffer.WriteString(", ")
 		}

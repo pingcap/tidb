@@ -23,6 +23,7 @@ import (
 	"testing"
 	gotime "time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -260,7 +261,11 @@ func TestGeneratePartitionExpr(t *testing.T) {
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
+<<<<<<< HEAD
 		require.Equal(t, upperBounds[i], expr.String())
+=======
+		require.Equal(t, upperBounds[i], expr.StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	}
 }
 

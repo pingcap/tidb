@@ -820,7 +820,11 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+<<<<<<< HEAD
 		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
+=======
+		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -1607,3 +1611,21 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 	}
 	return exprs
 }
+<<<<<<< HEAD
+=======
+
+// StringifyExpressionsWithCtx turns a slice of expressions into string
+func StringifyExpressionsWithCtx(ctx EvalContext, exprs []Expression) string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i, expr := range exprs {
+		sb.WriteString(expr.StringWithCtx(ctx, errors.RedactLogDisable))
+
+		if i != len(exprs)-1 {
+			sb.WriteString(" ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
+}
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))

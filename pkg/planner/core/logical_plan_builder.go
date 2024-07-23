@@ -1536,7 +1536,11 @@ func buildExpandFieldName(expr expression.Expression, name *types.FieldName, gen
 	var origTblName, origColName, dbName, colName, tblName model.CIStr
 	if genName != "" {
 		// for case like: gid_, gpos_
+<<<<<<< HEAD
 		colName = model.NewCIStr(expr.String())
+=======
+		colName = model.NewCIStr(expr.StringWithCtx(ctx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	} else if isCol {
 		// col ref to original col, while its nullability may be changed.
 		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
@@ -1544,7 +1548,11 @@ func buildExpandFieldName(expr expression.Expression, name *types.FieldName, gen
 		tblName = model.NewCIStr("ex_" + name.TblName.O)
 	} else {
 		// Other: complicated expression.
+<<<<<<< HEAD
 		colName = model.NewCIStr("ex_" + expr.String())
+=======
+		colName = model.NewCIStr("ex_" + expr.StringWithCtx(ctx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	}
 	newName := &types.FieldName{
 		TblName:     tblName,

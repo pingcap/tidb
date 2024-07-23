@@ -155,8 +155,13 @@ func (cb *CommonHandleCols) NumCols() int {
 	return len(cb.columns)
 }
 
+<<<<<<< HEAD:pkg/planner/core/handle_cols.go
 // String implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) String() string {
+=======
+// StringWithCtx implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) StringWithCtx(ctx expression.ParamValues, _ string) string {
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553)):pkg/planner/util/handle_cols.go
 	b := new(strings.Builder)
 	b.WriteByte('[')
 	for i, col := range cb.columns {
@@ -266,9 +271,15 @@ func (*IntHandleCols) IsInt() bool {
 	return true
 }
 
+<<<<<<< HEAD:pkg/planner/core/handle_cols.go
 // String implements the kv.HandleCols interface.
 func (ib *IntHandleCols) String() string {
 	return ib.col.ExplainInfo()
+=======
+// StringWithCtx implements the kv.HandleCols interface.
+func (ib *IntHandleCols) StringWithCtx(ctx expression.ParamValues, _ string) string {
+	return ib.col.ColumnExplainInfo(ctx, false)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553)):pkg/planner/util/handle_cols.go
 }
 
 // GetCol implements the kv.HandleCols interface.

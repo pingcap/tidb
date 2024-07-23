@@ -20,6 +20,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -546,5 +547,9 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	// make sure the correlated columns are extracted correctly
 	correlated := ts.ExtractCorrelatedCols()
 	require.Equal(t, 1, len(correlated))
+<<<<<<< HEAD
 	require.Equal(t, "test.t2.company_no", correlated[0].String())
+=======
+	require.Equal(t, "test.t2.company_no", correlated[0].StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 }
