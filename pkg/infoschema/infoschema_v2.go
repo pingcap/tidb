@@ -51,15 +51,15 @@ type tableItem struct {
 }
 
 type schemaItem struct {
-	dbInfo        *model.DBInfo
 	schemaVersion int64
+	dbInfo        *model.DBInfo
 	tomb          bool
 }
 
 type schemaIDName struct {
+	schemaVersion int64
 	id            int64
 	name          string
-	schemaVersion int64
 	tomb          bool
 }
 
@@ -125,15 +125,15 @@ type Data struct {
 type tableInfoItem struct {
 	dbName        string
 	tableID       int64
-	tableInfo     *model.TableInfo
 	schemaVersion int64
+	tableInfo     *model.TableInfo
 	tomb          bool
 }
 
 type partitionItem struct {
 	partitionID   int64
-	tableID       int64
 	schemaVersion int64
+	tableID       int64
 	tomb          bool
 }
 
