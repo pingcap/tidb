@@ -26,7 +26,6 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
-        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/util/dbterror/exeerrors",

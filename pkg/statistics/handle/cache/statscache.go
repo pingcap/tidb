@@ -258,7 +258,12 @@ func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 	distribution := make([]int64, 5)
+	uneligibleAnalyze := 0
 	for _, tbl := range s.Values() {
+		isEligibleForAnalysis := tbl.IsEligibleForAnalysis()
+		if !isEligibleForAnalysis {
+			uneligibleAnalyze++
+		}
 		healthy, ok := tbl.GetStatsHealthy()
 		if !ok {
 			continue
@@ -277,4 +282,5 @@ func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
+	handle_metrics.StatsHealthyGauges[5].Set(float64(uneligibleAnalyze))
 }
