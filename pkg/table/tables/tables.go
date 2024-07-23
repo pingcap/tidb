@@ -69,24 +69,13 @@ type TableCommon struct {
 	Columns         []*table.Column
 
 	// column caches
-	//
-	// TODO: we lazily initialize them because they could possibly consume too much unnecessary
-	//  memory. We can move these initialization to initTableCommon after infoschema v2 is enabled.
-	//
-	// sync.Once is needed to avoid data race because TableCommon may be accessed concurrently
 	// They are pointers to support copying TableCommon to CachedTable and PartitionedTable
-	publicColumns                       []*table.Column
-	publicColumnsOnce                   *sync.Once
-	visibleColumns                      []*table.Column
-	visibleColumnsOnce                  *sync.Once
-	hiddenColumns                       []*table.Column
-	hiddenColumnsOnce                   *sync.Once
-	writableColumns                     []*table.Column
-	writableColumnsOnce                 *sync.Once
-	fullHiddenColsAndVisibleColumns     []*table.Column
-	fullHiddenColsAndVisibleColumnsOnce *sync.Once
-	writableConstraints                 []*table.Constraint
-	writableConstraintsOnce             *sync.Once
+	publicColumns                   []*table.Column
+	visibleColumns                  []*table.Column
+	hiddenColumns                   []*table.Column
+	writableColumns                 []*table.Column
+	fullHiddenColsAndVisibleColumns []*table.Column
+	writableConstraints             []*table.Constraint
 
 	indices                 []table.Index
 	meta                    *model.TableInfo
@@ -100,26 +89,44 @@ type TableCommon struct {
 	indexPrefix  kv.Key
 }
 
-// ClearColumnsCache implements testingKnob interface.
-func (t *TableCommon) ClearColumnsCache() {
-	t.publicColumns = nil
-	t.publicColumnsOnce = new(sync.Once)
-	t.visibleColumns = nil
-	t.visibleColumnsOnce = new(sync.Once)
-	t.hiddenColumns = nil
-	t.hiddenColumnsOnce = new(sync.Once)
-	t.writableColumns = nil
-	t.writableColumnsOnce = new(sync.Once)
-	t.fullHiddenColsAndVisibleColumns = nil
-	t.fullHiddenColsAndVisibleColumnsOnce = new(sync.Once)
-	t.writableConstraints = nil
-	t.writableConstraintsOnce = new(sync.Once)
+// ResetColumnsCache implements testingKnob interface.
+func (t *TableCommon) ResetColumnsCache() {
+	t.publicColumns = t.getCols(full)
+	t.visibleColumns = t.getCols(visible)
+	t.hiddenColumns = t.getCols(hidden)
+
+	t.writableColumns = make([]*table.Column, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+			continue
+		}
+		t.writableColumns = append(t.writableColumns, col)
+	}
+
+	t.fullHiddenColsAndVisibleColumns = make([]*table.Column, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.Hidden || col.State == model.StatePublic {
+			t.fullHiddenColsAndVisibleColumns = append(t.fullHiddenColsAndVisibleColumns, col)
+		}
+	}
+
+	if t.Constraints != nil {
+		t.writableConstraints = make([]*table.Constraint, 0, len(t.Constraints))
+		for _, con := range t.Constraints {
+			if !con.Enforced {
+				continue
+			}
+			if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
+				continue
+			}
+			t.writableConstraints = append(t.writableConstraints, con)
+		}
+	}
 }
 
 // Copy copies a TableCommon struct, and reset its column cache. This is not a deep copy.
 func (t *TableCommon) Copy() TableCommon {
 	newTable := *t
-	newTable.ClearColumnsCache()
 	return newTable
 }
 
@@ -253,12 +260,7 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
 		}
 	}
-	t.publicColumnsOnce = new(sync.Once)
-	t.visibleColumnsOnce = new(sync.Once)
-	t.hiddenColumnsOnce = new(sync.Once)
-	t.writableColumnsOnce = new(sync.Once)
-	t.fullHiddenColsAndVisibleColumnsOnce = new(sync.Once)
-	t.writableConstraintsOnce = new(sync.Once)
+	t.ResetColumnsCache()
 }
 
 // initTableIndices initializes the indices of the TableCommon.
@@ -345,53 +347,21 @@ func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
 
 // Cols implements table.Table Cols interface.
 func (t *TableCommon) Cols() []*table.Column {
-	t.publicColumnsOnce.Do(
-		func() {
-			if len(t.publicColumns) == 0 {
-				t.publicColumns = t.getCols(full)
-			}
-		},
-	)
 	return t.publicColumns
 }
 
 // VisibleCols implements table.Table VisibleCols interface.
 func (t *TableCommon) VisibleCols() []*table.Column {
-	t.visibleColumnsOnce.Do(
-		func() {
-			if len(t.visibleColumns) == 0 {
-				t.visibleColumns = t.getCols(visible)
-			}
-		},
-	)
 	return t.visibleColumns
 }
 
 // HiddenCols implements table.Table HiddenCols interface.
 func (t *TableCommon) HiddenCols() []*table.Column {
-	t.hiddenColumnsOnce.Do(
-		func() {
-			if len(t.hiddenColumns) == 0 {
-				t.hiddenColumns = t.getCols(hidden)
-			}
-		},
-	)
 	return t.hiddenColumns
 }
 
 // WritableCols implements table WritableCols interface.
 func (t *TableCommon) WritableCols() []*table.Column {
-	t.writableColumnsOnce.Do(
-		func() {
-			t.writableColumns = make([]*table.Column, 0, len(t.Columns))
-			for _, col := range t.Columns {
-				if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
-					continue
-				}
-				t.writableColumns = append(t.writableColumns, col)
-			}
-		},
-	)
 	return t.writableColumns
 }
 
@@ -405,27 +375,23 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 	if t.Constraints == nil {
 		return nil
 	}
-	t.writableConstraintsOnce.Do(
-		func() {
-			t.writableConstraints = make([]*table.Constraint, 0, len(t.Constraints))
-			for _, con := range t.Constraints {
-				if !con.Enforced {
-					continue
-				}
-				if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
-					continue
-				}
-				t.writableConstraints = append(t.writableConstraints, con)
-			}
-		})
 	return t.writableConstraints
 }
 
 // CheckRowConstraint verify row check constraints.
 func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
-	ectx := ctx.GetExprCtx()
-	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ectx.GetEvalCtx(), chunk.MutRowFromDatums(rowToCheck).ToRow())
+	if constraints := t.WritableConstraint(); len(constraints) > 0 {
+		ectx := ctx.GetExprCtx().GetEvalCtx()
+		row := chunk.MutRowFromDatums(rowToCheck).ToRow()
+		return checkRowConstraint(ectx, constraints, row)
+	}
+	return nil
+}
+
+// checkRowConstraint verify row check constraints.
+func checkRowConstraint(ctx exprctx.EvalContext, constraints []*table.Constraint, rowToCheck chunk.Row) error {
+	for _, constraint := range constraints {
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
 		if err != nil {
 			return err
 		}
@@ -438,14 +404,6 @@ func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []t
 
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
-	t.fullHiddenColsAndVisibleColumnsOnce.Do(func() {
-		t.fullHiddenColsAndVisibleColumns = make([]*table.Column, 0, len(t.Columns))
-		for _, col := range t.Columns {
-			if col.Hidden || col.State == model.StatePublic {
-				t.fullHiddenColsAndVisibleColumns = append(t.fullHiddenColsAndVisibleColumns, col)
-			}
-		}
-	})
 	return t.fullHiddenColsAndVisibleColumns
 }
 
@@ -571,32 +529,22 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		}
 	}
 	// check data constraint
-	err = t.CheckRowConstraint(sctx, checkRowBuffer.GetRowToCheck())
-	if err != nil {
-		return err
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	if constraints := t.WritableConstraint(); len(constraints) > 0 {
+		if err = checkRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+			return err
+		}
 	}
 	sessVars := sctx.GetSessionVars()
 	// rebuild index
-	if !sessVars.InTxn() {
-		savePresumeKeyNotExist := sessVars.PresumeKeyNotExists
-		if !sessVars.ConstraintCheckInPlace && sessVars.TxnCtx.IsPessimistic {
-			sessVars.PresumeKeyNotExists = true
-		}
-		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-		sessVars.PresumeKeyNotExists = savePresumeKeyNotExist
-		if err != nil {
-			return err
-		}
-	} else {
-		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-		if err != nil {
-			return err
-		}
+	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+	if err != nil {
+		return err
 	}
 
 	key := t.RecordKey(h)
-	sc := sessVars.StmtCtx
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), sc.TimeZone(), sc.ErrCtx(), memBuffer, key)
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key)
 	if err != nil {
 		return err
 	}
@@ -605,7 +553,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
-		if sctx.GetSessionVars().ConnectionID != 0 {
+		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
 				failpoint.Return(err)
@@ -613,7 +561,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		}
 	})
 
-	if t.shouldAssert(sessVars.AssertionLevel) {
+	if t.shouldAssert(sctx.TxnAssertionLevel()) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 	} else {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
@@ -625,8 +573,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
-	if sessVars.EnableMutationChecker {
-		if err = CheckDataConsistency(txn, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
+	if sctx.EnableMutationChecker() {
+		if err = CheckDataConsistency(txn, tc, t, newData, oldData, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -645,19 +593,19 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 	colSizeBuffer := mutateBuffers.GetColSizeDeltaBufferWithCap(len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), newData[id])
+		size, err := codec.EstimateValueSize(tc, newData[id])
 		if err != nil {
 			continue
 		}
 		newLen := size - 1
-		size, err = codec.EstimateValueSize(sc.TypeCtx(), oldData[id])
+		size, err = codec.EstimateValueSize(tc, oldData[id])
 		if err != nil {
 			continue
 		}
 		oldLen := size - 1
 		colSizeBuffer.AddColSizeDelta(col.ID, int64(newLen-oldLen))
 	}
-	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 0, 1, colSizeBuffer.GetColSizeDelta())
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSizeBuffer)
 	return nil
 }
 
@@ -845,6 +793,10 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	} else {
 		ctx = context.Background()
 	}
+
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+
 	var hasRecordID bool
 	cols := t.Cols()
 	// opt.IsUpdate is a flag for update.
@@ -868,8 +820,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			}
 			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
-			handleBytes, err = codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, pkDts...)
-			err = sctx.GetSessionVars().StmtCtx.HandleError(err)
+			handleBytes, err = codec.EncodeKey(tc.Location(), nil, pkDts...)
+			err = ec.HandleError(err)
 			if err != nil {
 				return
 			}
@@ -996,13 +948,12 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	if setPresume {
 		flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 		if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic && sessVars.InTxn() &&
-			!sessVars.InRestrictedSQL && sessVars.ConnectionID > 0 {
+			!sctx.InRestrictedSQL() && sctx.ConnectionID() > 0 {
 			flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 		}
 	}
 
-	sc := sessVars.StmtCtx
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), sc.TimeZone(), sc.ErrCtx(), memBuffer, key, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, flags...)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,7 +962,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		// Assert the key exists while it actually doesn't. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
-		if sctx.GetSessionVars().ConnectionID != 0 {
+		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
 				failpoint.Return(nil, err)
@@ -1045,8 +996,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return nil, err
 	}
-	if sessVars.EnableMutationChecker {
-		if err = CheckDataConsistency(txn, sessVars, t, r, nil, memBuffer, sh); err != nil {
+	if sctx.EnableMutationChecker() {
+		if err = CheckDataConsistency(txn, tc, t, r, nil, memBuffer, sh); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -1067,13 +1018,13 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 
 	colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
+		size, err := codec.EstimateValueSize(tc, r[id])
 		if err != nil {
 			continue
 		}
 		colSizeBuffer.AddColSizeDelta(col.ID, int64(size-1))
 	}
-	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, colSizeBuffer.GetColSizeDelta())
+	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSizeBuffer)
 	return recordID, nil
 }
 
@@ -1097,7 +1048,7 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
 func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opts []table.CreateIdxOptFunc) (kv.Handle, error) {
-	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
+	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	for _, v := range t.Indices() {
@@ -1107,7 +1058,11 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
-		indexVals, err := v.FetchValues(r, indexVals)
+		// We declared `err` here to make sure `indexVals` is assigned with `=` instead of `:=`.
+		// The latter one will create a new variable that shadows the outside `indexVals` that makes `indexVals` outside
+		// always nil, and we cannot reuse it.
+		var err error
+		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
 			return nil, err
 		}
@@ -1304,13 +1259,13 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		return err
 	}
 
-	sessVars := ctx.GetSessionVars()
-	sc := sessVars.StmtCtx
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
-	if sessVars.EnableMutationChecker {
-		if err = CheckDataConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
+
+	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
+	if ctx.EnableMutationChecker() {
+		if err = CheckDataConsistency(txn, tc, t, nil, r, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1346,14 +1301,14 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	// It can only act as a temporary buffer for the current function call.
 	colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
+		size, err := codec.EstimateValueSize(tc, r[id])
 		if err != nil {
 			continue
 		}
 		colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(
-		t.physicalTableID, -1, 1, colSizeBuffer.GetColSizeDelta(),
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(
+		t.physicalTableID, -1, 1, colSizeBuffer,
 	)
 	return err
 }
@@ -1451,14 +1406,14 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, h kv.Handle) error 
 		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
-		if ctx.GetSessionVars().ConnectionID != 0 {
+		if ctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
-	if t.shouldAssert(ctx.GetSessionVars().AssertionLevel) {
+	if t.shouldAssert(ctx.TxnAssertionLevel()) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 	} else {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)

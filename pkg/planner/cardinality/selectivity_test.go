@@ -58,7 +58,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h := dom.StatsHandle()
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec("explain select * from t where a = 'aaa'")
 	require.Nil(t, h.LoadNeededHistograms())
 	var (
@@ -117,7 +117,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int unsigned)")
+	testKit.MustExec("create table t(a int unsigned, index idx(a))")
 	for i := 0; i < 3000; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
@@ -178,12 +178,12 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300))
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("analyze table t all columns with 1 samplerate, 0 topn")
 	// Data in [300, 500), 1000 rows in total, are deleted.
 	// 2000 rows left.
 	testKit.MustExec("delete from t where a < 500")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	var (
 		input  []string
 		output []struct {
@@ -226,7 +226,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
@@ -292,7 +292,7 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, unique key(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7)")
-	testKit.MustExec("analyze table t with 4 cmsketch width, 1 cmsketch depth;")
+	testKit.MustExec("analyze table t all columns with 4 cmsketch width, 1 cmsketch depth;")
 	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := dom.StatsHandle().GetTableStats(table.Meta())
@@ -474,7 +474,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, c int, d int)")
+	testKit.MustExec("create table t(a int, b int, c int, d int, index idx(a, b, c, d))")
 	testKit.MustExec("insert into t value(1,5,4,4),(3,4,1,8),(4,2,6,10),(6,7,2,5),(7,1,4,9),(8,9,8,3),(9,1,9,1),(10,6,6,2)")
 	testKit.MustExec("alter table t add index (b)")
 	testKit.MustExec("alter table t add index (d)")
@@ -586,7 +586,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("create table t(a int, index idx(a))")
 	for i := 0; i < 400; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v), (%v), (%v)", i, i, i)) // [0, 400)
 	}
@@ -812,7 +812,7 @@ func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outp
 	tk.MustExec(`insert into t value("yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy")`)
 	tk.MustExec(`insert into t value("zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	tk.MustExec(`analyze table t with 3 topn`)
+	tk.MustExec(`analyze table t all columns with 3 topn`)
 
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -847,10 +847,10 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("analyze table t all columns with 1 samplerate, 0 topn")
 	testKit.MustExec("delete from t where a < 500")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	var (
 		input  []string
 		output []struct {
@@ -867,8 +867,8 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
-	testKit.MustExec("analyze table t partition p4 with 1 samplerate, 0 topn")
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	testKit.MustExec("analyze table t partition p4 all columns with 1 samplerate, 0 topn")
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	for i := range input {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
@@ -1206,7 +1206,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// 1. Insert 11 rows of data without ANALYZE.
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(2,1),(2,2),(2,3),(2,4),(2,5),(3,1)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	// 1-1. use real-time stats.
 	// From the real-time stats, we are able to know the total count is 11.
@@ -1227,8 +1227,8 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	))
 
 	// 2. After ANALYZE.
-	testKit.MustExec("analyze table t with 1 samplerate")
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	testKit.MustExec("analyze table t all columns with 1 samplerate")
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	// The execution plans are the same no matter we ignore the real-time stats or not.
 	analyzedPlan := []string{
@@ -1244,7 +1244,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// 3. Insert another 4 rows of data.
 	testKit.MustExec("insert into t values(3,2),(3,3),(3,4),(3,5)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	// 3-1. use real-time stats.
 	// From the real-time stats, we are able to know the total count is 15.
@@ -1261,6 +1261,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
 }
+
 func TestSubsetIdxCardinality(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -1318,7 +1319,7 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
 		"TableReader 0.08 root  data:Selection",
@@ -1327,14 +1328,14 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	))
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(is))
+	require.NoError(t, h.InitStatsLite(context.Background(), is))
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
 		"TableReader 0.08 root  data:Selection",
 		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	h.Clear()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
 		"TableReader 8.00 root  data:Selection",
 		"└─Selection 8.00 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",

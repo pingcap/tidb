@@ -2621,6 +2621,8 @@ func getPartitionTableRecordsNum(t *testing.T, ctx sessionctx.Context, tbl table
 func TestPartitionErrorCode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec("drop database if exists test_db_with_partition")
@@ -2665,7 +2667,6 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk.MustGetErrCode("alter table t_part repair partition p1;", errno.ErrUnsupportedDDLOperation)
 
 	// Reduce the impact on DML when executing partition DDL
-	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1.MustExec("drop table if exists t;")
@@ -3041,7 +3042,7 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// And also cached and lazy loaded
 	h.Clear()
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemovePartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3087,7 +3088,7 @@ func TestRemoveListPartitioning(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// And also cached and lazy loaded
 	h.Clear()
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3133,7 +3134,7 @@ func TestRemoveListColumnPartitioning(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// And also cached and lazy loaded
 	h.Clear()
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3179,7 +3180,7 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	// And also cached and lazy loaded
 	h.Clear()
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)

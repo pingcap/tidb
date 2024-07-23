@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1384,7 +1384,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		newColumnIDs = append(newColumnIDs, colID)
 		newRow = append(newRow, val)
 	}
-	rd := &w.tblCtx.GetSessionVars().RowEncoder
+	rd := w.tblCtx.GetRowEncodingConfig().RowEncoder
 	ec := w.exprCtx.GetEvalCtx().ErrCtx()
 	var checksum rowcodec.Checksum
 	if w.checksumNeeded {

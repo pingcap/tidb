@@ -3158,7 +3158,9 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			if SchemaCacheSize.Load() != bt && ChangeSchemaCacheSize != nil {
-				ChangeSchemaCacheSize(bt)
+				if err := ChangeSchemaCacheSize(ctx, bt); err != nil {
+					return err
+				}
 			}
 			SchemaCacheSize.Store(bt)
 			SchemaCacheSizeOriginText.Store(str)
@@ -3270,6 +3272,10 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLazyCursorFetch, Value: BoolToOnOff(DefTiDBEnableLazyCursorFetch), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLazyCursorFetch = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

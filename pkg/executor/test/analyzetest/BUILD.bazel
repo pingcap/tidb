@@ -28,6 +28,7 @@ go_test(
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/testkit",
+        "//pkg/testkit/analyzehelper",
         "//pkg/util/dbterror/exeerrors",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

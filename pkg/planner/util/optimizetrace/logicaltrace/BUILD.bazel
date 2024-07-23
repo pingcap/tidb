@@ -11,5 +11,6 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/util",
         "//pkg/planner/util/optimizetrace",
+        "@com_github_pingcap_errors//:errors",
     ],
 )

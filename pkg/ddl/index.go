@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -871,8 +871,14 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 	return true, ver, err
 }
 
-func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+func doReorgWorkForCreateIndex(
+	w *worker,
+	d *ddlCtx,
+	t *meta.Meta,
+	job *model.Job,
+	tbl table.Table,
+	allIndexInfos []*model.IndexInfo,
+) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
 	reorgTp, err = pickBackfillType(job)
 	if err != nil {
@@ -1011,8 +1017,15 @@ func errorIsRetryable(err error, job *model.Job) bool {
 	return true
 }
 
-func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
+func runReorgJobAndHandleErr(
+	w *worker,
+	d *ddlCtx,
+	t *meta.Meta,
+	job *model.Job,
+	tbl table.Table,
+	allIndexInfos []*model.IndexInfo,
+	mergingTmpIdx bool,
+) (done bool, ver int64, err error) {
 	elements := make([]*meta.Element, 0, len(allIndexInfos))
 	for _, indexInfo := range allIndexInfos {
 		elements = append(elements, &meta.Element{ID: indexInfo.ID, TypeKey: meta.IndexElementKey})
@@ -1911,12 +1924,12 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			w.ddlCtx.mu.RLock()
 			w.ddlCtx.mu.hook.OnUpdateReorgInfo(reorgInfo.Job, reorgInfo.PhysicalTableID)
 			w.ddlCtx.mu.RUnlock()
-			failpoint.InjectCall("beforeUpdateReorgInfo-addTableIndex", reorgInfo.Job)
 
 			finish, err = updateReorgInfo(w.sessPool, tbl, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			failpoint.InjectCall("afterUpdatePartitionReorgInfo", reorgInfo.Job)
 			// Every time we finish a partition, we update the progress of the job.
 			if rc := w.getReorgCtx(reorgInfo.Job.ID); rc != nil {
 				reorgInfo.Job.SetRowCount(rc.getRowCount())
@@ -2140,7 +2153,7 @@ func estimateTableRowSize(
 func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.Table) (int, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
-		return 0, errors.New("not a helper.Storage")
+		return 0, fmt.Errorf("not a helper.Storage")
 	}
 	h := &helper.Helper{
 		Store:       hStore,
@@ -2175,11 +2188,11 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, err
 	}
 	if len(regionInfos.Regions) != regionLimit {
-		return 0, errors.New("less than 3 regions")
+		return 0, fmt.Errorf("less than 3 regions")
 	}
 	sample := regionInfos.Regions[1]
 	if sample.ApproximateKeys == 0 || sample.ApproximateSize == 0 {
-		return 0, errors.New("zero approximate size")
+		return 0, fmt.Errorf("zero approximate size")
 	}
 	return int(uint64(sample.ApproximateSize)*size.MB) / int(sample.ApproximateKeys), nil
 }

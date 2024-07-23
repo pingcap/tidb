@@ -24,10 +24,12 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
@@ -550,14 +552,12 @@ func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
 }
 
 func TestFlashbackSchema(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
 
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
 	tk.MustExec("create database if not exists test_flashback")
 	tk.MustExec("use test_flashback")
 	tk.MustExec("drop table if exists t_flashback")
@@ -576,9 +576,13 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("insert into t_flashback values (1),(2),(3)")
 	tk.MustExec("drop database test_flashback")
 
+	// even PD is down, the job can not be canceled for now.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `4*return()`)
+	tk.MustExec("flashback database test_flashback")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
+
 	// Test flashback database with db_not_exists name.
 	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")
-	tk.MustExec("flashback database test_flashback")
 	tk.MustGetErrMsg("flashback database test_flashback to test_flashback2", infoschema.ErrDatabaseExists.GenWithStack("Schema 'test_flashback' already been recover to 'test_flashback', can't be recover repeatedly").Error())
 
 	// Test flashback database failed by there is already a new database with the same name.
@@ -624,6 +628,43 @@ func TestFlashbackSchema(t *testing.T) {
 	newTk.MustExec("flashback schema t_recover")
 
 	tk.MustExec("drop user 'testflashbackschema'@'localhost';")
+}
+
+func TestFlashbackSchemaWithManyTables(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
+
+	backup := kv.TxnEntrySizeLimit.Load()
+	kv.TxnEntrySizeLimit.Store(50000)
+	t.Cleanup(func() {
+		kv.TxnEntrySizeLimit.Store(backup)
+	})
+
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
+	tk.MustExec("set @@global.tidb_enable_fast_create_table=ON")
+	tk.MustExec("drop database if exists many_tables")
+	tk.MustExec("create database if not exists many_tables")
+	tk.MustExec("use many_tables")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	for i := 0; i < 700; i++ {
+		tk.MustExec(fmt.Sprintf("create table t%d (a int)", i))
+	}
+
+	tk.MustExec("drop database many_tables")
+
+	tk.MustExec("flashback database many_tables")
+
+	tk.MustQuery("select count(*) from many_tables.t0").Check(testkit.Rows("0"))
 }
 
 // MockGC is used to make GC work in the test environment.

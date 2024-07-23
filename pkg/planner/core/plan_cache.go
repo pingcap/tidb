@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
@@ -46,11 +45,8 @@ type PlanCacheKeyTestIssue46760 struct{}
 // PlanCacheKeyTestIssue47133 is only for test.
 type PlanCacheKeyTestIssue47133 struct{}
 
-// PlanCacheKeyTestBeforeAdjust is only for test.
-type PlanCacheKeyTestBeforeAdjust struct{}
-
-// PlanCacheKeyTestAfterAdjust is only for test.
-type PlanCacheKeyTestAfterAdjust struct{}
+// PlanCacheKeyTestClone is only for test.
+type PlanCacheKeyTestClone struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -139,6 +135,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
 		stmt.PointGet.pointPlan = nil
+		stmt.PointGet.planCacheKey = ""
 		stmt.PointGet.columnNames = nil
 		stmt.PointGet.pointPlanHints = nil
 		stmt.PointGet.Executor = nil
@@ -223,7 +220,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if stmtCtx.UseCache() {
 		var cachedVal *PlanCacheValue
 		var hit, isPointPlan bool
-		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use paramTypes
+		if stmt.PointGet.pointPlan != nil && stmt.PointGet.planCacheKey == cacheKey { // if it's PointGet Plan, no need to use paramTypes
 			cachedVal = &PlanCacheValue{
 				Plan:          stmt.PointGet.pointPlan,
 				OutputColumns: stmt.PointGet.columnNames,
@@ -232,13 +229,9 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			isPointPlan, hit = true, true
 		} else {
 			paramTypes = parseParamTypes(sctx, params)
-			cachedVal, hit = lookupPlanCache(sctx, cacheKey, paramTypes)
+			cachedVal, hit = lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		}
 		if hit {
-			if intest.InTest && ctx.Value(PlanCacheKeyTestBeforeAdjust{}) != nil && ctx.Value(PlanCacheKeyTestAfterAdjust{}) != nil {
-				ctx.Value(PlanCacheKeyTestBeforeAdjust{}).(func(cachedVal *PlanCacheValue))(cachedVal)
-				defer ctx.Value(PlanCacheKeyTestAfterAdjust{}).(func(cachedVal *PlanCacheValue))(cachedVal)
-			}
 			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, isPointPlan, binding, is, stmt); err != nil || ok {
 				return plan, names, err
 			}
@@ -251,11 +244,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
 }
 
-func lookupPlanCache(sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
+func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
 	if sctx.GetSessionVars().EnableInstancePlanCache {
 		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
 			cachedVal = v.(*PlanCacheValue)
-			return cachedVal.CloneForInstancePlanCache(sctx.GetPlanCtx()) // clone the value to solve concurrency problem
+			return cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx()) // clone the value to solve concurrency problem
 		}
 	} else {
 		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, paramTypes); hit {
@@ -330,6 +323,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 			stmt.PointGet.pointPlan = p
 			stmt.PointGet.columnNames = names
 			stmt.PointGet.pointPlanHints = stmtCtx.StmtHints.Clone()
+			stmt.PointGet.planCacheKey = cacheKey
 		}
 	}
 	sessVars.FoundInPlanCache = false

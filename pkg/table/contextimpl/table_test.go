@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -39,11 +40,24 @@ func TestMutateContextImplFields(t *testing.T) {
 	binlogMutation := ctx.GetBinlogMutation(1234)
 	require.NotNil(t, binlogMutation)
 	require.Same(t, sctx.StmtGetMutation(1234), binlogMutation)
+	// ConnectionID
+	sctx.GetSessionVars().ConnectionID = 12345
+	require.Equal(t, uint64(12345), ctx.ConnectionID())
 	// restricted SQL
-	sctx.GetSessionVars().StmtCtx.InRestrictedSQL = false
+	sctx.GetSessionVars().InRestrictedSQL = false
 	require.False(t, ctx.InRestrictedSQL())
-	sctx.GetSessionVars().StmtCtx.InRestrictedSQL = true
+	sctx.GetSessionVars().InRestrictedSQL = true
 	require.True(t, ctx.InRestrictedSQL())
+	// AssertionLevel
+	ctx.GetSessionVars().AssertionLevel = variable.AssertionLevelFast
+	require.Equal(t, variable.AssertionLevelFast, ctx.TxnAssertionLevel())
+	ctx.GetSessionVars().AssertionLevel = variable.AssertionLevelStrict
+	require.Equal(t, variable.AssertionLevelStrict, ctx.TxnAssertionLevel())
+	// EnableMutationChecker
+	ctx.GetSessionVars().EnableMutationChecker = true
+	require.True(t, ctx.EnableMutationChecker())
+	ctx.GetSessionVars().EnableMutationChecker = false
+	require.False(t, ctx.EnableMutationChecker())
 	// encoding config
 	sctx.GetSessionVars().EnableRowLevelChecksum = true
 	sctx.GetSessionVars().RowEncoder.Enable = true

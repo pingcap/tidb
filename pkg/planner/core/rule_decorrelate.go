@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -30,47 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
-
-// canPullUpAgg checks if an apply can pull an aggregation up.
-func (la *LogicalApply) canPullUpAgg() bool {
-	if la.JoinType != InnerJoin && la.JoinType != LeftOuterJoin {
-		return false
-	}
-	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
-		return false
-	}
-	return len(la.Children()[0].Schema().Keys) > 0
-}
-
-// deCorColFromEqExpr checks whether it's an equal condition of form `col = correlated col`. If so we will change the decorrelated
-// column to normal column to make a new equal condition.
-func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expression.Expression {
-	sf, ok := expr.(*expression.ScalarFunction)
-	if !ok || sf.FuncName.L != ast.EQ {
-		return nil
-	}
-	if col, lOk := sf.GetArgs()[0].(*expression.Column); lOk {
-		if corCol, rOk := sf.GetArgs()[1].(*expression.CorrelatedColumn); rOk {
-			ret := corCol.Decorrelate(la.Schema())
-			if _, ok := ret.(*expression.CorrelatedColumn); ok {
-				return nil
-			}
-			// We should make sure that the equal condition's left side is the join's left join key, right is the right key.
-			return expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
-		}
-	}
-	if corCol, lOk := sf.GetArgs()[0].(*expression.CorrelatedColumn); lOk {
-		if col, rOk := sf.GetArgs()[1].(*expression.Column); rOk {
-			ret := corCol.Decorrelate(la.Schema())
-			if _, ok := ret.(*expression.CorrelatedColumn); ok {
-				return nil
-			}
-			// We should make sure that the equal condition's left side is the join's left join key, right is the right key.
-			return expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
-		}
-	}
-	return nil
-}
 
 // ExtractOuterApplyCorrelatedCols only extract the correlated columns whose corresponding Apply operator is outside the plan.
 // For Plan-1, ExtractOuterApplyCorrelatedCols(CTE-1) will return cor_col_1.
@@ -224,7 +184,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			//	upper OP (depend on column8)   --> lower layer OP
 			//	          |                             ^
 			//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
-			hasFail := apply.columnSubstituteAll(proj.Schema(), proj.Exprs)
+			hasFail := apply.ColumnSubstituteAll(proj.Schema(), proj.Exprs)
 			if hasFail {
 				goto NoOptimize
 			}
@@ -232,7 +192,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
-			apply.decorrelate(outerPlan.Schema())
+			apply.Decorrelate(outerPlan.Schema())
 
 			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
@@ -269,7 +229,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				return s.optimize(ctx, p, opt)
 			}
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
-			if apply.canPullUpAgg() && agg.canPullUp() {
+			if apply.CanPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.Children()[0]
 				apply.JoinType = LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
@@ -335,7 +295,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				)
 				// Extract the equal condition.
 				for _, cond := range sel.Conditions {
-					if expr := apply.deCorColFromEqExpr(cond); expr != nil {
+					if expr := apply.DeCorColFromEqExpr(cond); expr != nil {
 						eqCondWithCorCol = append(eqCondWithCorCol, expr.(*expression.ScalarFunction))
 					} else {
 						remainedExpr = append(remainedExpr, cond)
@@ -533,21 +493,21 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.StringWithCtx(evalCtx))
+			buffer.WriteString(col.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 		}
 		buffer.WriteString("], and functions added [")
 		for i, f := range appendedAggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(f.StringWithCtx(evalCtx))
+			buffer.WriteString(f.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "], and %v_%v's conditions added [", p.TP(), p.ID())
 		for i, cond := range eqCondWithCorCol {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.StringWithCtx(evalCtx))
+			buffer.WriteString(cond.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -558,7 +518,7 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.StringWithCtx(evalCtx))
+			buffer.WriteString(cond.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are correlated to %v_%v and pulled up as %v_%v's join key",
 			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())

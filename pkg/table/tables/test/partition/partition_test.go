@@ -23,6 +23,7 @@ import (
 	"testing"
 	gotime "time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -260,7 +261,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
-		require.Equal(t, upperBounds[i], expr.StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx()))
+		require.Equal(t, upperBounds[i], expr.StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 	}
 }
 
@@ -279,7 +280,7 @@ func TestLocatePartition(t *testing.T) {
     	PARTITION watch_event VALUES IN ("WatchEvent")
     )`)
 	tk.MustExec(`insert into t values (1,"PushEvent"),(2,"WatchEvent"),(3, "WatchEvent")`)
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3182,7 +3183,7 @@ func TestExplainPartition(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`CREATE TABLE t (a int, b int) PARTITION BY hash(a) PARTITIONS 3`)
 	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6)`)
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
 	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
 		`TableReader 1.00 root  data:Selection`,
@@ -3232,7 +3233,7 @@ func TestPartitionCoverage(t *testing.T) {
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b int, primary key (a,b)) partition by hash(b) partitions 3`)
 	tk.MustExec(`insert into t values (1,1),(1,2),(2,1),(2,2),(1,3)`)
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
 	query := `select * from t where a in (1,2) and b = 1 order by a`
 	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"))
@@ -3264,7 +3265,7 @@ func TestPartitionCoverage(t *testing.T) {
 		"TableReader 10.00 root partition:dual data:Selection",
 		"└─Selection 10.00 cop[tikv]  eq(test.t.a, 10)",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
 		`TableReader 0.00 root partition:dual data:Selection`,
 		`└─Selection 0.00 cop[tikv]  eq(test.t.a, 10)`,

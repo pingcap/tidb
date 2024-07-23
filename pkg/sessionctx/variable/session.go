@@ -307,36 +307,38 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 	return buf
 }
 
-// UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
-	tc.tdmLock.Lock()
-	defer tc.tdmLock.Unlock()
-	if tc.TableDeltaMap == nil {
-		tc.TableDeltaMap = make(map[int64]TableDelta)
-	}
-	item := tc.TableDeltaMap[physicalTableID]
-	if item.ColSize == nil && colSize != nil {
-		item.ColSize = make(map[int64]int64, len(colSize))
-	}
-	item.Delta += delta
-	item.Count += count
-	item.TableID = physicalTableID
-	for key, val := range colSize {
-		item.ColSize[key] += val
-	}
-	tc.TableDeltaMap[physicalTableID] = item
-}
-
 // ColSize is a data struct to store the delta information for a table.
 type ColSize struct {
 	ColID int64
 	Size  int64
 }
 
-// UpdateDeltaForTableFromColSlice is the same as UpdateDeltaForTable, but it accepts a slice of column size.
-func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
+// DeltaCols is used to update the delta size for cols.
+type DeltaCols interface {
+	// UpdateColSizeMap is used to update delta map for cols.
+	UpdateColSizeMap(m map[int64]int64) map[int64]int64
+}
+
+// DeltaColsMap implements DeltaCols
+type DeltaColsMap map[int64]int64
+
+// UpdateColSizeMap implements DeltaCols
+func (cols DeltaColsMap) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
+	if m == nil && len(cols) > 0 {
+		m = make(map[int64]int64, len(cols))
+	}
+	for colID, size := range cols {
+		m[colID] += size
+	}
+	return m
+}
+
+// UpdateDeltaForTable updates the delta info for some table.
+// The `cols` argument is used to update the delta size for cols.
+// If `cols` is nil, it means that the delta size for cols is not changed.
+func (tc *TransactionContext) UpdateDeltaForTable(
 	physicalTableID int64, delta int64,
-	count int64, colSizes []ColSize,
+	count int64, cols DeltaCols,
 ) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
@@ -344,14 +346,11 @@ func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[physicalTableID]
-	if item.ColSize == nil && len(colSizes) > 0 {
-		item.ColSize = make(map[int64]int64, len(colSizes))
-	}
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	for _, s := range colSizes {
-		item.ColSize[s.ColID] += s.Size
+	if cols != nil {
+		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
 	}
 	tc.TableDeltaMap[physicalTableID] = item
 }
@@ -1521,6 +1520,7 @@ type SessionVars struct {
 
 	// Resource group name
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
+	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -1626,6 +1626,9 @@ type SessionVars struct {
 
 	// TiFlashPreAggMode indicates the policy of pre aggregation.
 	TiFlashPreAggMode TiFlashPreAggModeType
+
+	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
+	EnableLazyCursorFetch bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2815,7 +2818,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
-	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.SetResourceGroupName(sessionStates.ResourceGroupName)
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
@@ -2824,6 +2827,15 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
+}
+
+// SetResourceGroupName changes the resource group name and inc/dec the metrics accordingly.
+func (s *SessionVars) SetResourceGroupName(groupName string) {
+	if s.ResourceGroupName != groupName {
+		metrics.ConnGauge.WithLabelValues(s.ResourceGroupName).Dec()
+		metrics.ConnGauge.WithLabelValues(groupName).Inc()
+	}
+	s.ResourceGroupName = groupName
 }
 
 // TableDelta stands for the changed count for one table or partition.
