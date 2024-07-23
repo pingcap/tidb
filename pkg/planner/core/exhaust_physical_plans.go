@@ -2744,12 +2744,12 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHashJoin {
+func GetHashJoin(la *LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
 	return getHashJoin(&la.LogicalJoin, prop, 1, false)
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// ExhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
+func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
@@ -2760,7 +2760,7 @@ func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.Children()[0])
-	join := la.GetHashJoin(prop)
+	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
 		columns = append(columns, &colColumn.Column)

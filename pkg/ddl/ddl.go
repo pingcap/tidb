@@ -1806,10 +1806,12 @@ func resumePausedJob(_ *sess.Session, job *model.Job,
 }
 
 // processJobs command on the Job according to the process
-func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+func processJobs(
+	process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
-	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
+	byWho model.AdminCommandOperator,
+) (jobErrs []error, err error) {
 	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock failed admin command on ddl jobs"))

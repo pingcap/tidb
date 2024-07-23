@@ -140,7 +140,13 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 			diskConsumed = pi.DiskTracker.BytesConsumed()
 		}
 	}
-	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias)
+
+	var affectedRows any
+	if pi.StmtCtx != nil {
+		affectedRows = pi.StmtCtx.AffectedRows()
+	}
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
+		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows)
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.
