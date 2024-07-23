@@ -412,13 +412,15 @@ func (*indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexHash
 }
 
 func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask) *indexHashJoinOuterWorker {
+	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	batchSize := min(e.MaxChunkSize(), maxBatchSize)
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{
 			OuterCtx:         e.OuterCtx,
 			ctx:              e.Ctx(),
 			executor:         e.Children(0),
-			batchSize:        32,
-			maxBatchSize:     e.Ctx().GetSessionVars().IndexJoinBatchSize,
+			batchSize:        batchSize,
+			maxBatchSize:     maxBatchSize,
 			parentMemTracker: e.memTracker,
 			lookup:           &e.IndexLookUpJoin,
 		},
