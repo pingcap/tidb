@@ -3613,8 +3613,8 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 }
 
 // SetDirectResourceGroupRUSecondOption tries to set ru second part of the ResourceGroupSettings.
-func SetDirectResourceGroupRUSecondOption(resourceGroupSettings *model.ResourceGroupSettings, intVal uint64, unlimted bool) error {
-	if unlimted {
+func SetDirectResourceGroupRUSecondOption(resourceGroupSettings *model.ResourceGroupSettings, intVal uint64, unlimited bool) error {
+	if unlimited {
 		resourceGroupSettings.RURate = uint64(math.MaxInt32)
 		resourceGroupSettings.BurstLimit = -1
 	} else {

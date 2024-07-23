@@ -2176,7 +2176,7 @@ type ResourceGroupOption struct {
 	StrValue          string
 	UintValue         uint64
 	BoolValue         bool
-	RUUnlimited       bool
+	RUUnlimited       bool // mark `RU_PER_SEC` is `unlimited`
 	RunawayOptionList []*ResourceGroupRunawayOption
 	BackgroundOptions []*ResourceGroupBackgroundOption
 }
