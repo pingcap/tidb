@@ -3900,6 +3900,7 @@ func ValidTiFlashPreAggMode() string {
 	return ForcePreAggStr + ", " + AutoStr + ", " + ForceStreamingStr
 }
 
+// ToTiPBTiFlashPreAggMode return the corresponding tipb value of preaggregation mode.
 func (m TiFlashPreAggModeType) ToTiPBTiFlashPreAggMode() (tipb.TiFlashPreAggMode, bool) {
 	switch m {
 	case ForcePreAggStr:
