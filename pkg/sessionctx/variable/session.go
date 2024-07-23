@@ -1625,7 +1625,7 @@ type SessionVars struct {
 	GroupConcatMaxLen uint64
 
 	// TiFlashPreAggMode indicates the policy of pre aggregation.
-	TiFlashPreAggMode TiFlashPreAggModeType
+	TiFlashPreAggMode string
 
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
@@ -3883,9 +3883,6 @@ func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
 }
 
-// TiFlashPreAggModeType is the type of TiFlashPreAggMode.
-type TiFlashPreAggModeType string
-
 // ForcePreAggStr means 1st hashagg will be pre aggregated.
 // AutoStr means TiFlash will decide which policy for 1st hashagg.
 // ForceStreamingStr means 1st hashagg will for pass through all blocks.
@@ -3901,8 +3898,8 @@ func ValidTiFlashPreAggMode() string {
 }
 
 // ToTiPBTiFlashPreAggMode return the corresponding tipb value of preaggregation mode.
-func (m TiFlashPreAggModeType) ToTiPBTiFlashPreAggMode() (tipb.TiFlashPreAggMode, bool) {
-	switch m {
+func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
+	switch mode {
 	case ForcePreAggStr:
 		return tipb.TiFlashPreAggMode_ForcePreAgg, true
 	case ForceStreamingStr:

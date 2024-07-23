@@ -3258,9 +3258,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashHashAggPreAggMode, Value: DefTiFlashPreAggMode, Type: TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			mode := TiFlashPreAggModeType(normalizedValue)
-			_, ok := mode.ToTiPBTiFlashPreAggMode()
-			if ok {
+			if _, ok := ToTiPBTiFlashPreAggMode(normalizedValue); ok {
 				return normalizedValue, nil
 			}
 			errMsg := fmt.Sprintf("incorrect value: `%s`. %s options: %s",
@@ -3268,7 +3266,7 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, errors.New(errMsg)
 		},
 		SetSession: func(s *SessionVars, val string) error {
-			s.TiFlashPreAggMode = TiFlashPreAggModeType(val)
+			s.TiFlashPreAggMode = val
 			return nil
 		},
 	},

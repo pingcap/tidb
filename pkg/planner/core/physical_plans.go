@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -2043,7 +2042,7 @@ func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
-	tiflashPreAggMode variable.TiFlashPreAggModeType
+	tiflashPreAggMode string
 }
 
 func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {

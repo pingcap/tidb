@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -115,7 +116,7 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 		// If p.tiflashPreAggMode is empty, means no need to consider preagg mode.
 		// For example it's the the second stage of hashagg.
 		if len(p.tiflashPreAggMode) != 0 {
-			if preAggModeVal, ok := p.tiflashPreAggMode.ToTiPBTiFlashPreAggMode(); !ok {
+			if preAggModeVal, ok := variable.ToTiPBTiFlashPreAggMode(p.tiflashPreAggMode); !ok {
 				err = fmt.Errorf("unexpected tiflash pre agg mode: %v", p.tiflashPreAggMode)
 			} else {
 				aggExec.PreAggMode = &preAggModeVal
