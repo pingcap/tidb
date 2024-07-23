@@ -687,7 +687,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 				sql := "analyze table %n.%n index %n"
 				params := append([]any{db, tblInfo.Name.O}, idx.Name.O)
-				statslogutil.StatsLogger().Info("auto analyze for global index",
+				statslogutil.StatsLogger().Info("auto analyze for special global index",
 					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),

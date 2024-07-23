@@ -57,7 +57,7 @@ func (pc *PriorityCalculator) CalculateWeight(job AnalysisJob) float64 {
 	indicators := job.GetIndicators()
 	changeRatio := 100 * indicators.ChangePercentage
 	if j, ok := job.(*DynamicPartitionedTableAnalysisJob); ok {
-		tblSize := indicators.TableSize * (1 + float64(len(j.SpecialIndexes)))
+		tblSize := indicators.TableSize * (1 + float64(len(j.SpecialGlobalIndexes)))
 		return changeRatioWeight*math.Log10(1+changeRatio) +
 			sizeWeight*(1-math.Log10(1+tblSize)) +
 			analysisInterval*math.Log10(1+math.Sqrt(indicators.LastAnalysisDuration.Seconds())) +

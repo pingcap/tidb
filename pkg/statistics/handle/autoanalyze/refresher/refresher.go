@@ -453,12 +453,12 @@ func CheckIndexesNeedAnalyze(
 	return indexes
 }
 
-func checkSpecialIndex(
+func checkSpecialGlobalIndex(
 	tblInfo *model.TableInfo,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 	autoAnalyzeRatio float64,
 ) []string {
-	specialIndexes := make([]string, 0)
+	specialGlobalIndexes := make([]string, 0)
 	needAnalyzeGlobalIndex := false
 	modifyCount, tblCnt := 0.0, 0.0
 	for _, pStats := range partitionStats {
@@ -480,11 +480,11 @@ func checkSpecialIndex(
 			continue
 		}
 		if needAnalyzeGlobalIndex {
-			specialIndexes = append(specialIndexes, idx.Name.O)
+			specialGlobalIndexes = append(specialGlobalIndexes, idx.Name.O)
 			continue
 		}
 	}
-	return specialIndexes
+	return specialGlobalIndexes
 }
 
 func createTableAnalysisJobForPartitions(
@@ -515,7 +515,7 @@ func createTableAnalysisJobForPartitions(
 		tblStats,
 		partitionStats,
 	)
-	specialIndexes := checkSpecialIndex(
+	specialGlobalIndexes := checkSpecialGlobalIndex(
 		tblInfo,
 		partitionStats,
 		autoAnalyzeRatio,
@@ -524,7 +524,7 @@ func createTableAnalysisJobForPartitions(
 	// No need to analyze.
 	// We perform a separate check because users may set the auto analyze ratio to 0,
 	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
-	if len(partitionNames) == 0 && len(partitionIndexes) == 0 && len(specialIndexes) == 0 {
+	if len(partitionNames) == 0 && len(partitionIndexes) == 0 && len(specialGlobalIndexes) == 0 {
 		return nil
 	}
 
@@ -534,7 +534,7 @@ func createTableAnalysisJobForPartitions(
 		tblInfo.ID,
 		partitionNames,
 		partitionIndexes,
-		specialIndexes,
+		specialGlobalIndexes,
 		tableStatsVer,
 		averageChangePercentage,
 		avgSize,

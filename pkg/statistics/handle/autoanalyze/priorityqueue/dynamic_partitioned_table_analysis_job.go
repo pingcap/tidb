@@ -47,7 +47,7 @@ type DynamicPartitionedTableAnalysisJob struct {
 	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
 	PartitionIndexes map[string][]string
 
-	SpecialIndexes []string
+	SpecialGlobalIndexes []string
 
 	TableSchema     string
 	GlobalTableName string
@@ -69,20 +69,20 @@ func NewDynamicPartitionedTableAnalysisJob(
 	tableID int64,
 	partitions []string,
 	partitionIndexes map[string][]string,
-	specialIndexes []string,
+	specialGlobalIndexes []string,
 	tableStatsVer int,
 	changePercentage float64,
 	tableSize float64,
 	lastAnalysisDuration time.Duration,
 ) *DynamicPartitionedTableAnalysisJob {
 	return &DynamicPartitionedTableAnalysisJob{
-		GlobalTableID:    tableID,
-		TableSchema:      schema,
-		GlobalTableName:  tableName,
-		Partitions:       partitions,
-		PartitionIndexes: partitionIndexes,
-		SpecialIndexes:   specialIndexes,
-		TableStatsVer:    tableStatsVer,
+		GlobalTableID:        tableID,
+		TableSchema:          schema,
+		GlobalTableName:      tableName,
+		Partitions:           partitions,
+		PartitionIndexes:     partitionIndexes,
+		SpecialGlobalIndexes: specialGlobalIndexes,
+		TableStatsVer:        tableStatsVer,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,
 			TableSize:            tableSize,
@@ -123,7 +123,7 @@ func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
 	sctx sessionctx.Context,
 ) (bool, string) {
 	// Check whether the table or partition is valid to analyze.
-	if len(j.Partitions) > 0 || len(j.PartitionIndexes) > 0 || len(j.SpecialIndexes) > 0 {
+	if len(j.Partitions) > 0 || len(j.PartitionIndexes) > 0 || len(j.SpecialGlobalIndexes) > 0 {
 		// Any partition is invalid to analyze, the whole table is invalid to analyze.
 		// Because we need to analyze partitions in batch mode.
 		partitions := append(j.Partitions, getPartitionNames(j.PartitionIndexes)...)
@@ -157,7 +157,7 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 			"\tAnalyzeType: %s\n"+
 			"\tPartitions: %s\n"+
 			"\tPartitionIndexes: %v\n"+
-			"\tSpecialIndexes: %v\n"+
+			"\tSpecialGlobalIndexes: %v\n"+
 			"\tSchema: %s\n"+
 			"\tGlobal Table: %s\n"+
 			"\tGlobal TableID: %d\n"+
@@ -168,7 +168,7 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
 		strings.Join(j.Partitions, ", "),
-		j.PartitionIndexes, j.SpecialIndexes,
+		j.PartitionIndexes, j.SpecialGlobalIndexes,
 		j.TableSchema, j.GlobalTableName,
 		j.GlobalTableID, j.TableStatsVer, j.ChangePercentage,
 		j.TableSize, j.LastAnalysisDuration, j.Weight,
@@ -200,9 +200,9 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 		params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 	}
-	for i := 0; i < len(j.SpecialIndexes); i++ {
+	for i := 0; i < len(j.SpecialGlobalIndexes); i++ {
 		sql := "analyze table %n.%n index %n"
-		params := append([]any{j.TableSchema, j.GlobalTableName}, j.SpecialIndexes[i])
+		params := append([]any{j.TableSchema, j.GlobalTableName}, j.SpecialGlobalIndexes[i])
 		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 	}
 }
