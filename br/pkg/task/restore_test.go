@@ -8,7 +8,12 @@ import (
 	"fmt"
 	"testing"
 
+<<<<<<< HEAD
 	"github.com/golang/protobuf/proto"
+=======
+	"github.com/docker/go-units"
+	"github.com/gogo/protobuf/proto"
+>>>>>>> d662428574e (br:  disk space check follow up (#54596))
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -25,9 +30,13 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+<<<<<<< HEAD
 func TestRestoreConfigAdjust(t *testing.T) {
 	cfg := &RestoreConfig{}
 	cfg.Adjust()
+=======
+const pb uint64 = units.PB
+>>>>>>> d662428574e (br:  disk space check follow up (#54596))
 
 	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
@@ -272,3 +281,106 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 		Schemas: mockSchemas,
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestCheckDDLJobByRules(t *testing.T) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+		{
+			Type: model.ActionReorganizePartition,
+		},
+	}
+
+	filteredDDlJobs := task.FilterDDLJobByRules(ddlJobs, task.DDLJobLogIncrementalCompactBlockListRule)
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionSetTiFlashReplica,
+		model.ActionAddPrimaryKey,
+		model.ActionUpdateTiFlashReplicaStatus,
+		model.ActionCreateTable,
+		model.ActionLockTable,
+		model.ActionUnlockTable,
+		model.ActionCreateSchema,
+	}
+
+	require.Equal(t, len(expectedDDLTypes), len(filteredDDlJobs))
+	expectedDDLJobs := make([]*model.Job, 0, len(expectedDDLTypes))
+	for i, ddlJob := range filteredDDlJobs {
+		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+		expectedDDLJobs = append(expectedDDLJobs, ddlJob)
+	}
+
+	require.NoError(t, task.CheckDDLJobByRules(expectedDDLJobs, task.DDLJobLogIncrementalCompactBlockListRule))
+	require.Error(t, task.CheckDDLJobByRules(ddlJobs, task.DDLJobLogIncrementalCompactBlockListRule))
+}
+
+// NOTICE: Once there is a new backfilled type ddl, BR needs to ensure that it is correctly cover by the rules:
+func TestMonitorTheIncrementalUnsupportDDLType(t *testing.T) {
+	require.Equal(t, int(5), ddl.BackupFillerTypeCount())
+}
+
+func TestTikvUsage(t *testing.T) {
+	files := []*backuppb.File{
+		{Name: "F1", Size_: 1 * pb},
+		{Name: "F2", Size_: 2 * pb},
+		{Name: "F3", Size_: 3 * pb},
+		{Name: "F4", Size_: 4 * pb},
+		{Name: "F5", Size_: 5 * pb},
+	}
+	replica := uint64(3)
+	storeCnt := uint64(6)
+	total := uint64(0)
+	for _, f := range files {
+		total += f.GetSize_()
+	}
+	ret := task.EstimateTikvUsage(files, replica, storeCnt)
+	require.Equal(t, total*replica/storeCnt, ret)
+}
+
+func TestTiflashUsage(t *testing.T) {
+	tables := []*metautil.Table{
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 0}},
+			Files: []*backuppb.File{{Size_: 1 * pb}}},
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1}},
+			Files: []*backuppb.File{{Size_: 2 * pb}}},
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 2}},
+			Files: []*backuppb.File{{Size_: 3 * pb}}},
+	}
+
+	var storeCnt uint64 = 3
+	ret := task.EstimateTiflashUsage(tables, storeCnt)
+	require.Equal(t, 8*pb/3, ret)
+}
+
+func TestCheckTikvSpace(t *testing.T) {
+	store := pdhttp.StoreInfo{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{Available: "500PB"}}
+	require.NoError(t, task.CheckStoreSpace(400*pb, &store))
+}
+>>>>>>> d662428574e (br:  disk space check follow up (#54596))
