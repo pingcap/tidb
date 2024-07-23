@@ -1508,11 +1508,8 @@ const (
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
-<<<<<<< HEAD
 	DefTiFlashPreAggMode                              = "auto"
-=======
 	DefTiDBEnableLazyCursorFetch                      = false
->>>>>>> 419139e801551eb36441de0752b7f5af5f756d33
 )
 
 // Process global variables.
