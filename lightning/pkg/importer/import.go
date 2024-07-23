@@ -338,6 +338,10 @@ func NewImportControllerWithPauser(
 	}
 
 	db := p.DB
+	db.SetMaxIdleConns(16)
+	db.SetMaxOpenConns(32)
+	db.SetConnMaxIdleTime(time.Hour)
+	db.SetConnMaxLifetime(time.Hour)
 	errorMgr := errormanager.New(db, cfg, log.FromContext(ctx))
 	if err := errorMgr.Init(ctx); err != nil {
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
