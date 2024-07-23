@@ -30,7 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
+func (d *executor) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
 	subJobs := info.SubJobs
 	if len(subJobs) == 0 {
 		return nil
