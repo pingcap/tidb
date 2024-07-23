@@ -1016,6 +1016,7 @@ func (job *Job) MayNeedReorg() bool {
 }
 
 // IsRollbackable checks whether the job can be rollback.
+// TODO(lance6716): should make sure it's the same as convertJob2RollbackJob
 func (job *Job) IsRollbackable() bool {
 	switch job.Type {
 	case ActionDropIndex, ActionDropPrimaryKey:
@@ -1087,7 +1088,8 @@ const (
 	// is in `done` state and version synchronized, the job will be deleted from
 	// tidb_ddl_job table, and we insert a `synced` job to the history table and queue directly.
 	JobStateSynced JobState = 6
-	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
+	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but
+	// the DDL worker hasn't handled it.
 	JobStateCancelling JobState = 7
 	// JobStateQueueing means the job has not yet been started.
 	JobStateQueueing JobState = 8
