@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -84,7 +85,7 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item.StringWithCtx(ectx))
+			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] contained in ")
 		if idx == 0 {
@@ -106,7 +107,7 @@ func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *o
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item.StringWithCtx(ectx))
+			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
 		return buffer.String()
