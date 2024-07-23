@@ -2378,6 +2378,7 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	defer b.ReleaseSysSession(ctx, sysCtx)
+	// `fn` may use KV transaction, so initialize the txn here
 	if err = sessiontxn.NewTxn(ctx, sysCtx); err != nil {
 		return err
 	}
