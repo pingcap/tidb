@@ -519,16 +519,6 @@ func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 // PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
 // Don't forget to reset this executor when the prior plan is invalid.
 type PointGetExecutorCache struct {
-	// Special (or tricky) optimization for PointGet Plan.
-	// Store the PointGet Plan in PlanCacheStmt directly to bypass the LRU Cache to gain some performance improvement.
-	// There is around 3% improvement, BenchmarkPreparedPointGet: 6450 ns/op --> 6250 ns/op.
-	pointPlan      base.Plan
-	pointPlanHints *hint.StmtHints
-	columnNames    types.NameSlice
-
-	// the cache key for this statement, have to check whether the cache key changes before reusing this plan for safety.
-	planCacheKey string
-
 	ColumnInfos any
 	// Executor is only used for point get scene.
 	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
