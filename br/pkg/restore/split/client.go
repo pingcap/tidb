@@ -86,7 +86,7 @@ type SplitClient interface {
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// ScanRegions gets a list of regions, starts from the region that contains key.
 	// Limit limits the maximum number of regions returned.
-	ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error)
+	ScanRegions(ctx context.Context, key, endKey []byte, limit int, options ...pd.GetRegionOption) ([]*RegionInfo, error)
 	// GetPlacementRule loads a placement rule from PD.
 	GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error)
 	// SetPlacementRule insert or update a placement rule to PD.
@@ -763,14 +763,19 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 	return c.client.GetOperator(ctx, regionID)
 }
 
-func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
+func (c *pdClient) ScanRegions(
+	ctx context.Context,
+	key, endKey []byte,
+	limit int,
+	options ...pd.GetRegionOption,
+) ([]*RegionInfo, error) {
 	failpoint.Inject("no-leader-error", func(_ failpoint.Value) {
 		logutil.CL(ctx).Debug("failpoint no-leader-error injected.")
 		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
 	})
 
 	//nolint:staticcheck
-	regions, err := c.client.ScanRegions(ctx, key, endKey, limit)
+	regions, err := c.client.ScanRegions(ctx, key, endKey, limit, options...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -568,70 +568,6 @@ func TestRegionConsistency(t *testing.T) {
 		regions  []*RegionInfo
 	}{
 		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"scan region return empty result, startKey: (.*?), endKey: (.*?)",
-			[]*RegionInfo{},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"first region 1's startKey(.*?) > startKey(.*?)",
-			[]*RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:       1,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("b")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"last region 100's endKey(.*?) < endKey(.*?)",
-			[]*RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:       100,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("c")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region 6's endKey not equal to next region 8's startKey(.*?)",
-			[]*RegionInfo{
-				{
-					Leader: &metapb.Peer{
-						Id:      6,
-						StoreId: 1,
-					},
-					Region: &metapb.Region{
-						Id:          6,
-						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
-						RegionEpoch: nil,
-					},
-				},
-				{
-					Leader: &metapb.Peer{
-						Id:      8,
-						StoreId: 1,
-					},
-					Region: &metapb.Region{
-						Id:       8,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
-					},
-				},
-			},
-		},
-		{
 			codec.EncodeBytes([]byte{}, []byte("c")),
 			codec.EncodeBytes([]byte{}, []byte("e")),
 			"region 6's leader is nil(.*?)",
@@ -685,54 +621,10 @@ func TestRegionConsistency(t *testing.T) {
 		},
 	}
 	for _, ca := range cases {
-		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		err := checkRegionConsistency(ca.regions)
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
 	}
-}
-
-func regionInfo(startKey, endKey string) *RegionInfo {
-	return &RegionInfo{
-		Region: &metapb.Region{
-			StartKey: []byte(startKey),
-			EndKey:   []byte(endKey),
-		},
-	}
-}
-
-func TestSplitCheckPartRegionConsistency(t *testing.T) {
-	var (
-		startKey []byte = []byte("a")
-		endKey   []byte = []byte("f")
-		err      error
-	)
-	err = checkPartRegionConsistency(startKey, endKey, nil)
-	require.Error(t, err)
-	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
-		regionInfo("b", "c"),
-	})
-	require.Error(t, err)
-	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
-		regionInfo("a", "c"),
-		regionInfo("d", "e"),
-	})
-	require.Error(t, err)
-	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
-		regionInfo("a", "c"),
-		regionInfo("c", "d"),
-	})
-	require.NoError(t, err)
-	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
-		regionInfo("a", "c"),
-		regionInfo("c", "d"),
-		regionInfo("d", "f"),
-	})
-	require.NoError(t, err)
-	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
-		regionInfo("a", "c"),
-		regionInfo("c", "z"),
-	})
-	require.NoError(t, err)
 }
 
 func TestScanRegionsWithRetry(t *testing.T) {
