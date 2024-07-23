@@ -2380,5 +2380,8 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	defer sysCtx.RollbackTxn(ctx)
+	if err = ResetContextOfStmt(sysCtx, &ast.SelectStmt{}); err != nil {
+		return err
+	}
 	return fn(sysCtx)
 }
