@@ -15,6 +15,7 @@
 package contextimpl
 
 import (
+	"github.com/pingcap/failpoint"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -75,16 +76,6 @@ func (ctx *TableContextImpl) EnableMutationChecker() bool {
 	return ctx.vars().EnableMutationChecker
 }
 
-// BinlogEnabled returns whether the binlog is enabled.
-func (ctx *TableContextImpl) BinlogEnabled() bool {
-	return ctx.vars().BinlogClient != nil
-}
-
-// GetBinlogMutation returns a `binlog.TableMutation` object for a table.
-func (ctx *TableContextImpl) GetBinlogMutation(tblID int64) *binlog.TableMutation {
-	return ctx.Context.StmtGetMutation(tblID)
-}
-
 // GetRowEncodingConfig returns the RowEncodingConfig.
 func (ctx *TableContextImpl) GetRowEncodingConfig() context.RowEncodingConfig {
 	vars := ctx.vars()
@@ -97,6 +88,41 @@ func (ctx *TableContextImpl) GetRowEncodingConfig() context.RowEncodingConfig {
 // GetMutateBuffers implements the MutateContext interface.
 func (ctx *TableContextImpl) GetMutateBuffers() *context.MutateBuffers {
 	return ctx.mutateBuffers
+}
+
+// GetBinlogSupport implements the MutateContext interface.
+func (ctx *TableContextImpl) GetBinlogSupport() (context.BinlogSupport, bool) {
+	failpoint.Inject("forceWriteBinlog", func() {
+		// Just to cover binlog related code in this package, since the `BinlogClient` is
+		// still nil, mutations won't be written to pump on commit.
+		failpoint.Return(ctx, true)
+	})
+	if ctx.vars().BinlogClient != nil {
+		return ctx, true
+	}
+	return nil, false
+}
+
+// GetBinlogMutation implements the BinlogSupport interface.
+func (ctx *TableContextImpl) GetBinlogMutation(tblID int64) *binlog.TableMutation {
+	return ctx.Context.StmtGetMutation(tblID)
+}
+
+// GetStatisticsSupport implements the MutateContext interface.
+func (ctx *TableContextImpl) GetStatisticsSupport() (context.StatisticsSupport, bool) {
+	if ctx.vars().TxnCtx != nil {
+		return ctx, true
+	}
+	return nil, false
+}
+
+// UpdatePhysicalTableDelta implements the StatisticsSupport interface.
+func (ctx *TableContextImpl) UpdatePhysicalTableDelta(
+	physicalTableID int64, delta int64, count int64, cols variable.DeltaCols,
+) {
+	if txnCtx := ctx.vars().TxnCtx; txnCtx != nil {
+		txnCtx.UpdateDeltaForTable(physicalTableID, delta, count, cols)
+	}
 }
 
 func (ctx *TableContextImpl) vars() *variable.SessionVars {
