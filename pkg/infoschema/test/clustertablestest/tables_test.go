@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -632,18 +633,28 @@ func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, d
 	require.True(t, ok)
 	require.Equal(t, dbID, db.ID)
 	// Test for information_schema table id.
-	tables := is.SchemaTables(model.NewCIStr(dbName))
+	tables, err := is.SchemaTableInfos(context.Background(), model.NewCIStr(dbName))
+	require.NoError(t, err)
 	require.Greater(t, len(tables), 0)
 	for _, tbl := range tables {
-		tid := tbl.Meta().ID
-		require.Greaterf(t, tid&autoid.SystemSchemaIDFlag, int64(0), "table name is %v", tbl.Meta().Name)
-		require.Greaterf(t, tid&^autoid.SystemSchemaIDFlag, start, "table name is %v", tbl.Meta().Name)
-		require.Lessf(t, tid&^autoid.SystemSchemaIDFlag, end, "table name is %v", tbl.Meta().Name)
+		tid := tbl.ID
+		require.Greaterf(t, tid&autoid.SystemSchemaIDFlag, int64(0), "table name is %v", tbl.Name)
+		require.Greaterf(t, tid&^autoid.SystemSchemaIDFlag, start, "table name is %v", tbl.Name)
+		require.Lessf(t, tid&^autoid.SystemSchemaIDFlag, end, "table name is %v", tbl.Name)
 
 		name, ok := uniqueIDMap[tid]
-		require.Falsef(t, ok, "schema id of %v is duplicate with %v, both is %v", name, tbl.Meta().Name, tid)
-		uniqueIDMap[tid] = tbl.Meta().Name.O
+		require.Falsef(t, ok, "schema id of %v is duplicate with %v, both is %v", name, tbl.Name, tid)
+		uniqueIDMap[tid] = tbl.Name.O
 	}
+}
+
+func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *model.TableInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		return m.UpdateTable(dbID, tableInfo)
+	})
+	require.NoError(t, err)
 }
 
 func TestSelectHiddenColumn(t *testing.T) {
@@ -657,18 +668,28 @@ func TestSelectHiddenColumn(t *testing.T) {
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
 	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
 	require.NoError(t, err)
-	colInfo := tb.Meta().Columns
+	tbInfo := tb.Meta()
+	colInfo := tbInfo.Columns
+
 	// Set column b to hidden
 	colInfo[1].Hidden = true
+	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("0"))
+
 	// Set column b to visible
 	colInfo[1].Hidden = false
+	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("1"))
+
 	// Set a, b ,c to hidden
 	colInfo[0].Hidden = true
 	colInfo[1].Hidden = true
 	colInfo[2].Hidden = true
+	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
 }
 
