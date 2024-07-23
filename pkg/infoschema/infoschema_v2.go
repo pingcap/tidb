@@ -419,23 +419,34 @@ func resetPID2TIDBeforeFullLoad(bt *btree.BTreeG[partitionItem], schemaVersion i
 	if !ok {
 		return
 	}
-	items := make([]partitionItem, 0, bt.Len())
+
+	batchSize := 1000
+	if bt.Len() < batchSize {
+		batchSize = bt.Len()
+	}
+	items := make([]partitionItem, 0, batchSize)
 	items = append(items, pivot)
-	bt.Descend(pivot, func(item partitionItem) bool {
-		if pivot.partitionID == item.partitionID {
-			return true // skip MVCC version
-		}
-		pivot = item
-		items = append(items, pivot)
-		return true
-	})
-	for _, item := range items {
-		bt.Set(partitionItem{
-			partitionID:   item.partitionID,
-			tableID:       item.tableID,
-			schemaVersion: schemaVersion,
-			tomb:          true,
+	for {
+		bt.Descend(pivot, func(item partitionItem) bool {
+			if pivot.partitionID == item.partitionID {
+				return true // skip MVCC version
+			}
+			pivot = item
+			items = append(items, pivot)
+			return len(items) < cap(items)
 		})
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			bt.Set(partitionItem{
+				partitionID:   item.partitionID,
+				tableID:       item.tableID,
+				schemaVersion: schemaVersion,
+				tomb:          true,
+			})
+		}
+		items = items[:0]
 	}
 }
 
