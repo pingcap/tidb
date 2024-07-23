@@ -254,8 +254,14 @@ func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 // TODO: write a generics version to avoid repeated code.
 func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
 	resetTableInfoResidentBeforeFullLoad(isd.tableInfoResident, schemaVersion)
+
 	resetByIDBeforeFullLoad(isd.byID, schemaVersion)
 	resetByNameBeforeFullLoad(isd.byName, schemaVersion)
+
+	resetSchemaMapBeforeFullLoad(isd.schemaMap, schemaVersion)
+	resetSchemaID2NameBeforeFullLoad(isd.schemaID2Name, schemaVersion)
+
+	resetPID2TIDBeforeFullLoad(isd.pid2tid, schemaVersion)
 }
 
 func resetByIDBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
@@ -352,6 +358,80 @@ func resetTableInfoResidentBeforeFullLoad(bt *btree.BTreeG[tableInfoItem], schem
 	for _, item := range items {
 		bt.Set(tableInfoItem{
 			dbName:        item.dbName,
+			tableID:       item.tableID,
+			schemaVersion: schemaVersion,
+			tomb:          true,
+		})
+	}
+}
+
+func resetSchemaMapBeforeFullLoad(bt *btree.BTreeG[schemaItem], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+	items := make([]schemaItem, 0, bt.Len())
+	items = append(items, pivot)
+	bt.Descend(pivot, func(item schemaItem) bool {
+		if pivot.Name() == item.Name() {
+			return true // skip MVCC version
+		}
+		pivot = item
+		items = append(items, pivot)
+		return true
+	})
+	for _, item := range items {
+		bt.Set(schemaItem{
+			dbInfo:        item.dbInfo,
+			schemaVersion: schemaVersion,
+			tomb:          true,
+		})
+	}
+}
+
+func resetSchemaID2NameBeforeFullLoad(bt *btree.BTreeG[schemaIDName], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+	items := make([]schemaIDName, 0, bt.Len())
+	items = append(items, pivot)
+	bt.Descend(pivot, func(item schemaIDName) bool {
+		if pivot.id == item.id {
+			return true // skip MVCC version
+		}
+		pivot = item
+		items = append(items, pivot)
+		return true
+	})
+	for _, item := range items {
+		bt.Set(schemaIDName{
+			id:            item.id,
+			name:          item.name,
+			schemaVersion: schemaVersion,
+			tomb:          true,
+		})
+	}
+}
+
+func resetPID2TIDBeforeFullLoad(bt *btree.BTreeG[partitionItem], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+	items := make([]partitionItem, 0, bt.Len())
+	items = append(items, pivot)
+	bt.Descend(pivot, func(item partitionItem) bool {
+		if pivot.partitionID == item.partitionID {
+			return true // skip MVCC version
+		}
+		pivot = item
+		items = append(items, pivot)
+		return true
+	})
+	for _, item := range items {
+		bt.Set(partitionItem{
+			partitionID:   item.partitionID,
 			tableID:       item.tableID,
 			schemaVersion: schemaVersion,
 			tomb:          true,

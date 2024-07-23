@@ -559,6 +559,10 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			if diffs[0].Type == model.ActionRenameTable {
 				failpoint.Return(nil, nil, nil, errors.New("mock error"))
 			}
+		case "dropdatabase":
+			if diffs[0].Type == model.ActionDropSchema {
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+			}
 		}
 	})
 

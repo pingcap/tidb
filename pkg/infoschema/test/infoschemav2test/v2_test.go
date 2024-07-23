@@ -360,6 +360,13 @@ func TestFullLoadAndSnapshot(t *testing.T) {
 	tk.MustExec("use db1")
 	tk.MustQuery("show tables").Check(testkit.Rows())
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("dropdatabase")`)
+	tk.MustExec("drop database db1")
+	tk.MustExecToErr("use db1")
+	tk.MustQuery("select table_schema from information_schema.tables where table_schema = 'db2'").Check(testkit.Rows("db2"))
+	tk.MustQuery("select * from information_schema.tables where table_schema = 'db1'").Check(testkit.Rows())
+
+	// Set snapthost and read old schema.
 	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot= '%s'", timestamp))
 	tk.MustQuery("select * from db1.t").Check(testkit.Rows())
 	tk.MustExecToErr("select * from db2.t")
