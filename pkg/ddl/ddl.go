@@ -1147,6 +1147,7 @@ func setDDLJobMode(job *model.Job) {
 		}
 	case model.ActionCreateSchema:
 		job.LocalMode = true
+		return
 	default:
 	}
 	job.LocalMode = false
