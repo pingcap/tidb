@@ -126,7 +126,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 			}
 			return nil
 		},
-		utils.NewPDReqBackofferExt(),
+		utils.NewConservativePDBackoffStrategy(),
 	)
 	restoreNumStores := len(allStores)
 	if restoreNumStores != numStores {

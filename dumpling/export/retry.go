@@ -24,7 +24,7 @@ const (
 )
 
 type backOfferResettable interface {
-	utils.Backoffer
+	utils.BackoffStrategy
 	Reset()
 }
 
