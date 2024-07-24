@@ -509,7 +509,7 @@ GRANT ALL ON *.* TO 'superuser';
 SET PASSWORD for 'nobodyuser' = 'newpassword';
 SET PASSWORD for 'nobodyuser' = '';
 SET PASSWORD for 'superuser' = 'newpassword';
-Error 1044 (42000): Access denied for user 'superuser'@'%' to database 'mysql'
+Error 1044 (42000): Access denied for user 'nobodyuser'@'127.0.0.1' to database 'mysql'
 CREATE ROLE tsg_r1;
 CREATE USER tsg_u1, tsg_u2;
 GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1;

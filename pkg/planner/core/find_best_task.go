@@ -1226,9 +1226,7 @@ func (ds *DataSource) exploreEnforcedPlan() bool {
 	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, false)
 }
 
-// FindBestTask implements the PhysicalPlan interface.
-// It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -1401,6 +1399,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet && ds.table.Meta().GetPartitionInfo() != nil {
 			// partition table with dynamic prune not support batchPointGet
 			// Due to sorting?
+			// Please make sure handle `where _tidb_rowid in (xx, xx)` correctly when delete this if statements.
 			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				canConvertPointGet = false
 			}
@@ -1417,6 +1416,10 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 				if hashPartColName == nil {
 					canConvertPointGet = false
 				}
+			}
+			// Partition table can't use `_tidb_rowid` to generate PointGet Plan unless one partition is explicitly specified.
+			if canConvertPointGet && path.IsIntHandlePath && !ds.table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
+				canConvertPointGet = false
 			}
 			if canConvertPointGet {
 				if path != nil && path.Index != nil && path.Index.Global {
@@ -2694,7 +2697,18 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
 		batchPointGetPlan.accessCols = ds.TblCols
-		batchPointGetPlan.HandleColOffset = ds.HandleCols.GetCol(0).Index
+		found := false
+		for i := range ds.Columns {
+			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
+				batchPointGetPlan.HandleColOffset = ds.Columns[i].Offset
+				found = true
+				break
+			}
+		}
+		if !found {
+			return base.InvalidTask
+		}
+
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
@@ -2888,7 +2902,7 @@ func findBestTask4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty, cou
 		return base.InvalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
-	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.SCtx(), p.StatsInfo())
+	pcte := PhysicalCTE{SeedPlan: p.Cte.seedPartPhysicalPlan, RecurPlan: p.Cte.recursivePartPhysicalPlan, CTE: p.Cte, cteAsName: p.CteAsName, cteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
 	pcte.SetSchema(p.Schema())
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
 		pcte.readerReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
@@ -2915,10 +2929,10 @@ func findBestTask4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty, cou
 
 func findBestTask4LogicalCTETable(p *LogicalCTETable, prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if !prop.IsSortItemEmpty() {
-		return nil, 1, nil
+		return base.InvalidTask, 0, nil
 	}
 
-	pcteTable := PhysicalCTETable{IDForStorage: p.idForStorage}.Init(p.SCtx(), p.StatsInfo())
+	pcteTable := PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
 	pcteTable.SetSchema(p.Schema())
 	rt := &RootTask{}
 	rt.SetPlan(pcteTable)

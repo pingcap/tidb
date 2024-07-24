@@ -680,26 +680,26 @@ type PhysicalIndexScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 
-	Table      *model.TableInfo
-	Index      *model.IndexInfo
+	Table      *model.TableInfo `plan-cache-clone:"shallow"` // please see comment on genPlanCloneForPlanCacheCode.
+	Index      *model.IndexInfo `plan-cache-clone:"shallow"`
 	IdxCols    []*expression.Column
 	IdxColLens []int
 	Ranges     []*ranger.Range
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
+	Columns    []*model.ColumnInfo `plan-cache-clone:"shallow"`
+	DBName     model.CIStr         `plan-cache-clone:"shallow"`
 
-	TableAsName *model.CIStr
+	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
 
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
-	dataSourceSchema *expression.Schema
+	dataSourceSchema *expression.Schema `plan-cache-clone:"shallow"`
 
 	rangeInfo string
 
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableItemID]expression.Expression `json:"-"`
+	GenExprs map[model.TableItemID]expression.Expression `plan-cache-clone:"must-nil"`
 
 	isPartition bool
 	Desc        bool
@@ -715,18 +715,18 @@ type PhysicalIndexScan struct {
 
 	// required by cost model
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
-	tblColHists   *statistics.HistColl
+	tblColHists   *statistics.HistColl `plan-cache-clone:"shallow"`
 	pkIsHandleCol *expression.Column
 
 	// constColsByCond records the constant part of the index columns caused by the access conds.
 	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
 	constColsByCond []bool
 
-	prop *property.PhysicalProperty
+	prop *property.PhysicalProperty `plan-cache-clone:"shallow"`
 
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
-	usedStatsInfo *stmtctx.UsedStatsInfoForTable
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -857,12 +857,12 @@ type PhysicalTableScan struct {
 	// TODO: remove this field after we support pushing down selection to coprocessor.
 	LateMaterializationFilterCondition []expression.Expression
 
-	Table   *model.TableInfo
-	Columns []*model.ColumnInfo
-	DBName  model.CIStr
+	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
+	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
+	DBName  model.CIStr         `plan-cache-clone:"shallow"`
 	Ranges  []*ranger.Range
 
-	TableAsName *model.CIStr
+	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
 
 	physicalTableID int64
 
@@ -890,13 +890,13 @@ type PhysicalTableScan struct {
 
 	PlanPartInfo *PhysPlanPartInfo
 
-	SampleInfo *tablesampler.TableSampleInfo
+	SampleInfo *tablesampler.TableSampleInfo `plan-cache-clone:"must-nil"`
 
 	// required by cost model
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
-	tblCols     []*expression.Column
-	tblColHists *statistics.HistColl
-	prop        *property.PhysicalProperty
+	tblCols     []*expression.Column       `plan-cache-clone:"shallow"`
+	tblColHists *statistics.HistColl       `plan-cache-clone:"shallow"`
+	prop        *property.PhysicalProperty `plan-cache-clone:"shallow"`
 
 	// constColsByCond records the constant part of the index columns caused by the access conds.
 	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
@@ -905,10 +905,10 @@ type PhysicalTableScan struct {
 
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
-	usedStatsInfo *stmtctx.UsedStatsInfoForTable
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
 
 	// for runtime filter
-	runtimeFilterList []*RuntimeFilter
+	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 	maxWaitTimeMs     int
 }
 
@@ -1255,6 +1255,32 @@ func (p *basePhysicalJoin) getInnerChildIdx() int {
 	return p.InnerChildIdx
 }
 
+func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, bool) {
+	cloned := new(basePhysicalJoin)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
+	if err != nil {
+		return nil, false
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.JoinType = p.JoinType
+	cloned.LeftConditions = util.CloneExprs(p.LeftConditions)
+	cloned.RightConditions = util.CloneExprs(p.RightConditions)
+	cloned.OtherConditions = util.CloneExprs(p.OtherConditions)
+	cloned.InnerChildIdx = p.InnerChildIdx
+	cloned.OuterJoinKeys = util.CloneCols(p.OuterJoinKeys)
+	cloned.InnerJoinKeys = util.CloneCols(p.InnerJoinKeys)
+	cloned.LeftJoinKeys = util.CloneCols(p.LeftJoinKeys)
+	cloned.RightJoinKeys = util.CloneCols(p.RightJoinKeys)
+	cloned.IsNullEQ = make([]bool, len(p.IsNullEQ))
+	copy(cloned.IsNullEQ, p.IsNullEQ)
+	for _, d := range p.DefaultValues {
+		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
+	}
+	cloned.LeftNAJoinKeys = util.CloneCols(p.LeftNAJoinKeys)
+	cloned.RightNAJoinKeys = util.CloneCols(p.RightNAJoinKeys)
+	return cloned, true
+}
+
 func (p *basePhysicalJoin) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, error) {
 	cloned := new(basePhysicalJoin)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
@@ -1358,13 +1384,13 @@ type PhysicalHashJoin struct {
 	mppShuffleJoin bool
 
 	// for runtime filter
-	runtimeFilterList []*RuntimeFilter
+	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 }
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 	switch p.JoinType {
-	case LeftOuterJoin, InnerJoin:
+	case LeftOuterJoin, RightOuterJoin, InnerJoin:
 		// null aware join is not supported yet
 		if len(p.LeftNAJoinKeys) > 0 {
 			return false
@@ -1582,7 +1608,7 @@ func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
 type PhysicalMergeJoin struct {
 	basePhysicalJoin
 
-	CompareFuncs []expression.CompareFunc
+	CompareFuncs []expression.CompareFunc `plan-cache-clone:"shallow"`
 	// Desc means whether inner child keep desc order.
 	Desc bool
 }
@@ -1913,6 +1939,24 @@ func (p *basePhysicalAgg) IsFinalAgg() bool {
 		}
 	}
 	return false
+}
+
+func (p *basePhysicalAgg) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, bool) {
+	cloned := new(basePhysicalAgg)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
+	if err != nil {
+		return nil, false
+	}
+	cloned.physicalSchemaProducer = *base
+	for _, aggDesc := range p.AggFuncs {
+		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
+	}
+	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
+	cloned.MppRunMode = p.MppRunMode
+	for _, p := range p.MppPartitionCols {
+		cloned.MppPartitionCols = append(cloned.MppPartitionCols, p.Clone())
+	}
+	return cloned, true
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, error) {
@@ -2699,7 +2743,15 @@ func (p *CTEDefinition) ExplainInfo() string {
 		res = "Non-Recursive CTE"
 	}
 	if p.CTE.HasLimit {
-		res += fmt.Sprintf(", limit(offset:%v, count:%v)", p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg)
+		offset, count := p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg
+		switch p.SCtx().GetSessionVars().EnableRedactLog {
+		case errors.RedactLogMarker:
+			res += fmt.Sprintf(", limit(offset:‹%v›, count:‹%v›)", offset, count)
+		case errors.RedactLogDisable:
+			res += fmt.Sprintf(", limit(offset:%v, count:%v)", offset, count)
+		case errors.RedactLogEnable:
+			res += ", limit(offset:?, count:?)"
+		}
 	}
 	return res
 }

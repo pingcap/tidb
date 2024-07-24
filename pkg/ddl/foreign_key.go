@@ -601,18 +601,21 @@ func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta
 	return result, nil
 }
 
-func checkDatabaseHasForeignKeyReferred(is infoschema.InfoSchema, schema model.CIStr, fkCheck bool) error {
+func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoSchema, schema model.CIStr, fkCheck bool) error {
 	if !fkCheck {
 		return nil
 	}
-	tables := is.SchemaTables(schema)
+	tables, err := is.SchemaTableInfos(ctx, schema)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	tableNames := make([]ast.Ident, len(tables))
 	for i := range tables {
-		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Meta().Name}
+		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Name}
 	}
 	for _, tbl := range tables {
-		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Meta().Name.L, tableNames, fkCheck); referredFK != nil {
-			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Meta().Name, referredFK.ChildFKName, referredFK.ChildTable))
+		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Name.L, tableNames, fkCheck); referredFK != nil {
+			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Name, referredFK.ChildFKName, referredFK.ChildTable))
 		}
 	}
 	return nil
@@ -635,7 +638,7 @@ func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *mod
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = checkDatabaseHasForeignKeyReferred(is, model.NewCIStr(job.SchemaName), fkCheck)
+	err = checkDatabaseHasForeignKeyReferred(d.ctx, is, model.NewCIStr(job.SchemaName), fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 	}

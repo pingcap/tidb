@@ -55,6 +55,7 @@ type Builder struct {
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
 	infoData *Data
+	store    kv.Storage
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -865,6 +866,25 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.initMisc(dbInfos, policies, resourceGroups)
 
+	if b.enableV2 {
+		// We must not clear the historial versions like b.infoData = NewData(), because losing
+		// the historial versions would cause applyDiff get db not exist error and fail, then
+		// infoschema reloading retries with full load every time.
+		// See https://github.com/pingcap/tidb/issues/53442
+		//
+		// We must reset it, otherwise the stale tables remain and cause bugs later.
+		// For example, schema version 59:
+		//         107: t1
+		//         112: t2 (partitions p0=113, p1=114, p2=115)
+		// operation: alter table t2 exchange partition p0 with table t1
+		// schema version 60 if we do not reset:
+		//         107: t1   <- stale
+		//         112: t2 (partition p0=107, p1=114, p2=115)
+		//         113: t1
+		// See https://github.com/pingcap/tidb/issues/54796
+		b.infoData.resetBeforeFullLoad(schemaVersion)
+	}
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
 		if err != nil {
@@ -919,9 +939,26 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 		schTbls.tables[t.Name.L] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
+		if len(di.TableName2ID) > 0 {
+			delete(di.TableName2ID, t.Name.L)
+		}
 
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)
+		}
+	}
+	// Add the rest name to ID mappings.
+	if b.enableV2 {
+		for name, id := range di.TableName2ID {
+			item := tableItem{
+				dbName:        di.Name.L,
+				dbID:          di.ID,
+				tableName:     name,
+				tableID:       id,
+				schemaVersion: schemaVersion,
+			}
+			b.infoData.byID.Set(item)
+			b.infoData.byName.Set(item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
@@ -931,7 +968,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTables) {
 	if b.enableV2 {
-		if isSpecialDB(di.Name.L) {
+		if IsSpecialDB(di.Name.L) {
 			b.infoData.addSpecialDB(di, schTbls)
 		} else {
 			b.infoData.addDB(schemaVersion, di)
@@ -983,6 +1020,12 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		builder.enableV2 = true
 	}
 	return builder
+}
+
+// WithStore attaches the given store to builder.
+func (b *Builder) WithStore(s kv.Storage) *Builder {
+	b.store = s
+	return b
 }
 
 func tableBucketIdx(tableID int64) int {

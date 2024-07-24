@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -316,18 +317,18 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test_orderby_limit"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if strings.HasPrefix(tblInfo.Name.L, "tr") || strings.HasPrefix(tblInfo.Name.L, "thash") || strings.HasPrefix(tblInfo.Name.L, "tlist") {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange_intpk")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash_intpk")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist_intpk")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular_intpk")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange_clustered")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash_clustered")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist_clustered")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular_clustered")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
 
 	// test indexLookUp
@@ -1280,10 +1281,10 @@ func TestMPPQueryExplainInfo(t *testing.T) {
 		  partition p2 values less than (15))`)
 	tb := external.GetTableByName(t, tk, "tiflash_partition_test", "t")
 	for _, partition := range tb.Meta().GetPartitionInfo().Definitions {
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.ID, true)
 		require.NoError(t, err)
 	}
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec(`insert into t values (2), (7), (12)`)
 	tk.MustExec("set tidb_enforce_mpp=1")

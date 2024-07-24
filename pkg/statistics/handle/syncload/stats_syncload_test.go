@@ -193,7 +193,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	for _, fp := range failpoints {
 		// clear statsCache
 		h.Clear()
-		require.NoError(t, dom.StatsHandle().Update(is))
+		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 		// no stats at beginning
 		stat := h.GetTableStats(tableInfo)
@@ -294,7 +294,7 @@ func TestRetry(t *testing.T) {
 
 	// clear statsCache
 	h.Clear()
-	require.NoError(t, dom.StatsHandle().Update(is))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 	// no stats at beginning
 	stat := h.GetTableStats(tableInfo)

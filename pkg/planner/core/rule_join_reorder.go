@@ -678,7 +678,7 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 		newJoin.RightPreferJoinType = joinMethodHint.preferredJoinMethod
 		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
 	}
-	newJoin.setPreferredJoinType()
+	newJoin.SetPreferredJoinType()
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.

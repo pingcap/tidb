@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -1527,14 +1527,12 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 	sessionToStart.Add(2)
 	firstDDLFinished := make(chan struct{})
 
-	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetSchemaAndTableByIdent", func(ctx sessionctx.Context) {
 		// The following code is for testing.
 		// Make sure the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
-		var info infoschema.InfoSchema
 		sessionToStart.Done()
 		sessionToStart.Wait()
-		info = is
 
 		// Make sure the two session have got the same information schema. And the first session can continue to go on,
 		// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
@@ -1542,9 +1540,7 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 		if currID != 1 {
 			<-firstDDLFinished
 		}
-
-		return info
-	}
+	})
 	d := dom.DDL()
 	d.(ddl.DDLForTest).SetInterceptor(intercept)
 
