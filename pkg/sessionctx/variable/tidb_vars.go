@@ -156,6 +156,9 @@ const (
 	// TiDBRetryLimit is the maximum number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
 
+	// TiDBWorkloadRepositoryDest is the destination of workload repository.
+	TiDBWorkloadRepositoryDest = "tidb_workload_repository_dest"
+
 	// TiDBDisableTxnAutoRetry disables transaction auto retry.
 	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
@@ -1709,6 +1712,10 @@ var (
 	DisableDDL func() error = nil
 	// SwitchFastCreateTable is the func registered by DDL to switch fast create table.
 	SwitchFastCreateTable func(val bool) error
+	// SetRepositoryDest is the func registered by domain to noticy repository worker in this instance.
+	SetRepositoryDest func(context.Context, string) error = nil
+	// ValidateRepositoryDest is the func registered by domain to noticy repository worker in this instance.
+	ValidateRepositoryDest func(string) (string, error) = nil
 	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd

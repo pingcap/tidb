@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/domain/repository"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -38,6 +40,9 @@ func (do *Domain) initDomainSysVars() {
 
 	variable.SetExternalTimestamp = do.setExternalTimestamp
 	variable.GetExternalTimestamp = do.getExternalTimestamp
+
+	variable.SetRepositoryDest = do.setRepositoryDest
+	variable.ValidateRepositoryDest = repository.ValidateDest
 
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
@@ -147,5 +152,35 @@ func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error 
 		return err
 	}
 	do.infoCache.Data.SetCacheCapacity(size)
+	return nil
+}
+
+func (do *Domain) setRepositoryDest(ctx context.Context, dst string) error {
+	switch {
+	case dst == "table":
+		return do.startRepositoryWorker(ctx)
+	default:
+		return do.stopRepositoryWorker()
+	}
+}
+
+func (do *Domain) startRepositoryWorker(ctx context.Context) error {
+	if do.repositoryWorker == nil {
+		if do.etcdClient == nil {
+			log.Warn("etcd client not provided, no repositoryWorker.")
+			return nil
+		}
+		do.repositoryWorker = repository.NewWorker(do.etcdClient, do.GetGlobalVar, do.newOwnerManager, do.SysSessionPool(), do.exit)
+	}
+	do.repositoryWorker.Start(context.Background())
+	return nil
+}
+
+func (do *Domain) stopRepositoryWorker() error {
+	if do.repositoryWorker == nil {
+		return nil
+	}
+	do.repositoryWorker.Stop()
+	do.repositoryWorker = nil
 	return nil
 }

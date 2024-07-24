@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/repository"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
@@ -193,6 +194,7 @@ type Domain struct {
 
 	brOwnerMgr               owner.Manager
 	logBackupAdvancer        *daemon.OwnerDaemon
+	repositoryWorker         *repository.Worker
 	historicalStatsWorker    *HistoricalStatsWorker
 	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
 	runawayManager           *runaway.Manager
