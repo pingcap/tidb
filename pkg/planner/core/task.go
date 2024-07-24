@@ -1011,16 +1011,15 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
-	// current expand can only be run in MPP TiFlash mode.
-	// if expr inside could not be pushed down to tiFlash,
-	// it will error in converting to pb side.
+	// current expand can only be run in MPP TiFlash mode or Root Tidb mode.
+	// if expr inside could not be pushed down to tiFlash, it will error in converting to pb side.
 	if mpp, ok := t.(*MppTask); ok {
 		p.SetChildren(mpp.p)
 		mpp.p = p
 		return mpp
 	}
 	// For root task
-	// since expand can only be in root side, convert to root task now.
+	// since expand should be in root side accordingly, convert to root task now.
 	root := t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, root)
 	if root, ok := tasks[0].(*RootTask); ok && root.IsEmpty() {

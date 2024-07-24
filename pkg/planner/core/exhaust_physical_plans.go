@@ -2729,7 +2729,7 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	// for property.RootTaskType, we can give a TiDB Expand.
 	{
-		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.MppTaskType, property.RootTaskType}
 		for _, taskType := range taskTypes {
 			// require cop task type for children.F
 			tidbProp := prop.CloneEssentialFields()

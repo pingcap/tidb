@@ -83,10 +83,10 @@ func (e *ExpandExec) isUnparalleled() bool {
 }
 
 func (e *ExpandExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
-	e.childResult.SetRequiredRows(chk.RequiredRows(), e.MaxChunkSize())
-	mSize := e.childResult.MemoryUsage()
 	// for one cache input chunk, if it has already been processed N times, we need to fetch a new one.
 	if e.levelIterOffset == -1 || e.levelIterOffset > int64(len(e.levelEvaluatorSuits)-1) {
+		e.childResult.SetRequiredRows(chk.RequiredRows(), e.MaxChunkSize())
+		mSize := e.childResult.MemoryUsage()
 		err := exec.Next(ctx, e.Children(0), e.childResult)
 		if err != nil {
 			return err
