@@ -784,6 +784,7 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 			case iw.resultCh <- joinResult:
 			case <-ctx.Done():
 			}
+			failpoint.InjectCall("joinMatchedInnerRow2Chunk")
 			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
 				return false, joinResult
