@@ -39,6 +39,7 @@ type MetaOnlyInfoSchema interface {
 	Misc
 }
 
+// SchemaAndTable is define for iterating all the schemas and tables in the infoschema.
 type SchemaAndTable interface {
 	AllSchemas() []*model.DBInfo
 	SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error)

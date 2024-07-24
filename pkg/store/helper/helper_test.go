@@ -69,7 +69,7 @@ func TestHotRegion(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	res, err := h.FetchRegionTableIndex(regionMetric, dbInfoAsInfoSchema{[]*model.DBInfo{dbInfo}}, nil)
+	res, err := h.FetchRegionTableIndex(regionMetric, helper.DBInfoAsInfoSchema([]*model.DBInfo{dbInfo}), nil)
 	require.NotEqual(t, res[0].RegionMetric, res[1].RegionMetric)
 	require.NoError(t, err)
 }
@@ -80,25 +80,8 @@ func TestGetRegionsTableInfo(t *testing.T) {
 	h := helper.NewHelper(store)
 	regionsInfo := getMockTiKVRegionsInfo()
 	schemas := getMockRegionsTableInfoSchema()
-	tableInfos := h.GetRegionsTableInfo(regionsInfo, dbInfoAsInfoSchema{schemas}, nil)
+	tableInfos := h.GetRegionsTableInfo(regionsInfo, helper.DBInfoAsInfoSchema(schemas), nil)
 	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
-}
-
-type dbInfoAsInfoSchema struct {
-	data []*model.DBInfo
-}
-
-func (d dbInfoAsInfoSchema) AllSchemas() []*model.DBInfo {
-	return d.data
-}
-
-func (d dbInfoAsInfoSchema) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
-	for _, db := range d.data {
-		if db.Name == schema {
-			return db.Deprecated.Tables, nil
-		}
-	}
-	return nil, nil
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {

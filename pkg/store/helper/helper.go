@@ -718,6 +718,24 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 	}
 }
 
+// DBInfoAsInfoSchema is used mainly in test.
+type DBInfoAsInfoSchema []*model.DBInfo
+
+// AllSchemas implement infoschema.SchemaAndTable interface.
+func (d DBInfoAsInfoSchema) AllSchemas() []*model.DBInfo {
+	return []*model.DBInfo(d)
+}
+
+// SchemaTableInfos implement infoschema.SchemaAndTable interface.
+func (d DBInfoAsInfoSchema) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
+	for _, db := range d {
+		if db.Name == schema {
+			return db.Deprecated.Tables, nil
+		}
+	}
+	return nil, nil
+}
+
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
 func (*Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
