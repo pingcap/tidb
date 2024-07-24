@@ -331,7 +331,7 @@ func BenchmarkTableByName(t *testing.B) {
 }
 
 func TestFullLoadAndSnapshot(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
 
@@ -341,6 +341,9 @@ func TestFullLoadAndSnapshot(t *testing.T) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	tk.MustExec("use test")
+	tk.MustExec("create global temporary table tmp (id int) on commit delete rows")
 
 	tk.MustExec("create database db1")
 	tk.MustExec("create database db2")
@@ -359,6 +362,13 @@ func TestFullLoadAndSnapshot(t *testing.T) {
 	tk.MustQuery("show tables").Check(testkit.Rows("t"))
 	tk.MustExec("use db1")
 	tk.MustQuery("show tables").Check(testkit.Rows())
+
+	// Cover a bug that after full load using infoschema v2, the temporary table is gone.
+	// Check global temporary table not dispear after full load.
+	require.True(t, dom.InfoSchema().HasTemporaryTable())
+	tk.MustExec("begin")
+	tk.MustExec("insert into test.tmp values (1)")
+	tk.MustExec("commit")
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("dropdatabase")`)
 	tk.MustExec("drop database db1")
