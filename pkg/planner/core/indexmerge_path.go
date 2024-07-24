@@ -1253,10 +1253,16 @@ func buildPartialPath4MVIndex(
 	partialPath := &util.AccessPath{Index: mvIndex}
 	partialPath.Ranges = ranger.FullRange()
 	for i := 0; i < len(idxCols); i++ {
+		length := mvIndex.Columns[i].Length
+		// For full length prefix index, we consider it as non prefix index.
+		// This behavior is the same as in IndexInfo2Cols(), which is used for non mv index.
+		if length == idxCols[i].RetType.GetFlen() {
+			length = types.UnspecifiedLength
+		}
 		partialPath.IdxCols = append(partialPath.IdxCols, idxCols[i])
-		partialPath.IdxColLens = append(partialPath.IdxColLens, mvIndex.Columns[i].Length)
+		partialPath.IdxColLens = append(partialPath.IdxColLens, length)
 		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
-		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, mvIndex.Columns[i].Length)
+		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, length)
 	}
 	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
 		return nil, false, err
