@@ -76,6 +76,7 @@ type streamMetadataHelper interface {
 		storage storage.ExternalStorage,
 	) ([]byte, error)
 	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
+	ParseToOneCompaction(rawData []byte) (*backuppb.LogFileSubcompaction, error)
 }
 
 // LogFileManager is the manager for log files of a certain restoration,
@@ -119,10 +120,11 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:   init.StartTS,
-		restoreTS: init.RestoreTS,
-		storage:   init.Storage,
-		helper:    stream.NewMetadataHelper(),
+		startTS:        init.StartTS,
+		restoreTS:      init.RestoreTS,
+		storage:        init.Storage,
+		helper:         stream.NewMetadataHelper(),
+		withmigrations: init.Migrations,
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
@@ -327,6 +329,37 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 				FileMetas: iter.CollectAll(context.Background(), metas).Item,
 			}
 		})
+	})
+}
+
+// Fetch compactions that may contain file less than the TS.
+func (rc *LogFileManager) OpenCompactionIter(ctx context.Context) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+	compactionDirs := make([]string, 0, 8)
+	for _, mig := range rc.withmigrations.migs {
+		for _, c := range mig.Compactions {
+			compactionDirs = append(compactionDirs, c.GeneratedFiles)
+		}
+	}
+	compactionDirIter := iter.FromSlice(compactionDirs)
+	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+		opt := &storage.WalkOption{SubDir: stream.GetStreamBackupCompactionsPrefix(name)}
+		allSubCompactions := make([]*backuppb.LogFileSubcompaction, 0, 8)
+		err := rc.storage.WalkDir(ctx, opt, func(path string, size int64) error {
+			f, err := rc.storage.ReadFile(ctx, path)
+			if err != nil {
+				return errors.Annotatef(err, "failed during reading file %s", name)
+			}
+			oneCompaction, err := rc.helper.ParseToOneCompaction(f)
+			if err != nil {
+				return errors.Annotatef(err, "failed during parse one compaction %s", name)
+			}
+			allSubCompactions = append(allSubCompactions, oneCompaction)
+			return nil
+		})
+		if err != nil {
+			return iter.Fail[*backuppb.LogFileSubcompaction](errors.Annotatef(err, "failed during reading compactions dir %s", name))
+		}
+		return iter.FromSlice(allSubCompactions)
 	})
 }
 

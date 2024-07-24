@@ -58,11 +58,13 @@ func (s *SimpleFileRestorer) Close() error {
 // updateCh is used to record progress.
 func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
 	var splitClientOpt split.ClientOptionalParameter
-	splitClientOpt = split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
-	})
+	if updateCh != nil {
+		splitClientOpt = split.WithOnSplit(func(keys [][]byte) {
+			for range keys {
+				updateCh.Inc()
+			}
+		})
+	}
 	s.splitter.ApplyOptions(splitClientOpt)
 	splitter := utils.NewRegionSplitter(s.splitter)
 	return splitter.ExecuteSplit(ctx, ranges)
@@ -79,7 +81,9 @@ func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesI
 			func() error {
 				defer func() {
 					log.Info("import sst files done", logutil.Files(fileReplica.Files))
-					updateCh.Inc()
+					if updateCh != nil {
+						updateCh.Inc()
+					}
 				}()
 				return r.fileImporter.ImportSSTFiles(ectx, fileReplica.Files, fileReplica.RewriteRules)
 			})

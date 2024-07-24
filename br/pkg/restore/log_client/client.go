@@ -44,6 +44,7 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
+	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -77,6 +78,7 @@ const maxSplitKeysOnce = 10240
 const rawKVBatchCount = 64
 
 type LogClient struct {
+	restorer      sstfiles.FileRestorer
 	cipher        *backuppb.CipherInfo
 	pdClient      pd.Client
 	pdHTTPClient  pdhttp.Client
@@ -140,7 +142,44 @@ func (rc *LogClient) Close() {
 		log.Warn("failed to close file improter")
 	}
 
+	if err := rc.restorer.Close(); err != nil {
+		log.Warn("failed to close file improter")
+	}
+
 	log.Info("Restore client closed")
+}
+
+func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*restoreutils.RewriteRules, compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction]) error {
+	eg, eCtx := errgroup.WithContext(ctx)
+	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+		i := r.Item
+		rewriteRules, ok := rules[i.Meta.TableID]
+		if !ok {
+			return errors.New("not found table id")
+		}
+		// no need to merge sst files here
+		ranges, _, err := restoreutils.MergeAndRewriteFileRanges(i.SstOutputs, rewriteRules, 0, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		restoreFiles := sstfiles.SstFilesInfo{
+			TableID:      i.Meta.TableID,
+			Files:        i.SstOutputs,
+			RewriteRules: rewriteRules,
+		}
+		// TODO implement update ch
+		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			err = rc.restorer.SplitRanges(eCtx, ranges, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return rc.restorer.RestoreFiles(eCtx, []sstfiles.SstFilesInfo{restoreFiles}, nil)
+		})
+	}
+	return eg.Wait()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(
@@ -235,6 +274,22 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
+
+	var createCallBacks []func(*sstfiles.SnapFileImporter) error
+	var closeCallBacks []func(*sstfiles.SnapFileImporter) error
+	createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+		return importer.CheckMultiIngestSupport(ctx, stores)
+	})
+	// TODO make a better concurrencyPerStore
+	snapFileImporter, err := sstfiles.NewSnapFileImporter(
+		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
+		importCli, backend, false, false, stores, sstfiles.RewriteModeLegacy, 128, createCallBacks, closeCallBacks)
+	if err != nil {
+		log.Fatal("failed to init snap file importer", zap.Error(err))
+	}
+	// TODO make a better concurrency
+	workerPool := tidbutil.NewWorkerPool(128, "sst files")
+	rc.restorer = sstfiles.NewSimpleFileRestorer(snapFileImporter, metaClient, workerPool)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
