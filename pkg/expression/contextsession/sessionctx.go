@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -39,101 +40,121 @@ import (
 	"go.uber.org/zap"
 )
 
-// sessionctx.Context + *ExprCtxExtendedImpl should implement
-// `expression.BuildContext` and `expression.AggFuncBuildContext`
-// Only used to assert `ExprCtxExtendedImpl` should implement all methods not in `sessionctx.Context`
-var _ exprctx.ExprContext = struct {
-	sessionctx.Context
-	*ExprCtxExtendedImpl
-}{}
+// SessionExprContext should implement the `ExprContext` interface.
+var _ exprctx.ExprContext = &SessionExprContext{}
 
-// ExprCtxExtendedImpl extends the sessionctx.Context to implement `expression.BuildContext`
-type ExprCtxExtendedImpl struct {
+// SessionExprContext implements `ExprContext`
+type SessionExprContext struct {
 	sctx sessionctx.Context
 	*SessionEvalContext
 }
 
-// NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
-func NewExprExtendedImpl(sctx sessionctx.Context) *ExprCtxExtendedImpl {
-	return &ExprCtxExtendedImpl{
+// NewSessionExprContext creates a new SessionExprContext.
+func NewSessionExprContext(sctx sessionctx.Context) *SessionExprContext {
+	return &SessionExprContext{
 		sctx:               sctx,
 		SessionEvalContext: NewSessionEvalContext(sctx),
 	}
 }
 
 // GetEvalCtx returns the EvalContext.
-func (ctx *ExprCtxExtendedImpl) GetEvalCtx() exprctx.EvalContext {
+func (ctx *SessionExprContext) GetEvalCtx() exprctx.EvalContext {
 	return ctx.SessionEvalContext
 }
 
 // GetCharsetInfo gets charset and collation for current context.
-func (ctx *ExprCtxExtendedImpl) GetCharsetInfo() (string, string) {
+func (ctx *SessionExprContext) GetCharsetInfo() (string, string) {
 	return ctx.sctx.GetSessionVars().GetCharsetInfo()
 }
 
 // GetDefaultCollationForUTF8MB4 returns the default collation of UTF8MB4.
-func (ctx *ExprCtxExtendedImpl) GetDefaultCollationForUTF8MB4() string {
+func (ctx *SessionExprContext) GetDefaultCollationForUTF8MB4() string {
 	return ctx.sctx.GetSessionVars().DefaultCollationForUTF8MB4
 }
 
 // GetBlockEncryptionMode returns the variable block_encryption_mode
-func (ctx *ExprCtxExtendedImpl) GetBlockEncryptionMode() string {
+func (ctx *SessionExprContext) GetBlockEncryptionMode() string {
 	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
 	return blockMode
 }
 
 // GetSysdateIsNow returns a bool to determine whether Sysdate is an alias of Now function.
 // It is the value of variable `tidb_sysdate_is_now`.
-func (ctx *ExprCtxExtendedImpl) GetSysdateIsNow() bool {
+func (ctx *SessionExprContext) GetSysdateIsNow() bool {
 	return ctx.sctx.GetSessionVars().SysdateIsNow
 }
 
 // GetNoopFuncsMode returns the noop function mode: OFF/ON/WARN values as 0/1/2.
-func (ctx *ExprCtxExtendedImpl) GetNoopFuncsMode() int {
+func (ctx *SessionExprContext) GetNoopFuncsMode() int {
 	return ctx.sctx.GetSessionVars().NoopFuncsMode
 }
 
 // Rng is used to generate random values.
-func (ctx *ExprCtxExtendedImpl) Rng() *mathutil.MysqlRng {
+func (ctx *SessionExprContext) Rng() *mathutil.MysqlRng {
 	return ctx.sctx.GetSessionVars().Rng
 }
 
 // IsUseCache indicates whether to cache the build expression in plan cache.
 // If SetSkipPlanCache is invoked, it should return false.
-func (ctx *ExprCtxExtendedImpl) IsUseCache() bool {
+func (ctx *SessionExprContext) IsUseCache() bool {
 	return ctx.sctx.GetSessionVars().StmtCtx.UseCache()
 }
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
-func (ctx *ExprCtxExtendedImpl) SetSkipPlanCache(reason string) {
+func (ctx *SessionExprContext) SetSkipPlanCache(reason string) {
 	ctx.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 }
 
 // AllocPlanColumnID allocates column id for plan.
-func (ctx *ExprCtxExtendedImpl) AllocPlanColumnID() int64 {
+func (ctx *SessionExprContext) AllocPlanColumnID() int64 {
 	return ctx.sctx.GetSessionVars().AllocPlanColumnID()
 }
 
 // IsInNullRejectCheck returns whether the expression is in null reject check.
-func (ctx *ExprCtxExtendedImpl) IsInNullRejectCheck() bool {
+func (ctx *SessionExprContext) IsInNullRejectCheck() bool {
+	return false
+}
+
+// IsConstantPropagateCheck returns whether the ctx is in constant propagate check.
+func (ctx *SessionExprContext) IsConstantPropagateCheck() bool {
 	return false
 }
 
 // GetWindowingUseHighPrecision determines whether to compute window operations without loss of precision.
 // see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
-func (ctx *ExprCtxExtendedImpl) GetWindowingUseHighPrecision() bool {
+func (ctx *SessionExprContext) GetWindowingUseHighPrecision() bool {
 	return ctx.sctx.GetSessionVars().WindowingUseHighPrecision
 }
 
 // GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
-func (ctx *ExprCtxExtendedImpl) GetGroupConcatMaxLen() uint64 {
+func (ctx *SessionExprContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
 }
 
 // ConnectionID indicates the connection ID of the current session.
 // If the context is not in a session, it should return 0.
-func (ctx *ExprCtxExtendedImpl) ConnectionID() uint64 {
+func (ctx *SessionExprContext) ConnectionID() uint64 {
 	return ctx.sctx.GetSessionVars().ConnectionID
+}
+
+// IntoStatic turns the SessionExprContext into a StaticExprContext.
+func (ctx *SessionExprContext) IntoStatic() *contextstatic.StaticExprContext {
+	staticEvalContext := ctx.SessionEvalContext.IntoStatic()
+	return contextstatic.NewStaticExprContext(
+		contextstatic.WithEvalCtx(staticEvalContext),
+		contextstatic.WithCharset(ctx.GetCharsetInfo()),
+		contextstatic.WithDefaultCollationForUTF8MB4(ctx.GetDefaultCollationForUTF8MB4()),
+		contextstatic.WithBlockEncryptionMode(ctx.GetBlockEncryptionMode()),
+		contextstatic.WithSysDateIsNow(ctx.GetSysdateIsNow()),
+		contextstatic.WithNoopFuncsMode(ctx.GetNoopFuncsMode()),
+		contextstatic.WithRng(ctx.Rng()),
+		contextstatic.WithPlanCacheTracker(&ctx.sctx.GetSessionVars().StmtCtx.PlanCacheTracker),
+		contextstatic.WithColumnIDAllocator(
+			exprctx.NewSimplePlanColumnIDAllocator(ctx.sctx.GetSessionVars().PlanColumnID.Load())),
+		contextstatic.WithConnectionID(ctx.ConnectionID()),
+		contextstatic.WithWindowingUseHighPrecision(ctx.GetWindowingUseHighPrecision()),
+		contextstatic.WithGroupConcatMaxLen(ctx.GetGroupConcatMaxLen()),
+	)
 }
 
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
@@ -236,6 +257,11 @@ func (ctx *SessionEvalContext) GetMaxAllowedPacket() uint64 {
 	return ctx.sctx.GetSessionVars().MaxAllowedPacket
 }
 
+// GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
+func (ctx *SessionEvalContext) GetTiDBRedactLog() string {
+	return ctx.sctx.GetSessionVars().EnableRedactLog
+}
+
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 func (ctx *SessionEvalContext) GetDefaultWeekFormatMode() string {
 	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
@@ -276,6 +302,81 @@ func (ctx *SessionEvalContext) RequestDynamicVerification(privName string, grant
 		return true
 	}
 	return checker.RequestDynamicVerification(ctx.sctx.GetSessionVars().ActiveRoles, privName, grantable)
+}
+
+// GetParamValue returns the value of the parameter by index.
+func (ctx *SessionEvalContext) GetParamValue(idx int) (types.Datum, error) {
+	params := ctx.sctx.GetSessionVars().PlanCacheParams.AllParamValues()
+	if idx >= len(params) {
+		return types.Datum{}, exprctx.ErrParamIndexExceedParamCounts
+	}
+	return params[idx], nil
+}
+
+// IntoStatic turns the SessionEvalContext into a StaticEvalContext.
+func (ctx *SessionEvalContext) IntoStatic() *contextstatic.StaticEvalContext {
+	typeCtx := ctx.TypeCtx()
+	errCtx := ctx.ErrCtx()
+
+	// TODO: at least provide some optional eval prop provider which is suitable to be used in the static context.
+	props := make([]exprctx.OptionalEvalPropProvider, 0, exprctx.OptPropsCnt)
+
+	params := variable.NewPlanCacheParamList()
+	for _, param := range ctx.sctx.GetSessionVars().PlanCacheParams.AllParamValues() {
+		params.Append(param)
+	}
+
+	// TODO: use a more structural way to replace the closure.
+	// These closure makes sure the fields which may be changed in the execution of the next statement will not be embedded into them, to make
+	// sure it's safe to call them after the session continues to execute other statements.
+	staticCtx := contextstatic.NewStaticEvalContext(
+		contextstatic.WithWarnHandler(ctx.sctx.GetSessionVars().StmtCtx.WarnHandler),
+		contextstatic.WithSQLMode(ctx.SQLMode()),
+		contextstatic.WithTypeFlags(typeCtx.Flags()),
+		contextstatic.WithLocation(typeCtx.Location()),
+		contextstatic.WithErrLevelMap(errCtx.LevelMap()),
+		contextstatic.WithCurrentDB(ctx.CurrentDB()),
+		contextstatic.WithCurrentTime(func() func() (time.Time, error) {
+			currentTime, currentTimeErr := ctx.CurrentTime()
+
+			return func() (time.Time, error) {
+				return currentTime, currentTimeErr
+			}
+		}()),
+		contextstatic.WithMaxAllowedPacket(ctx.GetMaxAllowedPacket()),
+		contextstatic.WithDefaultWeekFormatMode(ctx.GetDefaultWeekFormatMode()),
+		contextstatic.WithDivPrecisionIncrement(ctx.GetDivPrecisionIncrement()),
+		contextstatic.WithPrivCheck(func() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
+			checker := privilege.GetPrivilegeManager(ctx.sctx)
+			activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
+			copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
+
+			return func(db string, table string, column string, priv mysql.PrivilegeType) bool {
+				if checker == nil {
+					return true
+				}
+
+				return checker.RequestVerification(activeRoles, db, table, column, priv)
+			}
+		}()),
+		contextstatic.WithDynamicPrivCheck(func() func(privName string, grantable bool) bool {
+			checker := privilege.GetPrivilegeManager(ctx.sctx)
+			activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
+			copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
+
+			return func(privName string, grantable bool) bool {
+				if checker == nil {
+					return true
+				}
+
+				return checker.RequestDynamicVerification(activeRoles, privName, grantable)
+			}
+		}()),
+		contextstatic.WithParamList(params),
+		contextstatic.WithOptionalProperty(props...),
+	)
+
+	return staticCtx
 }
 
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {

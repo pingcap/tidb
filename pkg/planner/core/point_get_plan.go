@@ -36,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -50,10 +52,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -97,15 +99,13 @@ type PointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
-	planCostVer2 coreusage.CostVer2
+	planCostVer2 costusage.CostVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
 	probeParents []base.PhysicalPlan
-	// stmtHints should restore in executing context.
-	stmtHints *hint.StmtHints
 	// explicit partition selection
 	PartitionNames []model.CIStr
 }
@@ -165,7 +165,7 @@ func (*PointGetPlan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executo
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *PointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
@@ -197,11 +197,15 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?")
 		} else {
+			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
-			if p.UnsignedHandle {
-				buffer.WriteString(strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
+			if redactOn {
+				buffer.WriteString("?")
+			} else if p.UnsignedHandle {
+				redact.WriteRedact(&buffer, strconv.FormatUint(uint64(p.Handle.IntValue()), 10), redactMode)
 			} else {
-				buffer.WriteString(p.Handle.String())
+				redact.WriteRedact(&buffer, p.Handle.String(), redactMode)
 			}
 		}
 	}
@@ -233,9 +237,8 @@ func (*PointGetPlan) StatsCount() float64 {
 // StatsInfo will return the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) StatsInfo() *property.StatsInfo {
 	if p.Plan.StatsInfo() == nil {
-		p.Plan.SetStats(&property.StatsInfo{})
+		p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	}
-	p.Plan.StatsInfo().RowCount = 1
 	return p.Plan.StatsInfo()
 }
 
@@ -266,7 +269,7 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (*PointGetPlan) AppendChildCandidate(_ *coreusage.PhysicalOptimizeOp) {}
+func (*PointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
 
 const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
 
@@ -341,6 +344,17 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		// reading for the Global Index / table id
 		return false
 	}
+	// _tidb_rowid + specify a partition
+	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
+		for i, def := range pi.Definitions {
+			if def.Name.L == p.PartitionNames[0].L {
+				idx := i
+				p.PartitionIdx = &idx
+				break
+			}
+		}
+		return false
+	}
 	// If tryPointGetPlan did generate the plan,
 	// then PartitionIdx is not set and needs to be set here!
 	// There are two ways to get here from static mode partition pruning:
@@ -380,7 +394,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		}
 		dVal.Copy(&row[p.HandleColOffset])
 	}
-	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx(), row)
+	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 	if err != nil {
 		partIdx = -1
 		p.PartitionIdx = &partIdx
@@ -440,7 +454,7 @@ type BatchPointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
-	planCostVer2 coreusage.CostVer2
+	planCostVer2 costusage.CostVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
@@ -483,7 +497,7 @@ func (p *BatchPointGetPlan) SetCost(cost float64) {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *BatchPointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
@@ -582,7 +596,7 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (*BatchPointGetPlan) AppendChildCandidate(_ *coreusage.PhysicalOptimizeOp) {}
+func (*BatchPointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
 
 const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
 
@@ -663,7 +677,7 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 		for j := range rows[i] {
 			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
 		}
-		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx(), r)
+		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 		if err != nil {
 			// Skip on any error, like:
 			// No matching partition, overflow etc.
@@ -761,7 +775,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					d = types.NewIntDatum(handle.IntValue())
 				}
 				d.Copy(&r[p.HandleColOffset])
-				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx(), r)
+				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 				if err != nil ||
 					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&
@@ -874,6 +888,9 @@ func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.(type) {
 	case *ast.SelectStmt:
+		if x.SelectIntoOpt != nil {
+			return nil
+		}
 		defer func() {
 			vars := ctx.GetSessionVars()
 			if vars.SelectLimit != math2.MaxUint64 && p != nil {
@@ -1485,6 +1502,7 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 		outputNames:  names,
 		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
+	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 	return p
 }
@@ -1707,7 +1725,11 @@ func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model
 			return nil, false
 		}
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
-		if col == nil { // Handling the case when the column is _tidb_rowid.
+		if col == nil {
+			// Partition table can't use `_tidb_rowid` to generate PointGet Plan.
+			if tbl.GetPartitionInfo() != nil && colName.Name.Name.L == model.ExtraHandleName.L {
+				return nil, false
+			}
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
 		}
 
@@ -1948,8 +1970,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	}
 	if tbl.GetPartitionInfo() != nil {
 		pt := t.(table.PartitionedTable)
-		var updateTableList []*ast.TableName
-		updateTableList = extractTableList(updateStmt.TableRefs.TableRefs, updateTableList, true)
+		updateTableList := ExtractTableList(updateStmt.TableRefs.TableRefs, true)
 		updatePlan.PartitionedTable = make([]table.PartitionedTable, 0, len(updateTableList))
 		for _, updateTable := range updateTableList {
 			if len(updateTable.PartitionNames) > 0 {
@@ -1995,7 +2016,7 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if err != nil {
 			return nil, true
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, col.GetType())
+		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, col.GetStaticType())
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
@@ -2094,24 +2115,24 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
+func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *expression.Schema) util.HandleCols {
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				return &IntHandleCols{col: schema.Columns[i]}
+				return util.NewIntHandleCols(schema.Columns[i])
 			}
 		}
 	}
 
 	if tbl.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tbl)
-		return NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
+		return util.NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
 	}
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
-	return &IntHandleCols{col: handleCol}
+	return util.NewIntHandleCols(handleCol)
 }
 
 // TODO: Remove this, by enabling all types of partitioning

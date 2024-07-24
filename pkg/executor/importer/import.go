@@ -590,7 +590,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
-		if opt.Value.GetType().GetType() != mysql.TypeVarString {
+		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -601,7 +601,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
 		// current parser takes integer and bool as mysql.TypeLonglong
-		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -758,6 +758,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
 
+	if p.SplitFile && len(p.LinesTerminatedBy) == 0 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("lines_terminated_by, should not be empty when use split_file")
+	}
+
 	p.adjustOptions(targetNodeCPUCnt)
 	return nil
 }
@@ -805,9 +809,13 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		setClause = sb.String()
 	}
 	optionMap := make(map[string]any, len(plan.Options))
+	var evalCtx expression.EvalContext
+	if plan.SCtx() != nil {
+		evalCtx = plan.SCtx().GetExprCtx().GetEvalCtx()
+	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.String()
+			val := opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1355,7 +1363,7 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 type JobImportResult struct {
 	Affected   uint64
 	Warnings   []contextutil.SQLWarn
-	ColSizeMap map[int64]int64
+	ColSizeMap variable.DeltaColsMap
 }
 
 // GetMsgFromBRError get msg from BR error.
@@ -1395,7 +1403,7 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	if serverDiskImport || !variable.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}
-	return handle.GetCPUCountOfManagedNode(ctx)
+	return handle.GetCPUCountOfNode(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

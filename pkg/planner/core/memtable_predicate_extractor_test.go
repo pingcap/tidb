@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -544,7 +545,7 @@ func TestMetricTableExtractor(t *testing.T) {
 	require.NoError(t, err)
 
 	parseTime := func(t *testing.T, s string) time.Time {
-		tt, err := time.ParseInLocation(plannercore.MetricTableTimeFormat, s, time.Local)
+		tt, err := time.ParseInLocation(util.MetricTableTimeFormat, s, time.Local)
 		require.NoError(t, err)
 		return tt
 	}
@@ -1721,13 +1722,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		prepared string
 		userVars []any
 		params   []any
-		checker  func(extractor plannercore.MemTablePredicateExtractor)
+		checker  func(extractor base.MemTablePredicateExtractor)
 	}{
 		{
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id = ?",
 			userVars: []any{1},
 			params:   []any{1},
-			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
 				slices.Sort(tableids)
@@ -1738,7 +1739,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id = ? or table_id = ?",
 			userVars: []any{1, 2},
 			params:   []any{1, 2},
-			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
 				slices.Sort(tableids)
@@ -1749,7 +1750,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id in (?,?)",
 			userVars: []any{1, 2},
 			params:   []any{1, 2},
-			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
 				slices.Sort(tableids)
@@ -1760,7 +1761,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
-			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.ColumnsTableExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.TableNamePatterns)
 			},
@@ -1773,7 +1774,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 				require.NoError(t, err)
 				return tt
 			}()},
-			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.HotRegionsHistoryTableExtractor)
 				require.Equal(t, timestamp(t, "2019-10-10 10:10:10"), rse.StartTime)
 			},
@@ -1822,7 +1823,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 	}
 }
 
-func TestInformSchemaTableExtract(t *testing.T) {
+func TestInfoSchemaTableExtract(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
@@ -1890,6 +1891,45 @@ func TestInformSchemaTableExtract(t *testing.T) {
 			},
 		},
 		{
+			sql:         "select * from information_schema.REFERENTIAL_CONSTRAINTS where constraint_schema ='t'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.REFERENTIAL_CONSTRAINTS where constraint_schema ='t' and constraint_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"constraint_name":   set.NewStringSet("cc"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.CHECK_CONSTRAINTS where constraint_schema ='t' and constraint_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"constraint_name":   set.NewStringSet("cc"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TIDB_CHECK_CONSTRAINTS where constraint_schema ='t' and constraint_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"constraint_name":   set.NewStringSet("cc"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLE_CONSTRAINTS where constraint_schema ='t' and table_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"table_name":        set.NewStringSet("cc"),
+			},
+		},
+		{
 			sql:         "select * from information_schema.KEY_COLUMN_USAGE where table_name ='t' or table_name ='A'",
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
@@ -1929,6 +1969,68 @@ func TestInformSchemaTableExtract(t *testing.T) {
 			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'b'",
 			skipRequest:   false,
 			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'b'",
+			skipRequest:   false,
+			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:         "select * from information_schema.SEQUENCES where sequence_schema ='a' and sequence_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"sequence_schema": set.NewStringSet("a"),
+				"sequence_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TIDB_INDEX_USAGE where table_schema ='a' and table_name='b' and index_name='c'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+				"index_name":   set.NewStringSet("c"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.PARTITIONS where table_schema ='a' and table_name='b' and partition_name='c'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema":   set.NewStringSet("a"),
+				"table_name":     set.NewStringSet("b"),
+				"partition_name": set.NewStringSet("c"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TIDB_INDEXES where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.VIEWS where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLE_CONSTRAINTS where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.SCHEMATA where schema_name ='a'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"schema_name": set.NewStringSet("a"),
+			},
 		},
 	}
 	parser := parser.New()

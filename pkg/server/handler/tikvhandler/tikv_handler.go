@@ -645,11 +645,16 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
 	allDBs := schema.AllSchemaNames()
 	for _, db := range allDBs {
-		tbls := schema.SchemaTables(db)
+		tbls, err := schema.SchemaTableInfos(context.Background(), db)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
 		for _, tbl := range tbls {
-			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
+			replicaInfos = h.getTiFlashReplicaInfo(tbl, replicaInfos)
 		}
 	}
+
 	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
 	if err != nil {
 		handler.WriteError(w, err)
@@ -895,7 +900,7 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		if reqTableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
 			cTableName := model.NewCIStr(reqTableName)
-			data, e := schema.TableByName(cDBName, cTableName)
+			data, e := schema.TableByName(context.Background(), cDBName, cTableName)
 			if e != nil {
 				handler.WriteError(w, e)
 				return
@@ -916,14 +921,26 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 }
 
-// WriteDBTablesData writes all the table data in a database. The format is the marshal result of []*model.TableInfo, you can
-// unmarshal it to []*model.TableInfo. In this function, we manually construct the marshal result so that the memory
-// can be deallocated quickly.
-// For every table in the input, we marshal them. The result such as {tb1} {tb2} {tb3}.
-// Then we add some bytes to make it become [{tb1}, {tb2}, {tb3}], so we can unmarshal it to []*model.TableInfo.
-// Note: It would return StatusOK even if errors occur. But if errors occur, there must be some bugs.
-func WriteDBTablesData(w http.ResponseWriter, tbs []table.Table) {
-	if len(tbs) == 0 {
+// WriteDBTablesData writes all the table data in a database. The format is the
+// marshal result of []*model.TableInfo, you can unmarshal it to
+// []*model.TableInfo.
+//
+// Note: It would return StatusOK even if errors occur. But if errors occur,
+// there must be some bugs.
+func WriteDBTablesData(w http.ResponseWriter, tbs []*model.TableInfo) {
+	a := make([]any, 0, len(tbs))
+	for _, tb := range tbs {
+		a = append(a, tb)
+	}
+	manualWriteJSONArray(w, a)
+}
+
+// manualWriteJSONArray manually construct the marshal result so that the memory
+// can be deallocated quickly. For every item in the input, we marshal them. The
+// result such as {tb1} {tb2} {tb3}. Then we add some bytes to make it become
+// [{tb1}, {tb2}, {tb3}] to build a valid JSON array.
+func manualWriteJSONArray(w http.ResponseWriter, array []any) {
+	if len(array) == 0 {
 		handler.WriteData(w, []*model.TableInfo{})
 		return
 	}
@@ -936,7 +953,7 @@ func WriteDBTablesData(w http.ResponseWriter, tbs []table.Table) {
 		return
 	}
 	init := false
-	for _, tb := range tbs {
+	for _, item := range array {
 		if init {
 			_, err = w.Write(hack.Slice(",\n"))
 			if err != nil {
@@ -946,7 +963,7 @@ func WriteDBTablesData(w http.ResponseWriter, tbs []table.Table) {
 		} else {
 			init = true
 		}
-		js, err := json.MarshalIndent(tb.Meta(), "", " ")
+		js, err := json.MarshalIndent(item, "", " ")
 		if err != nil {
 			terror.Log(errors.Trace(err))
 			return
@@ -959,6 +976,14 @@ func WriteDBTablesData(w http.ResponseWriter, tbs []table.Table) {
 	}
 	_, err = w.Write(hack.Slice("\n]"))
 	terror.Log(errors.Trace(err))
+}
+
+func writeDBSimpleTablesData(w http.ResponseWriter, tbs []*model.TableNameInfo) {
+	a := make([]any, 0, len(tbs))
+	for _, tb := range tbs {
+		a = append(a, tb)
+	}
+	manualWriteJSONArray(w, a)
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -977,7 +1002,7 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if tableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
 			cTableName := model.NewCIStr(tableName)
-			data, err := schema.TableByName(cDBName, cTableName)
+			data, err := schema.TableByName(context.Background(), cDBName, cTableName)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
@@ -987,7 +1012,16 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
-			tbs := schema.SchemaTables(cDBName)
+			if a := req.FormValue(handler.IDNameOnly); a == "true" {
+				tbs := schema.SchemaSimpleTableInfos(context.Background(), cDBName)
+				writeDBSimpleTablesData(w, tbs)
+				return
+			}
+			tbs, err := schema.SchemaTableInfos(context.Background(), cDBName)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
 			WriteDBTablesData(w, tbs)
 			return
 		}
@@ -997,31 +1031,53 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if tableID := req.FormValue(handler.TableIDQuery); len(tableID) > 0 {
 		// table schema of a specified tableID
-		tid, err := strconv.Atoi(tableID)
+		data, err := getTableByIDStr(schema, tableID)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		if tid < 0 {
-			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-			return
+		handler.WriteData(w, data)
+		return
+	}
+
+	if tableIDsStr := req.FormValue(handler.TableIDsQuery); len(tableIDsStr) > 0 {
+		tableIDs := strings.Split(tableIDsStr, ",")
+		data := make(map[int64]*model.TableInfo, len(tableIDs))
+		for _, tableID := range tableIDs {
+			tbl, err := getTableByIDStr(schema, tableID)
+			if err == nil {
+				data[tbl.ID] = tbl
+			}
 		}
-		if data, ok := schema.TableByID(int64(tid)); ok {
-			handler.WriteData(w, data.Meta())
-			return
+		if len(data) > 0 {
+			handler.WriteData(w, data)
+		} else {
+			handler.WriteError(w, errors.New("All tables are not found"))
 		}
-		// The tid maybe a partition ID of the partition-table.
-		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
-		if tbl == nil {
-			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-			return
-		}
-		handler.WriteData(w, tbl.Meta())
 		return
 	}
 
 	// all databases' schemas
 	handler.WriteData(w, schema.AllSchemas())
+}
+
+func getTableByIDStr(schema infoschema.InfoSchema, tableID string) (*model.TableInfo, error) {
+	tid, err := strconv.Atoi(tableID)
+	if err != nil {
+		return nil, err
+	}
+	if tid < 0 {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
+	}
+	if data, ok := schema.TableByID(int64(tid)); ok {
+		return data.Meta(), nil
+	}
+	// The tid maybe a partition ID of the partition-table.
+	tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+	if tbl == nil {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
+	}
+	return tbl.Meta(), nil
 }
 
 // ServeHTTP handles table related requests, such as table's region information, disk usage.
@@ -1037,7 +1093,7 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	tableName, partitionName := handler.ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -1336,7 +1392,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
 	pdCli := h.RegionCache.PDClient()
-	regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+	regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -1359,7 +1415,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+		regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 		if err != nil {
 			return nil, err
 		}
@@ -1424,12 +1480,12 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			ctx := context.Background()
-			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema.AllSchemas())
+			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema, nil)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
 			}
-			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema.AllSchemas())
+			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema, nil)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
@@ -1481,9 +1537,13 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if util.IsMemDB(dbName.L) {
 			continue
 		}
-		tables := schema.SchemaTables(dbName)
+		tables, err := schema.SchemaTableInfos(context.Background(), dbName)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
 		for _, tableVal := range tables {
-			regionDetail.addTableInRange(dbName.String(), tableVal.Meta(), frameRange)
+			regionDetail.addTableInRange(dbName.String(), tableVal, frameRange)
 		}
 	}
 	handler.WriteData(w, regionDetail)

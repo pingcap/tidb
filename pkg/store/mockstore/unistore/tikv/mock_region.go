@@ -911,6 +911,37 @@ func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byt
 	return regions, nil
 }
 
+// BatchScanRegions scans regions in batch, return flattened regions.
+// limit limits the maximum number of regions returned.
+func (pd *MockPD) BatchScanRegions(ctx context.Context, keyRanges []pdclient.KeyRange, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
+	regions := make([]*pdclient.Region, 0, len(keyRanges))
+	var lastRegion *pdclient.Region
+	for _, keyRange := range keyRanges {
+		if lastRegion != nil && lastRegion.Meta != nil {
+			endKey := lastRegion.Meta.EndKey
+			if len(endKey) == 0 {
+				return regions, nil
+			}
+			if bytes.Compare(endKey, keyRange.EndKey) >= 0 {
+				continue
+			} else if bytes.Compare(endKey, keyRange.StartKey) > 0 {
+				keyRange.StartKey = endKey
+			}
+		}
+		rangeRegions := pd.rm.ScanRegions(keyRange.StartKey, keyRange.EndKey, limit, opts...)
+		if len(rangeRegions) == 0 {
+			continue
+		}
+		lastRegion = rangeRegions[len(rangeRegions)-1]
+		regions = append(regions, rangeRegions...)
+		limit -= len(rangeRegions)
+		if limit <= 0 {
+			break
+		}
+	}
+	return regions, nil
+}
+
 // ScatterRegion scatters the specified region. Should use it for a batch of regions,
 // and the distribution of these regions will be dispersed.
 // NOTICE: This method is the old version of ScatterRegions, you should use the later one as your first choice.

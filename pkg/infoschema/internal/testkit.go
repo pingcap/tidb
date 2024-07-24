@@ -155,7 +155,7 @@ func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 		Name:  model.NewCIStr(DBName),
 		State: model.StatePublic,
 	}
-	dbInfo.SetTables([]*model.TableInfo{})
+	dbInfo.Deprecated.Tables = []*model.TableInfo{}
 	return dbInfo
 }
 

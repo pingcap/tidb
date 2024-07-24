@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -147,7 +149,7 @@ func TestPartitionInfoDisable(t *testing.T) {
   PARTITION p202011 VALUES LESS THAN ("2020-12-01")
 )`)
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_info_null"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_info_null"))
 	require.NoError(t, err)
 
 	tbInfo := tbl.Meta()
@@ -315,18 +317,18 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test_orderby_limit"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if strings.HasPrefix(tblInfo.Name.L, "tr") || strings.HasPrefix(tblInfo.Name.L, "thash") || strings.HasPrefix(tblInfo.Name.L, "tlist") {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange_intpk")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash_intpk")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist_intpk")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular_intpk")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "trange_clustered")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "thash_clustered")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tlist_clustered")
+	coretestsdk.SetTiFlashReplica(t, dom, "test_orderby_limit", "tregular_clustered")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
 
 	// test indexLookUp
@@ -2406,4 +2408,33 @@ func TestIssue31024(t *testing.T) {
 	require.Equal(t, <-ch, 2)
 
 	tk2.MustExec("rollback")
+}
+
+func TestGlobalIndexWithSelectLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set tidb_enable_global_index = true")
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(a int, b int, unique index(b), primary key(a)) partition by hash(a) partitions 5;")
+	tk1.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t use index(b) where b = 2 order by b limit 1 for update;")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	ch := make(chan int, 10)
+	go func() {
+		// Check the key is locked.
+		tk2.MustExec("update t set b = 6 where b = 2")
+		ch <- 1
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	ch <- 0
+	tk1.MustExec("commit")
+
+	require.Equal(t, <-ch, 0)
+	require.Equal(t, <-ch, 1)
 }

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -138,7 +139,7 @@ func TestPredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagConvertOuterToInnerJoin|flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -161,7 +162,7 @@ func TestImplicitCastNotNullFlag(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
-	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().GetFlag()) & mysql.NotNullFlag
+	castNotNullFlag := (p.(*LogicalProjection).Children()[0].(*LogicalSelection).Children()[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag()) & mysql.NotNullFlag
 	var nullableFlag uint = 0
 	require.Equal(t, nullableFlag, castNotNullFlag)
 }
@@ -179,8 +180,8 @@ func TestEliminateProjectionUnderUnion(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
-	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
-	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().GetFlag() & mysql.NotNullFlag
+	schemaNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Schema().Columns[0].RetType.GetFlag() & mysql.NotNullFlag
+	exprNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Exprs[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag() & mysql.NotNullFlag
 	require.Equal(t, exprNullFlag, schemaNullFlag)
 }
 
@@ -197,6 +198,7 @@ func TestJoinPredicatePushDown(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
+	ectx := s.ctx.GetExprCtx().GetEvalCtx()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)
 		stmt, err := s.p.ParseOneStmt(ca, "", "")
@@ -207,14 +209,14 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		proj, ok := p.(*LogicalProjection)
 		require.True(t, ok, comment)
-		join, ok := proj.children[0].(*LogicalJoin)
+		join, ok := proj.Children()[0].(*LogicalJoin)
 		require.True(t, ok, comment)
-		leftPlan, ok := join.children[0].(*DataSource)
+		leftPlan, ok := join.Children()[0].(*DataSource)
 		require.True(t, ok, comment)
-		rightPlan, ok := join.children[1].(*DataSource)
+		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
-		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
-		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
+		leftCond := expression.StringifyExpressionsWithCtx(ectx, leftPlan.PushedDownConds)
+		rightCond := expression.StringifyExpressionsWithCtx(ectx, rightPlan.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
@@ -237,6 +239,7 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
+	ectx := s.ctx.GetExprCtx().GetEvalCtx()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)
 		stmt, err := s.p.ParseOneStmt(ca, "", "")
@@ -247,21 +250,21 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		proj, ok := p.(*LogicalProjection)
 		require.True(t, ok, comment)
-		selection, ok := proj.children[0].(*LogicalSelection)
+		selection, ok := proj.Children()[0].(*LogicalSelection)
 		require.True(t, ok, comment)
-		selCond := fmt.Sprintf("%s", selection.Conditions)
+		selCond := expression.StringifyExpressionsWithCtx(ectx, selection.Conditions)
 		testdata.OnRecord(func() {
 			output[i].Sel = selCond
 		})
 		require.Equal(t, output[i].Sel, selCond, comment)
-		join, ok := selection.children[0].(*LogicalJoin)
+		join, ok := selection.Children()[0].(*LogicalJoin)
 		require.True(t, ok, comment)
-		leftPlan, ok := join.children[0].(*DataSource)
+		leftPlan, ok := join.Children()[0].(*DataSource)
 		require.True(t, ok, comment)
-		rightPlan, ok := join.children[1].(*DataSource)
+		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
-		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
-		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
+		leftCond := expression.StringifyExpressionsWithCtx(ectx, leftPlan.PushedDownConds)
+		rightCond := expression.StringifyExpressionsWithCtx(ectx, rightPlan.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
@@ -289,7 +292,7 @@ func TestSimplifyOuterJoin(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagConvertOuterToInnerJoin, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
@@ -352,6 +355,7 @@ func TestDeriveNotNullConds(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
+	ectx := s.ctx.GetExprCtx().GetEvalCtx()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)
 		stmt, err := s.p.ParseOneStmt(ca, "", "")
@@ -367,8 +371,8 @@ func TestDeriveNotNullConds(t *testing.T) {
 		join := p.(base.LogicalPlan).Children()[0].(*LogicalJoin)
 		left := join.Children()[0].(*DataSource)
 		right := join.Children()[1].(*DataSource)
-		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
-		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
+		leftConds := expression.StringifyExpressionsWithCtx(ectx, left.PushedDownConds)
+		rightConds := expression.StringifyExpressionsWithCtx(ectx, right.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftConds, rightConds
 		})
@@ -387,10 +391,10 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	require.NoError(t, err, comment)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 	require.NoError(t, err, comment)
-	ds := p.(*LogicalProjection).children[0].(*LogicalAggregation).children[0].(*DataSource)
+	ds := p.(*LogicalProjection).Children()[0].(*LogicalAggregation).Children()[0].(*DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
-	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.GetFlag())
+	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Schema().Columns[2].RetType.GetFlag())
 }
 
 func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (base.Plan, error) {
@@ -474,11 +478,11 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 	require.NoError(t, err, comment)
 	proj, ok := p.(*LogicalProjection)
 	require.True(t, ok, comment)
-	join, ok := proj.children[0].(*LogicalJoin)
+	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok, comment)
-	leftPlan, ok := join.children[0].(*LogicalSelection)
+	leftPlan, ok := join.Children()[0].(*LogicalSelection)
 	require.True(t, ok, comment)
-	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
+	leftCond := expression.StringifyExpressionsWithCtx(s.ctx.GetExprCtx().GetEvalCtx(), leftPlan.Conditions)
 	// Condition with mutable function cannot be de-duplicated when push down join conds.
 	require.Equal(t, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", leftCond, comment)
 }
@@ -774,6 +778,7 @@ func TestAllocID(t *testing.T) {
 }
 
 func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch v := p.(type) {
 	case *DataSource, *LogicalUnionAll, *LogicalLimit:
 		testdata.OnRecord(func() {
@@ -784,9 +789,9 @@ func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string,
 		require.Equal(t, len(colList), len(p.Schema().Columns), comment)
 		for i, col := range p.Schema().Columns {
 			testdata.OnRecord(func() {
-				colList[i] = col.String()
+				colList[i] = col.StringWithCtx(ectx, errors.RedactLogDisable)
 			})
-			require.Equal(t, colList[i], col.String(), comment)
+			require.Equal(t, colList[i], col.StringWithCtx(ectx, errors.RedactLogDisable), comment)
 		}
 	}
 	for _, child := range p.Children() {
@@ -795,6 +800,7 @@ func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string,
 }
 
 func checkOrderByItems(p base.LogicalPlan, t *testing.T, colList *[]string, comment string) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch p := p.(type) {
 	case *LogicalSort:
 		testdata.OnRecord(func() {
@@ -802,9 +808,9 @@ func checkOrderByItems(p base.LogicalPlan, t *testing.T, colList *[]string, comm
 		})
 		for i, col := range p.ByItems {
 			testdata.OnRecord(func() {
-				(*colList)[i] = col.String()
+				(*colList)[i] = col.StringWithCtx(ectx, errors.RedactLogDisable)
 			})
-			s := col.String()
+			s := col.StringWithCtx(ectx, errors.RedactLogDisable)
 			require.Equal(t, (*colList)[i], s, comment)
 		}
 	}
@@ -1010,6 +1016,7 @@ func TestValidate(t *testing.T) {
 }
 
 func checkUniqueKeys(p base.LogicalPlan, t *testing.T, ans map[int][][]string, sql string) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	testdata.OnRecord(func() {
 		ans[p.ID()] = make([][]string, len(p.Schema().Keys))
 	})
@@ -1023,9 +1030,9 @@ func checkUniqueKeys(p base.LogicalPlan, t *testing.T, ans map[int][][]string, s
 		require.Equal(t, len(keyList[i]), len(p.Schema().Keys[i]), fmt.Sprintf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
 		for j := range keyList[i] {
 			testdata.OnRecord(func() {
-				keyList[i][j] = p.Schema().Keys[i][j].String()
+				keyList[i][j] = p.Schema().Keys[i][j].StringWithCtx(ectx, errors.RedactLogDisable)
 			})
-			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].String(), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
+			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].StringWithCtx(ectx, errors.RedactLogDisable), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
 		}
 	}
 	testdata.OnRecord(func() {
@@ -1097,27 +1104,27 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", "", nil, false, "", false},
+				{mysql.InsertPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "delete from t order by a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "delete from t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		/* Not currently supported. See https://github.com/pingcap/tidb/issues/23644
@@ -1131,234 +1138,234 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.UpdatePriv, "test", "t", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.UpdatePriv, "test", "t", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "update t a1 set a1.a = a1.a + 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.UpdatePriv, "test", "t", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DropPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DropPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", "", nil, false, "", false},
+				{mysql.CreatePriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.CreatePriv, "test", "t1", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", "", nil, false, "", false},
+				{mysql.CreatePriv, "test", "", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", "", nil, false, "", false},
+				{mysql.DropPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", nil, false, "", false},
+				{mysql.IndexPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", nil, false, "", false},
+				{mysql.IndexPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", nil, false, "", false},
-				{mysql.InsertPriv, "test", "", "", nil, false, "", false},
-				{mysql.UpdatePriv, "test", "", "", nil, false, "", false},
-				{mysql.DeletePriv, "test", "", "", nil, false, "", false},
-				{mysql.CreatePriv, "test", "", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "test", "", "", nil, false, "", false},
-				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
-				{mysql.LockTablesPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, "", false},
-				{mysql.EventPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateRoutinePriv, "test", "", "", nil, false, "", false},
-				{mysql.AlterRoutinePriv, "test", "", "", nil, false, "", false},
-				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
-				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
-				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
-				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
-				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "", "", nil, false, nil, false},
+				{mysql.UpdatePriv, "test", "", "", nil, false, nil, false},
+				{mysql.DeletePriv, "test", "", "", nil, false, nil, false},
+				{mysql.CreatePriv, "test", "", "", nil, false, nil, false},
+				{mysql.DropPriv, "test", "", "", nil, false, nil, false},
+				{mysql.GrantPriv, "test", "", "", nil, false, nil, false},
+				{mysql.ReferencesPriv, "test", "", "", nil, false, nil, false},
+				{mysql.LockTablesPriv, "test", "", "", nil, false, nil, false},
+				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, nil, false},
+				{mysql.EventPriv, "test", "", "", nil, false, nil, false},
+				{mysql.CreateRoutinePriv, "test", "", "", nil, false, nil, false},
+				{mysql.AlterRoutinePriv, "test", "", "", nil, false, nil, false},
+				{mysql.AlterPriv, "test", "", "", nil, false, nil, false},
+				{mysql.ExecutePriv, "test", "", "", nil, false, nil, false},
+				{mysql.IndexPriv, "test", "", "", nil, false, nil, false},
+				{mysql.CreateViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.ShowViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: `grant all privileges on *.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "", "", "", nil, false, "", false},
-				{mysql.InsertPriv, "", "", "", nil, false, "", false},
-				{mysql.UpdatePriv, "", "", "", nil, false, "", false},
-				{mysql.DeletePriv, "", "", "", nil, false, "", false},
-				{mysql.CreatePriv, "", "", "", nil, false, "", false},
-				{mysql.DropPriv, "", "", "", nil, false, "", false},
-				{mysql.ProcessPriv, "", "", "", nil, false, "", false},
-				{mysql.ReferencesPriv, "", "", "", nil, false, "", false},
-				{mysql.AlterPriv, "", "", "", nil, false, "", false},
-				{mysql.ShowDBPriv, "", "", "", nil, false, "", false},
-				{mysql.SuperPriv, "", "", "", nil, false, "", false},
-				{mysql.ExecutePriv, "", "", "", nil, false, "", false},
-				{mysql.IndexPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateUserPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateTablespacePriv, "", "", "", nil, false, "", false},
-				{mysql.TriggerPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateViewPriv, "", "", "", nil, false, "", false},
-				{mysql.ShowViewPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateRolePriv, "", "", "", nil, false, "", false},
-				{mysql.DropRolePriv, "", "", "", nil, false, "", false},
-				{mysql.CreateTMPTablePriv, "", "", "", nil, false, "", false},
-				{mysql.LockTablesPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateRoutinePriv, "", "", "", nil, false, "", false},
-				{mysql.AlterRoutinePriv, "", "", "", nil, false, "", false},
-				{mysql.EventPriv, "", "", "", nil, false, "", false},
-				{mysql.ShutdownPriv, "", "", "", nil, false, "", false},
-				{mysql.ReloadPriv, "", "", "", nil, false, "", false},
-				{mysql.FilePriv, "", "", "", nil, false, "", false},
-				{mysql.ConfigPriv, "", "", "", nil, false, "", false},
-				{mysql.ReplicationClientPriv, "", "", "", nil, false, "", false},
-				{mysql.ReplicationSlavePriv, "", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "", "", "", nil, false, "", false},
+				{mysql.SelectPriv, "", "", "", nil, false, nil, false},
+				{mysql.InsertPriv, "", "", "", nil, false, nil, false},
+				{mysql.UpdatePriv, "", "", "", nil, false, nil, false},
+				{mysql.DeletePriv, "", "", "", nil, false, nil, false},
+				{mysql.CreatePriv, "", "", "", nil, false, nil, false},
+				{mysql.DropPriv, "", "", "", nil, false, nil, false},
+				{mysql.ProcessPriv, "", "", "", nil, false, nil, false},
+				{mysql.ReferencesPriv, "", "", "", nil, false, nil, false},
+				{mysql.AlterPriv, "", "", "", nil, false, nil, false},
+				{mysql.ShowDBPriv, "", "", "", nil, false, nil, false},
+				{mysql.SuperPriv, "", "", "", nil, false, nil, false},
+				{mysql.ExecutePriv, "", "", "", nil, false, nil, false},
+				{mysql.IndexPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateUserPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateTablespacePriv, "", "", "", nil, false, nil, false},
+				{mysql.TriggerPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.ShowViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateRolePriv, "", "", "", nil, false, nil, false},
+				{mysql.DropRolePriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateTMPTablePriv, "", "", "", nil, false, nil, false},
+				{mysql.LockTablesPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateRoutinePriv, "", "", "", nil, false, nil, false},
+				{mysql.AlterRoutinePriv, "", "", "", nil, false, nil, false},
+				{mysql.EventPriv, "", "", "", nil, false, nil, false},
+				{mysql.ShutdownPriv, "", "", "", nil, false, nil, false},
+				{mysql.ReloadPriv, "", "", "", nil, false, nil, false},
+				{mysql.FilePriv, "", "", "", nil, false, nil, false},
+				{mysql.ConfigPriv, "", "", "", nil, false, nil, false},
+				{mysql.ReplicationClientPriv, "", "", "", nil, false, nil, false},
+				{mysql.ReplicationSlavePriv, "", "", "", nil, false, nil, false},
+				{mysql.GrantPriv, "", "", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", nil, false, "", false},
-				{mysql.GrantPriv, "test", "ttt", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, nil, false},
+				{mysql.GrantPriv, "test", "ttt", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: `grant select on ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", nil, false, "", false},
-				{mysql.GrantPriv, "test", "ttt", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, nil, false},
+				{mysql.GrantPriv, "test", "ttt", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: `revoke all privileges on test.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", nil, false, "", false},
-				{mysql.InsertPriv, "test", "", "", nil, false, "", false},
-				{mysql.UpdatePriv, "test", "", "", nil, false, "", false},
-				{mysql.DeletePriv, "test", "", "", nil, false, "", false},
-				{mysql.CreatePriv, "test", "", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "test", "", "", nil, false, "", false},
-				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
-				{mysql.LockTablesPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, "", false},
-				{mysql.EventPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateRoutinePriv, "test", "", "", nil, false, "", false},
-				{mysql.AlterRoutinePriv, "test", "", "", nil, false, "", false},
-				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
-				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
-				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
-				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
-				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "", "", nil, false, nil, false},
+				{mysql.UpdatePriv, "test", "", "", nil, false, nil, false},
+				{mysql.DeletePriv, "test", "", "", nil, false, nil, false},
+				{mysql.CreatePriv, "test", "", "", nil, false, nil, false},
+				{mysql.DropPriv, "test", "", "", nil, false, nil, false},
+				{mysql.GrantPriv, "test", "", "", nil, false, nil, false},
+				{mysql.ReferencesPriv, "test", "", "", nil, false, nil, false},
+				{mysql.LockTablesPriv, "test", "", "", nil, false, nil, false},
+				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, nil, false},
+				{mysql.EventPriv, "test", "", "", nil, false, nil, false},
+				{mysql.CreateRoutinePriv, "test", "", "", nil, false, nil, false},
+				{mysql.AlterRoutinePriv, "test", "", "", nil, false, nil, false},
+				{mysql.AlterPriv, "test", "", "", nil, false, nil, false},
+				{mysql.ExecutePriv, "test", "", "", nil, false, nil, false},
+				{mysql.IndexPriv, "test", "", "", nil, false, nil, false},
+				{mysql.CreateViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.ShowViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: `revoke connection_admin on *.* from u1`,
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", nil, false, "CONNECTION_ADMIN", true},
+				{mysql.ExtendedPriv, "", "", "", nil, false, []string{"CONNECTION_ADMIN"}, true},
 			},
 		},
 		{
 			sql: `revoke connection_admin, select on *.* from u1`,
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", nil, false, "CONNECTION_ADMIN", true},
-				{mysql.SelectPriv, "", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "", "", "", nil, false, "", false},
+				{mysql.ExtendedPriv, "", "", "", nil, false, []string{"CONNECTION_ADMIN"}, true},
+				{mysql.SelectPriv, "", "", "", nil, false, nil, false},
+				{mysql.GrantPriv, "", "", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: `revoke all privileges on *.* FROM u1`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "", "", "", nil, false, "", false},
-				{mysql.InsertPriv, "", "", "", nil, false, "", false},
-				{mysql.UpdatePriv, "", "", "", nil, false, "", false},
-				{mysql.DeletePriv, "", "", "", nil, false, "", false},
-				{mysql.CreatePriv, "", "", "", nil, false, "", false},
-				{mysql.DropPriv, "", "", "", nil, false, "", false},
-				{mysql.ProcessPriv, "", "", "", nil, false, "", false},
-				{mysql.ReferencesPriv, "", "", "", nil, false, "", false},
-				{mysql.AlterPriv, "", "", "", nil, false, "", false},
-				{mysql.ShowDBPriv, "", "", "", nil, false, "", false},
-				{mysql.SuperPriv, "", "", "", nil, false, "", false},
-				{mysql.ExecutePriv, "", "", "", nil, false, "", false},
-				{mysql.IndexPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateUserPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateTablespacePriv, "", "", "", nil, false, "", false},
-				{mysql.TriggerPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateViewPriv, "", "", "", nil, false, "", false},
-				{mysql.ShowViewPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateRolePriv, "", "", "", nil, false, "", false},
-				{mysql.DropRolePriv, "", "", "", nil, false, "", false},
-				{mysql.CreateTMPTablePriv, "", "", "", nil, false, "", false},
-				{mysql.LockTablesPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateRoutinePriv, "", "", "", nil, false, "", false},
-				{mysql.AlterRoutinePriv, "", "", "", nil, false, "", false},
-				{mysql.EventPriv, "", "", "", nil, false, "", false},
-				{mysql.ShutdownPriv, "", "", "", nil, false, "", false},
-				{mysql.ReloadPriv, "", "", "", nil, false, "", false},
-				{mysql.FilePriv, "", "", "", nil, false, "", false},
-				{mysql.ConfigPriv, "", "", "", nil, false, "", false},
-				{mysql.ReplicationClientPriv, "", "", "", nil, false, "", false},
-				{mysql.ReplicationSlavePriv, "", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "", "", "", nil, false, "", false},
+				{mysql.SelectPriv, "", "", "", nil, false, nil, false},
+				{mysql.InsertPriv, "", "", "", nil, false, nil, false},
+				{mysql.UpdatePriv, "", "", "", nil, false, nil, false},
+				{mysql.DeletePriv, "", "", "", nil, false, nil, false},
+				{mysql.CreatePriv, "", "", "", nil, false, nil, false},
+				{mysql.DropPriv, "", "", "", nil, false, nil, false},
+				{mysql.ProcessPriv, "", "", "", nil, false, nil, false},
+				{mysql.ReferencesPriv, "", "", "", nil, false, nil, false},
+				{mysql.AlterPriv, "", "", "", nil, false, nil, false},
+				{mysql.ShowDBPriv, "", "", "", nil, false, nil, false},
+				{mysql.SuperPriv, "", "", "", nil, false, nil, false},
+				{mysql.ExecutePriv, "", "", "", nil, false, nil, false},
+				{mysql.IndexPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateUserPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateTablespacePriv, "", "", "", nil, false, nil, false},
+				{mysql.TriggerPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.ShowViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateRolePriv, "", "", "", nil, false, nil, false},
+				{mysql.DropRolePriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateTMPTablePriv, "", "", "", nil, false, nil, false},
+				{mysql.LockTablesPriv, "", "", "", nil, false, nil, false},
+				{mysql.CreateRoutinePriv, "", "", "", nil, false, nil, false},
+				{mysql.AlterRoutinePriv, "", "", "", nil, false, nil, false},
+				{mysql.EventPriv, "", "", "", nil, false, nil, false},
+				{mysql.ShutdownPriv, "", "", "", nil, false, nil, false},
+				{mysql.ReloadPriv, "", "", "", nil, false, nil, false},
+				{mysql.FilePriv, "", "", "", nil, false, nil, false},
+				{mysql.ConfigPriv, "", "", "", nil, false, nil, false},
+				{mysql.ReplicationClientPriv, "", "", "", nil, false, nil, false},
+				{mysql.ReplicationSlavePriv, "", "", "", nil, false, nil, false},
+				{mysql.GrantPriv, "", "", "", nil, false, nil, false},
 			},
 		},
 		{
@@ -1368,122 +1375,122 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", "", nil, false, "", false},
+				{mysql.AllPrivMask, "test", "ttt", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "alter table t add column a int(4)",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t", "", nil, false, "", false},
+				{mysql.AlterPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "rename table t_old to t_new",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t_old", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "t_old", "", nil, false, "", false},
-				{mysql.CreatePriv, "test", "t_new", "", nil, false, "", false},
-				{mysql.InsertPriv, "test", "t_new", "", nil, false, "", false},
+				{mysql.AlterPriv, "test", "t_old", "", nil, false, nil, false},
+				{mysql.DropPriv, "test", "t_old", "", nil, false, nil, false},
+				{mysql.CreatePriv, "test", "t_new", "", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t_new", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "alter table t_old rename to t_new",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t_old", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "t_old", "", nil, false, "", false},
-				{mysql.CreatePriv, "test", "t_new", "", nil, false, "", false},
-				{mysql.InsertPriv, "test", "t_new", "", nil, false, "", false},
+				{mysql.AlterPriv, "test", "t_old", "", nil, false, nil, false},
+				{mysql.DropPriv, "test", "t_old", "", nil, false, nil, false},
+				{mysql.CreatePriv, "test", "t_new", "", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t_new", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "alter table t drop partition p0;",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "t", "", nil, false, "", false},
+				{mysql.AlterPriv, "test", "t", "", nil, false, nil, false},
+				{mysql.DropPriv, "test", "t", "", nil, false, nil, false},
 			},
 		},
 		{
 			sql: "flush privileges",
 			ans: []visitInfo{
-				{mysql.ReloadPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
+				{mysql.ReloadPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
 			},
 		},
 		{
 			sql: "SET GLOBAL wait_timeout=12345",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "SYSTEM_VARIABLES_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"SYSTEM_VARIABLES_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "create placement policy x LEARNERS=1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"PLACEMENT_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "drop placement policy if exists x",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"PLACEMENT_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "BACKUP DATABASE test TO 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"BACKUP_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "RESTORE DATABASE test FROM 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"RESTORE_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "SHOW BACKUPS",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"BACKUP_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "SHOW RESTORES",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"RESTORE_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "GRANT rolename TO user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"ROLE_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "REVOKE rolename FROM user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"ROLE_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "GRANT BACKUP_ADMIN ON *.* TO user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"BACKUP_ADMIN"}, true},
 			},
 		},
 		{
 			sql: "GRANT BACKUP_ADMIN ON *.* TO user1 WITH GRANT OPTION",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"BACKUP_ADMIN"}, true},
 			},
 		},
 		{
 			sql: "RENAME USER user1 to user1_tmp",
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
+				{mysql.CreateUserPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
 			},
 		},
 		{
 			sql: "SHOW CONFIG",
 			ans: []visitInfo{
-				{mysql.ConfigPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
+				{mysql.ConfigPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
 			},
 		},
 	}
@@ -1545,7 +1552,7 @@ func (v visitInfoArray) Swap(i, j int) {
 func unique(v []visitInfo) []visitInfo {
 	repeat := 0
 	for i := 1; i < len(v); i++ {
-		if v[i] == v[i-1] {
+		if v[i].Equals(&v[i-1]) {
 			repeat++
 		} else {
 			v[i-repeat] = v[i]
@@ -1993,7 +2000,7 @@ func TestSkylinePruning(t *testing.T) {
 			case *LogicalProjection:
 				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
-					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
+					idx := v.Schema().ColumnIndex(col.Expr.(*expression.Column))
 					switch expr := v.Exprs[idx].(type) {
 					case *expression.Column:
 						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
@@ -2110,8 +2117,8 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	require.True(t, ok)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok)
-	require.Nil(t, join.hintInfo)
-	require.Equal(t, uint(0), join.preferJoinType)
+	require.Nil(t, join.HintInfo)
+	require.Equal(t, uint(0), join.PreferJoinType)
 }
 
 func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
@@ -2332,13 +2339,13 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.GID != nil, true)
 	require.Equal(t, builder.currentBlockExpand.GPos == nil, true)
 	require.Equal(t, builder.currentBlockExpand.LevelExprs == nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupGroupingSets != nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupID2GIDS == nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupGroupingIDs == nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupGroupingSets != nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupID2GIDS == nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupGroupingIDs == nil, true)
 	require.Equal(t, builder.currentBlockExpand.GroupingMode == tipb.GroupingMode_ModeBitAnd, true)
 	require.Equal(t, builder.currentBlockExpand.ExtraGroupingColNames[0], "gid")
-	require.Equal(t, builder.currentBlockExpand.distinctSize, 3)
-	require.Equal(t, len(builder.currentBlockExpand.distinctGroupByCol), 2)
+	require.Equal(t, builder.currentBlockExpand.DistinctSize, 3)
+	require.Equal(t, len(builder.currentBlockExpand.DistinctGroupByCol), 2)
 
 	_, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection|flagResolveExpand, p.(base.LogicalPlan))
 	require.NoError(t, err)
@@ -2348,24 +2355,27 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.LevelExprs != nil, true)
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
 	// for grouping set {}: gid = '00' = 0
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[0], expand.schema), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx.GetExprCtx().GetEvalCtx(), expand.LevelExprs[0], expand.Schema(), errors.RedactLogDisable),
+		"test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
 	// for grouping set {a}: gid = '01' = 1
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[1], expand.schema), "test.t.a, Column#13, <nil>->Column#14, 1->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx.GetExprCtx().GetEvalCtx(), expand.LevelExprs[1], expand.Schema(), errors.RedactLogDisable),
+		"test.t.a, Column#13, <nil>->Column#14, 1->gid")
 	// for grouping set {a,b}: gid = '11' = 3
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[2], expand.schema), "test.t.a, Column#13, Column#14, 3->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx.GetExprCtx().GetEvalCtx(), expand.LevelExprs[2], expand.Schema(), errors.RedactLogDisable),
+		"test.t.a, Column#13, Column#14, 3->gid")
 
 	require.Equal(t, expand.Schema().Len(), 4)
 	// source column a should be kept as real.
 	require.Equal(t, expand.Schema().Columns[0].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
-	require.Equal(t, expand.names[0].String(), "test.t.a")
+	require.Equal(t, expand.OutputNames()[0].String(), "test.t.a")
 	// the grouping column a,b should be changed as nullable.
 	require.Equal(t, expand.Schema().Columns[1].RetType.GetFlag()&mysql.NotNullFlag, uint(0))
-	require.Equal(t, expand.names[1].String(), "test.ex_t.ex_a") // column#13
+	require.Equal(t, expand.OutputNames()[1].String(), "test.ex_t.ex_a") // column#13
 	require.Equal(t, expand.Schema().Columns[2].RetType.GetFlag()&mysql.NotNullFlag, uint(0))
-	require.Equal(t, expand.names[2].String(), "test.ex_t.ex_b") // column#14
+	require.Equal(t, expand.OutputNames()[2].String(), "test.ex_t.ex_b") // column#14
 	// the gid col
 	require.Equal(t, expand.Schema().Columns[3].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
-	require.Equal(t, expand.names[3].String(), "gid")
+	require.Equal(t, expand.OutputNames()[3].String(), "gid")
 
 	// Test grouping marks generation.
 	// Expand.schema.columns[0] is normal source column.
@@ -2373,22 +2383,22 @@ func TestRollupExpand(t *testing.T) {
 	// Expand.schema.columns[2] is normal grouping set column b.
 	// Expand.schema.columns[2] is normal grouping gen column gid.
 	// mock grouping(a)
-	gm := expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[1]})
+	gm := expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[1]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 1)
 
 	// mock grouping(b)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[2]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[2]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 1)
 
 	// mock grouping(a,b)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[1], expand.schema.Columns[2]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[1], expand.Schema().Columns[2]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 
 	// mock grouping(b,a)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[2], expand.schema.Columns[1]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[2], expand.Schema().Columns[1]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 }

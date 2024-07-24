@@ -48,10 +48,10 @@ type stmtSummaryByDigestKey struct {
 	prevDigest string
 	// The digest of the plan of this SQL.
 	planDigest string
-	// `hash` is the hash value of this object.
-	hash []byte
 	// `resourceGroupName` is the resource group's name of this statement is bind to.
 	resourceGroupName string
+	// `hash` is the hash value of this object.
+	hash []byte
 }
 
 // Hash implements SimpleLRUCache.Key.
@@ -59,7 +59,7 @@ type stmtSummaryByDigestKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest))
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
@@ -225,14 +225,14 @@ type stmtSummaryByDigestElement struct {
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
 	SchemaName          string
-	OriginalSQL         string
+	OriginalSQL         fmt.Stringer
 	Charset             string
 	Collation           string
 	NormalizedSQL       string
 	Digest              string
 	PrevSQL             string
 	PrevSQLDigest       string
-	PlanGenerator       func() (string, string)
+	PlanGenerator       func() (string, string, any)
 	BinaryPlanGenerator func() string
 	PlanDigest          string
 	PlanDigestGen       func() string
@@ -602,6 +602,9 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if isElementNew {
 			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
 			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
+			if ssElement == nil {
+				return nil, isElementNew
+			}
 			ssbd.history.PushBack(ssElement)
 		}
 
@@ -646,7 +649,10 @@ var MaxEncodedPlanSizeInBytes = 1024 * 1024
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint := sei.PlanGenerator()
+	samplePlan, planHint, e := sei.PlanGenerator()
+	if e != nil {
+		return nil
+	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
@@ -659,7 +665,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
-		sampleSQL: formatSQL(sei.OriginalSQL),
+		sampleSQL: formatSQL(sei.OriginalSQL.String()),
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.

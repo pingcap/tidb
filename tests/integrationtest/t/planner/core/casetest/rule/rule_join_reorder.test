@@ -328,7 +328,7 @@ create table t6(a int, b int, key(a));
 create table t7(a int, b int, key(a));
 create table t8(a int, b int, key(a));
 insert into t3 values(1, 1), (2, 2), (3, 3);
-analyze table t3;
+analyze table t3 all columns;
 --enable_warnings
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);

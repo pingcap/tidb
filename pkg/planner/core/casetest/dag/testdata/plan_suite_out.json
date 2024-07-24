@@ -120,7 +120,7 @@
       },
       {
         "SQL": "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
-        "Best": "UnionAll{Dual->Projection->Projection->Dual->Projection->Projection->Dual->Projection->Projection}->HashAgg->Projection->Sort"
+        "Best": "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Projection->Sort"
       },
       {
         "SQL": "select * from (select *, NULL as xxx from t) t order by xxx",
@@ -136,7 +136,7 @@
       },
       {
         "SQL": "select f from t where a > 1",
-        "Best": "TableReader(Table(t))->Projection"
+        "Best": "TableReader(Table(t)->Projection)"
       },
       {
         "SQL": "select f from t where a > 1 limit 10",

@@ -15,7 +15,7 @@
 package refresher
 
 import (
-	"strings"
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -169,7 +169,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 				return err
 			}
 
-			dbs := infoschema.AllSchemaNames(is)
+			dbs := is.AllSchemaNames()
 			for _, db := range dbs {
 				// Sometimes the tables are too many. Auto-analyze will take too much time on it.
 				// so we need to check the available time.
@@ -177,19 +177,21 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 					return nil
 				}
 				// Ignore the memory and system database.
-				if util.IsMemOrSysDB(strings.ToLower(db)) {
+				if util.IsMemOrSysDB(db.L) {
 					continue
 				}
 
-				tbls := is.SchemaTables(model.NewCIStr(db))
+				tbls, err := is.SchemaTableInfos(context.Background(), db)
+				if err != nil {
+					return err
+				}
 				// We need to check every partition of every table to see if it needs to be analyzed.
-				for _, tbl := range tbls {
+				for _, tblInfo := range tbls {
 					// If table locked, skip analyze all partitions of the table.
-					if _, ok := lockedTables[tbl.Meta().ID]; ok {
+					if _, ok := lockedTables[tblInfo.ID]; ok {
 						continue
 					}
 
-					tblInfo := tbl.Meta()
 					if tblInfo.IsView() {
 						continue
 					}
@@ -217,7 +219,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 					if pi == nil {
 						job := CreateTableAnalysisJob(
 							sctx,
-							db,
+							db.O,
 							tblInfo,
 							r.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
 							autoAnalyzeRatio,
@@ -241,7 +243,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 						for pIDAndName, stats := range partitionStats {
 							job := CreateStaticPartitionAnalysisJob(
 								sctx,
-								db,
+								db.O,
 								tblInfo,
 								pIDAndName.ID,
 								pIDAndName.Name,
@@ -254,7 +256,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 					} else {
 						job := createTableAnalysisJobForPartitions(
 							sctx,
-							db,
+							db.O,
 							tblInfo,
 							r.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
 							partitionStats,
@@ -446,7 +448,7 @@ func CheckIndexesNeedAnalyze(
 	indexes := make([]string, 0, len(tblInfo.Indices))
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := tblStats.Indices[idx.ID]; !ok && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			indexes = append(indexes, idx.Name.O)
 		}
 	}
@@ -571,7 +573,7 @@ func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		// Find all the partitions that need to analyze this index.
 		names := make([]string, 0, len(partitionStats))
 		for pIDAndName, tblStats := range partitionStats {
-			if _, ok := tblStats.Indices[idx.ID]; !ok && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
+			if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				names = append(names, pIDAndName.Name)
 			}
 		}

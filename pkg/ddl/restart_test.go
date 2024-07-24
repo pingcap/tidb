@@ -43,7 +43,12 @@ func getDDLSchemaVer(t *testing.T, d ddl.DDL) int64 {
 func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 	err := d.DDL().Stop()
 	require.NoError(t, err)
-	newDDL := ddl.NewDDL(context.Background(), ddl.WithStore(d.Store()), ddl.WithInfoCache(d.InfoCache()), ddl.WithLease(d.DDL().GetLease()))
+	newDDL := ddl.NewDDL(context.Background(),
+		ddl.WithStore(d.Store()),
+		ddl.WithInfoCache(d.InfoCache()),
+		ddl.WithLease(d.DDL().GetLease()),
+		ddl.WithSchemaLoader(d),
+	)
 	d.SetDDL(newDDL)
 	err = newDDL.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
@@ -62,7 +67,7 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.DDL, job *model.Job
 
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	if errors.Is(err, context.Canceled) {
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
@@ -109,6 +114,7 @@ func TestSchemaResume(t *testing.T) {
 	require.NoError(t, err)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{dbInfo},
@@ -165,7 +171,9 @@ func TestTableResume(t *testing.T) {
 	require.NoError(t, err)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{tblInfo},
@@ -175,7 +183,9 @@ func TestTableResume(t *testing.T) {
 
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}

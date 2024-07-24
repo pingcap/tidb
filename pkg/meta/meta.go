@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 var (
@@ -69,6 +71,8 @@ var (
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
 	mNames               = []byte("Names")
+	mDBNames             = []byte("DBNames")
+	mDBNameInitialized   = []byte("DBNameInitialized")
 	mDDLV2Initialized    = []byte("DDLV2Initialized")
 	mDBPrefix            = "DB"
 	mTablePrefix         = "Table"
@@ -89,6 +93,7 @@ var (
 	mDDLTableVersion     = []byte("DDLTableVersion")
 	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
+	mSchemaCacheSize     = []byte("SchemaCacheSize")
 	mRequestUnitStats    = []byte("RequestUnitStats")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
@@ -261,6 +266,11 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 		ids = append(ids, i)
 	}
 	return ids, nil
+}
+
+// GlobalIDKey returns the key for the global ID.
+func (m *Meta) GlobalIDKey() []byte {
+	return m.txn.EncodeStringDataKey(mNextGlobalIDKey)
 }
 
 // GenPlacementPolicyID generates next placement policy id globally.
@@ -668,7 +678,13 @@ func (m *Meta) CreateDatabase(dbInfo *model.DBInfo) error {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(mDBs, dbKey, data)
+	if err := m.txn.HSet(mDBs, dbKey, data); err != nil {
+		return errors.Trace(err)
+	}
+	if m.needUpdateName {
+		return errors.Trace(m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID))
+	}
+	return nil
 }
 
 // UpdateDatabase updates a database with db info.
@@ -814,6 +830,24 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 	return bytes.Equal(val, []byte("1")), false, nil
 }
 
+// SetSchemaCacheSize sets the schema cache size.
+func (m *Meta) SetSchemaCacheSize(size uint64) error {
+	return errors.Trace(m.txn.Set(mSchemaCacheSize, []byte(strconv.FormatUint(size, 10))))
+}
+
+// GetSchemaCacheSize gets the schema cache size.
+func (m *Meta) GetSchemaCacheSize() (size uint64, isNull bool, err error) {
+	val, err := m.txn.Get(mSchemaCacheSize)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return 0, true, nil
+	}
+	size, err = strconv.ParseUint(string(val), 10, 64)
+	return size, false, errors.Trace(err)
+}
+
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
 func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
@@ -951,6 +985,8 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
+	tableInfo.Revision++
+
 	data, err := json.Marshal(tableInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -987,14 +1023,100 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 	return errors.Trace(err)
 }
 
-// ListTables shows all tables in database.
-func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+// GetMetasByDBID return all meta information of a database.
+// Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
+// Ref: https://github.com/pingcap/tiflow/issues/11109
+func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return res, nil
+}
+
+var checkSubstringsInOrder = [4]string{
+	`"partition":null`,
+	`"tiflash_replica":null`,
+	`"policy_ref_info":null`,
+	`"ttl_info":null`,
+}
+
+// CheckSpecialAttributes checks if the special attributes are in the table info.
+// Make it same as hasSpecialAttributes.
+// Exported for testing.
+// It's the regexp version for hasSpecialAttributes(), please keep up-to-date with it.
+func CheckSpecialAttributes(json []byte) bool {
+	idx := 0
+	for _, substr := range checkSubstringsInOrder {
+		idx = bytes.Index(json, hack.Slice(substr))
+		if idx == -1 {
+			return true
+		}
+		json = json[idx:]
+	}
+	return false
+}
+
+// NameExtractRegexp is exported for testing.
+const NameExtractRegexp = `"L":"([^"\\]*(?:\\.[^"\\]*)*)"}`
+
+// Unescape is exported for testing.
+func Unescape(s string) string {
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\\`, `\`)
+	return s
+}
+
+// GetAllNameToIDAndSpecialAttributeInfo gets all the fields and values and table info for special attributes in a hash.
+// It's used to get some infos for information schema cache in a faster way.
+func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	res := make(map[string]int64)
+	idRegex := regexp.MustCompile(`"id":(\d+)`)
+	nameLRegex := regexp.MustCompile(NameExtractRegexp)
+
+	tableInfos := make([]*model.TableInfo, 0)
+
+	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
+			return nil
+		}
+
+		idMatch := idRegex.FindStringSubmatch(string(hack.String(value)))
+		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(value)))
+		id, err := strconv.Atoi(idMatch[1])
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		key := Unescape(nameLMatch[1])
+		res[strings.Clone(key)] = int64(id)
+		if CheckSpecialAttributes(value) {
+			tbInfo := &model.TableInfo{}
+			err = json.Unmarshal(value, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbInfo.DBID = dbID
+			tableInfos = append(tableInfos, tbInfo)
+		}
+		return nil
+	})
+
+	return res, tableInfos, errors.Trace(err)
+}
+
+// ListTables shows all tables in database.
+func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1022,12 +1144,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 
 // ListSimpleTables shows all simple tables in database.
 func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	res, err := m.txn.HGetAll(dbKey)
+	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1554,6 +1671,15 @@ func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
 	return kv.Key(sb.String())
 }
 
+// DatabaseNameKey constructs the key for database name.
+func (*Meta) DatabaseNameKey(dbName string) kv.Key {
+	var sb strings.Builder
+	sb.Write(mDBNames)
+	sb.WriteByte(':')
+	sb.WriteString(strings.ToLower(dbName))
+	return kv.Key(sb.String())
+}
+
 // CheckTableNameExists checks if the table name exists.
 func (m *Meta) CheckTableNameExists(name []byte) error {
 	v, err := m.txn.Get(name)
@@ -1570,6 +1696,35 @@ func (m *Meta) CheckTableNameNotExists(name []byte) error {
 		err = ErrTableExists.FastGenByArgs(string(name))
 	}
 	return errors.Trace(err)
+}
+
+// CheckDatabaseNameExists checks if the database name exists.
+func (m *Meta) CheckDatabaseNameExists(name []byte) error {
+	v, err := m.txn.Get(name)
+	if err == nil && v == nil {
+		err = ErrDBNotExists.FastGenByArgs(string(name))
+	}
+	return errors.Trace(err)
+}
+
+// CheckDatabaseNameNotExists checks if the database name not exists.
+func (m *Meta) CheckDatabaseNameNotExists(name []byte) error {
+	v, err := m.txn.Get(name)
+	if err == nil && v != nil {
+		err = ErrDBExists.FastGenByArgs(string(name))
+	}
+	return errors.Trace(err)
+}
+
+// CreateDatabaseName creates a database name.
+// Used by CreateDatabase/RenameDatabase
+func (m *Meta) CreateDatabaseName(dbName string, dbID int64) error {
+	// Check if database exists.
+	key := m.DatabaseNameKey(dbName)
+	if err := m.CheckDatabaseNameNotExists(key); err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.Set(key, []byte(strconv.FormatInt(dbID, 10)))
 }
 
 // CreateTableName creates a table name.
@@ -1597,6 +1752,15 @@ func (m *Meta) DropTableName(dbName string, tableName string) error {
 // DropDatabaseName drops a database name.
 // Used by DropDatabase.
 func (m *Meta) DropDatabaseName(dbName string) error {
+	// Check if database exists.
+	key := m.DatabaseNameKey(dbName)
+	if err := m.CheckDatabaseNameExists(key); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.Clear(key); err != nil {
+		return errors.Trace(err)
+	}
+
 	// iterate all tables
 	prefix := m.TableNameKey(dbName, "")
 	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
@@ -1612,27 +1776,45 @@ func (m *Meta) ClearAllTableNames() error {
 	})
 }
 
-// SetDDLV2Initialized set DDLV2Initialized.
-func (m *Meta) SetDDLV2Initialized(b bool) error {
+// ClearAllDatabaseNames clears all database names.
+func (m *Meta) ClearAllDatabaseNames() error {
+	prefix := kv.Key(fmt.Sprintf("%s:", mDBNames))
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
+		return m.txn.Clear(key)
+	})
+}
+
+// SetFastCreateTableInitialized set fast create table initialized.
+func (m *Meta) SetFastCreateTableInitialized(b bool) error {
 	var data []byte
 	if b {
 		data = []byte("1")
 	} else {
 		data = []byte("0")
 	}
-	return m.txn.Set(mDDLV2Initialized, data)
+	if err := m.txn.Set(mDDLV2Initialized, data); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(m.txn.Set(mDBNameInitialized, data))
 }
 
-// GetDDLV2Initialized gets DDLV2Initialized
-func (m *Meta) GetDDLV2Initialized() (initialized bool, err error) {
-	val, err := m.txn.Get(mDDLV2Initialized)
+// GetFastCreateTableInitialized gets fast create table initialized.
+func (m *Meta) GetFastCreateTableInitialized() (initialized bool, err error) {
+	val1, err := m.txn.Get(mDDLV2Initialized)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if len(val) == 0 {
+	if len(val1) == 0 {
 		return false, nil
 	}
-	return bytes.Equal(val, []byte("1")), nil
+	val2, err := m.txn.Get(mDBNameInitialized)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(val2) == 0 {
+		return false, nil
+	}
+	return bytes.Equal(val1, []byte("1")) && bytes.Equal(val2, []byte("1")), nil
 }
 
 // GroupRUStats keeps the ru consumption statistics data.

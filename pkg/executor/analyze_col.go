@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -46,7 +47,7 @@ type AnalyzeColumnsExec struct {
 
 	tableInfo     *model.TableInfo
 	colsInfo      []*model.ColumnInfo
-	handleCols    core.HandleCols
+	handleCols    plannerutil.HandleCols
 	commonHandle  *model.IndexInfo
 	resultHandler *tableResultHandler
 	indexes       []*model.IndexInfo
@@ -379,33 +380,27 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	}
 }
 
-func hasPkHist(handleCols core.HandleCols) bool {
+func hasPkHist(handleCols plannerutil.HandleCols) bool {
 	return handleCols != nil && handleCols.IsInt()
 }
 
-func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
-	if e == nil || e.StatsVersion != statistics.Version2 {
-		return
-	}
-	opts := e.opts
+// prepareColumns prepares the columns for the analyze job.
+func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	cols := e.colsInfo
-	if e.V2Options != nil {
-		opts = e.V2Options.FilledOpts
-	}
-	sampleRate := *e.analyzePB.ColReq.SampleRate
-	var b strings.Builder
-	if retry {
-		b.WriteString("retry ")
-	}
-	if e.ctx.GetSessionVars().InRestrictedSQL {
-		b.WriteString("auto ")
-	}
-	b.WriteString("analyze table")
+	// Ignore the _row_id column.
 	if len(cols) > 0 && cols[len(cols)-1].ID == model.ExtraHandleID {
 		cols = cols[:len(cols)-1]
 	}
+	// If there are no columns, skip the process.
+	if len(cols) == 0 {
+		return
+	}
 	if len(cols) < len(e.tableInfo.Columns) {
-		b.WriteString(" columns ")
+		if len(cols) > 1 {
+			b.WriteString(" columns ")
+		} else {
+			b.WriteString(" column ")
+		}
 		for i, col := range cols {
 			if i > 0 {
 				b.WriteString(", ")
@@ -415,6 +410,58 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
 	} else {
 		b.WriteString(" all columns")
 	}
+}
+
+// prepareIndexes prepares the indexes for the analyze job.
+func prepareIndexes(e *AnalyzeColumnsExec, b *strings.Builder) {
+	indexes := e.indexes
+
+	// If there are no indexes, skip the process.
+	if len(indexes) == 0 {
+		return
+	}
+	if len(indexes) < len(e.tableInfo.Indices) {
+		if len(indexes) > 1 {
+			b.WriteString(" indexes ")
+		} else {
+			b.WriteString(" index ")
+		}
+		for i, index := range indexes {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(index.Name.O)
+		}
+	} else {
+		b.WriteString(" all indexes")
+	}
+}
+
+// prepareV2AnalyzeJobInfo prepares the job info for the analyze job.
+func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
+	// For v1, we analyze all columns in a single job, so we don't need to set the job info.
+	if e == nil || e.StatsVersion != statistics.Version2 {
+		return
+	}
+
+	opts := e.opts
+	if e.V2Options != nil {
+		opts = e.V2Options.FilledOpts
+	}
+	sampleRate := *e.analyzePB.ColReq.SampleRate
+	var b strings.Builder
+	// If it is an internal SQL, it means it is triggered by the system itself(auto-analyze).
+	if e.ctx.GetSessionVars().InRestrictedSQL {
+		b.WriteString("auto ")
+	}
+	b.WriteString("analyze table")
+
+	prepareIndexes(e, &b)
+	if len(e.indexes) > 0 && len(e.colsInfo) > 0 {
+		b.WriteString(",")
+	}
+	prepareColumns(e, &b)
+
 	var needComma bool
 	b.WriteString(" with ")
 	printOption := func(optType ast.AnalyzeOptionType) {

@@ -88,6 +88,7 @@ func TestInfo(t *testing.T) {
 		ddl.WithStore(s),
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
+		ddl.WithSchemaLoader(dom),
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
@@ -466,4 +467,21 @@ func TestIsAnalyzeTableSQL(t *testing.T) {
 	for _, tt := range tests {
 		require.True(t, isAnalyzeTableSQL(tt.sql))
 	}
+}
+
+func TestDeferFn(t *testing.T) {
+	var df deferFn
+	var a, b, c, d bool
+	df.add(func() { a = true }, time.Now().Add(50*time.Millisecond))
+	df.add(func() { b = true }, time.Now().Add(100*time.Millisecond))
+	df.add(func() { c = true }, time.Now().Add(10*time.Minute))
+	df.add(func() { d = true }, time.Now().Add(150*time.Millisecond))
+	time.Sleep(300 * time.Millisecond)
+	df.check()
+
+	require.True(t, a)
+	require.True(t, b)
+	require.False(t, c)
+	require.True(t, d)
+	require.Len(t, df.data, 1)
 }

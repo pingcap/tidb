@@ -34,7 +34,7 @@ import (
 const (
 	maxRetryCount   int           = 10
 	ruStatsInterval time.Duration = 24 * time.Hour
-	// only keep stats rows for last 3 monthes(92 days at most).
+	// only keep stats rows for last 3 months(92 days at most).
 	ruStatsGCDuration time.Duration = 92 * ruStatsInterval
 	gcBatchSize       int64         = 1000
 )

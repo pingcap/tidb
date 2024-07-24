@@ -52,13 +52,16 @@ func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldTyp
 		errOutputChan: errOutputChan,
 		finishCh:      finishCh,
 		fieldTypes:    fieldTypes,
-		tmpSpillChunk: chunk.NewChunkWithCapacity(fieldTypes, spillChunkSize),
 	}
 }
 
 func (p *parallelSortSpillHelper) close() {
 	for _, inDisk := range p.sortedRowsInDisk {
 		inDisk.Close()
+	}
+
+	if p.tmpSpillChunk != nil {
+		p.tmpSpillChunk.Destroy(spillChunkSize, p.fieldTypes)
 	}
 }
 
@@ -170,8 +173,15 @@ func (p *parallelSortSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByC
 	return nil
 }
 
+func (p *parallelSortSpillHelper) initForSpill() {
+	if p.tmpSpillChunk == nil {
+		p.tmpSpillChunk = chunk.NewChunkFromPoolWithCapacity(p.fieldTypes, spillChunkSize)
+	}
+}
+
 func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", p.bytesConsumed.Load()), zap.Int64("quota", p.bytesLimit.Load()))
+	p.initForSpill()
 	p.tmpSpillChunk.Reset()
 	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)

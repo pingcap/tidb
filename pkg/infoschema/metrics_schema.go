@@ -58,7 +58,7 @@ func init() {
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 	}
-	dbInfo.SetTables(metricTables)
+	dbInfo.Deprecated.Tables = metricTables
 	RegisterVirtualTable(dbInfo, tableFromMeta)
 }
 

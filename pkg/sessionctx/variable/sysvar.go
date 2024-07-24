@@ -17,6 +17,7 @@ package variable
 import (
 	"context"
 	"encoding/json"
+	goerr "errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -41,12 +43,12 @@ import (
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	distroleutil "github.com/pingcap/tidb/pkg/util/distrole"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/servicescope"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -891,10 +893,10 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return "OFF", nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.GenWithStack("tidb_enable_telemetry is deprecated since Telemetry has been removed, this variable is 'OFF' always."))
+		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_enable_telemetry is deprecated since Telemetry has been removed, this variable is 'OFF' always."))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: On, Type: TypeBool, Depended: true},
+	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
@@ -957,8 +959,11 @@ var defaultSysVars = []*SysVar{
 			}
 			AutoAnalyzePartitionBatchSize.Store(val)
 			return nil
-		}},
-
+		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(TiDBAutoAnalyzePartitionBatchSize))
+			return normalizedValue, nil
+		},
+	},
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
@@ -986,12 +991,17 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthLDAPSASL, mysql.AuthLDAPSimple}},
-	{Scope: ScopeGlobal, Name: TiDBPersistAnalyzeOptions, Value: BoolToOnOff(DefTiDBPersistAnalyzeOptions), Type: TypeBool,
+	{
+		Scope: ScopeGlobal,
+		Name:  TiDBPersistAnalyzeOptions,
+		Value: BoolToOnOff(DefTiDBPersistAnalyzeOptions),
+		Type:  TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(PersistAnalyzeOptions.Load()), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			PersistAnalyzeOptions.Store(TiDBOptOn(val))
+			persist := TiDBOptOn(val)
+			PersistAnalyzeOptions.Store(persist)
 			return nil
 		},
 	},
@@ -1004,7 +1014,33 @@ var defaultSysVars = []*SysVar{
 			RunAutoAnalyze.Store(TiDBOptOn(val))
 			return nil
 		},
-	}, {
+	},
+	{
+		Scope: ScopeGlobal,
+		Name:  TiDBAnalyzeColumnOptions,
+		Value: DefTiDBAnalyzeColumnOptions,
+		Type:  TypeStr,
+		GetGlobal: func(ctx context.Context, s *SessionVars) (string, error) {
+			return AnalyzeColumnOptions.Load(), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			AnalyzeColumnOptions.Store(strings.ToUpper(val))
+			return nil
+		},
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			choice := strings.ToUpper(normalizedValue)
+			if choice != model.AllColumns.String() && choice != model.PredicateColumns.String() {
+				return "", errors.Errorf(
+					"invalid value for %s, it should be either '%s' or '%s'",
+					TiDBAnalyzeColumnOptions,
+					model.AllColumns.String(),
+					model.PredicateColumns.String(),
+				)
+			}
+			return normalizedValue, nil
+		},
+	},
+	{
 		Scope: ScopeGlobal, Name: TiDBEnableAutoAnalyzePriorityQueue, Value: BoolToOnOff(DefTiDBEnableAutoAnalyzePriorityQueue), Type: TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(EnableAutoAnalyzePriorityQueue.Load()), nil
@@ -1012,6 +1048,10 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			EnableAutoAnalyzePriorityQueue.Store(TiDBOptOn(val))
 			return nil
+		},
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_enable_auto_analyze_priority_queue will be removed in the future and TiDB will always use priority queue to execute auto analyze."))
+			return normalizedValue, nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerThreshold, Value: strconv.FormatFloat(DefTiDBGOGCTunerThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
@@ -1133,22 +1173,21 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBEnableColumnTracking, Value: BoolToOnOff(DefTiDBEnableColumnTracking), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(EnableColumnTracking.Load()), nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		v := TiDBOptOn(val)
-		// If this is a user initiated statement,
-		// we log that column tracking is disabled.
-		if s.StmtCtx.StmtType == "Set" && !v {
-			// Set the location to UTC to avoid time zone interference.
-			disableTime := time.Now().UTC().Format(types.UTCTimeFormat)
-			if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
-				return err
-			}
-		}
-		EnableColumnTracking.Store(v)
-		return nil
-	}},
+	{
+		Scope: ScopeGlobal, Name: TiDBEnableColumnTracking,
+		Value: BoolToOnOff(true),
+		Type:  TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(true), nil
+		},
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			// This variable is deprecated and will be removed in the future.
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now."))
+			return normalizedValue, nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: RequireSecureTransport, Value: BoolToOnOff(DefRequireSecureTransport), Type: TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(tls.RequireSecureTransport.Load()), nil
@@ -1366,7 +1405,7 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableTmpStorageOnOOM.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBAutoBuildStatsConcurrency, Value: strconv.Itoa(DefTiDBAutoBuildStatsConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency},
-	{Scope: ScopeGlobal, Name: TiDBSysProcScanConcurrency, Value: strconv.Itoa(DefTiDBSysProcScanConcurrency), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32},
+	{Scope: ScopeGlobal, Name: TiDBSysProcScanConcurrency, Value: strconv.Itoa(DefTiDBSysProcScanConcurrency), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32},
 	{Scope: ScopeGlobal, Name: TiDBMemoryUsageAlarmRatio, Value: strconv.FormatFloat(DefMemoryUsageAlarmRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, DefMemoryUsageAlarmRatio))
 		return nil
@@ -1769,7 +1808,7 @@ var defaultSysVars = []*SysVar{
 			s.WindowingUseHighPrecision = TiDBOptOn(val)
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: BlockEncryptionMode, Value: "aes-128-ecb", Type: TypeEnum, PossibleValues: []string{"aes-128-ecb", "aes-192-ecb", "aes-256-ecb", "aes-128-cbc", "aes-192-cbc", "aes-256-cbc", "aes-128-ofb", "aes-192-ofb", "aes-256-ofb", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb"}},
+	{Scope: ScopeGlobal | ScopeSession, Name: BlockEncryptionMode, Value: DefBlockEncryptionMode, Type: TypeEnum, PossibleValues: []string{"aes-128-ecb", "aes-192-ecb", "aes-256-ecb", "aes-128-cbc", "aes-192-cbc", "aes-256-cbc", "aes-128-ofb", "aes-192-ofb", "aes-256-ofb", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb"}},
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution), Depended: true, SetSession: func(s *SessionVars, val string) error {
 		s.allowMPPExecution = TiDBOptOn(val)
@@ -1821,7 +1860,7 @@ var defaultSysVars = []*SysVar{
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(DefAnalyzeDistSQLScanConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(DefAnalyzeDistSQLScanConcurrency), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.analyzeDistSQLScanConcurrency = tidbOptPositiveInt32(val, DefAnalyzeDistSQLScanConcurrency)
 		return nil
 	}},
@@ -2356,6 +2395,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableParallelHashaggSpill, Value: BoolToOnOff(DefTiDBEnableParallelHashaggSpill), Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.EnableParallelHashaggSpill = TiDBOptOn(s)
+			if !vars.EnableParallelHashaggSpill {
+				vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default."))
+			}
 			return nil
 		},
 	},
@@ -2505,6 +2547,11 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		if len(val) > 0 && val != CloudStorageURI.Load() {
 			if err := ValidateCloudStorageURI(ctx, val); err != nil {
+				// convert annotations (second-level message) to message so clientConn.writeError
+				// will print friendly error.
+				if goerr.As(err, new(*errors.Error)) {
+					err = errors.New(err.Error())
+				}
 				return err
 			}
 		}
@@ -2751,6 +2798,16 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableResourceControl.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBResourceControlStrictMode, Value: BoolToOnOff(DefTiDBResourceControlStrictMode), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		opOn := TiDBOptOn(s)
+		if opOn != EnableResourceControlStrictMode.Load() {
+			EnableResourceControlStrictMode.Store(opOn)
+			logutil.BgLogger().Info("change resource control strict mode", zap.Bool("enable", TiDBOptOn(s)))
+		}
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableResourceControlStrictMode.Load()), nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionFairLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
 		return nil
@@ -2842,7 +2899,7 @@ var defaultSysVars = []*SysVar{
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json,blob,mediumblob,longblob", Type: TypeStr,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json,blob,mediumblob,longblob,mediumtext,longtext", Type: TypeStr,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			return ValidAnalyzeSkipColumnTypes(normalizedValue)
 		},
@@ -3086,14 +3143,32 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBSchemaCacheSize, Value: strconv.Itoa(DefTiDBSchemaCacheSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
-		// It does not take effect immediately, but within a ddl lease, infoschema reload would cause the v2 to be used.
-		SchemaCacheSize.Store(TidbOptInt64(val, DefTiDBSchemaCacheSize))
-		return nil
-	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		val := SchemaCacheSize.Load()
-		return strconv.FormatInt(val, 10), nil
-	}},
+	{Scope: ScopeGlobal, Name: TiDBSchemaCacheSize, Value: strconv.Itoa(DefTiDBSchemaCacheSize), Type: TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			_, str, err := parseSchemaCacheSize(s, normalizedValue, originalValue)
+			if err != nil {
+				return "", err
+			}
+			return str, nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			// It does not take effect immediately, but within a ddl lease, infoschema reload would cause the v2 to be used.
+			bt, str, err := parseSchemaCacheSize(vars, val, val)
+			if err != nil {
+				return err
+			}
+			if SchemaCacheSize.Load() != bt && ChangeSchemaCacheSize != nil {
+				if err := ChangeSchemaCacheSize(ctx, bt); err != nil {
+					return err
+				}
+			}
+			SchemaCacheSize.Store(bt)
+			SchemaCacheSizeOriginText.Store(str)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return SchemaCacheSizeOriginText.Load(), nil
+		}},
 	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			chars := []rune(normalizedValue)
@@ -3136,14 +3211,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeInstance, Name: TiDBServiceScope, Value: "", Type: TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			_, ok := distroleutil.ToTiDBServiceScope(originalValue)
-			if !ok {
-				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
-					originalValue,
-					TiDBServiceScope, `"", background`)
-				return normalizedValue, err
-			}
-			return normalizedValue, nil
+			return normalizedValue, servicescope.CheckServiceScope(originalValue)
 		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			newValue := strings.ToLower(s)
@@ -3188,6 +3256,10 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLazyCursorFetch, Value: BoolToOnOff(DefTiDBEnableLazyCursorFetch), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLazyCursorFetch = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

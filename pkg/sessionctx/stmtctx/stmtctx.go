@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
@@ -202,15 +202,16 @@ type StatementContext struct {
 		copied  uint64
 		touched uint64
 
-		message  string
-		warnings []SQLWarn
-		// extraWarnings record the extra warnings and are only used by the slow log only now.
-		// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
-		// not under such conditions now, it is considered as an extra warning.
-		// extraWarnings would not be printed through SHOW WARNINGS, but we want to always output them through the slow
-		// log to help diagnostics, so we store them here separately.
-		extraWarnings []SQLWarn
+		message string
 	}
+	WarnHandler contextutil.WarnHandlerExt
+	// ExtraWarnHandler record the extra warnings and are only used by the slow log only now.
+	// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
+	// not under such conditions now, it is considered as an extra warning.
+	// extraWarnings would not be printed through SHOW WARNINGS, but we want to always output them through the slow
+	// log to help diagnostics, so we store them here separately.
+	ExtraWarnHandler contextutil.WarnHandlerExt
+
 	execdetails.SyncExecDetails
 
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
@@ -269,7 +270,6 @@ type StatementContext struct {
 	plan any
 
 	Tables                []TableEntry
-	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
 	LockKeysDuration      int64
@@ -363,7 +363,7 @@ type StatementContext struct {
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
-	ColRefFromUpdatePlan []int64
+	ColRefFromUpdatePlan intset.FastIntSet
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -399,9 +399,13 @@ type StatementContext struct {
 		value *uint64
 		eval  func() (uint64, error)
 	}
+
+	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
+	MDLRelatedTableIDs map[int64]struct{}
 }
 
-var defaultErrLevels = func() (l errctx.LevelMap) {
+// DefaultStmtErrLevels is the default error levels for statement
+var DefaultStmtErrLevels = func() (l errctx.LevelMap) {
 	l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	return
 }()
@@ -418,21 +422,41 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		ctxID: contextutil.GenContextID(),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
+	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		ctxID: contextutil.GenContextID(),
+		ctxID:               contextutil.GenContextID(),
+		CTEStorageMap:       sc.CTEStorageMap,
+		LockTableIDs:        sc.LockTableIDs,
+		TableStats:          sc.TableStats,
+		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
+		WarnHandler:         sc.WarnHandler,
+		ExtraWarnHandler:    sc.ExtraWarnHandler,
+		IndexUsageCollector: sc.IndexUsageCollector,
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+	if h, ok := sc.WarnHandler.(interface{ Reset() }); ok && sc.WarnHandler != nil {
+		h.Reset()
+	} else {
+		sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
+	if h, ok := sc.ExtraWarnHandler.(interface{ Reset() }); ok && sc.ExtraWarnHandler != nil {
+		h.Reset()
+	} else {
+		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
 }
 
 // CtxID returns the context id of the statement
@@ -855,36 +879,17 @@ func (sc *StatementContext) SetMessage(msg string) {
 
 // GetWarnings gets warnings.
 func (sc *StatementContext) GetWarnings() []SQLWarn {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return sc.mu.warnings
+	return sc.WarnHandler.GetWarnings()
 }
 
 // CopyWarnings copies the warnings to the dst.
 func (sc *StatementContext) CopyWarnings(dst []SQLWarn) []SQLWarn {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if cnt := len(sc.mu.warnings); cap(dst) < cnt {
-		dst = make([]SQLWarn, cnt)
-	} else {
-		dst = dst[:cnt]
-	}
-	copy(dst, sc.mu.warnings)
-	return dst
+	return sc.WarnHandler.CopyWarnings(dst)
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
 func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	sz := len(sc.mu.warnings) - start
-	if sz <= 0 {
-		return nil
-	}
-	ret := make([]SQLWarn, sz)
-	copy(ret, sc.mu.warnings[start:])
-	sc.mu.warnings = sc.mu.warnings[:start]
-	return ret
+	return sc.WarnHandler.TruncateWarnings(start)
 }
 
 // WarningCount gets warning count.
@@ -892,106 +897,62 @@ func (sc *StatementContext) WarningCount() uint16 {
 	if sc.InShowWarning {
 		return 0
 	}
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return uint16(len(sc.mu.warnings))
+	return uint16(sc.WarnHandler.WarningCount())
 }
 
 // NumErrorWarnings gets warning and error count.
 func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	for _, w := range sc.mu.warnings {
-		if w.Level == contextutil.WarnLevelError {
-			ec++
-		}
-	}
-	wc = len(sc.mu.warnings)
-	return
+	return sc.WarnHandler.NumErrorWarnings()
 }
 
 // SetWarnings sets warnings.
 func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	sc.mu.warnings = warns
+	sc.WarnHandler.SetWarnings(warns)
 }
 
 // AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{Level: contextutil.WarnLevelWarning, Err: warn})
-	}
+	sc.WarnHandler.AppendWarning(warn)
 }
 
 // AppendWarnings appends some warnings.
 func (sc *StatementContext) AppendWarnings(warns []SQLWarn) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, warns...)
-	}
+	sc.WarnHandler.AppendWarnings(warns)
 }
 
 // AppendNote appends a warning with level 'Note'.
 func (sc *StatementContext) AppendNote(warn error) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{Level: contextutil.WarnLevelNote, Err: warn})
-	}
+	sc.WarnHandler.AppendNote(warn)
 }
 
 // AppendError appends a warning with level 'Error'.
 func (sc *StatementContext) AppendError(warn error) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{Level: contextutil.WarnLevelError, Err: warn})
-	}
+	sc.WarnHandler.AppendError(warn)
 }
 
 // GetExtraWarnings gets extra warnings.
 func (sc *StatementContext) GetExtraWarnings() []SQLWarn {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return sc.mu.extraWarnings
+	return sc.ExtraWarnHandler.GetWarnings()
 }
 
 // SetExtraWarnings sets extra warnings.
 func (sc *StatementContext) SetExtraWarnings(warns []SQLWarn) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	sc.mu.extraWarnings = warns
+	sc.ExtraWarnHandler.SetWarnings(warns)
 }
 
 // AppendExtraWarning appends an extra warning with level 'Warning'.
 func (sc *StatementContext) AppendExtraWarning(warn error) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if len(sc.mu.extraWarnings) < math.MaxUint16 {
-		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{Level: contextutil.WarnLevelWarning, Err: warn})
-	}
+	sc.ExtraWarnHandler.AppendWarning(warn)
 }
 
 // AppendExtraNote appends an extra warning with level 'Note'.
 func (sc *StatementContext) AppendExtraNote(warn error) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if len(sc.mu.extraWarnings) < math.MaxUint16 {
-		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{Level: contextutil.WarnLevelNote, Err: warn})
-	}
+	sc.ExtraWarnHandler.AppendNote(warn)
 }
 
 // AppendExtraError appends an extra warning with level 'Error'.
 func (sc *StatementContext) AppendExtraError(warn error) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if len(sc.mu.extraWarnings) < math.MaxUint16 {
-		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{Level: contextutil.WarnLevelError, Err: warn})
-	}
+	sc.ExtraWarnHandler.AppendError(warn)
 }
 
 // resetMuForRetry resets the changed states of sc.mu during execution.
@@ -1006,7 +967,6 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.copied = 0
 	sc.mu.touched = 0
 	sc.mu.message = ""
-	sc.mu.warnings = nil
 }
 
 // ResetForRetry resets the changed states during execution.
@@ -1018,6 +978,8 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
 	sc.SyncExecDetails.Reset()
+	sc.WarnHandler.TruncateWarnings(0)
+	sc.ExtraWarnHandler.TruncateWarnings(0)
 
 	// `TaskID` is reset, we'll need to reset distSQLCtx
 	sc.distSQLCtxCache.init = sync.Once{}

@@ -1074,7 +1074,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_ToBinary:
 		f = &builtinInternalToBinarySig{base}
 	case tipb.ScalarFuncSig_FromBinary:
-		f = &builtinInternalFromBinarySig{base}
+		// TODO: set the `cannotConvertStringAsWarning` accordingly
+		f = &builtinInternalFromBinarySig{base, false}
 
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)

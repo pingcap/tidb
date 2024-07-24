@@ -15,6 +15,8 @@
 package core
 
 import (
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -115,8 +117,8 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 // are columns or constants, we do not need to build the `proj`.
 func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) base.PhysicalPlan {
 	hasScalarFunc := false
-
-	coreusage.WrapCastForAggFuncs(aggPlan.SCtx().GetExprCtx(), aggFuncs)
+	exprCtx := aggPlan.SCtx().GetExprCtx()
+	coreusage.WrapCastForAggFuncs(exprCtx, aggFuncs)
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
@@ -139,6 +141,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 	projExprs := make([]expression.Expression, 0, cap(projSchemaCols))
 	cursor := 0
 
+	ectx := exprCtx.GetEvalCtx()
 	for _, f := range aggFuncs {
 		for i, arg := range f.Args {
 			if _, isCnst := arg.(*expression.Constant); isCnst {
@@ -147,7 +150,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 			projExprs = append(projExprs, arg)
 			newArg := &expression.Column{
 				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  arg.GetType(),
+				RetType:  arg.GetType(ectx),
 				Index:    cursor,
 			}
 			projSchemaCols = append(projSchemaCols, newArg)
@@ -155,34 +158,50 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 			cursor++
 		}
 		for _, byItem := range f.OrderByItems {
-			if _, isCnst := byItem.Expr.(*expression.Constant); isCnst {
+			bi := byItem.Expr
+			if _, isCnst := bi.(*expression.Constant); isCnst {
 				continue
 			}
-			projExprs = append(projExprs, byItem.Expr)
-			newArg := &expression.Column{
-				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  byItem.Expr.GetType(),
-				Index:    cursor,
+			idx := slices.IndexFunc(projExprs, func(a expression.Expression) bool {
+				return a.Equal(ectx, bi)
+			})
+			if idx < 0 {
+				projExprs = append(projExprs, bi)
+				newArg := &expression.Column{
+					UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+					RetType:  bi.GetType(ectx),
+					Index:    cursor,
+				}
+				projSchemaCols = append(projSchemaCols, newArg)
+				byItem.Expr = newArg
+				cursor++
+			} else {
+				byItem.Expr = projSchemaCols[idx]
 			}
-			projSchemaCols = append(projSchemaCols, newArg)
-			byItem.Expr = newArg
-			cursor++
 		}
 	}
 
 	for i, item := range groupByItems {
-		if _, isCnst := item.(*expression.Constant); isCnst {
+		it := item
+		if _, isCnst := it.(*expression.Constant); isCnst {
 			continue
 		}
-		projExprs = append(projExprs, item)
-		newArg := &expression.Column{
-			UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  item.GetType(),
-			Index:    cursor,
+		idx := slices.IndexFunc(projExprs, func(a expression.Expression) bool {
+			return a.Equal(ectx, it)
+		})
+		if idx < 0 {
+			projExprs = append(projExprs, it)
+			newArg := &expression.Column{
+				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  item.GetType(ectx),
+				Index:    cursor,
+			}
+			projSchemaCols = append(projSchemaCols, newArg)
+			groupByItems[i] = newArg
+			cursor++
+		} else {
+			groupByItems[i] = projSchemaCols[idx]
 		}
-		projSchemaCols = append(projSchemaCols, newArg)
-		groupByItems[i] = newArg
-		cursor++
 	}
 
 	child := aggPlan.Children()[0]
@@ -246,7 +265,7 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 		bottomProjExprs = append(bottomProjExprs, itemExpr)
 		newArg := &expression.Column{
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  itemExpr.GetType(),
+			RetType:  itemExpr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 			Index:    len(bottomProjSchemaCols),
 		}
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
@@ -297,7 +316,7 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 		bottomProjExprs = append(bottomProjExprs, itemExpr)
 		newArg := &expression.Column{
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  itemExpr.GetType(),
+			RetType:  itemExpr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 			Index:    len(bottomProjSchemaCols),
 		}
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)

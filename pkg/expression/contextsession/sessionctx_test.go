@@ -265,7 +265,7 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 
 func TestSessionBuildContext(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextsession.NewExprExtendedImpl(ctx)
+	impl := contextsession.NewSessionExprContext(ctx)
 	evalCtx, ok := impl.GetEvalCtx().(*contextsession.SessionEvalContext)
 	require.True(t, ok)
 	require.Same(t, evalCtx, impl.SessionEvalContext)

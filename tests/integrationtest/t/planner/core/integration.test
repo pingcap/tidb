@@ -1579,7 +1579,7 @@ SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN ID
 drop table if exists t;
 create table t (a int);
 insert into t values (1);
-analyze table t;
+analyze table t all columns;
 set tidb_opt_limit_push_down_threshold=0;
 explain format=brief select a from t order by a desc limit 10;
 set tidb_opt_limit_push_down_threshold=10;
@@ -1811,7 +1811,7 @@ insert into t1 select * from t1;
 insert into t1 select * from t1;
 insert into t1 select * from t1;
 insert into t1 value(1,1,1);
-analyze table t1;
+analyze table t1 all columns;
 explain format = 'brief' select * from t1 where a=1 or b=1;
 explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;
 explain format = 'brief' select * from t1 where null or a=1 or b=1;
@@ -1899,7 +1899,7 @@ drop table if exists t, t2;
 set @@tidb_partition_prune_mode='static';
 CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
 insert into t values (1),(2),(3),(4),(7),(8),(9),(10);
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t;
 CREATE TABLE t2 (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
 insert into t2 values (1),(2),(3),(4),(7),(8),(9),(10);
@@ -2051,7 +2051,7 @@ set @@tidb_enable_pipelined_window_function=DEFAULT;
 drop table if exists t;
 create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));
 insert into t values ('20000201'), ('19000101');
-analyze table t;
+analyze table t all columns;
 desc format='brief' select * from t where a < '2000-01-01';
 
 
@@ -2369,3 +2369,11 @@ set tidb_isolation_read_engines='tiflash';
 select * from sys.t;
 drop table sys.t;
 set tidb_isolation_read_engines=DEFAULT;
+
+# TestIssue53580
+drop table if exists t;
+create table t (col TEXT);
+select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
+  case when (
+    t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
+  ) then 1 else 2 end;

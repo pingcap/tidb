@@ -302,6 +302,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      len(execIDs),
+		Store:                sch.storeWithPD,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
@@ -613,10 +614,7 @@ func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) 
 }
 
 func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
-	failpoint.Inject("syncBeforeJobStarted", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
+	failpoint.InjectCall("syncBeforeJobStarted", taskMeta.JobID)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	// we consider all errors as retryable errors, except context done.
 	// the errors include errors happened when communicate with PD and TiKV.
@@ -630,9 +628,7 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHa
 			})
 		},
 	)
-	failpoint.Inject("syncAfterJobStarted", func() {
-		TestSyncChan <- struct{}{}
-	})
+	failpoint.InjectCall("syncAfterJobStarted")
 	return err
 }
 

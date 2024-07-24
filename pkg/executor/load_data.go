@@ -211,7 +211,9 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{})
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{
+				ZStdDecodeConcurrency: 1,
+			})
 		}}}
 	return e.load(ctx, readers)
 }
@@ -356,7 +358,7 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
-// processStream always trys to build a parser from channel and process it. When
+// processStream always tries to build a parser from channel and process it. When
 // it returns nil, it means all data is read.
 func (w *encodeWorker) processStream(
 	ctx context.Context,

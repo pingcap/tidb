@@ -15,6 +15,7 @@
 package ingestrec
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -138,10 +139,9 @@ func (i *IngestRecorder) RewriteTableID(rewriteFunc func(tableID int64) (int64, 
 
 // UpdateIndexInfo uses the newest schemas to update the ingest index's information
 func (i *IngestRecorder) UpdateIndexInfo(is infoschema.InfoSchema) {
-	dbInfos := is.AllSchemas()
-	for _, dbInfo := range dbInfos {
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			tblInfo := tbl.Meta()
+	for _, dbInfo := range is.AllSchemas() {
+		tblInfos, _ := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+		for _, tblInfo := range tblInfos {
 			tableindexes, tblexists := i.items[tblInfo.ID]
 			if !tblexists {
 				continue

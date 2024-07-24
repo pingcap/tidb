@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/context"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -34,6 +35,9 @@ type PlanContext = context.PlanContext
 
 // BuildPBContext is the context for building `*tipb.Executor`.
 type BuildPBContext = context.BuildPBContext
+
+// Note: appending the new adding method to the last, for the convenience of easy
+// locating in other implementor from other package.
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
@@ -75,6 +79,11 @@ type Plan interface {
 	QueryBlockOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
+
+	// CloneForPlanCache clones this Plan for Plan Cache.
+	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag
+	// `plan-cache-shallow-clone:"true"` are allowed to be shallow cloned.
+	CloneForPlanCache(newCtx PlanContext) (cloned Plan, ok bool)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -82,10 +91,10 @@ type PhysicalPlan interface {
 	Plan
 
 	// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver1.
-	GetPlanCostVer1(taskType property.TaskType, option *coreusage.PlanCostOption) (float64, error)
+	GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
 
 	// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
-	GetPlanCostVer2(taskType property.TaskType, option *coreusage.PlanCostOption) (coreusage.CostVer2, error)
+	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
 
 	// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -125,11 +134,11 @@ type PhysicalPlan interface {
 	ExplainNormalizedInfo() string
 
 	// Clone clones this physical plan.
-	Clone() (PhysicalPlan, error)
+	Clone(newCtx PlanContext) (PhysicalPlan, error)
 
 	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task
-	AppendChildCandidate(op *coreusage.PhysicalOptimizeOp)
+	AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp)
 
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
@@ -191,10 +200,10 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *coreusage.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
-	PruneColumns([]*expression.Column, *coreusage.LogicalOptimizeOp) (LogicalPlan, error)
+	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, error)
 
 	// FindBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -204,7 +213,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *coreusage.PhysicalOptimizeOp) (Task, int64, error)
+	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *optimizetrace.PhysicalOptimizeOp) (Task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -214,16 +223,16 @@ type LogicalPlan interface {
 
 	// PushDownTopN will push down the topN or limit operator during logical optimization.
 	// interface definition should depend on concrete implementation type.
-	PushDownTopN(topN LogicalPlan, opt *coreusage.LogicalOptimizeOp) LogicalPlan
+	PushDownTopN(topN LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
 	// DeriveTopN derives an implicit TopN from a filter on row_number window function...
-	DeriveTopN(opt *coreusage.LogicalOptimizeOp) LogicalPlan
+	DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
 	// PredicateSimplification consolidates different predcicates on a column and its equivalence classes.
-	PredicateSimplification(opt *coreusage.LogicalOptimizeOp) LogicalPlan
+	PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
 	// ConstantPropagation generate new constant predicate according to column equivalence relation
-	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *coreusage.LogicalOptimizeOp) (newRoot LogicalPlan)
+	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot LogicalPlan)
 
 	// PullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
 	PullUpConstantPredicates() []expression.Expression
@@ -259,7 +268,7 @@ type LogicalPlan interface {
 	// MaxOneRow means whether this operator only returns max one row.
 	MaxOneRow() bool
 
-	// Get all the children.
+	// Children Get all the children.
 	Children() []LogicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -276,4 +285,10 @@ type LogicalPlan interface {
 
 	// ExtractFD derive the FDSet from the tree bottom up.
 	ExtractFD() *fd.FDSet
+
+	// GetBaseLogicalPlan return the baseLogicalPlan inside each logical plan.
+	GetBaseLogicalPlan() LogicalPlan
+
+	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
+	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
 }

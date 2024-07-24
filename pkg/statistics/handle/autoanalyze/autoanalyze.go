@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -353,7 +354,8 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			continue
 		}
 
-		tbls := is.SchemaTables(model.NewCIStr(db))
+		tbls, err := is.SchemaTableInfos(context.Background(), model.NewCIStr(db))
+		terror.Log(err)
 		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
 		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
 		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
@@ -363,7 +365,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
-		for _, tbl := range tbls {
+		for _, tblInfo := range tbls {
 			// Sometimes the tables are too many. Auto-analyze will take too much time on it.
 			// so we need to check the available time.
 			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
@@ -371,11 +373,10 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			}
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
-			if _, ok := lockedTables[tbl.Meta().ID]; ok {
+			if _, ok := lockedTables[tblInfo.ID]; ok {
 				continue
 			}
 
-			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
 				continue
 			}
@@ -488,7 +489,7 @@ func tryAutoAnalyzeTable(
 
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := statsTbl.Indices[idx.ID]; !ok && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)

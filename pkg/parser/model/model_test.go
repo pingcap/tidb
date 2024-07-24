@@ -169,7 +169,7 @@ func TestModelBasic(t *testing.T) {
 		Charset: "utf8",
 		Collate: "utf8_bin",
 	}
-	dbInfo.SetTables([]*TableInfo{table})
+	dbInfo.Deprecated.Tables = []*TableInfo{table}
 
 	n := dbInfo.Clone()
 	require.Equal(t, dbInfo, n)

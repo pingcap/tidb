@@ -24,7 +24,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -38,7 +38,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		return newTk.Session(), nil
 	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(rs, store)
+	sessPool := session.NewSessionPool(rs)
 	sessCtx, err := sessPool.Get()
 	require.NoError(t, err)
 	sess := session.NewSession(sessCtx)
@@ -46,7 +46,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
+		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
 			ID: 1,
 		}, false)
 	})
@@ -55,7 +55,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
+		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
 			ID: 2,
 		}, false)
 	})

@@ -546,6 +546,7 @@ var collationsCols = []columnInfo{
 	{name: "IS_DEFAULT", tp: mysql.TypeVarchar, size: 3},
 	{name: "IS_COMPILED", tp: mysql.TypeVarchar, size: 3},
 	{name: "SORTLEN", tp: mysql.TypeLonglong, size: 3},
+	{name: "PAD_ATTRIBUTE", tp: mysql.TypeVarchar, size: 9},
 }
 
 var keyColumnUsageCols = []columnInfo{
@@ -854,6 +855,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "CURRENT_AFFECTED_ROWS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -869,6 +871,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
+	{name: "IS_GLOBAL", tp: mysql.TypeLonglong, size: 21},
 }
 
 var slowQueryCols = []columnInfo{
@@ -1263,9 +1266,9 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
+	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "END_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
@@ -1388,7 +1391,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.AvgQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
-	{name: stmtsummary.LastPlanCacheUnqualifiedStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
+	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1407,7 +1410,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 64},
 	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64},
@@ -1464,7 +1467,7 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
@@ -1529,7 +1532,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.StartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Start time of the transaction"},
 	{name: txninfo.CurrentSQLDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
 	{name: txninfo.CurrentSQLDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The normalized sql the transaction are currently running"},
-	{name: txninfo.StateStr, tp: mysql.TypeEnum, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
+	{name: txninfo.StateStr, tp: mysql.TypeEnum, size: 16, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
 	{name: txninfo.WaitingStartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Current lock waiting's start time"},
 	{name: txninfo.MemBufferKeysStr, tp: mysql.TypeLonglong, size: 64, comment: "How many entries are in MemDB"},
 	{name: txninfo.MemBufferBytesStr, tp: mysql.TypeLonglong, size: 64, comment: "MemDB used memory"},
@@ -1988,13 +1991,13 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
-		if resp == nil || resp.StatusCode != http.StatusOK {
-			terror.Log(resp.Body.Close())
-			return servers, nil
-		}
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			logutil.BgLogger().Warn("request microservice server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			terror.Log(resp.Body.Close())
 			continue
 		}
 		var content = []struct {

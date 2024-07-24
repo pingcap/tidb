@@ -206,7 +206,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	tk.MustExec("drop table if exists t3;")
 	tk.MustExec("create table t3 (a char(1));")
 	tk.MustExec("insert into t3 values ('1');")
-	tk.MustExec("analyze table t3;")
+	tk.MustExec("analyze table t3 all columns;")
 	// corrupt the statistics like pingcap/br#679.
 	tk.MustExec(`
 		update mysql.stats_buckets set upper_bound = 0xffffffff
@@ -251,7 +251,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	require.NotNil(t, schemas[0].DB)
 
 	// recover the statistics.
-	tk.MustExec("analyze table t3;")
+	tk.MustExec("analyze table t3 all columns;")
 
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false, true)
 	require.NoError(t, err)

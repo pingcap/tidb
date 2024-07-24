@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.opencensus.io/stats/view"
@@ -209,7 +210,7 @@ func TestAddIndexFailed(t *testing.T) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -334,6 +335,19 @@ func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 	})
 }
 
+// TestRunDDLJobPanicEnableFastCreateTable tests recover panic with fast create table when run ddl job panic.
+func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
+	s := createFailDBSuite(t)
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set global tidb_enable_fast_create_table=ON")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`)
+	_, err := tk.Exec("create table t(c1 int, c2 int)")
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
+}
+
 func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
 	if variable.EnableDistTask.Load() {
 		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
@@ -365,7 +379,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 	is := s.dom.InfoSchema()
 	schemaName := model.NewCIStr("test_db")
 	tableName := model.NewCIStr("test_add_index")
-	tbl, err := is.TableByName(schemaName, tableName)
+	tbl, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 
 	splitCount := 100
@@ -465,7 +479,7 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("alter table t change column b bb mediumint first")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	cols := tbl.Meta().Columns
 	colsStr := ""

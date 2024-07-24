@@ -69,7 +69,7 @@ func Init() {
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
 		}
-		dbInfo.SetTables(tbls)
+		dbInfo.Deprecated.Tables = tbls
 		infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
 	}
 	if expression.EvalSimpleAst != nil {

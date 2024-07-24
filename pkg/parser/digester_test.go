@@ -110,6 +110,11 @@ func TestNormalizeRedact(t *testing.T) {
 		{"select * from t where a in (1)", "select * from `t` where `a` in ( ‹1› )"},
 		{"select * from t where a in (1, 3)", "select * from `t` where `a` in ( ‹1› , ‹3› )"},
 		{"select ? from b order by 2", "select ? from `b` order by ‹2›"},
+		{"select ? from b order by 2 limit 10 offset 10", "select ? from `b` order by ‹2› limit ‹10› offset ‹10›"},
+		{"with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 100 offset 100) select * from cte1;",
+			"with recursive `cte1` ( `c1` ) as ( select `c1` from `t1` union select `c1` + ‹1› `c1` from `cte1` limit ‹100› offset ‹100› ) select * from `cte1`"},
+		{"select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range",
+			"select * , `first_value` ( `v` ) `over` ( partition by `p` order by `o` range between ‹3› preceding and ‹0› following ) as `a` from `test` . `first_range`"},
 	}
 
 	for _, c := range cases {

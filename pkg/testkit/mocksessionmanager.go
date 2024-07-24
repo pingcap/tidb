@@ -156,6 +156,17 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	defer msm.mu.Unlock()
 	ret := make([]uint64, 0, len(msm.internalSessions))
 	for internalSess := range msm.internalSessions {
+		// Ref the implementation of `GetInternalSessionStartTSList` on the real session manager. The `TxnInfo` is more
+		// accurate, because if a session is pending, the `StartTS` in `sessVars.TxnCtx` will not be updated. For example,
+		// if there is not DDL for a long time, the minimal internal session start ts will not have any progress.
+		if se, ok := internalSess.(interface{ TxnInfo() *txninfo.TxnInfo }); ok {
+			txn := se.TxnInfo()
+			if txn != nil {
+				ret = append(ret, txn.StartTS)
+			}
+			continue
+		}
+
 		se := internalSess.(sessionctx.Context)
 		sessVars := se.GetSessionVars()
 		sessVars.TxnCtxMu.Lock()

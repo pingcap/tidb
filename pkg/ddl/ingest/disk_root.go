@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -67,7 +68,7 @@ func (d *diskRootImpl) UpdateUsage() {
 	var capacity, used uint64
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
-		litLogger.Error(LitErrGetStorageQuota, zap.Error(err))
+		logutil.DDLIngestLogger().Error(LitErrGetStorageQuota, zap.Error(err))
 	} else {
 		capacity, used = sz.Capacity, sz.Capacity-sz.Available
 	}
@@ -84,7 +85,7 @@ func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.bcUsed > variable.DDLDiskQuota.Load() {
-		litLogger.Info("disk usage is over quota",
+		logutil.DDLIngestLogger().Info("disk usage is over quota",
 			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
 			zap.String("usage", d.usageInfo()))
 		return true
@@ -93,7 +94,7 @@ func (d *diskRootImpl) ShouldImport() bool {
 		return false
 	}
 	if float64(d.used) >= float64(d.capacity)*capacityThreshold {
-		litLogger.Warn("available disk space is less than 10%, "+
+		logutil.DDLIngestLogger().Warn("available disk space is less than 10%, "+
 			"this may degrade the performance, "+
 			"please make sure the disk available space is larger than @@tidb_ddl_disk_quota before adding index",
 			zap.String("usage", d.usageInfo()))
@@ -127,7 +128,7 @@ func (d *diskRootImpl) PreCheckUsage() error {
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
 	}
 	if RiskOfDiskFull(sz.Available, sz.Capacity) {
-		litLogger.Warn("available disk space is less than 10%, cannot use ingest mode",
+		logutil.DDLIngestLogger().Warn("available disk space is less than 10%, cannot use ingest mode",
 			zap.String("sort path", d.path),
 			zap.String("usage", d.usageInfo()))
 		msg := fmt.Sprintf("no enough space in %s", d.path)

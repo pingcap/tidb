@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,43 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
+
+const defaultPartialResultsBufferCap = 2048
+const defaultGroupKeyCap = 8
+
+var partialResultsBufferPool = sync.Pool{
+	New: func() any {
+		s := make([][]aggfuncs.PartialResult, 0, defaultPartialResultsBufferCap)
+		return &s
+	},
+}
+
+var groupKeyPool = sync.Pool{
+	New: func() any {
+		s := make([][]byte, 0, defaultGroupKeyCap)
+		return &s
+	},
+}
+
+func getBuffer() (*[][]aggfuncs.PartialResult, *[][]byte) {
+	partialResultsBuffer := partialResultsBufferPool.Get().(*[][]aggfuncs.PartialResult)
+	*partialResultsBuffer = (*partialResultsBuffer)[:0]
+	groupKey := groupKeyPool.Get().(*[][]byte)
+	*groupKey = (*groupKey)[:0]
+	return partialResultsBuffer, groupKey
+}
+
+// tryRecycleBuffer recycles small buffers only. This approach reduces the CPU pressure
+// from memory allocation during high concurrency aggregation computations (like DDL's scheduled tasks),
+// and also prevents the pool from holding too much memory and causing memory pressure.
+func tryRecycleBuffer(buf *[][]aggfuncs.PartialResult, groupKey *[][]byte) {
+	if cap(*buf) <= defaultPartialResultsBufferCap {
+		partialResultsBufferPool.Put(buf)
+	}
+	if cap(*groupKey) <= defaultGroupKeyCap {
+		groupKeyPool.Put(groupKey)
+	}
+}
 
 func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {
@@ -78,7 +116,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 	errCtx := ctx.GetSessionVars().StmtCtx.ErrCtx()
 	exprCtx := ctx.GetExprCtx()
 	for _, item := range groupByItems {
-		tp := item.GetType()
+		tp := item.GetType(ctx.GetExprCtx().GetEvalCtx())
 
 		buf, err := expression.GetColumn(tp.EvalType(), numRows)
 		if err != nil {
@@ -91,7 +129,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		// Ref to issue #26885.
 		// This check is used to handle invalid enum name same with user defined enum name.
 		// Use enum value as groupKey instead of enum name.
-		if item.GetType().GetType() == mysql.TypeEnum {
+		if item.GetType(ctx.GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeEnum {
 			newTp := *tp
 			newTp.AddFlag(mysql.EnumSetAsIntFlag)
 			tp = &newTp
@@ -102,7 +140,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 		// This check is used to avoid error during the execution of `EncodeDecimal`.
-		if item.GetType().GetType() == mysql.TypeNewDecimal {
+		if item.GetType(ctx.GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeNewDecimal {
 			newTp := *tp
 			newTp.SetFlen(0)
 			tp = &newTp

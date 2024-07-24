@@ -383,13 +383,12 @@ func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bo
 // for use of execution phase.
 const ExtraHandleID = -1
 
-// ExtraPidColID is the column ID of column which store the partitionID decoded in global index values.
-const ExtraPidColID = -2
+// Deprecated: Use ExtraPhysTblID instead.
+// const ExtraPidColID = -2
 
 // ExtraPhysTblID is the column ID of column that should be filled in with the physical table id.
 // Primarily used for table partition dynamic prune mode, to return which partition (physical table id) the row came from.
-// Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
-// Must be after ExtraPidColID!
+// If used with a global index, the partition ID decoded from the key value will be filled in.
 const ExtraPhysTblID = -3
 
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
@@ -435,8 +434,8 @@ const (
 // ExtraHandleName is the name of ExtraHandle Column.
 var ExtraHandleName = NewCIStr("_tidb_rowid")
 
-// ExtraPartitionIdName is the name of ExtraPartitionId Column.
-var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
+// Deprecated: Use ExtraPhysTblIdName instead.
+// var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
 // ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIdName = NewCIStr("_tidb_tid") //nolint:revive
@@ -541,6 +540,9 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
 }
@@ -915,21 +917,6 @@ func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)
 
-	colInfo.SetCharset(charset.CharsetBin)
-	colInfo.SetCollate(charset.CollationBin)
-	return colInfo
-}
-
-// NewExtraPartitionIDColInfo mocks a column info for extra partition id column.
-func NewExtraPartitionIDColInfo() *ColumnInfo {
-	colInfo := &ColumnInfo{
-		ID:   ExtraPidColID,
-		Name: ExtraPartitionIdName,
-	}
-	colInfo.SetType(mysql.TypeLonglong)
-	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
-	colInfo.SetFlen(flen)
-	colInfo.SetDecimal(decimal)
 	colInfo.SetCharset(charset.CharsetBin)
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
@@ -1700,32 +1687,24 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                 int64          `json:"id"`      // Database ID
-	Name               CIStr          `json:"db_name"` // DB name.
-	Charset            string         `json:"charset"`
-	Collate            string         `json:"collate"`
-	tables             []*TableInfo   `json:"-"` // Tables in the DB.
-	State              SchemaState    `json:"state"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-}
-
-// Tables returns the tables of this DB.
-// CAUTION: infoschema v2 does not hold tables in DBInfo, use infoschema.SchemaTables(db.Name) API instead.
-func (db *DBInfo) Tables() []*TableInfo {
-	return db.tables
-}
-
-// SetTables set the tables field for DBInfo, do not call this API except the infoschema v1 builder process.
-func (db *DBInfo) SetTables(tables []*TableInfo) {
-	db.tables = tables
+	ID                 int64            `json:"id"`      // Database ID
+	Name               CIStr            `json:"db_name"` // DB name.
+	Charset            string           `json:"charset"`
+	Collate            string           `json:"collate"`
+	Deprecated struct { // Tables is not set in infoschema v2, use infoschema SchemaTableInfos() instead.
+		Tables             []*TableInfo     `json:"-"` // Tables in the DB.
+	}
+	State              SchemaState      `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
+	TableName2ID       map[string]int64 `json:"-"`
 }
 
 // Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
-	newInfo.tables = make([]*TableInfo, len(db.tables))
-	for i := range db.tables {
-		newInfo.tables[i] = db.tables[i].Clone()
+	newInfo.Deprecated.Tables = make([]*TableInfo, len(db.Deprecated.Tables))
+	for i := range db.Deprecated.Tables {
+		newInfo.Deprecated.Tables[i] = db.Deprecated.Tables[i].Clone()
 	}
 	return &newInfo
 }
@@ -1733,8 +1712,8 @@ func (db *DBInfo) Clone() *DBInfo {
 // Copy shallow copies DBInfo.
 func (db *DBInfo) Copy() *DBInfo {
 	newInfo := *db
-	newInfo.tables = make([]*TableInfo, len(db.tables))
-	copy(newInfo.tables, db.tables)
+	newInfo.Deprecated.Tables = make([]*TableInfo, len(db.Deprecated.Tables))
+	copy(newInfo.Deprecated.Tables, db.Deprecated.Tables)
 	return &newInfo
 }
 

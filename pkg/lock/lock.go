@@ -15,6 +15,7 @@
 package lock
 
 import (
+	stdctx "context"
 	"errors"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -66,7 +67,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// TODO: try to remove this get for speed up.
-	tb, err := c.is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	tb, err := c.is.TableByName(stdctx.Background(), model.NewCIStr(db), model.NewCIStr(table))
 	// Ignore this error for "drop table if not exists t1" when t1 doesn't exists.
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil
@@ -140,9 +141,12 @@ func (c *Checker) CheckLockInDB(db string, privilege mysql.PrivilegeType) error 
 	if privilege == mysql.CreatePriv {
 		return nil
 	}
-	tables := c.is.SchemaTables(model.NewCIStr(db))
+	tables, err := c.is.SchemaTableInfos(stdctx.Background(), model.NewCIStr(db))
+	if err != nil {
+		return err
+	}
 	for _, tbl := range tables {
-		err := c.CheckTableLock(db, tbl.Meta().Name.L, privilege, false)
+		err := c.CheckTableLock(db, tbl.Name.L, privilege, false)
 		if err != nil {
 			return err
 		}

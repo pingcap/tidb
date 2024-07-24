@@ -193,16 +193,24 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.index >= len(e.values) {
 		return nil
 	}
+
+	schema := e.Schema()
+	sctx := e.BaseExecutor.Ctx()
+	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
 		e.index++
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
+	err := fillRowChecksum(sctx, start, e.index, schema, e.tblInfo, e.values, e.handles, req, nil)
+	if err != nil {
+		return err
+	}
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, schema.Columns, e.columns, sctx.GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
@@ -282,15 +290,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
+			handle, err1 := tablecodec.DecodeHandleInIndexValue(handleVal)
 			if err1 != nil {
 				return err1
 			}
 			if e.tblInfo.Partition != nil {
 				var pid int64
 				if e.idxInfo.Global {
-					segs := tablecodec.SplitIndexValue(handleVal)
-					_, pid, err = codec.DecodeInt(segs.PartitionID)
+					_, pid, err = codec.DecodeInt(tablecodec.SplitIndexValue(handleVal).PartitionID)
 					if err != nil {
 						return err
 					}
@@ -417,9 +424,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					IndexEncode: func(_ *consistency.RecordData) kv.Key {
 						return indexKeys[i]
 					},
-					Tbl:  e.tblInfo,
-					Idx:  e.idxInfo,
-					Sctx: e.Ctx(),
+					Tbl:             e.tblInfo,
+					Idx:             e.idxInfo,
+					EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+					Storage:         e.Ctx().GetStore(),
 				}).ReportLookupInconsistent(ctx,
 					1, 0,
 					e.handles[i:i+1],
