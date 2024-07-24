@@ -960,28 +960,6 @@ func runIngestReorgJobDist(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 
 func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
-	if ok && bc.Done() {
-		return true, 0, nil
-	}
-	ctx := tidblogutil.WithCategory(w.ctx, "ddl-ingest")
-	var discovery pd.ServiceDiscovery
-	if d != nil {
-		//nolint:forcetypeassert
-		discovery = d.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	}
-	hasUnique := false
-	for _, indexInfo := range allIndexInfos {
-		if indexInfo.Unique {
-			hasUnique = true
-			break
-		}
-	}
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
-		return false, ver, errors.Trace(err)
-	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	if err != nil {
 		if kv.ErrKeyExists.Equal(err) {
@@ -996,11 +974,8 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		return false, ver, errors.Trace(err)
 	}
-	if !done {
-		return false, ver, nil
-	}
-	bc.SetDone()
-	return true, ver, nil
+	failpoint.InjectCall("afterRunIngestReorgJob", job, done)
+	return done, ver, nil
 }
 
 func errorIsRetryable(err error, job *model.Job) bool {
