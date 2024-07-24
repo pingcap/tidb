@@ -16,6 +16,7 @@ package join
 
 import (
 	"bytes"
+	"encoding/binary"
 	"hash/fnv"
 	"unsafe"
 
@@ -54,7 +55,7 @@ type ProbeV2 interface {
 	// SetChunkForProbe will do some pre-work when start probing a chunk
 	SetChunkForProbe(chunk *chunk.Chunk) error
 	// SetRestoredChunkForProbe will do some pre-work for a chunk resoted from disk
-	SetRestoredChunkForProbe(chunk *chunk.Chunk, hashTable *hashTableV2) error
+	SetRestoredChunkForProbe(chunk *chunk.Chunk) error
 	// Probe is to probe current chunk, the result chunk is set in result.chk, and Probe need to make sure result.chk.NumRows() <= result.chk.RequiredRows()
 	Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult)
 	// IsCurrentChunkProbeDone returns true if current probe chunk is all probed
@@ -226,7 +227,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	}
 
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
-	if j.ctx.spillHelper.isSpillTriggered() && len(j.spillTmpChk) != j.ctx.PartitionNumber {
+	// spillTriggered can only be set in build stage, so it's ok to get it without lock
+	if j.ctx.spillHelper.isSpillTriggeredNoLock() && len(j.spillTmpChk) != j.ctx.PartitionNumber {
 		for i := 0; i < j.ctx.PartitionNumber; i++ {
 			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.probeSpillChkFieldTypes, spillChunkSize))
 		}
@@ -275,7 +277,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	return
 }
 
-func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk, hashTable *hashTableV2) error {
+func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	if j.currentChunk != nil {
 		if j.currentProbeRow < j.chunkRows {
 			return errors.New("Previous chunk is not probed yet")
@@ -320,11 +322,49 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk, hashTable *ha
 		j.serializedKeys = make([][]byte, logicalRows)
 	}
 
-	for i := 0; i < logicalRows; i++ {
-		j.serializedKeys[i] = append(j.serializedKeys[i], serializedKeysCol.GetBytes(i)...)
-		j.matchedRowsHeaders[i] = hashTable.tables[0].lookup(uint64(hashValueCol.GetInt64(i)))
+	hash := fnv.New64()
+	rehashBuf := new(bytes.Buffer)
+
+	// rehash all rows
+	for logicalRowIndex, physicalRowIndex := range j.usedRows {
+		oldHashValue := uint64(hashValueCol.GetInt64(physicalRowIndex))
+		rehashBuf.Reset()
+		err := binary.Write(rehashBuf, binary.LittleEndian, oldHashValue)
+		if err != nil {
+			return err
+		}
+
+		hash.Reset()
+		hash.Write(rehashBuf.Bytes())
+		newHashVal := hash.Sum64()
+		partIndex := newHashVal % uint64(j.ctx.PartitionNumber)
+		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
+			j.spillTmpChk[partIndex].AppendInt64(0, int64(newHashVal))
+			j.spillTmpChk[partIndex].AppendBytes(1, j.serializedKeys[logicalRowIndex])
+			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
+
+			if j.spillTmpChk[partIndex].IsFull() {
+				err := j.ctx.spillHelper.spillProbeChk(int(j.workID), int(partIndex), j.spillTmpChk[partIndex])
+				if err != nil {
+					return err
+				}
+				j.spillTmpChk[partIndex].Reset()
+			}
+
+			j.matchedRowsHeaders[logicalRowIndex] = 0
+		} else {
+			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: newHashVal, pos: logicalRowIndex})
+		}
 	}
+
 	j.currentProbeRow = 0
+	for i := 0; i < j.ctx.PartitionNumber; i++ {
+		for index := range j.hashValues[i] {
+			physicalPos := j.usedRows[j.hashValues[i][index].pos]
+			j.serializedKeys[i] = append(j.serializedKeys[i], serializedKeysCol.GetBytes(physicalPos)...)
+			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
+		}
+	}
 	return nil
 }
 

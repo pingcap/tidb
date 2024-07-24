@@ -50,8 +50,8 @@ func (j *leftOuterJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (j *leftOuterJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk, hashTable *hashTableV2) error {
-	err := j.baseJoinProbe.SetRestoredChunkForProbe(chk, hashTable)
+func (j *leftOuterJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
+	err := j.baseJoinProbe.SetRestoredChunkForProbe(chk)
 	if err != nil {
 		return err
 	}

@@ -82,9 +82,9 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 	return true, waitTime, joinResult
 }
 
-func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, hashTable *hashTableV2, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
+func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
 	waitTime = 0
-	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(probeChunk, hashTable)
+	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(probeChunk)
 	if joinResult.err != nil {
 		return false, 0, joinResult
 	}
@@ -159,8 +159,6 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		return
 	}
 
-	// TODO restore should be skipped when there is an error
-
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
@@ -171,6 +169,78 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
 	}
+}
+
+func (w *ProbeWorkerV2) restoreAndProbe() error {
+	probeTime := int64(0)
+	// TODO refine the statistic
+	// if w.HashJoinCtx.stats != nil {
+	// 	start := time.Now()
+	// 	defer func() {
+	// 		t := time.Since(start)
+	// 		atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
+	// 		atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
+	// 		setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
+	// 	}()
+	// }
+
+	var (
+		probeSideResult *chunk.Chunk
+	)
+	ok, joinResult := w.getNewJoinResult()
+	if !ok {
+		return nil
+	}
+
+	// Read and filter probeSideResult, and join the probeSideResult with the build side rows.
+	emptyProbeSideResult := &probeChkResource{
+		dest: w.probeResultCh,
+	}
+
+	for ok := true; ok; {
+		if w.HashJoinCtx.finished.Load() {
+			return nil
+		}
+		select {
+		case <-w.HashJoinCtx.closeCh:
+			return nil
+		case probeSideResult, ok = <-w.probeResultCh:
+		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
+		if !ok {
+			break
+		}
+
+		start := time.Now()
+		waitTime := int64(0)
+		ok, waitTime, joinResult = w.processOneRestoredProbeChunk(probeSideResult, joinResult)
+		probeTime += int64(time.Since(start)) - waitTime
+		if !ok {
+			break
+		}
+		probeSideResult.Reset()
+		emptyProbeSideResult.chk = probeSideResult
+
+		// Give back to probe fetcher
+		w.probeChkResourceCh <- emptyProbeSideResult
+	}
+
+	err := w.JoinProbe.SpillRemainingProbeChunks()
+	if err != nil {
+		return err
+	}
+
+	// note joinResult.chk may be nil when getNewJoinResult fails in loops
+	if joinResult == nil {
+		return nil
+	} else if joinResult.err != nil {
+		handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, joinResult.err)
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
+		w.HashJoinCtx.joinResultCh <- joinResult
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
+		w.joinChkResourceCh <- joinResult.chk
+	}
+	return nil
 }
 
 func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {

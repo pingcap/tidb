@@ -16,7 +16,6 @@ package join
 
 import (
 	"bytes"
-	"encoding/binary"
 	"hash"
 	"hash/fnv"
 	"slices"
@@ -70,6 +69,9 @@ type hashJoinSpillHelper struct {
 	// This variable describes which columns can be directed respilled.
 	probeSpilledRowIdx []int
 
+	spilledPartitions []bool
+	spillTriggered    bool
+
 	triggeredInBuildStageForTest bool
 	spillRoundForTest            int
 }
@@ -97,6 +99,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*typ
 	if hashJoinExec != nil {
 		helper.memTracker = hashJoinExec.memTracker
 		helper.diskTracker = hashJoinExec.diskTracker
+		helper.spilledPartitions = make([]bool, hashJoinExec.PartitionNumber)
 	}
 	return helper
 }
@@ -127,14 +130,45 @@ func (h *hashJoinSpillHelper) close() {
 
 	partition := h.stack.pop()
 	for partition != nil {
-		partition.buildSideChunks.Close()
-		partition.probeSideChunks.Close()
+		for _, inDisk := range partition.buildSideChunks {
+			inDisk.Close()
+		}
+		for _, inDisk := range partition.probeSideChunks {
+			inDisk.Close()
+		}
 		partition = h.stack.pop()
 	}
 
 	for _, inDisk := range h.discardedInDisk {
 		inDisk.Close()
 	}
+}
+
+func (h *hashJoinSpillHelper) getSpilledPartitions() []int {
+	spilledPartitions := make([]int, 0)
+	for i, spilled := range h.spilledPartitions {
+		if spilled {
+			spilledPartitions = append(spilledPartitions, i)
+		}
+	}
+	return spilledPartitions
+}
+
+func (h *hashJoinSpillHelper) getUnspilledPartitions() []int {
+	unspilledPartitions := make([]int, 0)
+	for i, spilled := range h.spilledPartitions {
+		if !spilled {
+			unspilledPartitions = append(unspilledPartitions, i)
+		}
+	}
+	return unspilledPartitions
+}
+
+func (h *hashJoinSpillHelper) setPartitionSpilled(partIDs []int) {
+	for _, partID := range partIDs {
+		h.spilledPartitions[partID] = true
+	}
+	h.spillTriggered = true
 }
 
 func (h *hashJoinSpillHelper) setNotSpilled() {
@@ -167,41 +201,31 @@ func (h *hashJoinSpillHelper) isSpillNeeded() bool {
 	return h.spillStatus == needSpill
 }
 
-func (h *hashJoinSpillHelper) isSpillTriggered() bool {
-	h.cond.L.Lock()
-	defer h.cond.L.Unlock()
-	return len(h.buildRowsInDisk) > 0
+func (h *hashJoinSpillHelper) isSpillTriggeredNoLock() bool {
+	return h.spillTriggered
 }
 
 func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
-	return len(h.buildRowsInDisk) > 0 && h.buildRowsInDisk[partID] != nil
+	return h.spilledPartitions[partID]
 }
 
-func (h *hashJoinSpillHelper) discardInDisks(inDisks []*chunk.DataInDiskByChunks) error {
+// func (h *hashJoinSpillHelper)
+
+func (h *hashJoinSpillHelper) discardInDisks(inDisks [][]*chunk.DataInDiskByChunks) error {
 	hasNilInDisk := false
-	for _, inDisk := range inDisks {
-		if inDisk == nil {
-			hasNilInDisk = true
+	for _, disks := range inDisks {
+		for _, disk := range disks {
+			if disk == nil {
+				hasNilInDisk = true
+			}
+			h.discardedInDisk = append(h.discardedInDisk, disk)
 		}
-		h.discardedInDisk = append(h.discardedInDisk, inDisk)
 	}
 
 	if hasNilInDisk {
 		return errors.NewNoStackError("Receive nil DataInDiskByChunks")
 	}
 	return nil
-}
-
-func (h *hashJoinSpillHelper) rehash(hashValue uint64) uint64 {
-	h.rehashBuf.Reset()
-	err := binary.Write(h.rehashBuf, binary.LittleEndian, hashValue)
-	if err != nil {
-		panic("conversion error")
-	}
-
-	h.hash.Reset()
-	h.hash.Write(h.rehashBuf.Bytes())
-	return h.hash.Sum64()
 }
 
 // TODO write a specific test for this function
@@ -213,7 +237,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 		partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(i)
 	}
 
-	spilledPartitions := h.hashJoinExec.HashJoinCtxV2.hashTableContext.getSpilledPartitions()
+	spilledPartitions := h.getSpilledPartitions()
 
 	releasedMemoryUsage := int64(0)
 	for _, partID := range spilledPartitions {
@@ -229,7 +253,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 		return spilledPartitions, releasedMemoryUsage
 	}
 
-	unspilledPartitions := h.hashJoinExec.HashJoinCtxV2.hashTableContext.getUnspilledPartitions()
+	unspilledPartitions := h.getUnspilledPartitions()
 
 	type partIDAndMem struct {
 		partID      int
@@ -290,7 +314,7 @@ func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, 
 	return validJoinKeys
 }
 
-func (h *hashJoinSpillHelper) spillBuildSideOnePartition(workerID int, partID int, segments []*rowTableSegment) error {
+func (h *hashJoinSpillHelper) spillSegmentsToDisk(workerID int, partID int, segments []*rowTableSegment) error {
 	if h.buildRowsInDisk[workerID] == nil {
 		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
@@ -303,10 +327,10 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(workerID int, partID in
 		h.probeRowsInDisk[workerID][partID] = inDisk
 	}
 
-	return h.spillSegmentsToDisk(workerID, h.buildRowsInDisk[workerID][partID], segments)
+	return h.spillSegmentsToDiskImpl(workerID, h.buildRowsInDisk[workerID][partID], segments)
 }
 
-func (h *hashJoinSpillHelper) spillSegmentsToDisk(workerID int, disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
+func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
 	// TODO we can validJoinKeys buffer into hashJoinSpillHelper so that we can avoid repeated allocation
 	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
 	h.tmpSpillBuildSideChunks[workerID].Reset()
@@ -378,9 +402,7 @@ func (h *hashJoinSpillHelper) spillBuildRows() error {
 	waiter := &sync.WaitGroup{}
 	waiter.Add(len(partitionsNeedSpill))
 
-	for _, partID := range partitionsNeedSpill {
-		h.hashJoinExec.hashTableContext.setPartitionSpilled(partID)
-	}
+	h.setPartitionSpilled(partitionsNeedSpill)
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
 	for i := 0; i < workerNum; i++ {
@@ -399,12 +421,12 @@ func (h *hashJoinSpillHelper) spillBuildRows() error {
 
 				startPosInRawData := builder.startPosInRawData[partID]
 				if len(startPosInRawData) > 0 {
-					worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(i, partID, worker.builder, false)
+					worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
 				}
 				spilledSegments := worker.getSegments(partID)
 				worker.clearSegments(partID)
 
-				err := h.spillBuildSideOnePartition(workerID, partID, spilledSegments)
+				err := h.spillSegmentsToDisk(workerID, partID, spilledSegments)
 				if err != nil {
 					errChannel <- util.GetRecoverError(err)
 				}
@@ -422,221 +444,43 @@ func (h *hashJoinSpillHelper) spillBuildRows() error {
 	return nil
 }
 
-func (h *hashJoinSpillHelper) prepareForRestoring() error {
-	if len(h.buildRowsInDisk) != len(h.probeRowsInDisk) {
-		return errors.NewNoStackError("length of buildRowsInDisk and probeRowsInDisk are different")
+func (h *hashJoinSpillHelper) reset() {
+	for i := range h.buildRowsInDisk {
+		h.buildRowsInDisk[i] = nil
+		h.probeRowsInDisk[i] = nil
 	}
 
-	for i, buildInDisk := range h.buildRowsInDisk {
-		if buildInDisk == nil || h.probeRowsInDisk[i] == nil {
-			if buildInDisk == nil && h.probeRowsInDisk[i] == nil {
-				continue
+	for i := range h.spilledPartitions {
+		h.spilledPartitions[i] = false
+	}
+
+	h.spillTriggered = false
+}
+
+func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) {
+	partNum := h.hashJoinExec.PartitionNumber
+	concurrency := int(h.hashJoinExec.Concurrency)
+
+	for i := 0; i < partNum; i++ {
+		buildInDisks := make([]*chunk.DataInDiskByChunks, 0)
+		probeInDisks := make([]*chunk.DataInDiskByChunks, 0)
+		for j := 0; j < concurrency; j++ {
+			if h.buildRowsInDisk[j][i] != nil {
+				buildInDisks = append(buildInDisks, h.buildRowsInDisk[j][i])
+				probeInDisks = append(probeInDisks, h.probeRowsInDisk[j][i])
 			}
-			panic("buildInDisk and probeRowsInDisk should both be nil")
 		}
+
 		rd := &restorePartition{
-			// buildSideChunks: buildInDisk, // TODO
-			// probeSideChunks: h.probeRowsInDisk[i],
-			round: 1,
+			buildSideChunks: buildInDisks,
+			probeSideChunks: probeInDisks,
+			round:           lastRound + 1,
 		}
 		h.stack.push(rd)
 	}
-	return nil
-}
 
-// Append restored data to segment
-func (h *hashJoinSpillHelper) appendSegment(seg *rowTableSegment, row chunk.Row) {
-	hashValue := row.GetInt64(0)
-	validJoinKey := row.GetBytes(1)
-	rawData := row.GetBytes(2)
-
-	if int(validJoinKey[0]) != 0 {
-		// TODO we need to test the restore of validJoinKeyPos
-		seg.validJoinKeyPos = append(seg.validJoinKeyPos, seg.getRowNum())
-	}
-	seg.hashValues = append(seg.hashValues, uint64(hashValue))
-
-	seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
-	seg.rawData = append(seg.rawData, rawData...)
-}
-
-func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments []*rowTableSegment) ([]*rowTableSegment, int64) {
-	var seg *rowTableSegment
-	segLen := len(segments)
-	if segLen > 0 && !segments[segLen-1].finalized {
-		seg = segments[segLen-1]
-	} else {
-		seg = newRowTableSegment()
-		segments = append(segments, seg)
-	}
-
-	totalMemoryUsage := int64(0)
-	rowNum := chunk.NumRows()
-	for i := 0; i < rowNum; i++ {
-		if seg.getRowNum() >= int(maxRowTableSegmentSize) {
-			// rowLocations's initialization has been done, so it's ok to set `finalized` to true
-			seg.finalized = true
-
-			memoryUsage := seg.totalUsedBytes()
-			h.memTracker.Consume(memoryUsage)
-			totalMemoryUsage += memoryUsage
-			seg = newRowTableSegment()
-			segments = append(segments, seg)
-		}
-
-		row := chunk.GetRow(i)
-		h.appendSegment(seg, row)
-	}
-
-	return segments, totalMemoryUsage
-}
-
-func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, releasedMemoryUsage int64, buildInDisk *chunk.DataInDiskByChunks, chunkIdx int) ([]*chunk.DataInDiskByChunks, error) {
-	h.setInSpilling()
-	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
-
-	defer h.setNotSpilled()
-	defer h.memTracker.Consume(-releasedMemoryUsage)
-
-	newBuildInDisk := h.createNewDiskForBuild()
-	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
-
-	if len(h.tmpSpillBuildSideChunks) < h.hashJoinExec.PartitionNumber {
-		panic("length of tmpSpillBuildSideChunks should not be smaller than partition number")
-	}
-
-	for _, chk := range h.tmpSpillBuildSideChunks {
-		chk.Reset()
-	}
-
-	// Spill data in segments
-	for _, seg := range segments {
-		validJoinKeys = h.generateSpilledValidJoinKey(seg, validJoinKeys)
-		rows := seg.getRowsBytesForSpill()
-
-		for i, row := range rows {
-			newHashValue := h.rehash(seg.hashValues[i])
-			partID := newHashValue % uint64(h.hashJoinExec.PartitionNumber)
-
-			if h.tmpSpillBuildSideChunks[partID].IsFull() {
-				err := newBuildInDisk[partID].Add(h.tmpSpillBuildSideChunks[partID])
-				if err != nil {
-					return nil, err
-				}
-				h.tmpSpillBuildSideChunks[partID].Reset()
-			}
-
-			h.tmpSpillBuildSideChunks[partID].AppendInt64(0, int64(newHashValue))
-			h.tmpSpillBuildSideChunks[partID].AppendBytes(1, validJoinKeys[i:i+1])
-			h.tmpSpillBuildSideChunks[partID].AppendBytes(2, row)
-		}
-	}
-
-	// respill build side in disk data
-	chunkNum := buildInDisk.NumChunks()
-	for i := chunkIdx; i < chunkNum; i++ {
-		// TODO reuse chunk
-		chunk, err := buildInDisk.GetChunk(i)
-		if err != nil {
-			return nil, err
-		}
-
-		rowNum := chunk.NumRows()
-		for j := 0; j < rowNum; j++ {
-			row := chunk.GetRow(j)
-			newHashValue := h.rehash(uint64(row.GetInt64(0)))
-			partID := newHashValue % uint64(h.hashJoinExec.PartitionNumber)
-
-			if h.tmpSpillBuildSideChunks[partID].IsFull() {
-				err := newBuildInDisk[partID].Add(h.tmpSpillBuildSideChunks[partID])
-				if err != nil {
-					return nil, err
-				}
-				h.tmpSpillBuildSideChunks[partID].Reset()
-			}
-
-			h.tmpSpillBuildSideChunks[partID].AppendInt64(0, int64(newHashValue))
-			h.tmpSpillBuildSideChunks[partID].AppendBytes(1, row.GetBytes(1))
-			h.tmpSpillBuildSideChunks[partID].AppendBytes(2, row.GetBytes(2))
-		}
-	}
-
-	// Spill remaining rows in tmpSpillBuildSideChunks
-	for i := 0; i < h.hashJoinExec.PartitionNumber; i++ {
-		if h.tmpSpillBuildSideChunks[i].NumRows() > 0 {
-			err := newBuildInDisk[i].Add(h.tmpSpillBuildSideChunks[i])
-			if err != nil {
-				return nil, err
-			}
-			h.tmpSpillBuildSideChunks[i].Reset()
-		}
-	}
-
-	return newBuildInDisk, nil
-}
-
-func (h *hashJoinSpillHelper) respillForProbeData(probeInDisk *chunk.DataInDiskByChunks) ([]*chunk.DataInDiskByChunks, error) {
-	newProbeInDisk := h.createNewDiskForProbe()
-	chunkNum := probeInDisk.NumChunks()
-	h.initTmpSpillProbeSideChunks()
-	for i := 0; i < chunkNum; i++ {
-		// TODO reuse chunk
-		chunk, err := probeInDisk.GetChunk(i)
-		if err != nil {
-			return nil, err
-		}
-
-		rowNum := chunk.NumRows()
-		for j := 0; j < rowNum; j++ {
-			row := chunk.GetRow(j)
-			newHashValue := h.rehash(uint64(row.GetInt64(0)))
-			partID := newHashValue % uint64(h.hashJoinExec.PartitionNumber)
-
-			if h.tmpSpillProbeSideChunks[partID].IsFull() {
-				err := newProbeInDisk[partID].Add(h.tmpSpillProbeSideChunks[partID])
-				if err != nil {
-					return nil, err
-				}
-				h.tmpSpillProbeSideChunks[partID].Reset()
-			}
-
-			h.tmpSpillProbeSideChunks[partID].AppendInt64(0, int64(newHashValue))
-			h.tmpSpillProbeSideChunks[partID].AppendPartialRowByColIdxs(1, row, h.probeSpilledRowIdx)
-		}
-	}
-
-	// Spill remaining rows in tmpSpillProbeSideChunks
-	for i := 0; i < h.hashJoinExec.PartitionNumber; i++ {
-		if h.tmpSpillProbeSideChunks[i].NumRows() > 0 {
-			err := newProbeInDisk[i].Add(h.tmpSpillProbeSideChunks[i])
-			if err != nil {
-				return nil, err
-			}
-			h.tmpSpillProbeSideChunks[i].Reset()
-		}
-	}
-
-	return newProbeInDisk, nil
-}
-
-func (h *hashJoinSpillHelper) createNewDiskForBuild() []*chunk.DataInDiskByChunks {
-	newBuildInDisk := make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
-	for i := range newBuildInDisk {
-		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
-		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
-		newBuildInDisk[i] = inDisk
-	}
-	return newBuildInDisk
-}
-
-func (h *hashJoinSpillHelper) createNewDiskForProbe() []*chunk.DataInDiskByChunks {
-	newProbeInDisk := make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
-	for i := range newProbeInDisk {
-		inDisk := chunk.NewDataInDiskByChunks(h.probeFieldTypes)
-		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
-		newProbeInDisk[i] = inDisk
-	}
-	return newProbeInDisk
+	// Reset something as spill may still be triggered during restoring
+	h.reset()
 }
 
 func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
@@ -655,85 +499,6 @@ func (h *hashJoinSpillHelper) initTmpSpillProbeSideChunks() {
 	}
 }
 
-// TODO we need to refactor this function after applied concurrent restoring
-func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hashTableV2, bool, int64, error) {
-	rowTb := &rowTable{}
-	segments := make([]*rowTableSegment, 0, 10)
-	memoryUsage := int64(0)
-	totalMemoryUsage := int64(0)
-
-	spillTriggered := false
-	buildInDisk := partition.buildSideChunks
-	chunkNum := buildInDisk.NumChunks()
-	idx := 0
-	for ; idx < chunkNum; idx++ {
-		// TODO maybe we can reuse a chunk
-		chunk, err := buildInDisk.GetChunk(idx)
-		if err != nil {
-			return nil, spillTriggered, 0, err
-		}
-
-		// TODO test re-spill case
-		segments, memoryUsage = h.appendChunkToSegments(chunk, segments)
-		totalMemoryUsage += memoryUsage
-		if h.isSpillNeeded() {
-			idx++
-			break
-		}
-	}
-
-	if len(segments) > 0 && !segments[len(segments)-1].finalized {
-		segments[len(segments)-1].finalized = true
-		memoryUsage := segments[len(segments)-1].totalUsedBytes()
-		h.memTracker.Consume(memoryUsage)
-		totalMemoryUsage += memoryUsage
-	}
-
-	rowTb.segments = segments
-	subTb := newSubTable(rowTb, h.memTracker)
-
-	if h.isSpillNeeded() {
-		spillTriggered = true
-		if partition.round >= h.hashJoinExec.maxSpillRound {
-			return nil, spillTriggered, 0, errors.Errorf("Exceed max hash join spill round. max round: %d", h.hashJoinExec.maxSpillRound)
-		}
-
-		newBuildInDisks, err := h.respillForBuildData(subTb.rowData.getSegments(), totalMemoryUsage, buildInDisk, idx)
-		if err != nil {
-			return nil, spillTriggered, 0, err
-		}
-
-		newProbeInDisks, err := h.respillForProbeData(partition.probeSideChunks)
-		if err != nil {
-			return nil, spillTriggered, 0, err
-		}
-
-		if len(newBuildInDisks) != len(newProbeInDisks) {
-			panic("Hash join's respill occurs error")
-		}
-
-		newRound := partition.round + 1
-		for i := range newBuildInDisks {
-			h.stack.push(&restorePartition{
-				buildSideChunks: newBuildInDisks[i],
-				probeSideChunks: newProbeInDisks[i],
-				round:           newRound,
-			})
-		}
-		h.spillRoundForTest = max(h.spillRoundForTest, newRound)
-
-		return nil, spillTriggered, totalMemoryUsage, nil
-	} else {
-		subTb.build(0, len(subTb.rowData.segments))
-	}
-
-	hashTable := &hashTableV2{}
-	hashTable.tables = append(hashTable.tables, subTb)
-	hashTable.partitionNumber = 1
-
-	return hashTable, spillTriggered, totalMemoryUsage, nil
-}
-
 func (h *hashJoinSpillHelper) isSpillTriggeredInBuildStageForTest() bool {
 	return h.triggeredInBuildStageForTest
 }
@@ -744,8 +509,8 @@ func (h *hashJoinSpillHelper) isRespillTriggeredForTest() bool {
 
 // Data in this structure are in same partition
 type restorePartition struct {
-	buildSideChunks *chunk.DataInDiskByChunks
-	probeSideChunks *chunk.DataInDiskByChunks
+	buildSideChunks []*chunk.DataInDiskByChunks
+	probeSideChunks []*chunk.DataInDiskByChunks
 
 	round int
 }

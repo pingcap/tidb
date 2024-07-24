@@ -15,13 +15,11 @@
 package join
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -130,6 +128,58 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 
 	if w.HashJoinCtx.finished.Load() {
 		return
+	}
+
+	start := time.Now()
+	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
+	cost += int64(time.Since(start))
+	return nil
+}
+
+func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+	defer fetcherAndWorkerSyncer.Done()
+	
+	start := time.Now()
+	err := w.builder.processOneRestoredChunk(chk, w.HashJoinCtx, int(w.WorkerID), w.HashJoinCtx.PartitionNumber)
+	if err != nil {
+		return err
+	}
+	*cost += int64(time.Since(start))
+	return nil
+}
+
+func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) error {
+	// TODO add statistic
+	cost := int64(0)
+	// defer func() {
+	// 	if w.HashJoinCtx.stats != nil {
+	// 		atomic.AddInt64(&w.HashJoinCtx.stats.partitionData, cost)
+	// 		setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
+	// 	}
+	// }()
+
+	partitionNumber := w.HashJoinCtx.PartitionNumber
+	hashJoinCtx := w.HashJoinCtx
+
+	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+
+	chunkNum := inDisk.NumChunks()
+	for i := 0; i < chunkNum; i++ {
+		<-syncCh
+		if w.HashJoinCtx.finished.Load() {
+			return nil
+		}
+
+		// TODO reuse chunk
+		chk, err := inDisk.GetChunk(i)
+		if err != nil {
+			return err
+		}
+
+		err = w.processOneRestoredChunk(chk, fetcherAndWorkerSyncer, &cost)
+		if err != nil {
+			return err
+		}
 	}
 
 	start := time.Now()
