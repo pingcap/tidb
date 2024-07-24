@@ -288,16 +288,11 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	// create tiflash replica
 	{
 		is := dom.InfoSchema()
-		db, exists := is.SchemaByName(model.NewCIStr("test"))
-		require.True(t, exists)
-		for _, tbl := range is.SchemaTables(db.Name) {
-			tblInfo := tbl.Meta()
-			if tblInfo.Name.L == "show_warnings_expr_pushdown" {
-				tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-					Count:     1,
-					Available: true,
-				}
-			}
+		tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("show_warnings_expr_pushdown"))
+		require.NoError(t, err)
+		tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
 		}
 	}
 	tk.MustExec("set tidb_allow_mpp=0")

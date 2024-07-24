@@ -669,15 +669,13 @@ func TestSnapshotVersion(t *testing.T) {
 	tbl, err := currSnapIs.TableByName(context.Background(), model.NewCIStr("test2"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	m, err := dom.GetSnapshotMeta(snapTS)
-	require.NoError(t, err)
+	m := dom.GetSnapshotMeta(snapTS)
 
 	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
 	require.True(t, meta.ErrDBNotExists.Equal(err))
 	require.Nil(t, tblInfo1)
 
-	m, err = dom.GetSnapshotMeta(currSnapTS)
-	require.NoError(t, err)
+	m = dom.GetSnapshotMeta(currSnapTS)
 
 	tblInfo2, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
 	require.NoError(t, err)

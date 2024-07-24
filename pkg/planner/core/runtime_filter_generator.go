@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -185,7 +186,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPr
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
 		logutil.BgLogger().Debug("The runtime filter doesn't support null safe eq predicate",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)))
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)))
 		return false
 	}
 	var targetColumn, srcColumn *expression.Column
@@ -202,7 +203,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPr
 	// todo: cast expr in target column
 	if targetColumn.IsHidden || targetColumn.OrigName == "" {
 		logutil.BgLogger().Debug("Target column does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)),
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
 			zap.String("TargetColumn", targetColumn.String()),
 			zap.Bool("IsHidden", targetColumn.IsHidden),
 			zap.String("OrigName", targetColumn.OrigName))
@@ -214,7 +215,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPr
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
 		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetStaticType().Hybrid() || srcColumn.GetStaticType().IsArray() {
 		logutil.BgLogger().Debug("Src column type does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)),
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
 			zap.String("SrcColumn", srcColumn.String()),
 			zap.String("SrcColumnType", srcColumn.GetStaticType().String()))
 		return false

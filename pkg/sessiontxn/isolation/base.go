@@ -120,7 +120,6 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
 			InfoSchema: p.infoSchema,
-			ShardStep:  int(sessVars.ShardAllocateStep),
 			TxnScope:   sessVars.CheckAndGetTxnScope(),
 		},
 	}
@@ -295,6 +294,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+	sessVars.GetRowIDShardGenerator().SetShardStep(int(sessVars.ShardAllocateStep))
 	sessVars.TxnCtxMu.Unlock()
 	if sessVars.MemDBFootprint != nil {
 		sessVars.MemDBFootprint.Detach()

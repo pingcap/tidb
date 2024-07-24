@@ -11,7 +11,7 @@ analyze table p;
 drop table if exists t;
 create table t (id int, c int);
 insert into t values (1, 3);
-analyze table t;
+analyze table t all columns;
 
 --echo # TestGlobalIndexJoin
 explain format='brief' select * from p inner join t on p.id = t.id;
@@ -39,7 +39,7 @@ insert into p values (1,3,1,1), (3,4,3,3), (5,6,5,5), (7,9,7,7);
 analyze table p;
 create table t (id int, c int);
 insert into t values (1, 3);
-analyze table t;
+analyze table t all columns;
 
 --echo # TestGlobalIndexJoinForClusteredIndex
 explain format='brief' select * from p inner join t on p.id = t.id;

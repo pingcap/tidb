@@ -75,6 +75,7 @@ type staticEvalCtxState struct {
 	currentDB                    string
 	currentTime                  *timeOnce
 	maxAllowedPacket             uint64
+	enableRedactLog              string
 	defaultWeekFormatMode        string
 	divPrecisionIncrement        int
 	requestVerificationFn        func(db, table, column string, priv mysql.PrivilegeType) bool
@@ -226,6 +227,7 @@ func NewStaticEvalContext(opt ...StaticEvalCtxOption) *StaticEvalContext {
 			currentTime:           &timeOnce{},
 			sqlMode:               defaultSQLMode,
 			maxAllowedPacket:      variable.DefMaxAllowedPacket,
+			enableRedactLog:       variable.DefTiDBRedactLog,
 			defaultWeekFormatMode: variable.DefDefaultWeekFormat,
 			divPrecisionIncrement: variable.DefDivPrecisionIncrement,
 		},
@@ -314,6 +316,11 @@ func (ctx *StaticEvalContext) CurrentTime() (tm time.Time, err error) {
 // GetMaxAllowedPacket returns the value of the 'max_allowed_packet' system variable.
 func (ctx *StaticEvalContext) GetMaxAllowedPacket() uint64 {
 	return ctx.maxAllowedPacket
+}
+
+// GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
+func (ctx *StaticEvalContext) GetTiDBRedactLog() string {
+	return ctx.enableRedactLog
 }
 
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.

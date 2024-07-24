@@ -83,10 +83,6 @@ func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
-		return p, nil
-	}
-
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
 	var err error

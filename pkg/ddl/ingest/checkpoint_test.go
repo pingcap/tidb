@@ -23,7 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -61,10 +61,9 @@ func TestCheckpointManager(t *testing.T) {
 	}, 8, 8, 0)
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs)
-	flushCtrl := &dummyFlushCtrl{imported: false}
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, mockGetTSClient{})
+	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, []int64{1}, tmpFolder, mockGetTSClient{})
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -72,23 +71,27 @@ func TestCheckpointManager(t *testing.T) {
 	mgr.Register(2, []byte{'2', '9'})
 	mgr.UpdateTotalKeys(1, 100, false)
 	require.False(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
-	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
+	mgr.UpdateWrittenKeys(1, 100)
+	mgr.AdvanceWatermark(true, false)
 	require.False(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 	mgr.UpdateTotalKeys(1, 100, true)
-	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
+	mgr.UpdateWrittenKeys(1, 100)
+	mgr.AdvanceWatermark(true, false)
 	// The data is not imported to the storage yet.
 	require.False(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
-	flushCtrl.imported = true // Mock the data is imported to the storage.
-	require.NoError(t, mgr.UpdateWrittenKeys(2, 0))
+	mgr.UpdateWrittenKeys(2, 0)
+	mgr.AdvanceWatermark(true, true) // Mock the data is imported to the storage.
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 
 	// Only when the last batch is completed, the job can be completed.
 	mgr.UpdateTotalKeys(2, 50, false)
 	mgr.UpdateTotalKeys(2, 50, true)
-	require.NoError(t, mgr.UpdateWrittenKeys(2, 50))
+	mgr.UpdateWrittenKeys(2, 50)
+	mgr.AdvanceWatermark(true, true)
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 	require.False(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
-	require.NoError(t, mgr.UpdateWrittenKeys(2, 50))
+	mgr.UpdateWrittenKeys(2, 50)
+	mgr.AdvanceWatermark(true, true)
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 	require.True(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
 
@@ -99,8 +102,10 @@ func TestCheckpointManager(t *testing.T) {
 	mgr.UpdateTotalKeys(3, 100, true)
 	mgr.UpdateTotalKeys(4, 100, true)
 	mgr.UpdateTotalKeys(5, 100, true)
-	require.NoError(t, mgr.UpdateWrittenKeys(5, 100))
-	require.NoError(t, mgr.UpdateWrittenKeys(4, 100))
+	mgr.UpdateWrittenKeys(5, 100)
+	mgr.AdvanceWatermark(true, true)
+	mgr.UpdateWrittenKeys(4, 100)
+	mgr.AdvanceWatermark(true, true)
 	require.False(t, mgr.IsKeyProcessed([]byte{'3', '9'}))
 	require.False(t, mgr.IsKeyProcessed([]byte{'4', '9'}))
 }
@@ -116,15 +121,15 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	}, 8, 8, 0)
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs)
-	flushCtrl := &dummyFlushCtrl{imported: true}
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, mockGetTSClient{})
+	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, []int64{1}, tmpFolder, mockGetTSClient{})
 	require.NoError(t, err)
 
 	mgr.Register(1, []byte{'1', '9'})
 	mgr.UpdateTotalKeys(1, 100, true)
-	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
+	mgr.UpdateWrittenKeys(1, 100)
+	mgr.AdvanceWatermark(true, true)
 	mgr.Close() // Wait the global checkpoint to be updated to the reorg table.
 	r, err := tk.Exec("select reorg_meta from mysql.tidb_ddl_reorg where job_id = 1 and ele_id = 1;")
 	require.NoError(t, err)
@@ -154,6 +159,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 			LocalKeyCount:  100,
 			GlobalSyncKey:  []byte{'1', '9'},
 			GlobalKeyCount: 200,
+			PhysicalID:     1,
 			InstanceAddr:   ingest.InstanceAddr(),
 			Version:        1,
 			TS:             123456,
@@ -168,10 +174,9 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	}, 8, 8, 0)
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs)
-	flushCtrl := &dummyFlushCtrl{imported: false}
 	tmpFolder := t.TempDir()
 	// checkpoint manager should not use local checkpoint if the folder is empty
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, nil)
+	mgr, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, []int64{1}, tmpFolder, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
@@ -182,7 +187,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	require.EqualValues(t, 123456, mgr.GetTS())
 
 	createDummyFile(t, tmpFolder)
-	mgr2, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, nil)
+	mgr2, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, []int64{1}, tmpFolder, nil)
 	require.NoError(t, err)
 	defer mgr2.Close()
 	require.True(t, mgr2.IsKeyProcessed([]byte{'1', '9'}))
@@ -191,12 +196,4 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	require.Equal(t, 100, localCnt)
 	require.EqualValues(t, []byte{'1', '9'}, globalNextKey)
 	require.EqualValues(t, 123456, mgr.GetTS())
-}
-
-type dummyFlushCtrl struct {
-	imported bool
-}
-
-func (d *dummyFlushCtrl) Flush(mode ingest.FlushMode) (bool, bool, error) {
-	return true, d.imported, nil
 }

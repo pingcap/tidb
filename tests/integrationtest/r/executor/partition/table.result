@@ -354,7 +354,7 @@ partition p0 values less than (5),
 partition p1 values less than (10),
 partition p2 values less than (15));
 insert into t values (2), (7), (12);
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a < 3;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p0	data:Selection

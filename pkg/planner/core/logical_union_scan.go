@@ -32,9 +32,9 @@ import (
 type LogicalUnionScan struct {
 	logicalop.BaseLogicalPlan
 
-	conditions []expression.Expression
+	Conditions []expression.Expression
 
-	handleCols util.HandleCols
+	HandleCols util.HandleCols
 }
 
 // Init initializes LogicalUnionScan.
@@ -49,8 +49,8 @@ func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnion
 func (p *LogicalUnionScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "conds:%s",
-		expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.conditions))
-	fmt.Fprintf(buffer, ", handle:%s", p.handleCols)
+		expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
+	fmt.Fprintf(buffer, ", handle:%s", p.HandleCols)
 	return buffer.String()
 }
 
@@ -68,23 +68,23 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 		return predicates, p
 	}
 	retainedPredicates, _ := p.Children()[0].PredicatePushDown(predicates, opt)
-	p.conditions = make([]expression.Expression, 0, len(predicates))
-	p.conditions = append(p.conditions, predicates...)
+	p.Conditions = make([]expression.Expression, 0, len(predicates))
+	p.Conditions = append(p.Conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
 	return retainedPredicates, p
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.handleCols.NumCols(); i++ {
-		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
+	for i := 0; i < p.HandleCols.NumCols(); i++ {
+		parentUsedCols = append(parentUsedCols, p.HandleCols.GetCol(i))
 	}
 	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraPhysTblID {
 			parentUsedCols = append(parentUsedCols, col)
 		}
 	}
-	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.Conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)

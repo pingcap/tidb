@@ -66,7 +66,8 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
 	eCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	return expression.ExplainExpressionList(eCtx, p.Exprs, p.Schema())
+	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
+	return expression.ExplainExpressionList(eCtx, p.Exprs, p.Schema(), enableRedactLog)
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
@@ -131,6 +132,10 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt)
 	if err != nil {
 		return nil, err
+	}
+	// If its columns are all pruned, we directly use its child. The child will output at least one column.
+	if p.Schema().Len() == 0 {
+		return p.Children()[0], nil
 	}
 	return p, nil
 }

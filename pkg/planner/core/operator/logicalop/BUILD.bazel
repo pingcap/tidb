@@ -4,6 +4,7 @@ go_library(
     name = "logicalop",
     srcs = [
         "base_logical_plan.go",
+        "logical_max_one_row.go",
         "logical_schema_producer.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
@@ -21,6 +22,7 @@ go_library(
         "//pkg/planner/util/utilfuncp",
         "//pkg/types",
         "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/plancodec",
         "//pkg/util/tracing",
     ],
 )

@@ -1018,7 +1018,7 @@ func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
 		// Check string equivalence if one of the expressions is a clone.
 		sameString := false
 		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx) == expr.StringWithCtx(ectx))
+			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		if e == expr || sameString {
 			return true
@@ -1871,7 +1871,7 @@ func ExprsToStringsForDisplay(ctx EvalContext, exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
-				strconv.Quote(cond.StringWithCtx(ctx)),
+				strconv.Quote(cond.StringWithCtx(ctx, errors.RedactLogDisable)),
 				quote),
 			quote)
 	}
