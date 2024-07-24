@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"strings"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -125,8 +127,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
 		}
 		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].StringWithCtx(ectx)
-			r := eq.GetArgs()[1].StringWithCtx(ectx)
+			l := eq.GetArgs()[0].StringWithCtx(ectx, perrors.RedactLogDisable)
+			r := eq.GetArgs()[1].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *PhysicalMergeJoin:
@@ -154,8 +156,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
 		for i := range x.LeftJoinKeys {
-			l := x.LeftJoinKeys[i].StringWithCtx(ectx)
-			r := x.RightJoinKeys[i].StringWithCtx(ectx)
+			l := x.LeftJoinKeys[i].StringWithCtx(ectx, perrors.RedactLogDisable)
+			r := x.RightJoinKeys[i].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
@@ -165,7 +167,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *LogicalMaxOneRow, *PhysicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *LogicalLimit, *PhysicalLimit:
 		str = "Limit"
@@ -195,8 +197,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].StringWithCtx(ectx)
-			r := eq.GetArgs()[1].StringWithCtx(ectx)
+			l := eq.GetArgs()[0].StringWithCtx(ectx, perrors.RedactLogDisable)
+			r := eq.GetArgs()[1].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
@@ -249,7 +251,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
-			str += aggFunc.StringWithCtx(ectx)
+			str += aggFunc.StringWithCtx(ectx, perrors.RedactLogDisable)
 			if i != len(x.AggFuncs)-1 {
 				str += ","
 			}
@@ -317,7 +319,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, col := range x.ColTasks {
 			var colNames []string
 			if col.HandleCols != nil {
-				colNames = append(colNames, col.HandleCols.StringWithCtx(ectx))
+				colNames = append(colNames, col.HandleCols.StringWithCtx(ectx, perrors.RedactLogDisable))
 			}
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, c.Name.O)

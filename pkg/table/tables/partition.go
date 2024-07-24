@@ -1579,15 +1579,9 @@ func checkConstraintForExchangePartition(sctx table.MutateContext, row []types.D
 			return errors.Errorf("exchange partition process table by id failed")
 		}
 	}
-	type CheckConstraintTable interface {
-		CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error
-	}
-	cc, ok := nt.(CheckConstraintTable)
-	if !ok {
-		return errors.Errorf("exchange partition process assert check constraint failed")
-	}
-	err := cc.CheckRowConstraint(sctx, row)
-	if err != nil {
+
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	if err := table.CheckRowConstraintWithDatum(evalCtx, nt.WritableConstraint(), row); err != nil {
 		// TODO: make error include ExchangePartition info.
 		return err
 	}

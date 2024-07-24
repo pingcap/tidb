@@ -57,16 +57,18 @@ func init() {
 
 // Checker is used to check the result of SchemaTracker is same as real DDL.
 type Checker struct {
-	realDDL ddl.DDL
-	tracker SchemaTracker
-	closed  atomic.Bool
+	realDDL      ddl.DDL
+	tracker      SchemaTracker
+	closed       atomic.Bool
+	realExecutor ddl.Executor
 }
 
 // NewChecker creates a Checker.
-func NewChecker(realDDL ddl.DDL) *Checker {
+func NewChecker(realDDL ddl.DDL, realExecutor ddl.Executor) *Checker {
 	return &Checker{
-		realDDL: realDDL,
-		tracker: NewSchemaTracker(2),
+		realDDL:      realDDL,
+		realExecutor: realExecutor,
+		tracker:      NewSchemaTracker(2),
 	}
 }
 
@@ -169,7 +171,7 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model
 
 // CreateSchema implements the DDL interface.
 func (d *Checker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error {
-	err := d.realDDL.CreateSchema(ctx, stmt)
+	err := d.realExecutor.CreateSchema(ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -184,7 +186,7 @@ func (d *Checker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseS
 
 // AlterSchema implements the DDL interface.
 func (d *Checker) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error {
-	err := d.realDDL.AlterSchema(sctx, stmt)
+	err := d.realExecutor.AlterSchema(sctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -199,7 +201,7 @@ func (d *Checker) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseSt
 
 // DropSchema implements the DDL interface.
 func (d *Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error {
-	err := d.realDDL.DropSchema(ctx, stmt)
+	err := d.realExecutor.DropSchema(ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -219,7 +221,7 @@ func (*Checker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (e
 
 // CreateTable implements the DDL interface.
 func (d *Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
-	err := d.realDDL.CreateTable(ctx, stmt)
+	err := d.realExecutor.CreateTable(ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -243,7 +245,7 @@ func (d *Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt)
 
 // CreateView implements the DDL interface.
 func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error {
-	err := d.realDDL.CreateView(ctx, stmt)
+	err := d.realExecutor.CreateView(ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -258,7 +260,7 @@ func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) e
 
 // DropTable implements the DDL interface.
 func (d *Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	err = d.realDDL.DropTable(ctx, stmt)
+	err = d.realExecutor.DropTable(ctx, stmt)
 	_ = d.tracker.DropTable(ctx, stmt)
 
 	for _, tableName := range stmt.Tables {
@@ -281,7 +283,7 @@ func (*Checker) FlashbackCluster(_ sessionctx.Context, _ uint64) (err error) {
 
 // DropView implements the DDL interface.
 func (d *Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	err = d.realDDL.DropView(ctx, stmt)
+	err = d.realExecutor.DropView(ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -298,7 +300,7 @@ func (d *Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err
 
 // CreateIndex implements the DDL interface.
 func (d *Checker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
-	err := d.realDDL.CreateIndex(ctx, stmt)
+	err := d.realExecutor.CreateIndex(ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -313,7 +315,7 @@ func (d *Checker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt)
 
 // DropIndex implements the DDL interface.
 func (d *Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
-	err := d.realDDL.DropIndex(ctx, stmt)
+	err := d.realExecutor.DropIndex(ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -328,7 +330,7 @@ func (d *Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) err
 
 // AlterTable implements the DDL interface.
 func (d *Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
-	err := d.realDDL.AlterTable(ctx, sctx, stmt)
+	err := d.realExecutor.AlterTable(ctx, sctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -353,7 +355,7 @@ func (*Checker) TruncateTable(_ sessionctx.Context, _ ast.Ident) error {
 
 // RenameTable implements the DDL interface.
 func (d *Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
-	err := d.realDDL.RenameTable(ctx, stmt)
+	err := d.realExecutor.RenameTable(ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -371,17 +373,17 @@ func (d *Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt)
 
 // LockTables implements the DDL interface.
 func (d *Checker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
-	return d.realDDL.LockTables(ctx, stmt)
+	return d.realExecutor.LockTables(ctx, stmt)
 }
 
 // UnlockTables implements the DDL interface.
 func (d *Checker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
-	return d.realDDL.UnlockTables(ctx, lockedTables)
+	return d.realExecutor.UnlockTables(ctx, lockedTables)
 }
 
 // CleanupTableLock implements the DDL interface.
 func (d *Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
-	return d.realDDL.CleanupTableLock(ctx, tables)
+	return d.realExecutor.CleanupTableLock(ctx, tables)
 }
 
 // UpdateTableReplicaInfo implements the DDL interface.
@@ -450,7 +452,7 @@ func (*Checker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResourceGro
 
 // CreateSchemaWithInfo implements the DDL interface.
 func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo, onExist ddl.OnExist) error {
-	err := d.realDDL.CreateSchemaWithInfo(ctx, info, onExist)
+	err := d.realExecutor.CreateSchemaWithInfo(ctx, info, onExist)
 	if err != nil {
 		return err
 	}
@@ -558,7 +560,8 @@ func (d *Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschem
 
 // DoDDLJob implements the DDL interface.
 func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	return d.realDDL.DoDDLJob(ctx, job)
+	de := d.realExecutor.(ddl.ExecutorForTest)
+	return de.DoDDLJob(ctx, job)
 }
 
 // GetMinJobIDRefresher implements the DDL interface.
@@ -568,7 +571,8 @@ func (d *Checker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
 
 // DoDDLJobWrapper implements the DDL interface.
 func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
-	return d.realDDL.DoDDLJobWrapper(ctx, jobW)
+	de := d.realExecutor.(ddl.ExecutorForTest)
+	return de.DoDDLJobWrapper(ctx, jobW)
 }
 
 type storageAndMore interface {
@@ -580,7 +584,7 @@ type storageAndMore interface {
 // StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
 type StorageDDLInjector struct {
 	storageAndMore
-	Injector func(ddl.DDL) *Checker
+	Injector func(ddl.DDL, ddl.Executor) *Checker
 }
 
 // NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.

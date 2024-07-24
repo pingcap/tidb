@@ -248,7 +248,7 @@ func generateNonPartitionPlan(
 	useCloud bool,
 	instanceCnt int,
 ) (metas [][]byte, err error) {
-	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
+	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}

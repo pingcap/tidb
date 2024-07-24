@@ -2093,7 +2093,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, oldTblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), job.SchemaID, oldTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2291,7 +2291,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		physicalTableIDs := oldIDs
 		oldTblInfo := getTableInfoWithOriginalPartitions(tblInfo, oldIDs, newIDs)
 
-		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, oldTblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), job.SchemaID, oldTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2609,11 +2609,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	if withValidation {
-		ntbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, nt)
+		ntbl, err := getTable(d.getAutoIDRequirement(), job.SchemaID, nt)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ptbl, err := getTable((*asAutoIDRequirement)(d), ptSchemaID, pt)
+		ptbl, err := getTable(d.getAutoIDRequirement(), ptSchemaID, pt)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -3098,7 +3098,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err2 := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
+		tbl, err2 := getTable(d.getAutoIDRequirement(), job.SchemaID, tblInfo)
 		if err2 != nil {
 			return ver, errors.Trace(err2)
 		}
@@ -3526,15 +3526,16 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				// Non-clustered table / not unique _tidb_rowid for the whole table
 				// Generate new _tidb_rowid if exists.
 				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
-				stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
-				if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
+				if reserved, ok := w.tblCtx.GetReservedRowIDAlloc(); ok && reserved.Exhausted() {
 					// TODO: Which autoid allocator to use?
 					ids := uint64(max(1, w.batchCnt-len(w.rowRecords)))
 					// Keep using the original table's allocator
-					stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
+					var baseRowID, maxRowID int64
+					baseRowID, maxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
 					if err != nil {
 						return false, errors.Trace(err)
 					}
+					reserved.Reset(baseRowID, maxRowID)
 				}
 				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 				if err != nil {

@@ -172,3 +172,62 @@ func TestDetachWithParam(t *testing.T) {
 	stop.Store(true)
 	wg.Wait()
 }
+
+func TestDetachIndexReaderAndIndexLookUp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	tk.MustExec("create table t (a int, b int, c int, key idx_a_b (a,b), key idx_b (b))")
+	for i := 0; i < 10000; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+
+	// Test detach index reader
+	tk.MustHavePlan("select a, b from t where a > 100 and a < 200", "IndexReader")
+	rs, err := tk.Exec("select a, b from t where a > ? and a < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, err := rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	chk := drs.NewChunk(nil)
+	expectedSelect := 101
+	for {
+		err = drs.Next(context.Background(), chk)
+		require.NoError(t, err)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < chk.NumRows(); i++ {
+			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
+			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(1))
+			expectedSelect++
+		}
+	}
+
+	// Test detach indexLookUp
+	tk.MustHavePlan("select c from t use index(idx_b) where b > 100 and b < 200", "IndexLookUp")
+	rs, err = tk.Exec("select c from t where b > ? and b < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, err = rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	chk = drs.NewChunk(nil)
+	expectedSelect = 101
+	for {
+		err = drs.Next(context.Background(), chk)
+		require.NoError(t, err)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < chk.NumRows(); i++ {
+			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
+			expectedSelect++
+		}
+	}
+}

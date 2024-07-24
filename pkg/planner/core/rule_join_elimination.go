@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -266,14 +267,14 @@ func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan base.Logical
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.StringWithCtx(ectx))
+			buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are from outer table, and the inner join keys[")
 		for i, key := range innerJoinKeys.Columns {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(key.StringWithCtx(ectx))
+			buffer.WriteString(key.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are unique")
 		return buffer.String()
@@ -292,7 +293,7 @@ func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan b
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.StringWithCtx(ectx))
+			buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] in agg are from outer table, and the agg functions are duplicate agnostic")
 		return buffer.String()
