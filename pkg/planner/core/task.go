@@ -1019,7 +1019,7 @@ func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
 		mpp.p = p
 		return mpp
 	}
-	// for copTask and rootTask
+	// For root task
 	// since expand can only be in root side, convert to root task now.
 	root := t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, root)
