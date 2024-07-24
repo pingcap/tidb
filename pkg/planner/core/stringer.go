@@ -22,6 +22,7 @@ import (
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -166,7 +167,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *LogicalMaxOneRow, *PhysicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *LogicalLimit, *PhysicalLimit:
 		str = "Limit"

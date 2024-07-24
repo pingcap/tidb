@@ -3555,7 +3555,8 @@ func getNominalSortSimple(ls *LogicalSort, reqProp *property.PhysicalProperty) *
 	return ps
 }
 
-func exhaustPhysicalPlans4LogicalMaxOneRow(p *LogicalMaxOneRow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalMaxOneRow)
 	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil

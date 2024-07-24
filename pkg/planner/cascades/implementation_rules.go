@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
@@ -581,7 +582,7 @@ func (*ImplMaxOneRow) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) 
 
 // OnImplement implements ImplementationRule OnImplement interface
 func (*ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
-	mor := expr.ExprNode.(*plannercore.LogicalMaxOneRow)
+	mor := expr.ExprNode.(*logicalop.LogicalMaxOneRow)
 	physicalMaxOneRow := plannercore.PhysicalMaxOneRow{}.Init(
 		mor.SCtx(),
 		expr.Group.Prop.Stats,

@@ -17,6 +17,7 @@ package util
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
@@ -115,4 +116,15 @@ func isNullRejectedSimpleExpr(ctx context.PlanContext, schema *expression.Schema
 		}
 	}
 	return false
+}
+
+// ResetNotNullFlag resets the not null flag of [start, end] columns in the schema.
+func ResetNotNullFlag(schema *expression.Schema, start, end int) {
+	for i := start; i < end; i++ {
+		col := *schema.Columns[i]
+		newFieldType := *col.RetType
+		newFieldType.DelFlag(mysql.NotNullFlag)
+		col.RetType = &newFieldType
+		schema.Columns[i] = &col
+	}
 }
