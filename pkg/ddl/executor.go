@@ -774,7 +774,7 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
-	err = checkDatabaseHasForeignKeyReferred(d.ctx, is, old.Name, fkCheck)
+	err = checkDatabaseHasForeignKeyReferred(e.ctx, is, old.Name, fkCheck)
 	if err != nil {
 		return err
 	}
@@ -808,7 +808,7 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		return nil
 	}
 	// Clear table locks hold by the session.
-	tbs, err := is.SchemaTableInfos(d.ctx, stmt.Name)
+	tbs, err := is.SchemaTableInfos(e.ctx, stmt.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
