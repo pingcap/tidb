@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -196,11 +197,15 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?")
 		} else {
+			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
-			if p.UnsignedHandle {
-				buffer.WriteString(strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
+			if redactOn {
+				buffer.WriteString("?")
+			} else if p.UnsignedHandle {
+				redact.WriteRedact(&buffer, strconv.FormatUint(uint64(p.Handle.IntValue()), 10), redactMode)
 			} else {
-				buffer.WriteString(p.Handle.String())
+				redact.WriteRedact(&buffer, p.Handle.String(), redactMode)
 			}
 		}
 	}
