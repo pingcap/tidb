@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -109,8 +110,9 @@ func TestScanOnSmallTable(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tblInfo := range tblInfos {
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,

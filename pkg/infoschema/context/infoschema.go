@@ -33,11 +33,15 @@ type MetaOnlyInfoSchema interface {
 	FindTableInfoByPartitionID(partitionID int64) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
-	AllSchemas() []*model.DBInfo
+	SchemaAndTable
 	AllSchemaNames() []model.CIStr
-	SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error)
 	SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) []*model.TableNameInfo
 	Misc
+}
+
+type SchemaAndTable interface {
+	AllSchemas() []*model.DBInfo
+	SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error)
 }
 
 // Misc contains the methods that are not closely related to InfoSchema.

@@ -69,7 +69,7 @@ func TestHotRegion(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	res, err := h.FetchRegionTableIndex(regionMetric, dbInfoAsInfoSchema{[]*model.DBInfo{dbInfo}}, nil)
 	require.NotEqual(t, res[0].RegionMetric, res[1].RegionMetric)
 	require.NoError(t, err)
 }
@@ -80,8 +80,25 @@ func TestGetRegionsTableInfo(t *testing.T) {
 	h := helper.NewHelper(store)
 	regionsInfo := getMockTiKVRegionsInfo()
 	schemas := getMockRegionsTableInfoSchema()
-	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas)
+	tableInfos := h.GetRegionsTableInfo(regionsInfo, dbInfoAsInfoSchema{schemas}, nil)
 	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
+}
+
+type dbInfoAsInfoSchema struct {
+	data []*model.DBInfo
+}
+
+func (d dbInfoAsInfoSchema) AllSchemas() []*model.DBInfo {
+	return d.data
+}
+
+func (d dbInfoAsInfoSchema) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
+	for _, db := range d.data {
+		if db.Name == schema {
+			return db.Deprecated.Tables, nil
+		}
+	}
+	return nil, nil
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
@@ -213,27 +230,23 @@ func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 }
 
 func getMockRegionsTableInfoSchema() []*model.DBInfo {
-	return []*model.DBInfo{
+	dbInfo := &model.DBInfo{Name: model.NewCIStr("test")}
+	dbInfo.Deprecated.Tables = []*model.TableInfo{
 		{
-			Name: model.NewCIStr("test"),
-			Deprecated: {
-				Tables: []*model.TableInfo{
-					{
-						ID:      41,
-						Indices: []*model.IndexInfo{{ID: 1}},
-					},
-					{
-						ID:      63,
-						Indices: []*model.IndexInfo{{ID: 1}, {ID: 2}},
-					},
-					{
-						ID:      66,
-						Indices: []*model.IndexInfo{{ID: 1}, {ID: 2}, {ID: 3}},
-					},
-				},
-			},
+			ID:      41,
+			Indices: []*model.IndexInfo{{ID: 1}},
+		},
+		{
+			ID:      63,
+			Indices: []*model.IndexInfo{{ID: 1}, {ID: 2}},
+		},
+		{
+			ID:      66,
+			Indices: []*model.IndexInfo{{ID: 1}, {ID: 2}, {ID: 3}},
 		},
 	}
+
+	return []*model.DBInfo{dbInfo}
 }
 
 func getRegionsTableInfoAns(dbs []*model.DBInfo) map[int64][]helper.TableInfo {
@@ -241,31 +254,31 @@ func getRegionsTableInfoAns(dbs []*model.DBInfo) map[int64][]helper.TableInfo {
 	db := dbs[0]
 	ans[1] = []helper.TableInfo{}
 	ans[2] = []helper.TableInfo{
-		{db, db.Tables[0], false, nil, true, db.Tables[0].Indices[0]},
-		{db, db.Tables[0], false, nil, false, nil},
+		{db, db.Deprecated.Tables[0], false, nil, true, db.Deprecated.Tables[0].Indices[0]},
+		{db, db.Deprecated.Tables[0], false, nil, false, nil},
 	}
 	ans[3] = []helper.TableInfo{
-		{db, db.Tables[1], false, nil, true, db.Tables[1].Indices[0]},
-		{db, db.Tables[1], false, nil, true, db.Tables[1].Indices[1]},
-		{db, db.Tables[1], false, nil, false, nil},
+		{db, db.Deprecated.Tables[1], false, nil, true, db.Deprecated.Tables[1].Indices[0]},
+		{db, db.Deprecated.Tables[1], false, nil, true, db.Deprecated.Tables[1].Indices[1]},
+		{db, db.Deprecated.Tables[1], false, nil, false, nil},
 	}
 	ans[4] = []helper.TableInfo{
-		{db, db.Tables[2], false, nil, false, nil},
+		{db, db.Deprecated.Tables[2], false, nil, false, nil},
 	}
 	ans[5] = []helper.TableInfo{
-		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[2]},
-		{db, db.Tables[2], false, nil, false, nil},
+		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[2]},
+		{db, db.Deprecated.Tables[2], false, nil, false, nil},
 	}
 	ans[6] = []helper.TableInfo{
-		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[0]},
+		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[0]},
 	}
 	ans[7] = []helper.TableInfo{
-		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[1]},
+		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[1]},
 	}
 	ans[8] = []helper.TableInfo{
-		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[1]},
-		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[2]},
-		{db, db.Tables[2], false, nil, false, nil},
+		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[1]},
+		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[2]},
+		{db, db.Deprecated.Tables[2], false, nil, false, nil},
 	}
 	return ans
 }

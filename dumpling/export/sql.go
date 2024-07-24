@@ -1565,7 +1565,7 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 				}
 			}
 		}
-		schemas[last].Deprecated.Tables = append(schemas[last].Tables(), &model.TableInfo{
+		schemas[last].Deprecated.Tables = append(schemas[last].Deprecated.Tables, &model.TableInfo{
 			ID:        tidbTableID,
 			Name:      model.CIStr{O: tableName},
 			Partition: partition,

@@ -91,7 +91,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t1.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(t, sctx, d, db1, t1)
 	t1.State = model.StatePublic
-	db1.Deprecated.Tables = append(db1.Deprecate.Tables, t1)
+	db1.Deprecated.Tables = append(db1.Deprecated.Tables, t1)
 
 	t2, err := testTableInfo(store, "t2", 1)
 	require.NoError(t, err)

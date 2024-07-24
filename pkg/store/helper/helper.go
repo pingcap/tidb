@@ -303,7 +303,7 @@ const (
 )
 
 // ScrapeHotInfo gets the needed hot region information by the url given.
-func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, is infoschema.MetaOnlyInfoSchema, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
+func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	regionMetrics, err := h.FetchHotRegion(ctx, rw)
 	if err != nil {
 		return nil, err
@@ -380,7 +380,7 @@ type HotTableIndex struct {
 }
 
 // FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot RegionMetric metrics.
-func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infoschema.MetaOnlyInfoSchema, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
+func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
 		regionMetric := regionMetric
@@ -410,7 +410,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infos
 }
 
 // FindTableIndexOfRegion finds what table is involved in this hot region. And constructs the new frame item for future use.
-func (*Helper) FindTableIndexOfRegion(is infoschema.MetaOnlyInfoSchema, hotRange *RegionFrameRange) *FrameItem {
+func (*Helper) FindTableIndexOfRegion(is infoschema.SchemaAndTable, hotRange *RegionFrameRange) *FrameItem {
 	for _, dbInfo := range is.AllSchemas() {
 		tblInfos, _ := is.SchemaTableInfos(context.Background(), dbInfo.Name)
 		for _, tbl := range tblInfos {
@@ -679,7 +679,7 @@ func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
-func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.MetaOnlyInfoSchema, filter func([]*model.DBInfo) []*model.DBInfo) map[int64][]TableInfo {
+func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) map[int64][]TableInfo {
 	tables := h.GetTablesInfoWithKeyRange(is, filter)
 
 	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
@@ -719,7 +719,7 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 }
 
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
-func (*Helper) GetTablesInfoWithKeyRange(is infoschema.MetaOnlyInfoSchema, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
+func (*Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
 	dbInfos := is.AllSchemas()
 	if filter != nil {
