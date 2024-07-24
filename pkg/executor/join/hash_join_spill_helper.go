@@ -316,14 +316,17 @@ func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, 
 
 func (h *hashJoinSpillHelper) spillSegmentsToDisk(workerID int, partID int, segments []*rowTableSegment) error {
 	if h.buildRowsInDisk[workerID] == nil {
+		h.buildRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
+		h.probeRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
+	}
+	
+	if h.buildRowsInDisk[workerID][partID] == nil {
 		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
-		h.buildRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
 		h.buildRowsInDisk[workerID][partID] = inDisk
 
 		inDisk = chunk.NewDataInDiskByChunks(h.probeFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
-		h.probeRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
 		h.probeRowsInDisk[workerID][partID] = inDisk
 	}
 
@@ -458,6 +461,10 @@ func (h *hashJoinSpillHelper) reset() {
 }
 
 func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) {
+	if h.buildRowsInDisk == nil {
+		return
+	}
+
 	partNum := h.hashJoinExec.PartitionNumber
 	concurrency := int(h.hashJoinExec.Concurrency)
 

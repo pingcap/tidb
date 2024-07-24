@@ -70,7 +70,7 @@ func getExpectedResults(t *testing.T, info *hashJoinInfo, resultTypes []*types.F
 }
 
 func spillOnlyTriggeredInBuildStageCase(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 6000000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 60000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -130,8 +130,6 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 	spillOnlyTriggeredInBuildStageCase(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 
 	// TODO trigger spill only in build stage
-	// TODO trigger spill only in probe stage
-	// TODO trigger spill in both build and probe stage
 	// TODO trigger spill in build stage and retrigger in restore stage
 }
 
