@@ -907,22 +907,6 @@ func formatWindowFuncDescs(ctx expression.EvalContext, buffer *bytes.Buffer, des
 }
 
 // ExplainInfo implements Plan interface.
-func (ds *DataSource) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	tblName := ds.TableInfo.Name.O
-	if ds.TableAsName != nil && ds.TableAsName.O != "" {
-		tblName = ds.TableAsName.O
-	}
-	fmt.Fprintf(buffer, "table:%s", tblName)
-	if ds.PartitionDefIdx != nil {
-		if pi := ds.TableInfo.GetPartitionInfo(); pi != nil {
-			fmt.Fprintf(buffer, ", partition:%s", pi.Definitions[*ds.PartitionDefIdx].Name.O)
-		}
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalExchangeSender) ExplainInfo() string {
 	buffer := bytes.NewBufferString("ExchangeType: ")
 	switch p.ExchangeType {

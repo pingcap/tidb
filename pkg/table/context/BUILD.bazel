@@ -14,6 +14,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/parser/model",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/tablecodec",
         "//pkg/types",

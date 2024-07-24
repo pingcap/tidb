@@ -2410,6 +2410,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (it *infoschemaTable) WritableConstraint() []*table.Constraint {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
@@ -2495,6 +2500,11 @@ func (vt *VirtualTable) FullHiddenColsAndVisibleCols() []*table.Column {
 
 // Indices implements table.Table Indices interface.
 func (vt *VirtualTable) Indices() []table.Index {
+	return nil
+}
+
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (vt *VirtualTable) WritableConstraint() []*table.Constraint {
 	return nil
 }
 
