@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -46,21 +45,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
-=======
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/ranger"
-	filter "github.com/pingcap/tidb/util/table-filter"
->>>>>>> 918436672c7 (br: retry more time to get pd leader (#54059))
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -1071,13 +1058,8 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
-<<<<<<< HEAD
 			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
-			time.Sleep(time.Millisecond * time.Duration(100*i))
-=======
-			logutil.CL(ctx).Error("find leader failed", zap.Error(err), zap.Reflect("region", region))
 			time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
->>>>>>> 918436672c7 (br: retry more time to get pd leader (#54059))
 			continue
 		}
 		if len(targetStoreIds) == 0 {
@@ -1100,14 +1082,8 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 				return peer, nil
 			}
 		}
-<<<<<<< HEAD
-
 		logutil.CL(ctx).Warn("fail to find a target peer", logutil.Key("key", key))
-		time.Sleep(time.Millisecond * time.Duration(1000*i))
-=======
-		logutil.CL(ctx).Warn("no region found", logutil.Key("key", key))
 		time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
->>>>>>> 918436672c7 (br: retry more time to get pd leader (#54059))
 		continue
 	}
 	logutil.CL(ctx).Error("can not find a valid target peer", logutil.Key("key", key))
