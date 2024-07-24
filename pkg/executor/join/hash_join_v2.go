@@ -249,8 +249,8 @@ func (e *HashJoinV2Exec) Close() error {
 			channel.Clear(e.ProbeWorkers[i].joinChkResourceCh)
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
+
 		e.waiterWg.Wait()
-		close(e.joinResultCh)
 		e.hashTableContext.reset()
 	}
 	for _, w := range e.ProbeWorkers {
@@ -300,7 +300,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 	}
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
-	e.spillHelper = newHashJoinSpillHelper(e, e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
+	e.spillHelper = newHashJoinSpillHelper(e, e.PartitionNumber, e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
 
 	if variable.EnableTmpStorageOnOOM.Load() && e.PartitionNumber > 1 {
 		e.initMaxSpillRound()
@@ -486,6 +486,7 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 // finaWorker is responsible for scanning the row table after probe done and wake up the build fetcher
 func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 	defer func() {
+		close(e.joinResultCh)
 		close(e.finalSync)
 	}()
 
@@ -730,15 +731,18 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	// Build fetcher wakes up build workers with this channel
 	buildFetcherAndDispatcherSyncChan := make(chan struct{})
 
+	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
+	fetcherAndWorkerSyncer := &sync.WaitGroup{}
+
 	defer func() {
+		// We must ensure that all prebuild workers have exited before
+		// set `finished` flag and close buildFetcherAndDispatcherSyncChan
+		fetcherAndWorkerSyncer.Wait()
 		e.finished.Store(true)
 		close(buildFetcherAndDispatcherSyncChan)
 	}()
 
 	srcChkCh := make(chan *chunk.Chunk, 1)
-
-	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
-	fetcherAndWorkerSyncer := &sync.WaitGroup{}
 
 	preBuildWorkerWg := &sync.WaitGroup{}
 
@@ -751,6 +755,10 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	// However, `fetchBuildSideRowsImpl` is also used by hash join v1.
 	errCh := make(chan error)
 	e.BuildWorkers[0].fetchBuildSideRowsImpl(ctx, &e.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, e.buildFetcherFinishCh)
+
+	// Wait for the finish of prebuild workers
+	preBuildWorkerWg.Wait()
+
 	close(errCh)
 	if err := <-errCh; err != nil {
 		handleError(e.joinResultCh, &e.finished, err)
@@ -760,9 +768,6 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	if e.finished.Load() {
 		return
 	}
-
-	// Wait for the finish of prebuild workers
-	preBuildWorkerWg.Wait()
 
 	// Wake up build task dispatcher
 	buildFetcherAndDispatcherSyncChan <- struct{}{}

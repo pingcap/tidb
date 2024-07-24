@@ -76,7 +76,7 @@ type hashJoinSpillHelper struct {
 	spillRoundForTest            int
 }
 
-func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
+func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
 	helper.cond = sync.NewCond(new(sync.Mutex))
 	helper.buildSpillChkFieldTypes = make([]*types.FieldType, 0, 3)
@@ -87,6 +87,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*typ
 	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeLonglong)) // hash value
 	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeBit))      // serialized key
 	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)                     // row data
+	helper.spilledPartitions = make([]bool, partitionNum)
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
 
@@ -99,7 +100,6 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*typ
 	if hashJoinExec != nil {
 		helper.memTracker = hashJoinExec.memTracker
 		helper.diskTracker = hashJoinExec.diskTracker
-		helper.spilledPartitions = make([]bool, hashJoinExec.PartitionNumber)
 	}
 	return helper
 }

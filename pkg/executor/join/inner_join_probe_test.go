@@ -270,7 +270,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		RUsed:                 rightUsed,
 		LUsedInOtherCondition: leftUsedByOtherCondition,
 		RUsedInOtherCondition: rightUsedByOtherCondition,
-		spillHelper:           newHashJoinSpillHelper(nil, nil),
+		spillHelper:           newHashJoinSpillHelper(nil, partitionNumber, nil),
 	}
 	hashJoinCtx.SessCtx = mock.NewContext()
 	hashJoinCtx.JoinType = joinType
