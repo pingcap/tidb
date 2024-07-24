@@ -14,6 +14,7 @@ go_library(
         "//pkg/table/context",
         "//pkg/util/intest",
         "//pkg/util/tableutil",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-binlog",
     ],
 )

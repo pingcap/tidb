@@ -467,8 +467,8 @@ type IndexLookUpExecutor struct {
 
 	// All fields above are immutable.
 
-	idxWorkerWg sync.WaitGroup
-	tblWorkerWg sync.WaitGroup
+	idxWorkerWg *sync.WaitGroup
+	tblWorkerWg *sync.WaitGroup
 	finished    chan struct{}
 
 	resultCh   chan *lookupTableTask
@@ -620,6 +620,9 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 			return err
 		}
 	}
+
+	e.idxWorkerWg = &sync.WaitGroup{}
+	e.tblWorkerWg = &sync.WaitGroup{}
 	return nil
 }
 

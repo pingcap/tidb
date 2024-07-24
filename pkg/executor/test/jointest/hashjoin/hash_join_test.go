@@ -416,6 +416,9 @@ func TestIssue20270(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	enableHashJoinV2 := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(false)
+	defer join.SetEnableHashJoinV2(enableHashJoinV2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedInJoin2Chunk", "return(true)"))
 	err := tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
@@ -489,9 +492,10 @@ func TestFinalizeCurrentSegPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	join.SetEnableHashJoinV2(true)
 	defer func() {
-		join.SetEnableHashJoinV2(false)
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/finalizeCurrentSegPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"finalizeCurrentSegPanic\")"))
@@ -512,9 +516,10 @@ func TestSplitPartitionPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	join.SetEnableHashJoinV2(true)
 	defer func() {
-		join.SetEnableHashJoinV2(false)
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/splitPartitionPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"splitPartitionPanic\")"))
@@ -535,9 +540,10 @@ func TestProcessOneProbeChunkPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	join.SetEnableHashJoinV2(true)
 	defer func() {
-		join.SetEnableHashJoinV2(false)
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/processOneProbeChunkPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"processOneProbeChunkPanic\")"))
@@ -558,9 +564,10 @@ func TestCreateTasksPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	join.SetEnableHashJoinV2(true)
 	defer func() {
-		join.SetEnableHashJoinV2(false)
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/createTasksPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"createTasksPanic\")"))
@@ -581,9 +588,10 @@ func TestBuildHashTablePanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	join.SetEnableHashJoinV2(true)
 	defer func() {
-		join.SetEnableHashJoinV2(false)
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/buildHashTablePanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"buildHashTablePanic\")"))
@@ -604,9 +612,10 @@ func TestKillDuringProbe(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	join.SetEnableHashJoinV2(true)
 	defer func() {
-		join.SetEnableHashJoinV2(false)
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedDuringProbe", "return(true)"))
 	defer func() {
@@ -637,9 +646,10 @@ func TestKillDuringBuild(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	join.SetEnableHashJoinV2(true)
 	defer func() {
-		join.SetEnableHashJoinV2(false)
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedDuringBuild", "return(true)"))
 	defer func() {

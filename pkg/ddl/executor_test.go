@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
