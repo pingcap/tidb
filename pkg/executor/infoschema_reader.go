@@ -2613,23 +2613,16 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionctx.Context, _ []model.CIStr) error {
 	var (
 		checker       = privilege.GetPrivilegeManager(sctx)
 		rows          [][]types.Datum
 		tiFlashStores map[int64]pd.StoreInfo
 	)
-
-	for _, schema := range schemas {
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tbl := range tables {
-			if tbl.TiFlashReplica == nil {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+	rs := e.is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, schema := range rs {
+		for _, tbl := range schema.TableInfos {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.DBName, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			var progress float64
@@ -2652,7 +2645,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx
 			progressString := types.TruncateFloatToString(progress, 2)
 			progress, _ = strconv.ParseFloat(progressString, 64)
 			record := types.MakeDatums(
-				schema.O,                        // TABLE_SCHEMA
+				schema.DBName,                   // TABLE_SCHEMA
 				tbl.Name.O,                      // TABLE_NAME
 				tbl.ID,                          // TABLE_ID
 				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT

@@ -68,7 +68,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 				zap.Error(err))
 
 			for _, e := range openedEngines {
-				e.Clean()
+				e.Close(true)
 			}
 			return nil, errors.Trace(err)
 		}
@@ -101,8 +101,20 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	return ret, nil
 }
 
+// UnregisterOpt controls the behavior of backend context unregistering.
+type UnregisterOpt int
+
+const (
+	// OptCloseEngines only closes engines, it does not clean up sort path data.
+	OptCloseEngines UnregisterOpt = 1 << iota
+	// OptCleanData cleans up local sort dir data.
+	OptCleanData
+	// OptCheckDup checks if there is duplicate entry for unique indexes.
+	OptCheckDup
+)
+
 // FinishAndUnregisterEngines implements BackendCtx.
-func (bc *litBackendCtx) FinishAndUnregisterEngines() error {
+func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	bc.unregisterMu.Lock()
 	defer bc.unregisterMu.Unlock()
 
@@ -111,16 +123,20 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines() error {
 	}
 	numIdx := int64(len(bc.engines))
 	for _, ei := range bc.engines {
-		ei.Clean()
+		ei.Close(opt&OptCleanData != 0)
 	}
-	for _, ei := range bc.engines {
-		if ei.unique {
-			err := bc.collectRemoteDuplicateRows(ei.indexID, bc.tbl)
-			if err != nil {
-				return errors.Trace(err)
+
+	if opt&OptCheckDup != 0 {
+		for _, ei := range bc.engines {
+			if ei.unique {
+				err := bc.collectRemoteDuplicateRows(ei.indexID, bc.tbl)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}
+
 	bc.engines = make(map[int64]*engineInfo, 10)
 
 	bc.memRoot.Release(numIdx * structSizeEngineInfo)

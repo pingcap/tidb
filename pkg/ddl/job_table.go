@@ -774,38 +774,29 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 	return
 }
 
-func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKey kv.Key, physicalTableID int64, err error) {
-	startKey, endKey = kv.Key{}, kv.Key{}
+func getImportedKeyFromCheckpoint(se *sess.Session, job *model.Job) (imported kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := se.Execute(ctx, sql, "get_handle")
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 	if len(rows) == 0 {
-		return nil, nil, 0, meta.ErrDDLReorgElementNotExist
+		return nil, 0, meta.ErrDDLReorgElementNotExist
 	}
 	if !rows[0].IsNull(0) {
 		rawReorgMeta := rows[0].GetBytes(0)
 		var reorgMeta ingest.JobReorgMeta
 		err = json.Unmarshal(rawReorgMeta, &reorgMeta)
 		if err != nil {
-			return nil, nil, 0, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			logutil.DDLIngestLogger().Info("resume physical table ID from checkpoint",
 				zap.Int64("jobID", job.ID),
-				zap.String("start", hex.EncodeToString(cp.StartKey)),
-				zap.String("end", hex.EncodeToString(cp.EndKey)),
+				zap.String("global sync key", hex.EncodeToString(cp.GlobalSyncKey)),
 				zap.Int64("checkpoint physical ID", cp.PhysicalID))
-			physicalTableID = cp.PhysicalID
-			if len(cp.StartKey) > 0 {
-				startKey = cp.StartKey
-			}
-			if len(cp.EndKey) > 0 {
-				endKey = cp.EndKey
-				endKey = adjustEndKeyAcrossVersion(job, endKey)
-			}
+			return cp.GlobalSyncKey, cp.PhysicalID, nil
 		}
 	}
 	return
@@ -825,8 +816,6 @@ func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv
 	rawReorgMeta, err := json.Marshal(ingest.JobReorgMeta{
 		Checkpoint: &ingest.ReorgCheckpoint{
 			PhysicalID: physicalTableID,
-			StartKey:   startKey,
-			EndKey:     endKey,
 			Version:    ingest.JobCheckpointVersionCurrent,
 		}})
 	if err != nil {

@@ -58,11 +58,9 @@ type BackendCtx interface {
 	// are Register-ed before. It's safe to call it multiple times.
 	//
 	// FinishAndUnregisterEngines is only used in local disk based ingest.
-	FinishAndUnregisterEngines() error
+	FinishAndUnregisterEngines(opt UnregisterOpt) error
 
 	FlushController
-	Done() bool
-	SetDone()
 
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
@@ -99,7 +97,6 @@ type litBackendCtx struct {
 	ctx      context.Context
 	cfg      *lightning.Config
 	sysVars  map[string]string
-	done     bool
 
 	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
@@ -300,7 +297,6 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		}
 		ei.openedEngine = nil
-		ei.closedEngine = nil
 		return err
 	}
 	return nil
@@ -329,16 +325,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport
-}
-
-// Done returns true if the lightning backfill is done.
-func (bc *litBackendCtx) Done() bool {
-	return bc.done
-}
-
-// SetDone sets the done flag.
-func (bc *litBackendCtx) SetDone() {
-	bc.done = true
 }
 
 // AttachCheckpointManager attaches a checkpoint manager to the backend context.
