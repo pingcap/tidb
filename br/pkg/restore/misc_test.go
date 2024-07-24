@@ -78,15 +78,16 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 1, len(dbs))
 
+	dbInfo := &model.DBInfo{
+		Name:  model.NewCIStr("test"),
+		State: model.StatePublic,
+	}
+	dbInfo.Deprecated.Tables = []*model.TableInfo{{ID: 1, Name: model.NewCIStr("t1"), State: model.StatePublic}}
 	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("d1")},
-			{
-				Name:   model.NewCIStr("test"),
-				Tables: []*model.TableInfo{{ID: 1, Name: model.NewCIStr("t1"), State: model.StatePublic}},
-				State:  model.StatePublic,
-			},
+			dbInfo,
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
