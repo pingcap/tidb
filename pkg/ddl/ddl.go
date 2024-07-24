@@ -584,12 +584,12 @@ func (dc *ddlCtx) initJobDoneCh(jobID int64) {
 	dc.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
 }
 
-func (dc *executor) getJobDoneCh(jobID int64) (chan struct{}, bool) {
-	return dc.ddlJobDoneChMap.Load(jobID)
+func (e *executor) getJobDoneCh(jobID int64) (chan struct{}, bool) {
+	return e.ddlJobDoneChMap.Load(jobID)
 }
 
-func (dc *executor) delJobDoneCh(jobID int64) {
-	dc.ddlJobDoneChMap.Delete(jobID)
+func (e *executor) delJobDoneCh(jobID int64) {
+	e.ddlJobDoneChMap.Delete(jobID)
 }
 
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
@@ -983,13 +983,13 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
-func (d *executor) genGlobalIDs(count int) ([]int64, error) {
+func (e *executor) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// lock to reduce conflict
-	d.globalIDLock.Lock()
-	defer d.globalIDLock.Unlock()
-	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+	e.globalIDLock.Lock()
+	defer e.globalIDLock.Unlock()
+	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
@@ -999,10 +999,10 @@ func (d *executor) genGlobalIDs(count int) ([]int64, error) {
 	return ret, err
 }
 
-func (d *executor) genPlacementPolicyID() (int64, error) {
+func (e *executor) genPlacementPolicyID() (int64, error) {
 	var ret int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenPlacementPolicyID()
@@ -1072,16 +1072,16 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-func (dc *executor) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
+func (e *executor) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
 	// If the workers don't run, we needn't notify workers.
 	// TODO: It does not affect informing the backfill worker.
 	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}
-	if dc.ownerManager.IsOwner() {
+	if e.ownerManager.IsOwner() {
 		asyncNotify(ch)
 	} else {
-		dc.notifyNewJobByEtcd(etcdPath, jobID, jobType)
+		e.notifyNewJobByEtcd(etcdPath, jobID, jobType)
 	}
 }
 
@@ -1133,11 +1133,11 @@ func setDDLJobMode(job *model.Job) {
 	job.LocalMode = false
 }
 
-func (d *executor) deliverJobTask(task *JobWrapper) {
+func (e *executor) deliverJobTask(task *JobWrapper) {
 	if task.LocalMode {
-		d.limitJobChV2 <- task
+		e.limitJobChV2 <- task
 	} else {
-		d.limitJobCh <- task
+		e.limitJobCh <- task
 	}
 }
 
@@ -1145,11 +1145,11 @@ func (d *executor) deliverJobTask(task *JobWrapper) {
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
-func (d *executor) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	return d.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
+func (e *executor) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	return e.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
 }
 
-func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
+func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	job := jobW.Job
 	job.TraceInfo = &model.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
@@ -1163,7 +1163,7 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	setDDLJobMode(job)
-	d.deliverJobTask(jobW)
+	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1171,7 +1171,7 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
 			newJobW := NewJobWrapper(job, jobW.IDAllocated)
-			d.deliverJobTask(newJobW)
+			e.deliverJobTask(newJobW)
 			// The second job result is used for test.
 			jobW = newJobW
 		}
@@ -1180,7 +1180,7 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
 	err := <-jobW.ErrChs[0]
 	// job.ID must be allocated after previous channel receive returns nil.
-	defer d.delJobDoneCh(job.ID)
+	defer e.delJobDoneCh(job.ID)
 	if err != nil {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
@@ -1191,14 +1191,14 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	d.notifyNewJobSubmitted(d.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
+	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
 	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
 
 	// for local mode job, we add the history job directly now, so no need to check it.
 	// fast-create doesn't wait schema version synced, we must reload info-schema
 	// here to make sure later statements can see the created table/database.
 	if job.LocalMode {
-		return d.schemaLoader.Reload()
+		return e.schemaLoader.Reload()
 	}
 
 	var historyJob *model.Job
@@ -1212,7 +1212,7 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
 	initInterval, _ := getJobCheckInterval(job, 0)
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, initInterval))
+	ticker := time.NewTicker(chooseLeaseTime(10*e.lease, initInterval))
 	startTime := time.Now()
 	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
@@ -1222,14 +1222,15 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
-	notifyCh, _ := d.getJobDoneCh(job.ID)
+	notifyCh, _ := e.getJobDoneCh(job.ID)
 	for {
+		failpoint.InjectCall("storeCloseInLoop")
 		select {
 		case <-notifyCh:
 		case <-ticker.C:
 			i++
-			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
-		case <-d.ctx.Done():
+			ticker = updateTickerInterval(ticker, 10*e.lease, job, i)
+		case <-e.ctx.Done():
 			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
 			return context.Canceled
 		}
@@ -1241,14 +1242,14 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 				return context.Canceled
 			}
 			if sessVars.StmtCtx.DDLJobID != 0 {
-				se, err := d.sessPool.Get()
+				se, err := e.sessPool.Get()
 				if err != nil {
 					logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 					continue
 				}
 				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
 				errs, err := CancelJobsBySystem(se, []int64{jobID})
-				d.sessPool.Put(se)
+				e.sessPool.Put(se)
 				if len(errs) > 0 {
 					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
 				}
@@ -1259,13 +1260,13 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 			}
 		}
 
-		se, err := d.sessPool.Get()
+		se, err := e.sessPool.Get()
 		if err != nil {
 			logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 			continue
 		}
 		historyJob, err = GetHistoryJobByID(se, jobID)
-		d.sessPool.Put(se)
+		e.sessPool.Put(se)
 		if err != nil {
 			logutil.DDLLogger().Error("get history DDL job failed, check again", zap.Error(err))
 			continue
@@ -1275,7 +1276,7 @@ func (d *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 			continue
 		}
 
-		d.checkHistoryJobInTest(ctx, historyJob)
+		e.checkHistoryJobInTest(ctx, historyJob)
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
