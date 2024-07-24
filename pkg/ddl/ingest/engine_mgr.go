@@ -105,8 +105,8 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 type UnregisterOpt int
 
 const (
-	// OptBasic only closes engines, it does not clean up sort path data.
-	OptBasic UnregisterOpt = iota << 1
+	// OptCloseEngines only closes engines, it does not clean up sort path data.
+	OptCloseEngines UnregisterOpt = 1 << iota
 	// OptCleanData cleans up local sort dir data.
 	OptCleanData
 	// OptCheckDup checks if there is duplicate entry for unique indexes.

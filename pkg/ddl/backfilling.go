@@ -747,7 +747,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	}
 	err = executeAndClosePipeline(opCtx, pipe)
 	if err != nil {
-		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptBasic)
+		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
 			logutil.DDLIngestLogger().Error("unregister engine failed",
 				zap.Int64("jobID", job.ID),
