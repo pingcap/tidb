@@ -314,6 +314,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildCompactTable(v)
 	case *plannercore.AdminShowBDRRole:
 		return b.buildAdminShowBDRRole(v)
+	case *plannercore.PhysicalExpand:
+		return b.buildExpand(v)
 	default:
 		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -1966,6 +1968,41 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.
 		selectionExecutorContext: newSelectionExecutorContext(b.ctx),
 		BaseExecutorV2:           exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
 		filters:                  v.Conditions,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	levelES := make([]*expression.EvaluatorSuite, 0, len(v.LevelExprs))
+	for _, exprs := range v.LevelExprs {
+		// column evaluator can always refer others inside expand.
+		// grouping column's nullability change should be seen as a new column projecting.
+		// since input inside expand logic should be targeted and reused for N times.
+		// column evaluator's swapping columns logic will pollute the input data.
+		levelE := expression.NewEvaluatorSuite(exprs, true)
+		levelES = append(levelES, levelE)
+	}
+	e := &ExpandExec{
+		BaseExecutor:        exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
+		numWorkers:          int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
+		levelEvaluatorSuits: levelES,
+	}
+
+	// If the calculation row count for this Projection operator is smaller
+	// than a Chunk size, we turn back to the un-parallel Projection
+	// implementation to reduce the goroutine overhead.
+	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
+	}
+
+	// Use un-parallel projection for query that write on memdb to avoid data race.
+	// See also https://github.com/pingcap/tidb/issues/26832
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+		e.numWorkers = 0
 	}
 	return e
 }
