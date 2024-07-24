@@ -2952,7 +2952,6 @@ func TestIssue50308(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// Test for timestamp column.
 	tk.MustExec("create table t(a timestamp);")
 	tk.MustExec("insert ignore into t values(cast('2099-01-01' as date));")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1292 Incorrect timestamp value: '2099-01-01' for column 'a' at row 1"))

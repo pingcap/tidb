@@ -351,12 +351,10 @@ func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, val *type
 	if types.ErrOverflow.Equal(err) {
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
-	if types.ErrTruncatedWrongVal.Equal(err) {
-		if col != nil && col.ColumnInfo != nil && col.ColumnInfo.GetType() == mysql.TypeTimestamp {
-			err = completeInsertErr(col.ColumnInfo, val, rowIdx, err)
-			ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
-			return errors.AddStack(ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err))
-		}
+	if types.ErrTruncatedWrongVal.Equal(err) && col != nil && col.ColumnInfo != nil && col.ColumnInfo.GetType() == mysql.TypeTimestamp {
+		err = completeInsertErr(col.ColumnInfo, val, rowIdx, err)
+		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+		return errors.AddStack(ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err))
 	}
 	return err
 }
