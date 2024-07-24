@@ -19,8 +19,5 @@ go_test(
     srcs = ["callback_test.go"],
     embed = [":callback"],
     flaky = True,
-    deps = [
-        "//pkg/ddl",
-        "@com_github_stretchr_testify//require",
-    ],
+    deps = ["//pkg/ddl"],
 )
