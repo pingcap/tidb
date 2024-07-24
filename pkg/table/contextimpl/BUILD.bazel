@@ -12,6 +12,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/table/context",
         "//pkg/util/tableutil",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-binlog",
     ],
 )

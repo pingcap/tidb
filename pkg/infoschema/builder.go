@@ -876,7 +876,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		// For example, schema version 59:
 		//         107: t1
 		//         112: t2 (partitions p0=113, p1=114, p2=115)
-		// operation: alter table t2 exchange partition p1 with table t1
+		// operation: alter table t2 exchange partition p0 with table t1
 		// schema version 60 if we do not reset:
 		//         107: t1   <- stale
 		//         112: t2 (partition p0=107, p1=114, p2=115)

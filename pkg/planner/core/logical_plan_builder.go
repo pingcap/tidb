@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -4791,128 +4790,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
 
 	return result, nil
-}
-
-// ExtractFD implements the base.LogicalPlan interface.
-func (ds *DataSource) ExtractFD() *fd.FDSet {
-	// FD in datasource (leaf node) can be cached and reused.
-	// Once the all conditions are not equal to nil, built it again.
-	if ds.FDs() == nil || ds.AllConds != nil {
-		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
-		allCols := intset.NewFastIntSet()
-		// should use the column's unique ID avoiding fdSet conflict.
-		for _, col := range ds.TblCols {
-			// todo: change it to int64
-			allCols.Insert(int(col.UniqueID))
-		}
-		// int pk doesn't store its index column in indexInfo.
-		if ds.TableInfo.PKIsHandle {
-			keyCols := intset.NewFastIntSet()
-			for _, col := range ds.TblCols {
-				if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
-					keyCols.Insert(int(col.UniqueID))
-				}
-			}
-			fds.AddStrictFunctionalDependency(keyCols, allCols)
-			fds.MakeNotNull(keyCols)
-		}
-		// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
-		var (
-			latestIndexes map[int64]*model.IndexInfo
-			changed       bool
-			err           error
-		)
-		check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.IsForUpdateRead
-		check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
-		if check {
-			latestIndexes, changed, err = getLatestIndexInfo(ds.SCtx(), ds.table.Meta().ID, 0)
-			if err != nil {
-				ds.SetFDs(fds)
-				return fds
-			}
-		}
-		// other indices including common handle.
-		for _, idx := range ds.TableInfo.Indices {
-			keyCols := intset.NewFastIntSet()
-			allColIsNotNull := true
-			if ds.IsForUpdateRead && changed {
-				latestIndex, ok := latestIndexes[idx.ID]
-				if !ok || latestIndex.State != model.StatePublic {
-					continue
-				}
-			}
-			if idx.State != model.StatePublic {
-				continue
-			}
-			for _, idxCol := range idx.Columns {
-				// Note: even the prefix column can also be the FD. For example:
-				// unique(char_column(10)), will also guarantee the prefix to be
-				// the unique which means the while column is unique too.
-				refCol := ds.TableInfo.Columns[idxCol.Offset]
-				if !mysql.HasNotNullFlag(refCol.GetFlag()) {
-					allColIsNotNull = false
-				}
-				keyCols.Insert(int(ds.TblCols[idxCol.Offset].UniqueID))
-			}
-			if idx.Primary {
-				fds.AddStrictFunctionalDependency(keyCols, allCols)
-				fds.MakeNotNull(keyCols)
-			} else if idx.Unique {
-				if allColIsNotNull {
-					fds.AddStrictFunctionalDependency(keyCols, allCols)
-					fds.MakeNotNull(keyCols)
-				} else {
-					// unique index:
-					// 1: normal value should be unique
-					// 2: null value can be multiple
-					// for this kind of lax to be strict, we need to make the determinant not-null.
-					fds.AddLaxFunctionalDependency(keyCols, allCols)
-				}
-			}
-		}
-		// handle the datasource conditions (maybe pushed down from upper layer OP)
-		if len(ds.AllConds) != 0 {
-			// extract the not null attributes from selection conditions.
-			notnullColsUniqueIDs := ExtractNotNullFromConds(ds.AllConds, ds)
-
-			// extract the constant cols from selection conditions.
-			constUniqueIDs := ExtractConstantCols(ds.AllConds, ds.SCtx(), fds)
-
-			// extract equivalence cols.
-			equivUniqueIDs := ExtractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
-
-			// apply conditions to FD.
-			fds.MakeNotNull(notnullColsUniqueIDs)
-			fds.AddConstants(constUniqueIDs)
-			for _, equiv := range equivUniqueIDs {
-				fds.AddEquivalence(equiv[0], equiv[1])
-			}
-		}
-		// build the dependency for generated columns.
-		// the generated column is sequentially dependent on the forward column.
-		// a int, b int as (a+1), c int as (b+1), here we can build the strict FD down:
-		// {a} -> {b}, {b} -> {c}, put the maintenance of the dependencies between generated columns to the FD graph.
-		notNullCols := intset.NewFastIntSet()
-		for _, col := range ds.TblCols {
-			if col.VirtualExpr != nil {
-				dependencies := intset.NewFastIntSet()
-				dependencies.Insert(int(col.UniqueID))
-				// dig out just for 1 level.
-				directBaseCol := expression.ExtractColumns(col.VirtualExpr)
-				determinant := intset.NewFastIntSet()
-				for _, col := range directBaseCol {
-					determinant.Insert(int(col.UniqueID))
-				}
-				fds.AddStrictFunctionalDependency(determinant, dependencies)
-			}
-			if mysql.HasNotNullFlag(col.RetType.GetFlag()) {
-				notNullCols.Insert(int(col.UniqueID))
-			}
-		}
-		fds.MakeNotNull(notNullCols)
-		ds.SetFDs(fds)
-	}
-	return ds.FDs()
 }
 
 func (b *PlanBuilder) timeRangeForSummaryTable() util.QueryTimeRange {

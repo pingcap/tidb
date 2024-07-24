@@ -1223,6 +1223,19 @@ func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 	if err != nil {
 		return err
 	}
+	// no need to rollback for fast create table now.
+	if job.IsCancelling() {
+		job.State = model.JobStateCancelled
+		job.Error = dbterror.ErrCancelledDDLJob
+	}
+	if job.IsCancelled() {
+		w.sess.Reset()
+		if err = w.handleJobDone(d, job, t); err != nil {
+			return err
+		}
+		// return job.Error to let caller know the job is cancelled.
+		return job.Error
+	}
 
 	d.mu.RLock()
 	d.mu.hook.OnJobRunAfter(job)
