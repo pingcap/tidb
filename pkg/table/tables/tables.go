@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -378,30 +377,6 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 	return t.writableConstraints
 }
 
-// CheckRowConstraint verify row check constraints.
-func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
-	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		ectx := ctx.GetExprCtx().GetEvalCtx()
-		row := chunk.MutRowFromDatums(rowToCheck).ToRow()
-		return checkRowConstraint(ectx, constraints, row)
-	}
-	return nil
-}
-
-// checkRowConstraint verify row check constraints.
-func checkRowConstraint(ctx exprctx.EvalContext, constraints []*table.Constraint, rowToCheck chunk.Row) error {
-	for _, constraint := range constraints {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
-		if err != nil {
-			return err
-		}
-		if ok == 0 && !isNull {
-			return table.ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
-		}
-	}
-	return nil
-}
-
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	return t.fullHiddenColsAndVisibleColumns
@@ -532,7 +507,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	// check data constraint
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err = checkRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err = table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
 			return err
 		}
 	}
@@ -917,8 +892,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 	}
 	// check data constraint
-	err = t.CheckRowConstraint(sctx, r)
-	if err != nil {
+	if err = table.CheckRowConstraintWithDatum(evalCtx, t.WritableConstraint(), r); err != nil {
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
