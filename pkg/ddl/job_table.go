@@ -776,8 +776,7 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 	return
 }
 
-func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (adjustedStart kv.Key, physicalTableID int64, err error) {
-	adjustedStart = kv.Key{}
+func getImportedKeyFromCheckpoint(se *sess.Session, job *model.Job) (imported kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := se.Execute(ctx, sql, "get_handle")

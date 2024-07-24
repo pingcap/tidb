@@ -333,7 +333,7 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
 		return nil
 	}
-	start, pid, err := getCheckpointReorgHandle(sess, job)
+	start, pid, err := getImportedKeyFromCheckpoint(sess, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
