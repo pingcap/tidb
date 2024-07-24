@@ -28,6 +28,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/log"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -69,7 +70,7 @@ func TestHotRegion(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	res, err := h.FetchRegionTableIndex(regionMetric, helper.DBInfoAsInfoSchema([]*model.DBInfo{dbInfo}), nil)
+	res, err := h.FetchRegionTableIndex(regionMetric, infoschema.DBInfoAsInfoSchema([]*model.DBInfo{dbInfo}), nil)
 	require.NotEqual(t, res[0].RegionMetric, res[1].RegionMetric)
 	require.NoError(t, err)
 }
@@ -80,7 +81,7 @@ func TestGetRegionsTableInfo(t *testing.T) {
 	h := helper.NewHelper(store)
 	regionsInfo := getMockTiKVRegionsInfo()
 	schemas := getMockRegionsTableInfoSchema()
-	tableInfos := h.GetRegionsTableInfo(regionsInfo, helper.DBInfoAsInfoSchema(schemas), nil)
+	tableInfos := h.GetRegionsTableInfo(regionsInfo, infoschema.DBInfoAsInfoSchema(schemas), nil)
 	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
 }
 
