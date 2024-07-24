@@ -86,7 +86,7 @@ func setWatchOption(ctx context.Context,
 				return errors.Errorf("only support one SQL")
 			}
 			sql := stmts[0].Text()
-			switch model.RunawayWatchType(watchType) {
+			switch watchType {
 			case model.WatchNone:
 				return errors.Errorf("watch type must be specified")
 			case model.WatchExact:
