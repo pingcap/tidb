@@ -565,7 +565,11 @@ retry:
 		// In theory that error should be handled in the lower layer, like client-go.
 		// But it's not done, so we retry here.
 		if strings.Contains(err.Error(), "in flashback progress") {
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			goto retry
 		}
 		return nil, errors.Trace(err)
@@ -610,7 +614,11 @@ retry:
 		// In theory that error should be handled in the lower layer, like client-go.
 		// But it's not done, so we retry here.
 		if strings.Contains(err.Error(), "in flashback progress") {
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			goto retry
 		}
 		return nil, errors.Trace(err)
