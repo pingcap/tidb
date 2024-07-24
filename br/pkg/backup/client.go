@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1053,12 +1054,12 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
-	for i := 0; i < 5; i++ {
+	for i := 1; i < 100; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
 			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
-			time.Sleep(time.Millisecond * time.Duration(100*i))
+			time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 			continue
 		}
 		if len(targetStoreIds) == 0 {
@@ -1081,9 +1082,8 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 				return peer, nil
 			}
 		}
-
 		logutil.CL(ctx).Warn("fail to find a target peer", logutil.Key("key", key))
-		time.Sleep(time.Millisecond * time.Duration(1000*i))
+		time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 		continue
 	}
 	logutil.CL(ctx).Error("can not find a valid target peer", logutil.Key("key", key))
