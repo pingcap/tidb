@@ -5315,10 +5315,10 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 	return true
 }
 
-func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
+func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) (bool, error) {
 	// check temp table
 	if target.TempTableType != model.TempTableNone {
-		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(target.Name))
+		return false, errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(target.Name))
 	}
 
 	// check auto_random
@@ -5329,38 +5329,42 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
 		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
-		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
 	if len(source.Cols()) != len(target.Cols()) {
-		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
 		if sourceCol.IsVirtualGenerated() != targetCol.IsVirtualGenerated() {
-			return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
+			return false, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
 		// It should strictyle compare expressions for generated columns
 		if sourceCol.Name.L != targetCol.Name.L ||
 			sourceCol.Hidden != targetCol.Hidden ||
 			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) ||
 			sourceCol.GeneratedExprString != targetCol.GeneratedExprString {
-			return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+			return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 		}
 		if sourceCol.State != model.StatePublic ||
 			targetCol.State != model.StatePublic {
-			return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+			return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 		}
 		if sourceCol.ID != targetCol.ID {
-			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("column: %s", sourceCol.Name))
+			return false, dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("column: %s", sourceCol.Name))
 		}
 	}
 	if len(source.Indices) != len(target.Indices) {
-		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
+	globalIndex := false
 	for _, sourceIdx := range source.Indices {
+		// TODO: Should we allow Exchange Partition without matching GLOBAL INDEX vs UNIQUE INDEX?
+		// Since then we don't need to drop the UNIQUE INDEX from the table->partition!
+		// But also there are bigger risk that there are duplicate rows...
 		if sourceIdx.Global {
-			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("global index: %s", sourceIdx.Name))
+			globalIndex = true
 		}
 		var compatIdx *model.IndexInfo
 		for _, targetIdx := range target.Indices {
@@ -5370,31 +5374,32 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		}
 		// No match index
 		if compatIdx == nil {
-			return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+			return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 		}
 		// Index type is not compatible
 		if sourceIdx.Tp != compatIdx.Tp ||
 			sourceIdx.Unique != compatIdx.Unique ||
 			sourceIdx.Primary != compatIdx.Primary {
-			return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+			return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 		}
 		// The index column
 		if len(sourceIdx.Columns) != len(compatIdx.Columns) {
-			return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+			return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 		}
 		for i, sourceIdxCol := range sourceIdx.Columns {
 			compatIdxCol := compatIdx.Columns[i]
 			if sourceIdxCol.Length != compatIdxCol.Length ||
 				sourceIdxCol.Name.L != compatIdxCol.Name.L {
-				return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+				return false, errors.Trace(dbterror.ErrTablesDifferentMetadata)
 			}
 		}
 		if sourceIdx.ID != compatIdx.ID {
-			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("index: %s", sourceIdx.Name))
+			// TODO: We could allow Global Index ID mismatches, since they will be rewritten any way.
+			return false, dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("index: %s", sourceIdx.Name))
 		}
 	}
 
-	return nil
+	return globalIndex, nil
 }
 
 func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
@@ -5452,7 +5457,7 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 
-	err = checkTableDefCompatible(ptMeta, ntMeta)
+	_, err = checkTableDefCompatible(ptMeta, ntMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5471,7 +5476,8 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 			{Database: ptSchema.Name.L, Table: ptMeta.Name.L},
 			{Database: ntSchema.Name.L, Table: ntMeta.Name.L},
 		},
-		SQLMode: ctx.GetSessionVars().SQLMode,
+		SQLMode:   ctx.GetSessionVars().SQLMode,
+		ReorgMeta: NewDDLReorgMeta(ctx),
 	}
 
 	err = d.DoDDLJob(ctx, job)
