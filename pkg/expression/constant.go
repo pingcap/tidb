@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"unsafe"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -140,7 +141,7 @@ func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 }
 
 // StringWithCtx implements Expression interface.
-func (c *Constant) StringWithCtx(ctx ParamValues) string {
+func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 	if c.ParamMarker != nil {
 		dt, err := c.ParamMarker.GetUserVar(ctx)
 		intest.AssertNoError(err, "fail to get param")
@@ -149,9 +150,14 @@ func (c *Constant) StringWithCtx(ctx ParamValues) string {
 		}
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
-		return c.DeferredExpr.StringWithCtx(ctx)
+		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
-	return fmt.Sprintf("%v", c.Value.GetValue())
+	if redact == perrors.RedactLogDisable {
+		return fmt.Sprintf("%v", c.Value.GetValue())
+	} else if redact == perrors.RedactLogMarker {
+		return fmt.Sprintf("‹%v›", c.Value.GetValue())
+	}
+	return "?"
 }
 
 // Clone implements Expression interface.

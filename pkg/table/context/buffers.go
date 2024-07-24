@@ -148,6 +148,7 @@ func (b *ColSizeDeltaBuffer) UpdateColSizeMap(m map[int64]int64) map[int64]int64
 // Because inner slices are reused, you should not call the get methods again before finishing the previous usage.
 // Otherwise, the previous data will be overwritten.
 type MutateBuffers struct {
+	stmtBufs     *variable.WriteStmtBufs
 	encodeRow    *EncodeRowBuffer
 	checkRow     *CheckRowBuffer
 	colSizeDelta *ColSizeDeltaBuffer
@@ -156,6 +157,7 @@ type MutateBuffers struct {
 // NewMutateBuffers creates a new `MutateBuffers`.
 func NewMutateBuffers(stmtBufs *variable.WriteStmtBufs) *MutateBuffers {
 	return &MutateBuffers{
+		stmtBufs: stmtBufs,
 		encodeRow: &EncodeRowBuffer{
 			writeStmtBufs: stmtBufs,
 		},
@@ -202,6 +204,11 @@ func (b *MutateBuffers) GetColSizeDeltaBufferWithCap(capacity int) *ColSizeDelta
 	buffer := b.colSizeDelta
 	buffer.Reset(capacity)
 	return buffer
+}
+
+// GetWriteStmtBufs returns the `*variable.WriteStmtBufs`
+func (b *MutateBuffers) GetWriteStmtBufs() *variable.WriteStmtBufs {
+	return b.stmtBufs
 }
 
 // ensureCapacityAndReset is similar to the built-in make(),

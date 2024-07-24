@@ -482,8 +482,9 @@ func TestSelectionRequiredRows(t *testing.T) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
 	return &SelectionExec{
-		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		filters:      filters,
+		selectionExecutorContext: newSelectionExecutorContext(ctx),
+		BaseExecutorV2:           exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		filters:                  filters,
 	}
 }
 
