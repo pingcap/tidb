@@ -1114,8 +1114,9 @@ func TestIndexJoinHint(t *testing.T) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan string
+		SQL   string
+		Plan  string
+		Warns []string
 	}
 
 	is := domain.GetDomain(tk.Session()).InfoSchema()
@@ -1124,6 +1125,16 @@ func TestIndexJoinHint(t *testing.T) {
 
 	planSuiteData := GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
+	filterWarnings := func(originalWarnings []contextutil.SQLWarn) []contextutil.SQLWarn {
+		warnings := make([]contextutil.SQLWarn, 0, 4)
+		for _, warning := range originalWarnings {
+			// filter out warning about skyline pruning
+			if !strings.Contains(warning.Err.Error(), "remain after pruning paths for") {
+				warnings = append(warnings, warning)
+			}
+		}
+		return warnings
+	}
 	for i, tt := range input {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
@@ -1133,7 +1144,9 @@ func TestIndexJoinHint(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
+			output[i].Warns = testdata.ConvertSQLWarnToStrings(filterWarnings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		})
+		tk.Session().GetSessionVars().StmtCtx.TruncateWarnings(0)
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
 	}
 }
