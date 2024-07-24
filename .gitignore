@@ -42,3 +42,5 @@ MODULE.bazel.lock
 genkeyword
 test_coverage
 coverage.dat
+g
+f

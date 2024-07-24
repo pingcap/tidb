@@ -150,15 +150,15 @@ func TestJoinHintCompatibility(t *testing.T) {
 	tk.MustExec("create table t9(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
 	tk.MustExec("analyze table t7, t8, t9")
 
+	tk.MustExec("create definer='root'@'localhost' view v as select /*+ leading(t1), inl_join(t1) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select /*+ leading(t2), merge_join(t) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	coretestsdk.SetTiFlashReplica(t, dom, "test", "t4")
 	coretestsdk.SetTiFlashReplica(t, dom, "test", "t5")
 	coretestsdk.SetTiFlashReplica(t, dom, "test", "t6")
-
-	tk.MustExec("create definer='root'@'localhost' view v as select /*+ leading(t1), inl_join(t1) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
-	tk.MustExec("create definer='root'@'localhost' view v1 as select /*+ leading(t2), merge_join(t) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
-	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
 
 	var input []string
 	var output []struct {

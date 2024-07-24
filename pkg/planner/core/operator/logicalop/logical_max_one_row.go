@@ -12,25 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
-	logicalop.BaseLogicalPlan
+	BaseLogicalPlan
 }
 
 // Init initializes LogicalMaxOneRow.
 func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneRow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
 	return &p
 }
 
@@ -39,7 +40,7 @@ func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneR
 // Schema implements the Plan.Schema interface.
 func (p *LogicalMaxOneRow) Schema() *expression.Schema {
 	s := p.Children()[0].Schema().Clone()
-	resetNotNullFlag(s, 0, s.Len())
+	util.ResetNotNullFlag(s, 0, s.Len())
 	return s
 }
 
@@ -89,7 +90,7 @@ func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPhysicalPlans4LogicalMaxOneRow(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow(p, prop)
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
@@ -113,3 +114,15 @@ func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty)
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
+
+// Exists and MaxOneRow produce at most one row, so we set the RowCount of stats one.
+func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
+	ret := &property.StatsInfo{
+		RowCount: 1.0,
+		ColNDVs:  make(map[int64]float64, schema.Len()),
+	}
+	for _, col := range schema.Columns {
+		ret.ColNDVs[col.UniqueID] = 1
+	}
+	return ret
+}

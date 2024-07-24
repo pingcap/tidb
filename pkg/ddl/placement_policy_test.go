@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -169,6 +170,16 @@ func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblIn
 }
 
 func TestPlacementPolicy(t *testing.T) {
+	// Test for the first time
+	testPlacementPolicy(t)
+
+	// Test again with failpoint.
+	// For https://github.com/pingcap/tidb/issues/54796
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("exchangepartition")`)
+	testPlacementPolicy(t)
+}
+
+func testPlacementPolicy(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
@@ -770,7 +781,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, nil, ddl.OnExistError))
+	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, nil, ddl.WithOnExist(ddl.OnExistError)))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -791,7 +802,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tbl2.Name = model.NewCIStr("t3")
 	tbl2.PlacementPolicyRef.Name = model.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, nil, ddl.OnExistError)
+	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, nil, ddl.WithOnExist(ddl.OnExistError))
 	require.Equal(t, "[schema:8239]Unknown placement policy 'pxx'", err.Error())
 }
 

@@ -270,29 +270,15 @@ func (is *InfoschemaV3) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return tbl2, ok1
 }
 
-func (is *InfoschemaV3) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	tbl1 := is.infoV1.SchemaTables(schema)
-	tbl2 := is.infoV2.SchemaTables(schema)
-	if len(tbl1) != len(tbl2) {
+func (is *InfoschemaV3) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
+	tbl1, err1 := is.infoV1.SchemaTableInfos(ctx, schema)
+	tbl2, err2 := is.infoV2.SchemaTableInfos(ctx, schema)
+	if !errors.ErrorEqual(err2, err1) {
 		panic("inconsistent infoschema")
 	}
-	slices.SortFunc(tbl1, func(i, j table.Table) int {
-		return strings.Compare(i.Meta().Name.O, j.Meta().Name.O)
-	})
-	slices.SortFunc(tbl2, func(i, j table.Table) int {
-		return strings.Compare(i.Meta().Name.O, j.Meta().Name.O)
-	})
-	for i := range tbl1 {
-		if !tblEqual(tbl1[i], tbl2[i]) {
-			panic("inconsistent infoschema")
-		}
+	if err1 != nil {
+		return tbl2, err1
 	}
-	return tbl2
-}
-
-func (is *InfoschemaV3) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
-	tbl1 := is.infoV1.SchemaTableInfos(schema)
-	tbl2 := is.infoV2.SchemaTableInfos(schema)
 	if len(tbl1) != len(tbl2) {
 		panic("inconsistent infoschema")
 	}
@@ -307,7 +293,7 @@ func (is *InfoschemaV3) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 			panic("inconsistent infoschema")
 		}
 	}
-	return tbl2
+	return tbl2, nil
 }
 
 func (is *InfoschemaV3) FindTableInfoByPartitionID(
@@ -570,9 +556,9 @@ func (is *InfoschemaV3) ListTablesWithSpecialAttribute(filter specialAttributeFi
 	return rs2
 }
 
-func (is *InfoschemaV3) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
-	tbl1 := is.infoV1.SchemaSimpleTableInfos(schema)
-	tbl2 := is.infoV2.SchemaSimpleTableInfos(schema)
+func (is *InfoschemaV3) SchemaSimpleTableInfos(ctx context.Context, schema model.CIStr) []*model.TableNameInfo {
+	tbl1 := is.infoV1.SchemaSimpleTableInfos(ctx, schema)
+	tbl2 := is.infoV2.SchemaSimpleTableInfos(ctx, schema)
 	if len(tbl1) != len(tbl2) {
 		panic("inconsistent infoschema")
 	}

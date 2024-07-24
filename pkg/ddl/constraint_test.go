@@ -98,6 +98,7 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 			require.True(t, ok)
 			originCons := tableCommon.Constraints
 			tableCommon.Constraints = []*table.Constraint{}
+			tableCommon.ResetColumnsCache()
 			// insert data
 			tk1.MustExec("insert into t values(1)")
 			// recover
@@ -142,6 +143,7 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 			require.True(t, ok)
 			originCons := tableCommon.Constraints
 			tableCommon.Constraints = []*table.Constraint{}
+			tableCommon.ResetColumnsCache()
 			// insert data
 			tk1.MustExec("insert into t values(1)")
 			// recover

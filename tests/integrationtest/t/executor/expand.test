@@ -1,0 +1,112 @@
+CREATE TABLE t1(
+product VARCHAR(32),
+country_id INTEGER NOT NULL,
+year INTEGER,
+profit INTEGER);
+
+INSERT INTO t1  VALUES ( 'Computer', 2,2000, 1200),
+( 'TV', 1, 1999, 150),
+( 'Calculator', 1, 1999,50),
+( 'Computer', 1, 1999,1500),
+( 'Computer', 1, 2000,1500),
+( 'TV', 1, 2000, 150),
+( 'TV', 2, 2000, 100),
+( 'TV', 2, 2000, 100),
+( 'Calculator', 1, 2000,75),
+( 'Calculator', 2, 2000,75),
+( 'TV', 1, 1999, 100),
+( 'Computer', 1, 1999,1200),
+( 'Computer', 2, 2000,1500),
+( 'Calculator', 2, 2000,75),
+( 'Phone', 3, 2003,10)
+;
+
+CREATE TABLE t2 (
+country_id INTEGER PRIMARY KEY,
+country CHAR(20) NOT NULL);
+
+INSERT INTO t2 VALUES (1, 'USA'),(2,'India'), (3,'Finland');
+
+--echo # First simple rollups, with just grand total
+--echo
+--sorted_result
+SELECT product, SUM(profit) FROM t1 GROUP BY product;
+--echo
+--sorted_result
+SELECT product, SUM(profit) FROM t1 GROUP BY product WITH ROLLUP;
+--echo
+--sorted_result
+SELECT product, SUM(profit) FROM t1 GROUP BY 1 WITH ROLLUP;
+--echo
+--sorted_result
+SELECT product, SUM(profit),AVG(profit) FROM t1 GROUP BY product WITH ROLLUP;
+
+--echo
+--echo # Sub totals
+--sorted_result
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year;
+--echo
+--sorted_result
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP;
+--echo
+ANALYZE TABLE t1;
+--echo
+EXPLAIN FORMAT='brief' SELECT product, country_id , year, SUM(profit)
+FROM t1 GROUP BY product, country_id, year WITH ROLLUP;
+--echo
+SELECT product, country_id , SUM(profit) FROM t1
+GROUP BY product, country_id WITH ROLLUP
+ORDER BY product DESC, country_id;
+
+--echo
+--echo # limit
+--sorted_result
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP
+ORDER BY product, country_id, year LIMIT 5;
+--echo
+--sorted_result
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP
+ORDER BY product, country_id, year limit 3,3;
+--echo
+--sorted_result
+SELECT product, country_id, COUNT(*), COUNT(distinct year)
+FROM t1 GROUP BY product, country_id;
+--echo
+--sorted_result
+SELECT product, country_id, COUNT(*), COUNT(distinct year)
+FROM t1 GROUP BY product, country_id WITH ROLLUP;
+
+--echo
+--echo # Test of having
+--sorted_result
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP HAVING country_id = 1;
+--echo
+--sorted_result
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP HAVING SUM(profit) > 200;
+--echo
+--sorted_result
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP HAVING SUM(profit) > 7000;
+
+--echo
+--echo # Functions
+--sorted_result
+SELECT CONCAT(product,':',country_id) AS 'prod', CONCAT(":",year,":") AS 'year',
+1+1, SUM(profit)/COUNT(*) FROM t1 GROUP BY 1,2 WITH ROLLUP;
+--echo
+--sorted_result
+SELECT product, SUM(profit)/COUNT(*) FROM t1 GROUP BY product WITH ROLLUP;
+--echo
+--sorted_result
+SELECT LEFT(product,4) AS prod, SUM(profit)/COUNT(*) FROM t1
+GROUP BY prod WITH ROLLUP;
+--echo
+--sorted_result
+SELECT CONCAT(product,':',country_id), 1+1, SUM(profit)/COUNT(*) FROM t1
+GROUP BY CONCAT(product,':',country_id) WITH ROLLUP;
