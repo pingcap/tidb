@@ -1127,7 +1127,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history, Password_require_current) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
@@ -1219,6 +1219,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		// add Password_reuse_history value.
 		if plOptions.passwordHistoryChange && (plOptions.passwordHistory != notSpecified) {
 			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordHistory)
+		} else {
+			sqlescape.MustFormatSQL(sql, `, %?`, nil)
+		}
+		// Current password requirement per-user policy
+		if plOptions.passwordRequireCurrentChange {
+			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordRequireCurrent)
 		} else {
 			sqlescape.MustFormatSQL(sql, `, %?`, nil)
 		}

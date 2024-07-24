@@ -869,3 +869,37 @@ ADMIN SHOW SLOW TOP ALL 3;
 
 disconnect without_super;
 connection default;
+
+CREATE USER 'pwreq1'@'%' IDENTIFIED BY 'aaa' PASSWORD REQUIRE CURRENT;
+SHOW CREATE USER `pwreq1`@`%`;
+
+CREATE USER 'pwreq2'@'%' IDENTIFIED BY 'aaa' PASSWORD REQUIRE CURRENT DEFAULT;
+SHOW CREATE USER `pwreq2`@`%`;
+
+CREATE USER 'pwreq3'@'%' IDENTIFIED BY 'aaa' PASSWORD REQUIRE CURRENT OPTIONAL;
+SHOW CREATE USER `pwreq3`@`%`;
+
+--error 3893
+ALTER USER 'pwreq3'@'%' IDENTIFIED BY 'aac' REPLACE 'aaa';
+
+ALTER USER 'pwreq3'@'%' PASSWORD REQUIRE CURRENT DEFAULT;
+SHOW CREATE USER `pwreq3`@`%`;
+
+ALTER USER 'pwreq3'@'%' PASSWORD REQUIRE CURRENT;
+SHOW CREATE USER `pwreq3`@`%`;
+
+connect (pwreq1,localhost,pwreq1,aaa,);
+connection pwreq1;
+
+SHOW CREATE USER CURRENT_USER();
+
+--error 3892
+ALTER USER USER() IDENTIFIED BY 'aab';
+
+-- error 3891
+ALTER USER USER() IDENTIFIED BY 'aab' REPLACE 'wrongpassword';
+
+ALTER USER USER() IDENTIFIED BY 'aab' REPLACE 'aaa';
+
+disconnect pwreq1;
+connection default;
