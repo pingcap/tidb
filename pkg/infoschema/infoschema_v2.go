@@ -440,9 +440,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 
 // IsSpecialDB tells whether the database is a special database.
 func IsSpecialDB(dbName string) bool {
-	return dbName == util.InformationSchemaName.L ||
-		dbName == util.PerformanceSchemaName.L ||
-		dbName == util.MetricSchemaName.L
+	return dbName == util.InformationSchemaName.L
 }
 
 // EvictTable is exported for testing only.
@@ -1051,6 +1049,8 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	if !ok {
 		return nil
 	}
+
+	affected = appendAffectedIDs(affected, table.Meta())
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, table.Meta())
