@@ -2589,10 +2589,7 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 	return newKeys
 }
 
-// ExhaustPhysicalPlans enumerate all the possible physical plan for expand operator.
-// The second boolean means whether we should resort to enforcer to satisfy prop requirement.
-// false means we should, while true means we should not.
-func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalExpand(p *LogicalExpand, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
 		// false, meaning we can add a sort enforcer.
