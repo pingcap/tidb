@@ -711,7 +711,7 @@ type Performance struct {
 	TCPNoDelay          bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
-	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MaxTxnTTL           uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
@@ -754,7 +754,7 @@ type Performance struct {
 	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 
 	// Whether enable projection push down for tikv coprocessors.
-	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
+	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
 }
 
 // PlanCache is the PlanCache section of the config.
