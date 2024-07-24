@@ -2268,7 +2268,7 @@ func TestTiFlashHashAggPreAggMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@tiflash_hashagg_preaggregation_mode = default;")
-	tk.MustQuery("select @@tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("auto"))
+	tk.MustQuery("select @@tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("force_preagg"))
 
 	tk.MustExec("set @@tiflash_hashagg_preaggregation_mode = 'auto';")
 	tk.MustQuery("select @@tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("auto"))
