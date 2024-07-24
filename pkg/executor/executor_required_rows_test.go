@@ -482,8 +482,9 @@ func TestSelectionRequiredRows(t *testing.T) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
 	return &SelectionExec{
-		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		filters:      filters,
+		selectionExecutorContext: newSelectionExecutorContext(ctx),
+		BaseExecutorV2:           exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		filters:                  filters,
 	}
 }
 
@@ -600,9 +601,10 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
 	return &ProjectionExec{
-		BaseExecutor:  exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		numWorkers:    int64(numWorkers),
-		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		projectionExecutorContext: newProjectionExecutorContext(ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		numWorkers:                int64(numWorkers),
+		evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
 	}
 }
 

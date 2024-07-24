@@ -30,12 +30,12 @@ import (
 	"go.uber.org/zap"
 )
 
-func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
+func (e *executor) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
 	subJobs := info.SubJobs
 	if len(subJobs) == 0 {
 		return nil
 	}
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -135,8 +135,8 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *mode
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
-	err = d.DoDDLJob(ctx, job)
-	return d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
+	return e.callHookOnChanged(job, err)
 }
 
 func containsDistTaskSubJob(subJobs []*model.SubJob) bool {
@@ -160,7 +160,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				ver, err = w.runDDLJob(d, t, &proxyJob)
+				ver, _, err = w.runOneJobStep(d, t, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -183,7 +183,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job, i)
-			ver, err = w.runDDLJob(d, t, &proxyJob)
+			ver, _, err = w.runOneJobStep(d, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -209,7 +209,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			proxyJobVer, err := w.runDDLJob(d, t, &proxyJob)
+			proxyJobVer, _, err := w.runOneJobStep(d, t, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -258,7 +258,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job, i)
-		ver, err = w.runDDLJob(d, t, &proxyJob)
+		ver, _, err = w.runOneJobStep(d, t, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}

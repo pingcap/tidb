@@ -88,3 +88,7 @@ var GetHashAggs func(la base.LogicalPlan, prop *property.PhysicalProperty) []bas
 // util func pointer.
 var PruneByItems func(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (
 	byItems []*util.ByItems, parentUsedCols []*expression.Column)
+
+// ExhaustPhysicalPlans4LogicalMaxOneRow will be called by LogicalMaxOneRow in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)

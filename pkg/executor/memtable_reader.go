@@ -792,7 +792,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	tz := sctx.GetSessionVars().Location()
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	allSchemaNames := is.AllSchemaNames()
-	schemas := ensureSchemaTables(is, allSchemaNames)
+	schemas := ensureSchemaTables(ctx, is, allSchemaNames)
 	schemas = tikvHelper.FilterMemDBs(schemas)
 	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {

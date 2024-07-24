@@ -1626,6 +1626,8 @@ func TestSetClusterConfig(t *testing.T) {
 		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
 		{ServerType: "tikv", Address: "127.0.0.1:6666", StatusAddr: "127.0.0.1:6666"},
 		{ServerType: "tiflash", Address: "127.0.0.1:3933", StatusAddr: "127.0.0.1:7777"},
+		{ServerType: "tso", Address: "127.0.0.1:22379", StatusAddr: "127.0.0.1:22379"},
+		{ServerType: "scheduling", Address: "127.0.0.1:22479", StatusAddr: "127.0.0.1:22479"},
 	}
 	var serverInfoErr error
 	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
@@ -1635,6 +1637,8 @@ func TestSetClusterConfig(t *testing.T) {
 
 	require.EqualError(t, tk.ExecToErr("set config xxx log.level='info'"), "unknown type xxx")
 	require.EqualError(t, tk.ExecToErr("set config tidb log.level='info'"), "TiDB doesn't support to change configs online, please use SQL variables")
+	require.EqualError(t, tk.ExecToErr("set config tso log.level='info'"), "tso doesn't support to change configs online")
+	require.EqualError(t, tk.ExecToErr("set config scheduling log.level='info'"), "scheduling doesn't support to change configs online")
 	require.EqualError(t, tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), "TiDB doesn't support to change configs online, please use SQL variables")
 	require.EqualError(t, tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), "invalid instance 127.a.b.c:1234")                          // name doesn't resolve.
 	require.EqualError(t, tk.ExecToErr("set config 'example.com:1111' log.level='info'"), "instance example.com:1111 is not found in this cluster") // name resolves.

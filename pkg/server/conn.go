@@ -2438,10 +2438,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start = time.Now()
 	}
 
-	iter := rs.GetRowContainerReader()
+	iter := rs.GetRowIterator()
 	// send the rows to the client according to fetchSize.
-	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
-		row := iter.Current()
+	for i := 0; i < fetchSize && iter.Current(ctx) != iter.End(); i++ {
+		row := iter.Current(ctx)
 
 		data = data[0:4]
 		data, err = column.DumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
@@ -2452,7 +2452,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 			return err
 		}
 
-		iter.Next()
+		iter.Next(ctx)
 	}
 	if iter.Error() != nil {
 		return iter.Error()
@@ -2460,7 +2460,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
-	if iter.Current() == iter.End() {
+	if iter.Current(ctx) == iter.End() {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
 	}

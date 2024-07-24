@@ -16,14 +16,11 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -32,7 +29,7 @@ var (
 	_ base.LogicalPlan = &LogicalProjection{}
 	_ base.LogicalPlan = &LogicalSelection{}
 	_ base.LogicalPlan = &LogicalApply{}
-	_ base.LogicalPlan = &LogicalMaxOneRow{}
+	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
 	_ base.LogicalPlan = &LogicalTableDual{}
 	_ base.LogicalPlan = &DataSource{}
 	_ base.LogicalPlan = &TiKVSingleGather{}
@@ -53,7 +50,8 @@ var (
 	_ base.LogicalPlan = &LogicalSequence{}
 )
 
-func extractNotNullFromConds(conditions []expression.Expression, p base.LogicalPlan) intset.FastIntSet {
+// ExtractNotNullFromConds extracts not-null columns from conditions.
+func ExtractNotNullFromConds(conditions []expression.Expression, p base.LogicalPlan) intset.FastIntSet {
 	// extract the column NOT NULL rejection characteristic from selection condition.
 	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
 	//
@@ -79,7 +77,8 @@ func extractNotNullFromConds(conditions []expression.Expression, p base.LogicalP
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(conditions []expression.Expression, sctx base.PlanContext, fds *fd.FDSet) intset.FastIntSet {
+// ExtractConstantCols extracts constant columns from conditions.
+func ExtractConstantCols(conditions []expression.Expression, sctx base.PlanContext, fds *fd.FDSet) intset.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -106,7 +105,8 @@ func extractConstantCols(conditions []expression.Expression, sctx base.PlanConte
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanContext, fds *fd.FDSet) [][]intset.FastIntSet {
+// ExtractEquivalenceCols extracts equivalence columns from conditions.
+func ExtractEquivalenceCols(conditions []expression.Expression, sctx base.PlanContext, fds *fd.FDSet) [][]intset.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]intset.FastIntSet, 0, len(equivObjsPair))
@@ -146,106 +146,4 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 		equivUniqueIDs = append(equivUniqueIDs, []intset.FastIntSet{intset.NewFastIntSet(lhsUniqueID), intset.NewFastIntSet(rhsUniqueID)})
 	}
 	return equivUniqueIDs
-}
-
-// WindowFrame represents a window function frame.
-type WindowFrame struct {
-	Type  ast.FrameType
-	Start *FrameBound
-	End   *FrameBound
-}
-
-// Clone copies a window frame totally.
-func (wf *WindowFrame) Clone() *WindowFrame {
-	cloned := new(WindowFrame)
-	*cloned = *wf
-
-	cloned.Start = wf.Start.Clone()
-	cloned.End = wf.End.Clone()
-
-	return cloned
-}
-
-// FrameBound is the boundary of a frame.
-type FrameBound struct {
-	Type      ast.BoundType
-	UnBounded bool
-	Num       uint64
-	// CalcFuncs is used for range framed windows.
-	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
-	// and plus or minus for frames like `1 preceding`.
-	CalcFuncs []expression.Expression
-	// Sometimes we need to cast order by column to a specific type when frame type is range
-	CompareCols []expression.Expression
-	// CmpFuncs is used to decide whether one row is included in the current frame.
-	CmpFuncs []expression.CompareFunc
-	// This field is used for passing information to tiflash
-	CmpDataType tipb.RangeCmpDataType
-	// IsExplicitRange marks if this range explicitly appears in the sql
-	IsExplicitRange bool
-}
-
-// Clone copies a frame bound totally.
-func (fb *FrameBound) Clone() *FrameBound {
-	cloned := new(FrameBound)
-	*cloned = *fb
-
-	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
-	for _, it := range fb.CalcFuncs {
-		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
-	}
-	cloned.CmpFuncs = fb.CmpFuncs
-
-	return cloned
-}
-
-func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) {
-	// When cmpDataType can't match to any condition, we can ignore it.
-	//
-	// For example:
-	//   `create table test.range_test(p int not null,o text not null,v int not null);`
-	//   `select *, first_value(v) over (partition by p order by o) as a from range_test;`
-	//   The sql's frame type is range, but the cmpDataType is ETString and when the user explicitly use range frame
-	//   the sql will raise error before generating logical plan, so it's ok to ignore it.
-	switch cmpDataType {
-	case types.ETInt:
-		fb.CmpFuncs[0] = expression.CompareInt
-		fb.CmpDataType = tipb.RangeCmpDataType_Int
-	case types.ETDatetime, types.ETTimestamp:
-		fb.CmpFuncs[0] = expression.CompareTime
-		fb.CmpDataType = tipb.RangeCmpDataType_DateTime
-	case types.ETDuration:
-		fb.CmpFuncs[0] = expression.CompareDuration
-		fb.CmpDataType = tipb.RangeCmpDataType_Duration
-	case types.ETReal:
-		fb.CmpFuncs[0] = expression.CompareReal
-		fb.CmpDataType = tipb.RangeCmpDataType_Float
-	case types.ETDecimal:
-		fb.CmpFuncs[0] = expression.CompareDecimal
-		fb.CmpDataType = tipb.RangeCmpDataType_Decimal
-	}
-}
-
-// UpdateCompareCols will update CompareCols.
-func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
-	ectx := ctx.GetExprCtx().GetEvalCtx()
-
-	if len(fb.CalcFuncs) > 0 {
-		fb.CompareCols = make([]expression.Expression, len(orderByCols))
-		if fb.CalcFuncs[0].GetType(ectx).EvalType() != orderByCols[0].GetType(ectx).EvalType() {
-			var err error
-			fb.CompareCols[0], err = expression.NewFunctionBase(ctx.GetExprCtx(), ast.Cast, fb.CalcFuncs[0].GetType(ectx), orderByCols[0])
-			if err != nil {
-				return err
-			}
-		} else {
-			for i, col := range orderByCols {
-				fb.CompareCols[i] = col
-			}
-		}
-
-		cmpDataType := expression.GetAccurateCmpType(ctx.GetExprCtx().GetEvalCtx(), fb.CompareCols[0], fb.CalcFuncs[0])
-		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
-	}
-	return nil
 }
