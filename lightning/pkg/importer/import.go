@@ -2269,8 +2269,8 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 }
 
 var (
-	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
-	minDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
+	maxKVQueueSize         = 32                // Cache at most this number of rows before blocking the encode loop
+	minDeliverBytes uint64 = 10240 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
 )
 
 type deliveredKVs struct {
