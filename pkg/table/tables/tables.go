@@ -1295,9 +1295,6 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		}
 		err = t.addDeleteBinlog(ctx, binlogSupport, binlogRow, colIDs)
 	}
-	if ctx.GetSessionVars().TxnCtx == nil {
-		return nil
-	}
 
 	if s, ok := ctx.GetStatisticsSupport(); ok {
 		// a reusable buffer to save malloc
