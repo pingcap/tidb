@@ -15,10 +15,10 @@
 package pattern
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/stretchr/testify/require"
 )
 
