@@ -30,12 +30,12 @@ import (
 	"go.uber.org/zap"
 )
 
-func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
+func (e *executor) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
 	subJobs := info.SubJobs
 	if len(subJobs) == 0 {
 		return nil
 	}
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -135,8 +135,8 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *mode
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
-	err = d.DoDDLJob(ctx, job)
-	return d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
+	return e.callHookOnChanged(job, err)
 }
 
 func containsDistTaskSubJob(subJobs []*model.SubJob) bool {

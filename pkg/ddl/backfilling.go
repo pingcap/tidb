@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -689,6 +690,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	cpMgr, err := ingest.NewCheckpointManager(
 		ctx,
 		sessPool,
+		reorgInfo.PhysicalTableID,
 		job.ID,
 		indexIDs,
 		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
@@ -700,7 +702,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Error(err))
 	} else {
 		defer cpMgr.Close()
-		cpMgr.Reset(t.GetPhysicalID(), reorgInfo.StartKey, reorgInfo.EndKey)
 		bcCtx.AttachCheckpointManager(cpMgr)
 	}
 
@@ -723,10 +724,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
-	// in happy path FinishAndUnregisterEngines will be called in pipe.Close. We can
-	// ignore the error here.
-	//nolint: errcheck
-	defer bcCtx.FinishAndUnregisterEngines()
 
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
@@ -748,13 +745,31 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	err = pipe.Execute()
+	err = executeAndClosePipeline(opCtx, pipe)
+	if err != nil {
+		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
+		if err1 != nil {
+			logutil.DDLIngestLogger().Error("unregister engine failed",
+				zap.Int64("jobID", job.ID),
+				zap.Error(err1),
+				zap.Int64s("index IDs", indexIDs))
+		}
+		return err
+	}
+	if cpMgr != nil {
+		cpMgr.AdvanceWatermark(true, true)
+	}
+	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
+}
+
+func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline) error {
+	err := pipe.Execute()
 	if err != nil {
 		return err
 	}
 	err = pipe.Close()
-	if opCtx.OperatorErr() != nil {
-		return opCtx.OperatorErr()
+	if opErr := ctx.OperatorErr(); opErr != nil {
+		return opErr
 	}
 	return err
 }

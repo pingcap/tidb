@@ -332,10 +332,10 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) (
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
-func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) []*model.TableNameInfo {
+func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableNameInfo, error) {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	ret := make([]*model.TableNameInfo, 0, len(schemaTables.tables))
 	for _, t := range schemaTables.tables {
@@ -344,7 +344,7 @@ func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CI
 			Name: t.Meta().Name,
 		})
 	}
-	return ret
+	return ret, nil
 }
 
 type tableInfoResult struct {

@@ -97,7 +97,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	wg.Add(3)
 	for i := 0; i < 3; i++ {
 		go func() {
-			err := bCtx.FinishAndUnregisterEngines()
+			err := bCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 			require.NoError(t, err)
 			wg.Done()
 		}()

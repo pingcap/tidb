@@ -1,0 +1,260 @@
+CREATE TABLE t1(
+product VARCHAR(32),
+country_id INTEGER NOT NULL,
+year INTEGER,
+profit INTEGER);
+INSERT INTO t1  VALUES ( 'Computer', 2,2000, 1200),
+( 'TV', 1, 1999, 150),
+( 'Calculator', 1, 1999,50),
+( 'Computer', 1, 1999,1500),
+( 'Computer', 1, 2000,1500),
+( 'TV', 1, 2000, 150),
+( 'TV', 2, 2000, 100),
+( 'TV', 2, 2000, 100),
+( 'Calculator', 1, 2000,75),
+( 'Calculator', 2, 2000,75),
+( 'TV', 1, 1999, 100),
+( 'Computer', 1, 1999,1200),
+( 'Computer', 2, 2000,1500),
+( 'Calculator', 2, 2000,75),
+( 'Phone', 3, 2003,10)
+;
+CREATE TABLE t2 (
+country_id INTEGER PRIMARY KEY,
+country CHAR(20) NOT NULL);
+INSERT INTO t2 VALUES (1, 'USA'),(2,'India'), (3,'Finland');
+# First simple rollups, with just grand total
+
+SELECT product, SUM(profit) FROM t1 GROUP BY product;
+product	SUM(profit)
+Calculator	275
+Computer	6900
+Phone	10
+TV	600
+
+SELECT product, SUM(profit) FROM t1 GROUP BY product WITH ROLLUP;
+product	SUM(profit)
+NULL	7785
+Calculator	275
+Computer	6900
+Phone	10
+TV	600
+
+SELECT product, SUM(profit) FROM t1 GROUP BY 1 WITH ROLLUP;
+product	SUM(profit)
+NULL	7785
+Calculator	275
+Computer	6900
+Phone	10
+TV	600
+
+SELECT product, SUM(profit),AVG(profit) FROM t1 GROUP BY product WITH ROLLUP;
+product	SUM(profit)	AVG(profit)
+NULL	7785	519.0000
+Calculator	275	68.7500
+Computer	6900	1380.0000
+Phone	10	10.0000
+TV	600	120.0000
+
+# Sub totals
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year;
+product	country_id	year	SUM(profit)
+Calculator	1	1999	50
+Calculator	1	2000	75
+Calculator	2	2000	150
+Computer	1	1999	2700
+Computer	1	2000	1500
+Computer	2	2000	2700
+Phone	3	2003	10
+TV	1	1999	250
+TV	1	2000	150
+TV	2	2000	200
+
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP;
+product	country_id	year	SUM(profit)
+NULL	NULL	NULL	7785
+Calculator	NULL	NULL	275
+Calculator	1	NULL	125
+Calculator	1	1999	50
+Calculator	1	2000	75
+Calculator	2	NULL	150
+Calculator	2	2000	150
+Computer	NULL	NULL	6900
+Computer	1	NULL	4200
+Computer	1	1999	2700
+Computer	1	2000	1500
+Computer	2	NULL	2700
+Computer	2	2000	2700
+Phone	NULL	NULL	10
+Phone	3	NULL	10
+Phone	3	2003	10
+TV	NULL	NULL	600
+TV	1	NULL	400
+TV	1	1999	250
+TV	1	2000	150
+TV	2	NULL	200
+TV	2	2000	200
+
+ANALYZE TABLE t1;
+
+EXPLAIN FORMAT='brief' SELECT product, country_id , year, SUM(profit)
+FROM t1 GROUP BY product, country_id, year WITH ROLLUP;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#6->Column#11, Column#7->Column#12, Column#8->Column#13, Column#10
+└─HashAgg	8000.00	root		group by:Column#16, Column#17, Column#18, Column#19, funcs:sum(Column#15)->Column#10, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#7, funcs:firstrow(Column#18)->Column#8
+  └─Projection	10000.00	root		cast(executor__expand.t1.profit, decimal(10,0) BINARY)->Column#15, Column#6->Column#16, Column#7->Column#17, Column#8->Column#18, gid->Column#19
+    └─Expand	10000.00	root		level-projection:[executor__expand.t1.profit, <nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[executor__expand.t1.profit, Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[executor__expand.t1.profit, Column#6, Column#7, <nil>->Column#8, 3->gid],[executor__expand.t1.profit, Column#6, Column#7, Column#8, 7->gid]; schema: [executor__expand.t1.profit,Column#6,Column#7,Column#8,gid]
+      └─Projection	10000.00	root		executor__expand.t1.profit, executor__expand.t1.product->Column#6, executor__expand.t1.country_id->Column#7, executor__expand.t1.year->Column#8
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+
+SELECT product, country_id , SUM(profit) FROM t1
+GROUP BY product, country_id WITH ROLLUP
+ORDER BY product DESC, country_id;
+product	country_id	SUM(profit)
+TV	NULL	600
+TV	1	400
+TV	2	200
+Phone	NULL	10
+Phone	3	10
+Computer	NULL	6900
+Computer	1	4200
+Computer	2	2700
+Calculator	NULL	275
+Calculator	1	125
+Calculator	2	150
+NULL	NULL	7785
+
+# limit
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP
+ORDER BY product, country_id, year LIMIT 5;
+product	country_id	year	SUM(profit)
+NULL	NULL	NULL	7785
+Calculator	NULL	NULL	275
+Calculator	1	NULL	125
+Calculator	1	1999	50
+Calculator	1	2000	75
+
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP
+ORDER BY product, country_id, year limit 3,3;
+product	country_id	year	SUM(profit)
+Calculator	1	1999	50
+Calculator	1	2000	75
+Calculator	2	NULL	150
+
+SELECT product, country_id, COUNT(*), COUNT(distinct year)
+FROM t1 GROUP BY product, country_id;
+product	country_id	COUNT(*)	COUNT(distinct year)
+Calculator	1	2	2
+Calculator	2	2	1
+Computer	1	3	2
+Computer	2	2	1
+Phone	3	1	1
+TV	1	3	2
+TV	2	2	1
+
+SELECT product, country_id, COUNT(*), COUNT(distinct year)
+FROM t1 GROUP BY product, country_id WITH ROLLUP;
+product	country_id	COUNT(*)	COUNT(distinct year)
+NULL	NULL	15	3
+Calculator	NULL	4	2
+Calculator	1	2	2
+Calculator	2	2	1
+Computer	NULL	5	2
+Computer	1	3	2
+Computer	2	2	1
+Phone	NULL	1	1
+Phone	3	1	1
+TV	NULL	5	2
+TV	1	3	2
+TV	2	2	1
+
+# Test of having
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP HAVING country_id = 1;
+product	country_id	year	SUM(profit)
+Calculator	1	NULL	125
+Calculator	1	1999	50
+Calculator	1	2000	75
+Computer	1	NULL	4200
+Computer	1	1999	2700
+Computer	1	2000	1500
+TV	1	NULL	400
+TV	1	1999	250
+TV	1	2000	150
+
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP HAVING SUM(profit) > 200;
+product	country_id	year	SUM(profit)
+NULL	NULL	NULL	7785
+Calculator	NULL	NULL	275
+Computer	NULL	NULL	6900
+Computer	1	NULL	4200
+Computer	1	1999	2700
+Computer	1	2000	1500
+Computer	2	NULL	2700
+Computer	2	2000	2700
+TV	NULL	NULL	600
+TV	1	NULL	400
+TV	1	1999	250
+
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year WITH ROLLUP HAVING SUM(profit) > 7000;
+product	country_id	year	SUM(profit)
+NULL	NULL	NULL	7785
+
+# Functions
+SELECT CONCAT(product,':',country_id) AS 'prod', CONCAT(":",year,":") AS 'year',
+1+1, SUM(profit)/COUNT(*) FROM t1 GROUP BY 1,2 WITH ROLLUP;
+prod	year	1+1	SUM(profit)/COUNT(*)
+NULL	NULL	2	519.0000
+Calculator:1	NULL	2	62.5000
+Calculator:1	:1999:	2	50.0000
+Calculator:1	:2000:	2	75.0000
+Calculator:2	NULL	2	75.0000
+Calculator:2	:2000:	2	75.0000
+Computer:1	NULL	2	1400.0000
+Computer:1	:1999:	2	1350.0000
+Computer:1	:2000:	2	1500.0000
+Computer:2	NULL	2	1350.0000
+Computer:2	:2000:	2	1350.0000
+Phone:3	NULL	2	10.0000
+Phone:3	:2003:	2	10.0000
+TV:1	NULL	2	133.3333
+TV:1	:1999:	2	125.0000
+TV:1	:2000:	2	150.0000
+TV:2	NULL	2	100.0000
+TV:2	:2000:	2	100.0000
+
+SELECT product, SUM(profit)/COUNT(*) FROM t1 GROUP BY product WITH ROLLUP;
+product	SUM(profit)/COUNT(*)
+NULL	519.0000
+Calculator	68.7500
+Computer	1380.0000
+Phone	10.0000
+TV	120.0000
+
+SELECT LEFT(product,4) AS prod, SUM(profit)/COUNT(*) FROM t1
+GROUP BY prod WITH ROLLUP;
+prod	SUM(profit)/COUNT(*)
+NULL	519.0000
+Calc	68.7500
+Comp	1380.0000
+Phon	10.0000
+TV	120.0000
+
+SELECT CONCAT(product,':',country_id), 1+1, SUM(profit)/COUNT(*) FROM t1
+GROUP BY CONCAT(product,':',country_id) WITH ROLLUP;
+CONCAT(product,':',country_id)	1+1	SUM(profit)/COUNT(*)
+NULL	2	519.0000
+Calculator:1	2	62.5000
+Calculator:2	2	75.0000
+Computer:1	2	1400.0000
+Computer:2	2	1350.0000
+Phone:3	2	10.0000
+TV:1	2	133.3333
+TV:2	2	100.0000

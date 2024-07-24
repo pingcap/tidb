@@ -24,6 +24,7 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -188,6 +190,9 @@ type Table interface {
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
 
+	// WritableConstraint returns constraints of the table in writable states.
+	WritableConstraint() []*Constraint
+
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
 	// IndexPrefix returns the index key prefix.
@@ -302,4 +307,27 @@ type CachedTable interface {
 	// 'exit' is a channel to tell the keep alive goroutine to exit.
 	// The result is sent to the 'wg' channel.
 	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
+}
+
+// CheckRowConstraint verify row check constraints.
+func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowToCheck chunk.Row) error {
+	for _, constraint := range constraints {
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
+		if err != nil {
+			return err
+		}
+		if ok == 0 && !isNull {
+			return ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
+		}
+	}
+	return nil
+}
+
+// CheckRowConstraintWithDatum verify row check constraints.
+// It is the same with `CheckRowConstraint` but receives a slice of `types.Datum` instead of `chunk.Row`.
+func CheckRowConstraintWithDatum(ctx exprctx.EvalContext, constraints []*Constraint, row []types.Datum) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	return CheckRowConstraint(ctx, constraints, chunk.MutRowFromDatums(row).ToRow())
 }

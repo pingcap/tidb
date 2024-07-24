@@ -20,12 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
-// Init initializes DataSource.
-func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
-	ds.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)
-	return &ds
-}
-
 // Init initializes LogicalProjection.
 func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
