@@ -1181,13 +1181,23 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 	return false
 }
 
+// TableLockAttribute is the Table Lock attribute filter used by ListTablesWithSpecialAttribute.
+var TableLockAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.Lock != nil
+}
+
+// ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
+var ForeignKeysAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	return len(t.ForeignKeys) > 0
+}
+
 // PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
 var PartitionAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
 }
 
 func hasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.
