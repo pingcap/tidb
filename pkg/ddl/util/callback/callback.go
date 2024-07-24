@@ -15,7 +15,6 @@
 package callback
 
 import (
-	"context"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -31,31 +30,9 @@ type TestDDLCallback struct {
 	// domain to reload schema before your ddl stepping into the next state change.
 	Do ddl.SchemaLoader
 
-	onJobRunBefore          func(*model.Job)
-	OnJobRunBeforeExported  func(*model.Job)
-	OnJobRunAfterExported   func(*model.Job)
-	onJobUpdated            func(*model.Job)
-	OnJobUpdatedExported    atomic.Pointer[func(*model.Job)]
-	onWatched               func(ctx context.Context)
-	OnGetJobBeforeExported  func()
-	OnGetJobAfterExported   func(*model.Job)
-	OnJobSchemaStateChanged func(int64)
-
-	OnUpdateReorgInfoExported func(job *model.Job, pid int64)
-}
-
-// OnSchemaStateChanged mock the same behavior with the main ddl hook.
-func (tc *TestDDLCallback) OnSchemaStateChanged(schemaVer int64) {
-	if tc.Do != nil {
-		if err := tc.Do.Reload(); err != nil {
-			logutil.DDLLogger().Warn("reload failed on schema state changed", zap.Error(err))
-		}
-	}
-
-	if tc.OnJobSchemaStateChanged != nil {
-		tc.OnJobSchemaStateChanged(schemaVer)
-		return
-	}
+	OnJobRunBeforeExported func(*model.Job)
+	OnJobRunAfterExported  func(*model.Job)
+	OnJobUpdatedExported   atomic.Pointer[func(*model.Job)]
 }
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
@@ -63,10 +40,6 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 	logutil.DDLLogger().Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
-		return
-	}
-	if tc.onJobRunBefore != nil {
-		tc.onJobRunBefore(job)
 		return
 	}
 
@@ -94,32 +67,11 @@ func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	if job.State == model.JobStateSynced {
 		return
 	}
-	if tc.onJobUpdated != nil {
-		tc.onJobUpdated(job)
-		return
-	}
 
 	tc.BaseCallback.OnJobUpdated(job)
-}
-
-// OnWatched is used to run the user customized logic of `OnWatched` first.
-func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
-	if tc.onWatched != nil {
-		tc.onWatched(ctx)
-		return
-	}
-
-	tc.BaseCallback.OnWatched(ctx)
 }
 
 // Clone copies the callback and take its reference
 func (tc *TestDDLCallback) Clone() *TestDDLCallback {
 	return &*tc
-}
-
-// OnUpdateReorgInfo mock the same behavior with the main DDL reorg hook.
-func (tc *TestDDLCallback) OnUpdateReorgInfo(job *model.Job, pid int64) {
-	if tc.OnUpdateReorgInfoExported != nil {
-		tc.OnUpdateReorgInfoExported(job, pid)
-	}
 }
