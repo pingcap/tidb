@@ -326,20 +326,22 @@ func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	defer d.globalIDLock.Unlock()
 	return kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		ids, err := t.GenGlobalIDs(len(jobWs))
+
+		count := getRequiredGIDCount(jobWs)
+		ids, err := t.GenGlobalIDs(count)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		assignGIDsForJobs(jobWs, ids)
 
 		if err := d.checkFlashbackJobInQueue(t); err != nil {
 			return errors.Trace(err)
 		}
 
-		for i, jobW := range jobWs {
+		for _, jobW := range jobWs {
 			job := jobW.Job
 			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
-			job.ID = ids[i]
 			setJobStateToQueueing(job)
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
