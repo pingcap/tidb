@@ -753,7 +753,7 @@ type Performance struct {
 	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
 	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 
-	// Whether enable projection push down for tikv coprocessors.
+	// Deprecated: this config will not have any effect
 	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
 }
 
