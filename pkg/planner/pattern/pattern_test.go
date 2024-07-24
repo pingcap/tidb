@@ -15,6 +15,7 @@
 package pattern
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -27,7 +28,7 @@ func TestGetOperand(t *testing.T) {
 	require.Equal(t, OperandProjection, GetOperand(&plannercore.LogicalProjection{}))
 	require.Equal(t, OperandSelection, GetOperand(&plannercore.LogicalSelection{}))
 	require.Equal(t, OperandApply, GetOperand(&plannercore.LogicalApply{}))
-	require.Equal(t, OperandMaxOneRow, GetOperand(&plannercore.LogicalMaxOneRow{}))
+	require.Equal(t, OperandMaxOneRow, GetOperand(&logicalop.LogicalMaxOneRow{}))
 	require.Equal(t, OperandTableDual, GetOperand(&plannercore.LogicalTableDual{}))
 	require.Equal(t, OperandDataSource, GetOperand(&plannercore.DataSource{}))
 	require.Equal(t, OperandUnionScan, GetOperand(&plannercore.LogicalUnionScan{}))

@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -396,7 +397,7 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
 		*LogicalApply, *LogicalProjection, *LogicalWindow, *LogicalAggregation:
 		return childMaxOneRow[0]
-	case *LogicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow:
 		return true
 	case *LogicalJoin:
 		switch x.JoinType {

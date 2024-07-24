@@ -513,9 +513,9 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 					if join.JoinType == LeftOuterJoin {
-						resetNotNullFlag(join.Schema(), lChild.Schema().Len(), join.Schema().Len())
+						util.ResetNotNullFlag(join.Schema(), lChild.Schema().Len(), join.Schema().Len())
 					} else if join.JoinType == RightOuterJoin {
-						resetNotNullFlag(join.Schema(), 0, lChild.Schema().Len())
+						util.ResetNotNullFlag(join.Schema(), 0, lChild.Schema().Len())
 					}
 					buildKeyInfo(join)
 					// count(a) -> ifnull(col#x, 0, 1) in rewriteExpr of agg function, since col#x is already the final

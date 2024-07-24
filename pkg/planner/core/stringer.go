@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"strings"
 
 	perrors "github.com/pingcap/errors"
@@ -166,7 +167,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *LogicalMaxOneRow, *PhysicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *LogicalLimit, *PhysicalLimit:
 		str = "Limit"
