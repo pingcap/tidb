@@ -35,7 +35,7 @@ type MetaOnlyInfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaAndTable
 	AllSchemaNames() []model.CIStr
-	SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) []*model.TableNameInfo
+	SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableNameInfo, error)
 	Misc
 }
 
