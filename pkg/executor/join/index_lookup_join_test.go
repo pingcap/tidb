@@ -170,7 +170,7 @@ func TestIssue54688(t *testing.T) {
 				cancel()
 			},
 		))
-		_, err = session.GetRows4Test(context, nil, rs)
+		_, _ = session.GetRows4Test(context, nil, rs)
 		rs.Close()
 	}
 }
