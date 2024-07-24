@@ -2959,7 +2959,8 @@ func TestIssue50308(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("0000-00-00 00:00:00"))
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t values('2000-01-01');")
+	tk.MustGetErrMsg("update t set a=cast('2099-01-01' as date)", "[types:1292]Incorrect timestamp value: '2099-01-01'")
 	tk.MustExec("update ignore t set a=cast('2099-01-01' as date);")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1292 Incorrect timestamp value: '2099-01-01' for column 'a' at row 1"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1292 Incorrect timestamp value: '2099-01-01'"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("0000-00-00 00:00:00"))
 }
