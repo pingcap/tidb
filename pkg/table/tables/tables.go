@@ -816,11 +816,12 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			// The reserved ID could be used in the future within this statement, by the
 			// following AddRecord() operation.
 			// Make the IDs continuous benefit for the performance of TiKV.
-			sessVars := sctx.GetSessionVars()
-			stmtCtx := sessVars.StmtCtx
-			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
-			if err != nil {
-				return nil, err
+			if reserved, ok := sctx.GetReservedRowIDAlloc(); ok {
+				var baseRowID, maxRowID int64
+				if baseRowID, maxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID)); err != nil {
+					return nil, err
+				}
+				reserved.Reset(baseRowID, maxRowID)
 			}
 		}
 
@@ -1580,11 +1581,10 @@ func GetColDefaultValue(ctx exprctx.BuildContext, col *table.Column, defaultVals
 func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (kv.IntHandle,
 	error) {
 	if mctx != nil {
-		if stmtCtx := mctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+		if reserved, ok := mctx.GetReservedRowIDAlloc(); ok {
 			// First try to alloc if the statement has reserved auto ID.
-			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
-				stmtCtx.BaseRowID++
-				return kv.IntHandle(stmtCtx.BaseRowID), nil
+			if rowID, ok := reserved.Consume(); ok {
+				return kv.IntHandle(rowID), nil
 			}
 		}
 	}
@@ -1614,7 +1614,7 @@ func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table
 			// shard = 0010000000000000000000000000000000000000000000000000000000000000
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
-		shard := mctx.GetSessionVars().GetCurrentShard(int(n))
+		shard := mctx.GetRowIDShardGenerator().GetCurrentShard(int(n))
 		base = shardFmt.Compose(shard, base)
 		maxID = shardFmt.Compose(shard, maxID)
 	}
