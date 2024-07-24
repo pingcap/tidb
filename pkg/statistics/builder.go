@@ -152,6 +152,7 @@ func buildHist(
 	memTracker *memory.Tracker,
 ) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
+	// allowAutoCount determines if we will allow analyze to automatically adjust the bucket count
 	allowAutoCount := variable.EnableAnalyzeAutoCount.Load()
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
@@ -160,20 +161,20 @@ func buildHist(
 	ndvFactor := float64(count) / float64(ndv)
 	// origNdvFactor represents an upper bound (Ceil) of the orignal ndvFactor - such that "repeat" values greater
 	// than this value are considered to be skewed (well) above the average.
-	origNdvFactor := int64(math.Ceil(ndvFactor + 1))
+	origNdvFactor := int64(ndvFactor * math.Max(sampleFactor, 1))
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
 	// Since bucket count is increased by sampleFactor, so the actual max values per bucket are
-	// ceil(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
+	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
 	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
 	if allowAutoCount {
-		valuesPerBucket = math.Ceil(valuesPerBucket)
+		// We want to ensure there is more than 1 value per bucket unless that value is skewed
+		valuesPerBucket = math.Max(math.Ceil(valuesPerBucket), 2)
 	}
 
 	bucketIdx := 0
-	lastRepeat := int64(ndvFactor)
 	var lastCount int64
 	corrXYSum = float64(0)
 	// The underlying idea is that when a value is sampled,
@@ -226,21 +227,30 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-			// If all values in the bucket have the same repeat - allow the bucket size to double. Anything greater than the
-			// original average NDV should be the last value in this bucket since the repeat is used similar to a topN
+			// Keep the basic valuesPerBucket count if allowAutoCount is false
 		} else if (!allowAutoCount && currentCount <= valuesPerBucket) ||
-			(lastRepeat == hg.Buckets[bucketIdx].Repeat && currentCount <= valuesPerBucket*2) ||
-			(currentCount <= valuesPerBucket && hg.Buckets[bucketIdx].Repeat < origNdvFactor) {
+			// If allowAutoCount is true, allow the bucket size to grow. Anything greater than the original average NDV
+			// should be the last value in this bucket since the repeat is used similar to a topN
+			(allowAutoCount &&
+				((hg.Buckets[bucketIdx].Repeat <= int64(ndvFactor) && currentCount <= valuesPerBucket*2) ||
+					(currentCount <= valuesPerBucket && hg.Buckets[bucketIdx].Repeat < origNdvFactor))) {
 			// The bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
-			lastRepeat = hg.Buckets[bucketIdx].Repeat
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
 			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
-			lastRepeat = int64(ndvFactor)
+			// If we're running out of buckets - we need to increase the skewed value (origNDVFactor) and valuesPerBucket
+			remainingCount := float64(count) - totalCount
+			remainingBuckets := float64(numBuckets) - float64(bucketIdx)
+			if allowAutoCount && remainingCount/valuesPerBucket > remainingBuckets {
+				origNdvFactor++
+				if remainingCount/(valuesPerBucket*2) > remainingBuckets {
+					valuesPerBucket++
+				}
+			}
 		}
 	}
 	return corrXYSum, nil
@@ -336,6 +346,11 @@ func BuildHistAndTopN(
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
+	// if the NDV is less than 256, use histogram buckets rather than TopN to store values. This can reduce instances where
+	// we assume all values are contained in the TopN & buckets and estimate zero rows if a query searches for a new value
+	if variable.EnableAnalyzeAutoCount.Load() && ndv <= 256 {
+		numTopN = 0
+	}
 	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
 	if numTopN != 100 {
