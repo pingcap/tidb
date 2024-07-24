@@ -20,27 +20,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/zap"
 )
-
-// TestInterceptor is a test interceptor in the ddl
-type TestInterceptor struct {
-	*ddl.BaseInterceptor
-
-	OnGetInfoSchemaExported func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
-}
-
-// OnGetInfoSchema is to run when to call GetInfoSchema
-func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
-	if ti.OnGetInfoSchemaExported != nil {
-		return ti.OnGetInfoSchemaExported(ctx, is)
-	}
-
-	return ti.BaseInterceptor.OnGetInfoSchema(ctx, is)
-}
 
 // TestDDLCallback is used to customize user callback themselves.
 type TestDDLCallback struct {
@@ -60,21 +42,6 @@ type TestDDLCallback struct {
 	OnJobSchemaStateChanged func(int64)
 
 	OnUpdateReorgInfoExported func(job *model.Job, pid int64)
-}
-
-// OnChanged mock the same behavior with the main DDL hook.
-func (tc *TestDDLCallback) OnChanged(err error) error {
-	if err != nil {
-		return err
-	}
-	logutil.DDLLogger().Info("performing DDL change, must reload")
-	if tc.Do != nil {
-		err = tc.Do.Reload()
-		if err != nil {
-			logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
-		}
-	}
-	return nil
 }
 
 // OnSchemaStateChanged mock the same behavior with the main ddl hook.

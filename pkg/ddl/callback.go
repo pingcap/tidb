@@ -23,31 +23,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/zap"
 )
-
-// Interceptor is used for DDL.
-type Interceptor interface {
-	// OnGetInfoSchema is an intercept which is called in the function ddl.GetInfoSchema(). It is used in the tests.
-	OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
-}
-
-// BaseInterceptor implements Interceptor.
-type BaseInterceptor struct{}
-
-// OnGetInfoSchema implements Interceptor.OnGetInfoSchema interface.
-func (*BaseInterceptor) OnGetInfoSchema(_ sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
-	return is
-}
 
 // Callback is used for DDL.
 type Callback interface {
 	ReorgCallback
-	// OnChanged is called after a ddl statement is finished.
-	OnChanged(err error) error
 	// OnSchemaStateChanged is called after a schema state is changed.
 	// only called inside tests.
 	OnSchemaStateChanged(schemaVer int64)
@@ -63,11 +45,6 @@ type Callback interface {
 
 // BaseCallback implements Callback.OnChanged interface.
 type BaseCallback struct {
-}
-
-// OnChanged implements Callback interface.
-func (*BaseCallback) OnChanged(err error) error {
-	return err
 }
 
 // OnSchemaStateChanged implements Callback interface.

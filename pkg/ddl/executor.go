@@ -335,7 +335,6 @@ func (e *executor) CreateSchemaWithInfo(
 	}
 
 	err := e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 
 	if infoschema.ErrDatabaseExists.Equal(err) && onExist == OnExistIgnore {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -377,7 +376,6 @@ func (e *executor) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *a
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -419,7 +417,6 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 		})
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -588,7 +585,6 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			SQLMode: sctx.GetSessionVars().SQLMode,
 		}
 		err := e.DoDDLJob(sctx, job)
-		err = e.callHookOnChanged(job, err)
 		if err != nil {
 			oneFail = tbl.ID
 			fail++
@@ -666,7 +662,6 @@ func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, 
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -795,7 +790,6 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			if stmt.IfExists {
@@ -845,7 +839,6 @@ func (e *executor) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *Reco
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	err := e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3079,7 +3072,6 @@ func (e *executor) CreateTableWithInfo(
 		err = e.createTableWithInfoPost(ctx, tbInfo, job.SchemaID)
 	}
 
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3170,16 +3162,16 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
-		return errors.Trace(e.callHookOnChanged(jobW.Job, err))
+		return errors.Trace(err)
 	}
 
 	for j := range args {
 		if err = e.createTableWithInfoPost(ctx, args[j], jobW.SchemaID); err != nil {
-			return errors.Trace(e.callHookOnChanged(jobW.Job, err))
+			return errors.Trace(err)
 		}
 	}
 
-	return e.callHookOnChanged(jobW.Job, err)
+	return nil
 }
 
 // BuildQueryStringFromJobs takes a slice of Jobs and concatenates their
@@ -3298,7 +3290,6 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3368,7 +3359,6 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3412,7 +3402,6 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4396,7 +4385,6 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4450,7 +4438,6 @@ func (e *executor) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4649,7 +4636,6 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4748,7 +4734,6 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4939,7 +4924,6 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	if err == nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 	}
@@ -5005,7 +4989,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
+	failpoint.InjectCall("afterReorganizePartition")
 	if err == nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 	}
@@ -5071,7 +5055,6 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5279,7 +5262,6 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5383,7 +5365,6 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 		}
 		return errors.Trace(err)
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5594,8 +5575,7 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("after the exchange, please analyze related table of the exchange to update statistics"))
-	err = e.callHookOnChanged(job, err)
-	return errors.Trace(err)
+	return nil
 }
 
 // DropColumn will drop a column from the table, now we don't support drop the column with index covered.
@@ -5633,7 +5613,6 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6474,7 +6453,6 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6536,7 +6514,6 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6567,7 +6544,6 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6626,7 +6602,6 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6660,7 +6635,6 @@ func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6689,7 +6663,6 @@ func (e *executor) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6743,7 +6716,6 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6815,7 +6787,6 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6873,7 +6844,6 @@ func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.I
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6906,7 +6876,6 @@ func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) 
 			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
 		err = e.DoDDLJob(ctx, job)
-		err = e.callHookOnChanged(job, err)
 		return errors.Trace(err)
 	}
 
@@ -7042,7 +7011,6 @@ func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err := e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -7150,7 +7118,6 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -7295,7 +7262,6 @@ func (e *executor) dropTableObject(
 		}
 
 		err = e.DoDDLJob(ctx, job)
-		err = e.callHookOnChanged(job, err)
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 			continue
@@ -7382,7 +7348,6 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}})
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	if err != nil {
 		if config.TableLockEnabled() {
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
@@ -7456,7 +7421,6 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -7517,7 +7481,6 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -7719,7 +7682,6 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	job.ReorgMeta = reorgMeta
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -7987,7 +7949,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8187,7 +8148,6 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8217,7 +8177,6 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName m
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8310,7 +8269,6 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName mod
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8596,7 +8554,6 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 		ctx.ReleaseTableLocks(unlockTables)
 		ctx.AddTableLock(lockTables)
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8644,7 +8601,6 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8671,7 +8627,6 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 	}
 	defer d.sessPool.Put(ctx)
 	err = d.executor.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8743,7 +8698,6 @@ func (e *executor) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableN
 	if err == nil {
 		ctx.ReleaseTableLocks(cleanupTables)
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8833,7 +8787,6 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 		// Remove the old TableInfo from repairInfo before domain reload.
 		domainutil.RepairInfo.RemoveFromRepairInfo(oldDBInfo.Name.L, oldTableInfo.Name.L)
 	}
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8911,7 +8864,6 @@ func (e *executor) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequence
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8951,7 +8903,6 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8987,7 +8938,6 @@ func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident,
 		return errors.Trace(err)
 	}
 
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -9031,7 +8981,6 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 		return errors.Trace(err)
 	}
 
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -9113,7 +9062,6 @@ func (e *executor) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIde
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -9277,7 +9225,6 @@ func (e *executor) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateReso
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return err
 }
 
@@ -9328,7 +9275,6 @@ func (e *executor) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResou
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return err
 }
 
@@ -9385,7 +9331,6 @@ func (e *executor) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterRes
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return err
 }
 
@@ -9450,7 +9395,6 @@ func (e *executor) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPla
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -9489,7 +9433,6 @@ func (e *executor) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterP
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -9547,8 +9490,7 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
 
-	err = e.DoDDLJob(sctx, job)
-	return e.callHookOnChanged(job, err)
+	return e.DoDDLJob(sctx, job)
 }
 
 func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
@@ -9608,8 +9550,7 @@ func (e *executor) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err 
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = e.DoDDLJob(ctx, job)
-	return e.callHookOnChanged(job, err)
+	return e.DoDDLJob(ctx, job)
 }
 
 // checkTooBigFieldLengthAndTryAutoConvert will check whether the field length is too big
@@ -9702,7 +9643,6 @@ func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, c
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -9736,7 +9676,6 @@ func (e *executor) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, con
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -9770,20 +9709,6 @@ func (e *executor) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, co
 	}
 
 	err = e.DoDDLJob(ctx, job)
-	err = e.callHookOnChanged(job, err)
-	return errors.Trace(err)
-}
-
-// TODO remove it later.
-func (e *executor) callHookOnChanged(job *model.Job, err error) error {
-	if job.State == model.JobStateNone {
-		// We don't call the hook if the job haven't run yet.
-		return err
-	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	err = e.mu.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
