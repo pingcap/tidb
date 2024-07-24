@@ -765,7 +765,11 @@ retry:
 		// In theory that error should be handled in the lower layer, like client-go.
 		// But it's not done, so we retry here.
 		if strings.Contains(err.Error(), "in flashback progress") {
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			goto retry
 		}
 		return nil, errors.Trace(err)
@@ -774,7 +778,7 @@ retry:
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model.CIStr) []*model.TableNameInfo {
+func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableNameInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -786,15 +790,15 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model
 					Name: tbl.Meta().Name,
 				})
 			}
-			return ret
+			return ret, nil
 		}
-		return nil // something wrong?
+		return nil, nil // something wrong?
 	}
 
 retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
@@ -804,19 +808,22 @@ retry:
 	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			return nil
+			return nil, nil
 		}
 		// Flashback statement could cause such kind of error.
 		// In theory that error should be handled in the lower layer, like client-go.
 		// But it's not done, so we retry here.
 		if strings.Contains(err.Error(), "in flashback progress") {
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			goto retry
 		}
-		// TODO: error could happen, so do not panic!
-		panic(err)
+		return nil, errors.Trace(err)
 	}
-	return tblInfos
+	return tblInfos, nil
 }
 
 // FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
