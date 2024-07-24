@@ -15,6 +15,8 @@
 package context
 
 import (
+	stdctx "context"
+
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
@@ -33,8 +35,8 @@ type MetaOnlyInfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	AllSchemas() []*model.DBInfo
 	AllSchemaNames() []model.CIStr
-	SchemaTableInfos(schema model.CIStr) []*model.TableInfo
-	SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo
+	SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error)
+	SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) []*model.TableNameInfo
 	Misc
 }
 

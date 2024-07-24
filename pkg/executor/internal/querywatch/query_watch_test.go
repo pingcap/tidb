@@ -104,6 +104,13 @@ func TestQueryWatch(t *testing.T) {
 			"rg2 d08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57 Kill Plan",
 		), maxWaitDuration, tryInterval)
 
+	rs, err := tk.Exec("select SQL_NO_CACHE start_time from mysql.tidb_runaway_watch where resource_group_name = 'rg2'")
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	// check start_time in `mysql.tidb_runaway_watch` and `information_schema.runaway_watches`
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE DATE_FORMAT(start_time, '%Y-%m-%d %H:%i:%s') as start_time from mysql.tidb_runaway_watch where resource_group_name = 'rg2'", nil,
+		tk.MustQuery("select SQL_NO_CACHE start_time from information_schema.runaway_watches where resource_group_name = 'rg2'").Rows(), maxWaitDuration, tryInterval)
+
 	// avoid the default resource group to be recorded.
 	tk.MustExec("alter resource group default QUERY_LIMIT=(EXEC_ELAPSED='1000ms' ACTION=DRYRUN)")
 
@@ -151,7 +158,7 @@ func TestQueryWatch(t *testing.T) {
 		), maxWaitDuration, tryInterval)
 
 	// test remove
-	rs, err := tk.Exec("query watch remove 1")
+	rs, err = tk.Exec("query watch remove 1")
 	require.NoError(t, err)
 	require.Nil(t, rs)
 	time.Sleep(1 * time.Second)
