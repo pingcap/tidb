@@ -47,8 +47,8 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 		return nil, err
 	}
 	if intest.InTest && totalMemCost == 0 {
-		// In test, we set the cost to 5MB to avoid using too many memory in the LFU's CM sketch.
-		cost = 5000000
+		// In test, we set the cost to 10MB to avoid using too many memory in the LFU's CM sketch.
+		cost = 40_000_000
 	}
 	metrics.CapacityGauge.Set(float64(cost))
 	result := &LFU{}
