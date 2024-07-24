@@ -764,7 +764,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		tbl, err := getTable((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), dbInfo.ID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1672,7 +1672,17 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	return nil
 }
 
-type asAutoIDRequirement ddlCtx
+func (d *ddlCtx) getAutoIDRequirement() autoid.Requirement {
+	return &asAutoIDRequirement{
+		store:     d.store,
+		autoidCli: d.autoidCli,
+	}
+}
+
+type asAutoIDRequirement struct {
+	store     kv.Storage
+	autoidCli *autoid.ClientDiscover
+}
 
 var _ autoid.Requirement = &asAutoIDRequirement{}
 
@@ -1693,7 +1703,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	if !needMigrateFromAutoIncToAutoRand {
 		return nil
 	}
-	autoRandAlloc := autoid.NewAllocatorsFromTblInfo((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.getAutoIDRequirement(), dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
 	if autoRandAlloc == nil {
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)

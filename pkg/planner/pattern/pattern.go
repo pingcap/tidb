@@ -17,6 +17,7 @@ package pattern
 import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
 // Operand is the node of a pattern tree, it represents a logical expression operator.
@@ -86,7 +87,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandProjection
 	case *plannercore.LogicalSelection:
 		return OperandSelection
-	case *plannercore.LogicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow:
 		return OperandMaxOneRow
 	case *plannercore.LogicalTableDual:
 		return OperandTableDual

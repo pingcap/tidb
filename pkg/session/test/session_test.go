@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -341,11 +342,12 @@ func TestDoDDLJobQuit(t *testing.T) {
 	require.NoError(t, err)
 	defer se.Close()
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", `return`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop")) }()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", func() {
+		_ = dom.DDL().Stop()
+	})
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
+	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
 	require.Equal(t, "context canceled", err.Error())
 }
 

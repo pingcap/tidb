@@ -40,7 +40,7 @@ func testPlacementPolicyInfo(t *testing.T, store kv.Storage, name string, settin
 	return policy
 }
 
-func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.DDL, policyInfo *model.PolicyInfo) *model.Job {
+func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, policyInfo *model.PolicyInfo) *model.Job {
 	job := &model.Job{
 		SchemaName: policyInfo.Name.L,
 		Type:       model.ActionCreatePlacementPolicy,
@@ -60,7 +60,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.DDL, 
 
 func TestPlacementPolicyInUse(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	d := dom.DDL()
+	d := dom.DDLExecutor().(ddl.ExecutorForTest)
 
 	sctx := testkit.NewTestKit(t, store).Session()
 

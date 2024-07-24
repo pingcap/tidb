@@ -251,7 +251,7 @@ func TestMPPHints(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -298,7 +298,7 @@ func TestMPPHintsScope(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -351,7 +351,7 @@ func TestMPPBCJModel(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -396,13 +396,13 @@ func TestMPPPreferBCJ(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	tk.MustExec("analyze table t1 all columns")
@@ -455,7 +455,7 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	{
 		cnt, err := store.GetMPPClient().GetMPPStoreCount()
@@ -514,13 +514,13 @@ func TestMPPRightSemiJoin(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	tk.MustExec("analyze table t1 all columns")
@@ -570,13 +570,13 @@ func TestMPPRightOuterJoin(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	tk.MustExec("analyze table t1 all columns")
@@ -1456,6 +1456,41 @@ func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t ( a int NOT NULL ,  b int NOT NULL ) `)
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+// TestExplainExpand
+func TestExplainExpand(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(a int, b int, c int, d int, e int)")
+	tk.MustExec("create table s(a int, b int, c int, d int, e int)")
+	tk.MustExec("CREATE TABLE `sales` (`year` int(11) DEFAULT NULL, `country` varchar(20) DEFAULT NULL,  `product` varchar(32) DEFAULT NULL,  `profit` int(11) DEFAULT NULL, `whatever` int)")
+
+	// error test
+	err := tk.ExecToErr("explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+	require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
+
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts

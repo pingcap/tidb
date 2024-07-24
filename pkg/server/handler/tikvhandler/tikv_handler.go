@@ -777,7 +777,7 @@ func (h FlashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	defer s.Close()
 
 	available := status.checkTableFlashReplicaAvailable()
-	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
+	err = do.DDLExecutor().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
 		handler.WriteError(w, err)
 	}
@@ -1013,7 +1013,11 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
 			if a := req.FormValue(handler.IDNameOnly); a == "true" {
-				tbs := schema.SchemaSimpleTableInfos(context.Background(), cDBName)
+				tbs, err := schema.SchemaSimpleTableInfos(context.Background(), cDBName)
+				if err != nil {
+					handler.WriteError(w, err)
+					return
+				}
 				writeDBSimpleTablesData(w, tbs)
 				return
 			}
