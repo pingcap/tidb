@@ -424,7 +424,7 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 }
 
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
-func (e *executor) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
+func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := e.infoCache.GetLatest()
 	// If there are no schema change since last time(can be weird).
 	if is.SchemaMetaVersion() == originVersion {
@@ -471,7 +471,7 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
 			return true, originVersion, pendingCount, false
 		}
-		originVersion, pendingCount = e.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
+		originVersion, pendingCount = e.getPendingTiFlashTableCount(originVersion, pendingCount)
 		delay := time.Duration(0)
 		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
