@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -169,6 +170,16 @@ func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblIn
 }
 
 func TestPlacementPolicy(t *testing.T) {
+	// Test for the first time
+	testPlacementPolicy(t)
+
+	// Test again with failpoint.
+	// For https://github.com/pingcap/tidb/issues/54796
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("exchangepartition")`)
+	testPlacementPolicy(t)
+}
+
+func testPlacementPolicy(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)

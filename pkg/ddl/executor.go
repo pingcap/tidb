@@ -508,6 +508,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	total := len(tbls)
 	succ := 0
 	skip := 0
@@ -812,6 +813,7 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	lockTableIDs := make([]int64, 0)
 	for _, tb := range tbs {
 		if ok, _ := ctx.CheckTableLocked(tb.ID); ok {

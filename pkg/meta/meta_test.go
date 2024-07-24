@@ -790,6 +790,20 @@ func TestCheckSpecialAttributes(t *testing.T) {
 	require.True(t, meta.CheckSpecialAttributes(b))
 
 	tableInfo = &model.TableInfo{
+		Lock: &model.TableLockInfo{State: model.TableLockStatePreLock},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.CheckSpecialAttributes(b))
+
+	tableInfo = &model.TableInfo{
+		ForeignKeys: []*model.FKInfo{{ID: 1}},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.CheckSpecialAttributes(b))
+
+	tableInfo = &model.TableInfo{
 		ID: 123,
 	}
 	b, err = json.Marshal(tableInfo)

@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -327,4 +328,50 @@ func BenchmarkTableByName(t *testing.B) {
 		require.NoError(t, err)
 	}
 	t.StopTimer()
+}
+
+func TestFullLoadAndSnapshot(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+	tk.MustExec("use db1")
+	tk.MustExec("create table t (id int)")
+
+	timestamp := time.Now().Format(time.RFC3339Nano)
+	time.Sleep(100 * time.Millisecond)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("renametable")`)
+	tk.MustExec("rename table db1.t to db2.t")
+
+	tk.MustQuery("select * from db2.t").Check(testkit.Rows())
+	tk.MustExecToErr("select * from db1.t")
+	tk.MustExec("use db2")
+	tk.MustQuery("show tables").Check(testkit.Rows("t"))
+	tk.MustExec("use db1")
+	tk.MustQuery("show tables").Check(testkit.Rows())
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("dropdatabase")`)
+	tk.MustExec("drop database db1")
+	tk.MustExecToErr("use db1")
+	tk.MustQuery("select table_schema from information_schema.tables where table_schema = 'db2'").Check(testkit.Rows("db2"))
+	tk.MustQuery("select * from information_schema.tables where table_schema = 'db1'").Check(testkit.Rows())
+
+	// Set snapthost and read old schema.
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot= '%s'", timestamp))
+	tk.MustQuery("select * from db1.t").Check(testkit.Rows())
+	tk.MustExecToErr("select * from db2.t")
+	tk.MustExec("use db2")
+	tk.MustQuery("show tables").Check(testkit.Rows())
+	tk.MustExec("use db1")
+	tk.MustQuery("show tables").Check(testkit.Rows("t"))
 }
