@@ -77,14 +77,14 @@ func TestSetTableFlashReplica(t *testing.T) {
 	require.Equal(t, "a,b", strings.Join(tbl.Meta().TiFlashReplica.LocationLabels, ","))
 
 	// Use table ID as physical ID, mock for partition feature was not enabled.
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, true)
 	require.NoError(t, err)
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.True(t, tbl.Meta().TiFlashReplica.Available)
 	require.Len(t, tbl.Meta().TiFlashReplica.AvailablePartitionIDs, 0)
 
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, false)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, false)
 	require.NoError(t, err)
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")
 	require.False(t, tbl.Meta().TiFlashReplica.Available)
@@ -92,39 +92,39 @@ func TestSetTableFlashReplica(t *testing.T) {
 	// Mock for partition 0 replica was available.
 	partition := tbl.Meta().Partition
 	require.Len(t, partition.Definitions, 3)
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")
 	require.False(t, tbl.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID}, tbl.Meta().TiFlashReplica.AvailablePartitionIDs)
 
 	// Mock for partition 0 replica become unavailable.
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, false)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, false)
 	require.NoError(t, err)
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")
 	require.False(t, tbl.Meta().TiFlashReplica.Available)
 	require.Len(t, tbl.Meta().TiFlashReplica.AvailablePartitionIDs, 0)
 
 	// Mock for partition 0, 1,2 replica was available.
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
 	require.NoError(t, err)
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[2].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[2].ID, true)
 	require.NoError(t, err)
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")
 	require.True(t, tbl.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID, partition.Definitions[2].ID}, tbl.Meta().TiFlashReplica.AvailablePartitionIDs)
 
 	// Mock for partition 1 replica was unavailable.
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, false)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, false)
 	require.NoError(t, err)
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")
 	require.Equal(t, false, tbl.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[2].ID}, tbl.Meta().TiFlashReplica.AvailablePartitionIDs)
 
 	// Test for update table replica with unknown table ID.
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), math.MaxInt64, false)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), math.MaxInt64, false)
 	require.EqualError(t, err, "[schema:1146]Table which ID = 9223372036854775807 does not exist.")
 
 	// Test for FindTableByPartitionID.
@@ -282,7 +282,7 @@ func TestSkipSchemaChecker(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1;")
 	tb := external.GetTableByName(t, tk, "test", "t1")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	err = tk.ExecToErr("commit")
 	if err != nil {
@@ -386,9 +386,9 @@ func TestCreateTableWithLike2(t *testing.T) {
 	// Mock for all partitions replica was available.
 	partition := t1.Meta().Partition
 	require.Equal(t, 2, len(partition.Definitions))
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
 	require.NoError(t, err)
 	t1 = external.GetTableByName(t, tk, "test", "t1")
 	require.NotNil(t, t1.Meta().TiFlashReplica)
@@ -466,7 +466,7 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
 	t1 := external.GetTableByName(t, tk, "test", "t1")
 	// Mock for table tiflash replica was available.
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), t1.Meta().ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), t1.Meta().ID, true)
 	require.NoError(t, err)
 	t1 = external.GetTableByName(t, tk, "test", "t1")
 	require.NotNil(t, t1.Meta().TiFlashReplica)
@@ -487,9 +487,9 @@ func TestTruncateTable2(t *testing.T) {
 	// Mock for all partitions replica was available.
 	partition := t1.Meta().Partition
 	require.Equal(t, 2, len(partition.Definitions))
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
 	require.NoError(t, err)
 	t1 = external.GetTableByName(t, tk, "test", "t1")
 	require.NotNil(t, t1.Meta().TiFlashReplica)

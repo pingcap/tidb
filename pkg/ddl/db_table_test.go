@@ -315,7 +315,7 @@ func TestCreateTableWithInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 
-	d := dom.DDL()
+	d := dom.DDLExecutor()
 	require.NotNil(t, d)
 	info := []*model.TableInfo{{
 		ID:   42042, // Note, we must ensure the table ID is globally unique!
@@ -356,7 +356,7 @@ func TestBatchCreateTable(t *testing.T) {
 	tk.MustExec("drop table if exists tables_2")
 	tk.MustExec("drop table if exists tables_3")
 
-	d := dom.DDL()
+	d := dom.DDLExecutor()
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
 		Name: model.NewCIStr("tables_1"),

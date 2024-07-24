@@ -86,7 +86,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
 
-		var ddlInjector func(ddl.DDL) *schematracker.Checker
+		var ddlInjector func(ddl.DDL, ddl.Executor) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}

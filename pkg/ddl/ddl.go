@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -168,68 +167,6 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error
-	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
-	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
-	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
-	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
-	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
-	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
-	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error
-	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
-	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
-	DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error
-	AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error
-	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
-	RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error
-	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
-	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
-	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
-	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
-	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
-	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
-	DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error)
-	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
-	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
-	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
-	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
-	AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
-	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
-	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
-	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
-
-	// CreateSchemaWithInfo creates a database (schema) given its database info.
-	//
-	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
-	// in-place. If you want to keep using `info`, please call Clone() first.
-	CreateSchemaWithInfo(
-		ctx sessionctx.Context,
-		info *model.DBInfo,
-		onExist OnExist) error
-
-	// CreateTableWithInfo creates a table, view or sequence given its table info.
-	//
-	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
-	// in-place. If you want to keep using `info`, please call Clone() first.
-	CreateTableWithInfo(
-		ctx sessionctx.Context,
-		schema model.CIStr,
-		info *model.TableInfo,
-		involvingRef []model.InvolvingSchemaInfo,
-		cs ...CreateTableOption) error
-
-	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
-	BatchCreateTableWithInfo(ctx sessionctx.Context,
-		schema model.CIStr,
-		info []*model.TableInfo,
-		cs ...CreateTableOption) error
-
-	// CreatePlacementPolicyWithInfo creates a placement policy
-	//
-	// WARNING: the DDL owns the `policy` after calling this function, and will modify its fields
-	// in-place. If you want to keep using `policy`, please call Clone() first.
-	CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error
-
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
 	Start(ctxPool *pools.ResourcePool) error
@@ -261,14 +198,8 @@ type DDL interface {
 	SetHook(h Callback)
 	// GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's exported for testing.
 	GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema
-	// DoDDLJob does the DDL job, it's exported for test.
-	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
-	// DoDDLJobWrapper similar to DoDDLJob, but with JobWrapper as input.
-	// exported for testing.
-	// TODO remove it after decouple components of DDL.
-	DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error
 }
 
 // JobWrapper is used to wrap a job and some other information.
@@ -325,6 +256,7 @@ type ddl struct {
 	localJobCh chan *JobWrapper
 	// globalIDLocal locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
+	executor     *executor
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -422,12 +354,15 @@ type ddlCtx struct {
 	}
 
 	// hook may be modified.
-	mu struct {
-		sync.RWMutex
-		// see newDefaultCallBack for its value in normal flow.
-		hook        Callback
-		interceptor Interceptor
-	}
+	mu hookStruct
+}
+
+// TODO remove it after we remove hook and interceptor.
+type hookStruct struct {
+	sync.RWMutex
+	// see newDefaultCallBack for its value in normal flow.
+	hook        Callback
+	interceptor Interceptor
 }
 
 // the schema synchronization mechanism now requires strict incremental schema versions.
@@ -643,12 +578,12 @@ func (dc *ddlCtx) initJobDoneCh(jobID int64) {
 	dc.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
 }
 
-func (dc *ddlCtx) getJobDoneCh(jobID int64) (chan struct{}, bool) {
-	return dc.ddlJobDoneChMap.Load(jobID)
+func (e *executor) getJobDoneCh(jobID int64) (chan struct{}, bool) {
+	return e.ddlJobDoneChMap.Load(jobID)
 }
 
-func (dc *ddlCtx) delJobDoneCh(jobID int64) {
-	dc.ddlJobDoneChMap.Delete(jobID)
+func (e *executor) delJobDoneCh(jobID int64) {
+	e.ddlJobDoneChMap.Delete(jobID)
 }
 
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
@@ -682,6 +617,7 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
+	d.executor.statsHandle = h
 	d.ddlEventCh = h.DDLEventCh()
 }
 
@@ -710,11 +646,12 @@ func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
 }
 
 // NewDDL creates a new DDL.
-func NewDDL(ctx context.Context, options ...Option) DDL {
+// TODO remove it, to simplify this PR we use this way.
+func NewDDL(ctx context.Context, options ...Option) (DDL, Executor) {
 	return newDDL(ctx, options...)
 }
 
-func newDDL(ctx context.Context, options ...Option) *ddl {
+func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	opt := &Options{
 		Hook: &BaseCallback{},
 	}
@@ -799,7 +736,26 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	variable.SwitchMDL = d.SwitchMDL
 	variable.SwitchFastCreateTable = d.SwitchFastCreateTable
 
-	return d
+	e := &executor{
+		ctx:             d.ctx,
+		uuid:            d.uuid,
+		store:           d.store,
+		etcdCli:         d.etcdCli,
+		autoidCli:       d.autoidCli,
+		infoCache:       d.infoCache,
+		limitJobCh:      d.limitJobCh,
+		schemaLoader:    d.schemaLoader,
+		lease:           d.lease,
+		ownerManager:    d.ownerManager,
+		limitJobChV2:    d.limitJobChV2,
+		ddlJobDoneChMap: &d.ddlJobDoneChMap,
+		ddlJobNotifyCh:  d.ddlJobNotifyCh,
+		mu:              &d.mu,
+		globalIDLock:    &d.globalIDLock,
+	}
+	d.executor = e
+
+	return d, e
 }
 
 // Stop implements DDL.Stop interface.
@@ -857,6 +813,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
+	d.executor.sessPool = d.sessPool
 	d.sysTblMgr = systable.NewManager(d.sessPool)
 	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
 	d.wg.Run(func() {
@@ -1009,13 +966,13 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
-func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
+func (e *executor) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// lock to reduce conflict
-	d.globalIDLock.Lock()
-	defer d.globalIDLock.Unlock()
-	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+	e.globalIDLock.Lock()
+	defer e.globalIDLock.Unlock()
+	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
@@ -1025,10 +982,10 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	return ret, err
 }
 
-func (d *ddl) genPlacementPolicyID() (int64, error) {
+func (e *executor) genPlacementPolicyID() (int64, error) {
 	var ret int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenPlacementPolicyID()
@@ -1098,16 +1055,16 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-func (dc *ddlCtx) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
+func (e *executor) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
 	// If the workers don't run, we needn't notify workers.
 	// TODO: It does not affect informing the backfill worker.
 	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}
-	if dc.isOwner() {
+	if e.ownerManager.IsOwner() {
 		asyncNotify(ch)
 	} else {
-		dc.notifyNewJobByEtcd(etcdPath, jobID, jobType)
+		e.notifyNewJobByEtcd(etcdPath, jobID, jobType)
 	}
 }
 
@@ -1160,11 +1117,11 @@ func setDDLJobMode(job *model.Job) {
 	job.LocalMode = false
 }
 
-func (d *ddl) deliverJobTask(task *JobWrapper) {
+func (e *executor) deliverJobTask(task *JobWrapper) {
 	if task.LocalMode {
-		d.limitJobChV2 <- task
+		e.limitJobChV2 <- task
 	} else {
-		d.limitJobCh <- task
+		e.limitJobCh <- task
 	}
 }
 
@@ -1172,11 +1129,11 @@ func (d *ddl) deliverJobTask(task *JobWrapper) {
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
-func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	return d.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
+func (e *executor) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	return e.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
 }
 
-func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
+func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	job := jobW.Job
 	job.TraceInfo = &model.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
@@ -1190,7 +1147,7 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	setDDLJobMode(job)
-	d.deliverJobTask(jobW)
+	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1198,7 +1155,7 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
 			newJobW := NewJobWrapper(job, jobW.IDAllocated)
-			d.deliverJobTask(newJobW)
+			e.deliverJobTask(newJobW)
 			// The second job result is used for test.
 			jobW = newJobW
 		}
@@ -1207,7 +1164,7 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
 	err := <-jobW.ErrChs[0]
 	// job.ID must be allocated after previous channel receive returns nil.
-	defer d.delJobDoneCh(job.ID)
+	defer e.delJobDoneCh(job.ID)
 	if err != nil {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
@@ -1218,14 +1175,14 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	d.notifyNewJobSubmitted(d.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
+	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
 	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
 
 	// for local mode job, we add the history job directly now, so no need to check it.
 	// fast-create doesn't wait schema version synced, we must reload info-schema
 	// here to make sure later statements can see the created table/database.
 	if job.LocalMode {
-		return d.schemaLoader.Reload()
+		return e.schemaLoader.Reload()
 	}
 
 	var historyJob *model.Job
@@ -1239,7 +1196,7 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
 	initInterval, _ := getJobCheckInterval(job, 0)
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, initInterval))
+	ticker := time.NewTicker(chooseLeaseTime(10*e.lease, initInterval))
 	startTime := time.Now()
 	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
@@ -1249,18 +1206,15 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
-	notifyCh, _ := d.getJobDoneCh(job.ID)
+	notifyCh, _ := e.getJobDoneCh(job.ID)
 	for {
-		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
-			_ = d.Stop()
-		})
-
+		failpoint.InjectCall("storeCloseInLoop")
 		select {
 		case <-notifyCh:
 		case <-ticker.C:
 			i++
-			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
-		case <-d.ctx.Done():
+			ticker = updateTickerInterval(ticker, 10*e.lease, job, i)
+		case <-e.ctx.Done():
 			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
 			return context.Canceled
 		}
@@ -1272,14 +1226,14 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 				return context.Canceled
 			}
 			if sessVars.StmtCtx.DDLJobID != 0 {
-				se, err := d.sessPool.Get()
+				se, err := e.sessPool.Get()
 				if err != nil {
 					logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 					continue
 				}
 				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
 				errs, err := CancelJobsBySystem(se, []int64{jobID})
-				d.sessPool.Put(se)
+				e.sessPool.Put(se)
 				if len(errs) > 0 {
 					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
 				}
@@ -1290,13 +1244,13 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 			}
 		}
 
-		se, err := d.sessPool.Get()
+		se, err := e.sessPool.Get()
 		if err != nil {
 			logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 			continue
 		}
 		historyJob, err = GetHistoryJobByID(se, jobID)
-		d.sessPool.Put(se)
+		e.sessPool.Put(se)
 		if err != nil {
 			logutil.DDLLogger().Error("get history DDL job failed, check again", zap.Error(err))
 			continue
@@ -1306,7 +1260,7 @@ func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 			continue
 		}
 
-		d.checkHistoryJobInTest(ctx, historyJob)
+		e.checkHistoryJobInTest(ctx, historyJob)
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {

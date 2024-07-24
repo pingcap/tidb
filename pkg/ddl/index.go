@@ -747,7 +747,7 @@ SwitchIndexState:
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		tbl, err := getTable((*asAutoIDRequirement)(d), schemaID, tblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1277,7 +1277,7 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 		return nil, from, to, errors.Trace(err)
 	}
 
-	// Double check. See function `RenameIndex` in ddl_api.go
+	// Double check. See function `RenameIndex` in executor.go
 	duplicate, err := ValidateRenameIndex(from, to, tblInfo)
 	if duplicate {
 		return nil, from, to, nil

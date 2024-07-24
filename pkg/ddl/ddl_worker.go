@@ -191,14 +191,14 @@ func (w *worker) Close() {
 	tidblogutil.Logger(w.logCtx).Info("DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
-func (dc *ddlCtx) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
-	if dc.etcdCli == nil {
+func (e *executor) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
+	if e.etcdCli == nil {
 		return
 	}
 
 	jobIDStr := strconv.FormatInt(jobID, 10)
 	timeStart := time.Now()
-	err := util.PutKVToEtcd(dc.ctx, dc.etcdCli, 1, etcdPath, jobIDStr)
+	err := util.PutKVToEtcd(e.ctx, e.etcdCli, 1, etcdPath, jobIDStr)
 	if err != nil {
 		logutil.DDLLogger().Info("notify handling DDL job failed",
 			zap.String("etcdPath", etcdPath),

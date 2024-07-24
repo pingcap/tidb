@@ -291,7 +291,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 		newPolicy.Followers = 2
 		newPolicy.LearnerConstraints = "[+zone=z2]"
 		tk.Session().SetValue(sessionctx.QueryString, "skip")
-		err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), onExist)
+		err := dom.DDLExecutor().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), onExist)
 		require.NoError(t, err)
 		// old policy should not be changed
 		found, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
@@ -313,7 +313,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	newPolicy := oldPolicy.Clone()
 	newPolicy.ID = oldPolicy.ID + 1
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
+	err := dom.DDLExecutor().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
 	require.Error(t, err)
 	require.True(t, infoschema.ErrPlacementPolicyExists.Equal(err))
 	found, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
@@ -325,7 +325,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	newPolicy = oldPolicy.Clone()
 	newPolicy.ID = oldPolicy.ID + 1
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistIgnore)
+	err = dom.DDLExecutor().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistIgnore)
 	require.NoError(t, err)
 	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
 	require.True(t, ok)
@@ -338,7 +338,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	newPolicy.Followers = 1
 	newPolicy.LearnerConstraints = "[+zone=z1]"
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
+	err = dom.DDLExecutor().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
 	require.NoError(t, err)
 	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
 	require.True(t, ok)
@@ -781,7 +781,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, nil, ddl.WithOnExist(ddl.OnExistError)))
+	require.Nil(t, dom.DDLExecutor().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, nil, ddl.WithOnExist(ddl.OnExistError)))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -802,7 +802,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tbl2.Name = model.NewCIStr("t3")
 	tbl2.PlacementPolicyRef.Name = model.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, nil, ddl.WithOnExist(ddl.OnExistError))
+	err = dom.DDLExecutor().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, nil, ddl.WithOnExist(ddl.OnExistError))
 	require.Equal(t, "[schema:8239]Unknown placement policy 'pxx'", err.Error())
 }
 
@@ -833,7 +833,7 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.Nil(t, dom.DDL().CreateSchemaWithInfo(tk.Session(), db2, ddl.OnExistError))
+	require.Nil(t, dom.DDLExecutor().CreateSchemaWithInfo(tk.Session(), db2, ddl.OnExistError))
 	tk.MustQuery("show create database test2").Check(testkit.Rows("test2 CREATE DATABASE `test2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show create database test3").Check(testkit.Rows("test3 CREATE DATABASE `test3` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p1` */"))
 	tk.MustQuery("show placement where target='DATABASE test3'").Check(testkit.Rows("DATABASE test3 FOLLOWERS=2 SCHEDULED"))
@@ -850,7 +850,7 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 	db2.Name = model.NewCIStr("test4")
 	db2.PlacementPolicyRef.Name = model.NewCIStr("p2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err := dom.DDL().CreateSchemaWithInfo(tk.Session(), db2, ddl.OnExistError)
+	err := dom.DDLExecutor().CreateSchemaWithInfo(tk.Session(), db2, ddl.OnExistError)
 	require.Equal(t, "[schema:8239]Unknown placement policy 'p2'", err.Error())
 }
 

@@ -159,7 +159,7 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("drop database cancel_job_db")
 }
 
-// TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
+// TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of executor.go when
 // doing the operation of 'modify column'.
 func TestInitializeOffsetAndState(t *testing.T) {
 	s := createFailDBSuite(t)
