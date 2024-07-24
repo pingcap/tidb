@@ -674,6 +674,7 @@ func TestSelectHiddenColumn(t *testing.T) {
 	// Set column b to hidden
 	colInfo[1].Hidden = true
 	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+	dom.Reload()
 
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("0"))
@@ -681,6 +682,7 @@ func TestSelectHiddenColumn(t *testing.T) {
 	// Set column b to visible
 	colInfo[1].Hidden = false
 	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+	dom.Reload()
 
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("1"))
 
@@ -689,6 +691,7 @@ func TestSelectHiddenColumn(t *testing.T) {
 	colInfo[1].Hidden = true
 	colInfo[2].Hidden = true
 	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+	dom.Reload()
 
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
 }

@@ -231,7 +231,7 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	if !exist {
 		return
 	}
-	_ = bc.FinishAndUnregisterEngines()
+	_ = bc.FinishAndUnregisterEngines(OptCloseEngines)
 	bc.backend.Close()
 	m.memRoot.Release(structSizeBackendCtx)
 	m.memRoot.ReleaseWithTag(encodeBackendTag(jobID))
