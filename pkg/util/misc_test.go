@@ -17,7 +17,6 @@ package util
 import (
 	"bytes"
 	"crypto/x509/pkix"
-	"fmt"
 	"testing"
 	"time"
 
@@ -198,18 +197,4 @@ func assertChannel[T any](t *testing.T, ch <-chan T, items ...T) {
 	case <-time.After(50 * time.Microsecond):
 		t.Fatal("channel not closed: blocked")
 	}
-}
-
-func TestChannelMap(t *testing.T) {
-	ch := make(chan int, 4)
-	ch <- 1
-	ch <- 2
-	ch <- 3
-
-	tableCh := ChanMap(ch, func(i int) string {
-		return fmt.Sprintf("table%d", i)
-	})
-	close(ch)
-
-	assertChannel(t, tableCh, "table1", "table2", "table3")
 }

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -672,6 +674,37 @@ func (rc *SnapClient) getRebasedTables() map[restore.UniqueTableName]bool {
 	return rc.rebasedTablesMap
 }
 
+// CreateTables create tables, and generate their information.
+// this function will use workers as the same number of sessionPool,
+// leave sessionPool nil to send DDLs sequential.
+func (rc *SnapClient) CreateTables(
+	ctx context.Context,
+	tables []*metautil.Table,
+	newTS uint64,
+) ([]CreatedTable, error) {
+	log.Info("start create tables")
+	rc.generateRebasedTables(tables)
+
+	// try to restore tables in batch
+	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
+		tables, err := rc.createTablesBatch(ctx, tables, newTS)
+		if err == nil {
+			return tables, nil
+		} else if !utils.FallBack2CreateTable(err) {
+			return nil, errors.Trace(err)
+		}
+		// fall back to old create table (sequential create table)
+		log.Info("fall back to the sequential create table")
+	}
+
+	// restore tables in db pool
+	if len(rc.dbPool) > 0 {
+		return rc.createTablesSingle(ctx, rc.dbPool, tables, newTS)
+	}
+	// restore tables in one db
+	return rc.createTablesSingle(ctx, []*tidallocdb.DB{rc.db}, tables, newTS)
+}
+
 func (rc *SnapClient) createTables(
 	ctx context.Context,
 	db *tidallocdb.DB,
@@ -712,11 +745,17 @@ func (rc *SnapClient) createTables(
 	return cts, nil
 }
 
-func (rc *SnapClient) createTablesInWorkerPool(ctx context.Context, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
+	createdTables := struct {
+		sync.Mutex
+		tables []CreatedTable
+	}{
+		tables: make([]CreatedTable, 0, len(tables)),
+	}
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
 		end := min(lastSent+int(rc.batchDdlSize), len(tables))
@@ -735,21 +774,19 @@ func (rc *SnapClient) createTablesInWorkerPool(ctx context.Context, tables []*me
 				log.Error("create tables fail", zap.Error(err))
 				return err
 			}
-			for _, ct := range cts {
-				log.Debug("table created and send to next",
-					zap.Int("output chan size", len(outCh)),
-					zap.Stringer("table", ct.OldTable.Info.Name),
-					zap.Stringer("database", ct.OldTable.DB.Name))
-				outCh <- ct
-				rater.Inc()
-				rater.L().Info("table created",
-					zap.Stringer("table", ct.OldTable.Info.Name),
-					zap.Stringer("database", ct.OldTable.DB.Name))
-			}
+			rater.Add(float64(len(cts)))
+			rater.L().Info("tables created", zap.Int("num", len(cts)))
+			createdTables.Lock()
+			createdTables.tables = append(createdTables.tables, cts...)
+			createdTables.Unlock()
 			return err
 		})
 	}
-	return eg.Wait()
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return createdTables.tables, nil
 }
 
 func (rc *SnapClient) createTable(
@@ -786,30 +823,92 @@ func (rc *SnapClient) createTable(
 	return et, nil
 }
 
-func (rc *SnapClient) createTablesWithSoleDB(ctx context.Context,
-	createOneTable func(ctx context.Context, db *tidallocdb.DB, t *metautil.Table) error,
-	tables []*metautil.Table) error {
-	for _, t := range tables {
-		if err := createOneTable(ctx, rc.db, t); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func (rc *SnapClient) createTablesWithDBPool(ctx context.Context,
-	createOneTable func(ctx context.Context, db *tidallocdb.DB, t *metautil.Table) error,
-	tables []*metautil.Table) error {
+func (rc *SnapClient) createTablesSingle(
+	ctx context.Context,
+	dbPool []*tidallocdb.DB,
+	tables []*metautil.Table,
+	newTS uint64,
+) ([]CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
-	for _, t := range tables {
-		table := t
+	workers := tidbutil.NewWorkerPool(uint(len(dbPool)), "DDL workers")
+	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	createdTables := struct {
+		sync.Mutex
+		tables []CreatedTable
+	}{
+		tables: make([]CreatedTable, 0, len(tables)),
+	}
+	for _, tbl := range tables {
+		table := tbl
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return createOneTable(ectx, db, table)
+			db := dbPool[id%uint64(len(dbPool))]
+			rt, err := rc.createTable(ectx, db, table, newTS)
+			if err != nil {
+				log.Error("create table failed",
+					zap.Error(err),
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name))
+				return errors.Trace(err)
+			}
+			rater.Inc()
+			rater.L().Info("table created",
+				zap.Stringer("table", table.Info.Name),
+				zap.Stringer("database", table.DB.Name))
+
+			createdTables.Lock()
+			createdTables.tables = append(createdTables.tables, rt)
+			createdTables.Unlock()
+			return nil
 		})
 	}
-	return eg.Wait()
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return createdTables.tables, nil
+}
+
+// MapTableToFiles makes a map that mapping table ID to its backup files.
+// aware that one file can and only can hold one table.
+func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
+	result := map[int64][]*backuppb.File{}
+	for _, file := range files {
+		tableID := tablecodec.DecodeTableID(file.GetStartKey())
+		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
+		if tableID != tableEndID {
+			log.Panic("key range spread between many files.",
+				zap.String("file name", file.Name),
+				logutil.Key("startKey", file.StartKey),
+				logutil.Key("endKey", file.EndKey))
+		}
+		if tableID == 0 {
+			log.Panic("invalid table key of file",
+				zap.String("file name", file.Name),
+				logutil.Key("startKey", file.StartKey),
+				logutil.Key("endKey", file.EndKey))
+		}
+		result[tableID] = append(result[tableID], file)
+	}
+	return result
+}
+
+func SortAndValidateFileRanges(
+	ctx context.Context,
+	createdTables []CreatedTable,
+	files []*backuppb.File,
+	splitSizeBytes, splitKeyCount uint64,
+) []TableWithRange {
+	// sort the created table by downstream stream table id
+	sort.Slice(createdTables, func(a, b int) bool {
+		return createdTables[a].Table.ID < createdTables[b].Table.ID
+	})
+	// mapping table ID to its backup files
+	fileOfTable := MapTableToFiles(files)
+
+	for _, t := range createdTables {
+
+	}
+	return nil
 }
 
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
