@@ -716,7 +716,7 @@ func (t *Table) IsAnalyzed() bool {
 // IsEligibleForAnalysis checks whether the table is eligible for analysis.
 func (t *Table) IsEligibleForAnalysis() bool {
 	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
-	//	  Pseudo statistics can be created by the optimizer, so we need to double check it.
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
 	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
