@@ -1409,7 +1409,8 @@ func (do *Domain) Init(
 
 // Start starts the domain.
 func (do *Domain) Start() error {
-	if do.etcdClient != nil {
+	gCfg := config.GetGlobalConfig()
+	if gCfg.EnableGlobalKill && do.etcdClient != nil {
 		do.wg.Add(1)
 		go do.serverIDKeeper()
 	}
@@ -1442,7 +1443,7 @@ func (do *Domain) Start() error {
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
-	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
+	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
