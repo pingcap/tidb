@@ -1216,8 +1216,8 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     *auth.UserIdentity
-	Password string
+	User          *auth.UserIdentity
+	Password      string
 	ReplaceString string
 }
 

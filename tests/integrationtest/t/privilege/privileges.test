@@ -882,6 +882,9 @@ SHOW CREATE USER `pwreq3`@`%`;
 --error 3893
 ALTER USER 'pwreq3'@'%' IDENTIFIED BY 'aac' REPLACE 'aaa';
 
+--error 3893
+SET PASSWORD FOR 'pwreq3'@'%' = 'aad' REPLACE 'aaa';
+
 ALTER USER 'pwreq3'@'%' PASSWORD REQUIRE CURRENT DEFAULT;
 SHOW CREATE USER `pwreq3`@`%`;
 
@@ -900,6 +903,14 @@ ALTER USER USER() IDENTIFIED BY 'aab';
 ALTER USER USER() IDENTIFIED BY 'aab' REPLACE 'wrongpassword';
 
 ALTER USER USER() IDENTIFIED BY 'aab' REPLACE 'aaa';
+
+--error 3892
+SET PASSWORD = 'aac';
+
+-- error 3891
+SET PASSWORD = 'aac' REPLACE 'wrongpassword';
+
+SET PASSWORD = 'aac' REPLACE 'aab';
 
 disconnect pwreq1;
 connection default;
