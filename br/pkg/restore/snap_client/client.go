@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,10 +44,8 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	tidallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
-	internalutils "github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -57,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -868,49 +864,6 @@ func (rc *SnapClient) createTablesSingle(
 	return createdTables.tables, nil
 }
 
-// MapTableToFiles makes a map that mapping table ID to its backup files.
-// aware that one file can and only can hold one table.
-func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
-	result := map[int64][]*backuppb.File{}
-	for _, file := range files {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
-		if tableID != tableEndID {
-			log.Panic("key range spread between many files.",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		if tableID == 0 {
-			log.Panic("invalid table key of file",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		result[tableID] = append(result[tableID], file)
-	}
-	return result
-}
-
-func SortAndValidateFileRanges(
-	ctx context.Context,
-	createdTables []CreatedTable,
-	files []*backuppb.File,
-	splitSizeBytes, splitKeyCount uint64,
-) []TableWithRange {
-	// sort the created table by downstream stream table id
-	sort.Slice(createdTables, func(a, b int) bool {
-		return createdTables[a].Table.ID < createdTables[b].Table.ID
-	})
-	// mapping table ID to its backup files
-	fileOfTable := MapTableToFiles(files)
-
-	for _, t := range createdTables {
-
-	}
-	return nil
-}
-
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
 func (rc *SnapClient) InitFullClusterRestore(explicitFilter bool) {
 	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
@@ -1293,34 +1246,4 @@ func (rc *SnapClient) RestoreRaw(
 		logutil.Key("endKey", endKey),
 	)
 	return nil
-}
-
-// SplitRanges implements TiKVRestorer. It splits region by
-// data range after rewrite.
-func (rc *SnapClient) SplitRanges(
-	ctx context.Context,
-	ranges []rtree.Range,
-	updateCh glue.Progress,
-	isRawKv bool,
-) error {
-	splitClientOpts := make([]split.ClientOptionalParameter, 0, 2)
-	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
-	}))
-	if isRawKv {
-		splitClientOpts = append(splitClientOpts, split.WithRawKV())
-	}
-
-	splitter := internalutils.NewRegionSplitter(split.NewClient(
-		rc.pdClient,
-		rc.pdHTTPClient,
-		rc.tlsConf,
-		maxSplitKeysOnce,
-		rc.storeCount+1,
-		splitClientOpts...,
-	))
-
-	return splitter.ExecuteSplit(ctx, ranges)
 }

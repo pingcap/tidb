@@ -1082,9 +1082,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	rangeStream := client.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, errCh)
-
 	rangeSize := EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
@@ -1113,18 +1110,14 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		progressLen,
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := snapclient.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
+
+	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), cfg.Online)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	manager, err := snapclient.NewBRContextManager(ctx, mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), cfg.Online)
-	if err != nil {
+	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, updateCh); err != nil {
 		return errors.Trace(err)
 	}
-	batcher, afterTableRestoredCh := snapclient.NewBatcher(ctx, sender, manager, errCh, updateCh)
-	batcher.SetCheckpoint(checkpointSetWithTableID)
-	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
-	go restoreTableStream(ctx, rangeStream, batcher, errCh)
 
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
@@ -1418,39 +1411,6 @@ func enableTiDBConfig() func() {
 		log.Warn("set table-column-count to max(4096) to skip check column count in DDL")
 	})
 	return restoreConfig
-}
-
-// restoreTableStream blocks current goroutine and restore a stream of tables,
-// by send tables to batcher.
-func restoreTableStream(
-	ctx context.Context,
-	inputCh <-chan snapclient.TableWithRange,
-	batcher *snapclient.Batcher,
-	errCh chan<- error,
-) {
-	oldTableCount := 0
-	defer func() {
-		// when things done, we must clean pending requests.
-		batcher.Close()
-		log.Info("doing postwork",
-			zap.Int("table count", oldTableCount),
-		)
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			errCh <- ctx.Err()
-			return
-		case t, ok := <-inputCh:
-			if !ok {
-				return
-			}
-			oldTableCount += 1
-
-			batcher.Add(t)
-		}
-	}
 }
 
 func getTiFlashNodeCount(ctx context.Context, pdClient pd.Client) (uint64, error) {
