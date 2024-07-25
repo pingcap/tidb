@@ -2,6 +2,7 @@
 drop table if exists t;
 create table t(a int, b int, c int, key(b), key(c));
 explain format='hint' select /*+ inl_merge_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1;
+show warnings;
 explain format='hint' select /*+ inl_hash_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1;
 
 

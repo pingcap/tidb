@@ -780,14 +780,13 @@ Level	Code	Message
 Warning	1815	Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored
 explain format = 'brief' select /*+ inl_merge_join(t1), no_index_merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	task	access object	operator info
-IndexMergeJoin	12487.50	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
+MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t2.a
 ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
-│ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
-└─IndexReader(Probe)	12487.50	root		index:Selection
-  └─Selection	12487.50	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
-    └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)], keep order:true, stats:pseudo
+│ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
+└─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+  └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 explain format = 'brief' select /*+ inl_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	task	access object	operator info
 IndexJoin	12487.50	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
