@@ -332,7 +332,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, val *types.Datum, rowIdx int, err error) error {
+func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -360,18 +360,17 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		}
 		con := assign.Expr.(*expression.Constant)
 		val, err := con.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), emptyRow)
-		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], &val, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 			return nil, err
 		}
 
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val1, err := table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], &val, rowIdx, err); err != nil {
+			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
-			val = val1
 		}
 
 		val.Copy(&newRowData[assign.Col.Index])
@@ -395,11 +394,10 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val1, err := table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], &val, rowIdx, err); err != nil {
+			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
-			val = val1
 		}
 
 		val.Copy(&newRowData[assign.Col.Index])
@@ -418,18 +416,17 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 			continue
 		}
 		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
-		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], &val, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 			return nil, err
 		}
 
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val1, err := table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], &val, rowIdx, err); err != nil {
+			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
-			val = val1
 		}
 
 		val.Copy(&newRowData[assign.Col.Index])
