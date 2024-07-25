@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -320,7 +321,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 					c.addPredicateColumn(col)
 				}
 			}
-		case *LogicalCTETable:
+		case *logicalop.LogicalCTETable:
 			// Schema change from seedPlan to self.
 			for i, col := range x.Schema().Columns {
 				c.updateColMap(col, []*expression.Column{x.SeedSchema.Columns[i]})
