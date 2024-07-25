@@ -3723,7 +3723,7 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 			resourceGroupSettings.Runaway = nil
 		}
 		for _, opt := range opt.RunawayOptionList {
-			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue); err != nil {
+			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt); err != nil {
 				return err
 			}
 		}
@@ -3747,25 +3747,25 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 }
 
 // SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
-func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, typ ast.RunawayOptionType, stringVal string, intVal int32) error {
+func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupRunawayOption) error {
 	if resourceGroupSettings.Runaway == nil {
 		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
 	}
 	settings := resourceGroupSettings.Runaway
-	switch typ {
+	switch opt.Tp {
 	case ast.RunawayRule:
 		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
-		dur, err := time.ParseDuration(stringVal)
+		dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
 		if err != nil {
 			return err
 		}
 		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
 	case ast.RunawayAction:
-		settings.Action = model.RunawayActionType(intVal)
+		settings.Action = opt.ActionOption.Type
 	case ast.RunawayWatch:
-		settings.WatchType = model.RunawayWatchType(intVal)
-		if len(stringVal) > 0 {
-			dur, err := time.ParseDuration(stringVal)
+		settings.WatchType = opt.WatchOption.Type
+		if dur := opt.WatchOption.Duration; len(dur) > 0 {
+			dur, err := time.ParseDuration(dur)
 			if err != nil {
 				return err
 			}
