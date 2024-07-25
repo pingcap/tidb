@@ -17,7 +17,7 @@ package disjointset
 // Set is the universal implementation of disjoint set.
 // It's designed for sparse case or not integer type.
 // We hash the original value to an integer index and then apply the core disjoint set algorithm.
-// Time complexity: O(1) for findRoot, O(1) for InSameGroup, O(1) for Union. Both are amortized.
+// Time complexity: the union operation is inverse ackermann function, which is very close to O(1).
 type Set[T comparable] struct {
 	parent  []int
 	val2idx map[T]int

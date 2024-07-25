@@ -16,7 +16,7 @@ package disjointset
 
 // SimpleIntSet is the int disjoint set.
 // It's not designed for sparse case. You should use it when the elements are continuous.
-// Time complexity: O(1) for FindRoot, O(1) for Union. Both are amortized.
+// Time complexity: the union operation is inverse ackermann function, which is very close to O(1).
 type SimpleIntSet struct {
 	parent []int
 }
