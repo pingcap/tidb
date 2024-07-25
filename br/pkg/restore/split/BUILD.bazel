@@ -61,7 +61,6 @@ go_test(
         "//br/pkg/utils",
         "//pkg/kv",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/store/pdtypes",
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/codec",
