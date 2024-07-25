@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -174,10 +173,6 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
-		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
-			dom := domain.GetDomain(e.ctx)
-			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
-		})
 		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return nil, nil, nil, nil, nil, err
 		}

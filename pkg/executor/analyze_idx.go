@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -197,10 +196,6 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		statsVer = int(*e.analyzePB.IdxReq.Version)
 	}
 	for {
-		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
-			dom := domain.GetDomain(e.ctx)
-			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
-		})
 		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return nil, nil, nil, nil, err
 		}

@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -852,10 +851,6 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	// After all tasks are sent, close the mergeTaskCh to notify the mergeWorker that all tasks have been sent.
 	defer close(mergeTaskCh)
 	for {
-		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
-			dom := domain.GetDomain(ctx)
-			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
-		})
 		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
