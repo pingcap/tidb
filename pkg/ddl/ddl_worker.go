@@ -191,14 +191,14 @@ func (w *worker) Close() {
 	tidblogutil.Logger(w.logCtx).Info("DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
-func (dc *ddlCtx) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
-	if dc.etcdCli == nil {
+func (e *executor) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
+	if e.etcdCli == nil {
 		return
 	}
 
 	jobIDStr := strconv.FormatInt(jobID, 10)
 	timeStart := time.Now()
-	err := util.PutKVToEtcd(dc.ctx, dc.etcdCli, 1, etcdPath, jobIDStr)
+	err := util.PutKVToEtcd(e.ctx, e.etcdCli, 1, etcdPath, jobIDStr)
 	if err != nil {
 		logutil.DDLLogger().Info("notify handling DDL job failed",
 			zap.String("etcdPath", etcdPath),
@@ -326,20 +326,22 @@ func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	defer d.globalIDLock.Unlock()
 	return kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		ids, err := t.GenGlobalIDs(len(jobWs))
+
+		count := getRequiredGIDCount(jobWs)
+		ids, err := t.GenGlobalIDs(count)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		assignGIDsForJobs(jobWs, ids)
 
 		if err := d.checkFlashbackJobInQueue(t); err != nil {
 			return errors.Trace(err)
 		}
 
-		for i, jobW := range jobWs {
+		for _, jobW := range jobWs {
 			job := jobW.Job
 			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
-			job.ID = ids[i]
 			setJobStateToQueueing(job)
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)

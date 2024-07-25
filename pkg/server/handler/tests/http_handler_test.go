@@ -897,6 +897,15 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Greater(t, len(lt), 2)
 
+	resp, err = ts.FetchStatus("/schema/tidb?id_name_only=true")
+	require.NoError(t, err)
+	var lti []*model.TableNameInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&lti)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Greater(t, len(lti), 2)
+
 	resp, err = ts.FetchStatus("/schema/abc")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())

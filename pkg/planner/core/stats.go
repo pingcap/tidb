@@ -373,18 +373,6 @@ func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *pro
 	return stats
 }
 
-// Exists and MaxOneRow produce at most one row, so we set the RowCount of stats one.
-func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
-	ret := &property.StatsInfo{
-		RowCount: 1.0,
-		ColNDVs:  make(map[int64]float64, schema.Len()),
-	}
-	for _, col := range schema.Columns {
-		ret.ColNDVs[col.UniqueID] = 1
-	}
-	return ret
-}
-
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
 func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) {
 	statsRecord := ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)

@@ -1886,21 +1886,60 @@ func TestLowResolutionTSORead(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@autocommit=1")
 	tk.MustExec("use test")
-	tk.MustExec("create table low_resolution_tso(a int)")
+	tk.MustExec("create table low_resolution_tso(a int key)")
 	tk.MustExec("insert low_resolution_tso values (1)")
 
 	// enable low resolution tso
-	require.False(t, tk.Session().GetSessionVars().LowResolutionTSO)
+	require.False(t, tk.Session().GetSessionVars().UseLowResolutionTSO())
 	tk.MustExec("set @@tidb_low_resolution_tso = 'on'")
-	require.True(t, tk.Session().GetSessionVars().LowResolutionTSO)
+	require.True(t, tk.Session().GetSessionVars().UseLowResolutionTSO())
 
-	time.Sleep(3 * time.Second)
-	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from low_resolution_tso")
 	err := tk.ExecToErr("update low_resolution_tso set a = 2")
 	require.Error(t, err)
 	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
 	tk.MustExec("update low_resolution_tso set a = 2")
 	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
+
+	// Test select for update could not be executed when `tidb_low_resolution_tso` is enabled.
+	type testCase struct {
+		optimistic bool
+		pointGet   bool
+	}
+	cases := []testCase{
+		{true, true},
+		{true, false},
+		{false, true},
+		{false, false},
+	}
+	tk.MustExec("set @@tidb_low_resolution_tso = 'on'")
+	for _, test := range cases {
+		if test.optimistic {
+			tk.MustExec("begin optimistic")
+		} else {
+			tk.MustExec("begin")
+		}
+		var err error
+		if test.pointGet {
+			err = tk.ExecToErr("select * from low_resolution_tso where a = 1 for update")
+		} else {
+			err = tk.ExecToErr("select * from low_resolution_tso for update")
+		}
+		require.Error(t, err)
+		tk.MustExec("rollback")
+	}
+	tk.MustQuery("select * from low_resolution_tso for update")
+	tk.MustQuery("select * from low_resolution_tso where a = 1 for update")
+
+	origPessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+	defer func() {
+		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
+	}()
+	err = tk.ExecToErr("select * from low_resolution_tso where a = 1 for update")
+	require.Error(t, err)
+	err = tk.ExecToErr("select * from low_resolution_tso for update")
+	require.Error(t, err)
 }
 
 func TestAdapterStatement(t *testing.T) {

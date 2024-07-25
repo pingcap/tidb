@@ -1507,6 +1507,7 @@ const (
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
 	DefTiDBEnableLazyCursorFetch                      = false
+	DefOptEnableProjectionPushDown                    = true
 )
 
 // Process global variables.

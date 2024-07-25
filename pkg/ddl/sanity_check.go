@@ -32,8 +32,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
-	actualCnt, err := queryDeleteRangeCnt(d.sessPool, job.ID)
+func (e *executor) checkDeleteRangeCnt(job *model.Job) {
+	actualCnt, err := queryDeleteRangeCnt(e.sessPool, job.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "Not Supported") {
 			return // For mock session, we don't support executing SQLs.
@@ -187,14 +187,14 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 // checkHistoryJobInTest does some sanity check to make sure something is correct after DDL complete.
 // It's only check during the test environment, so it would panic directly.
 // These checks may be controlled by configuration in the future.
-func (d *ddl) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
+func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
 	if !intest.InTest {
 		return
 	}
 
 	// Check delete range.
 	if JobNeedGC(historyJob) {
-		d.checkDeleteRangeCnt(historyJob)
+		e.checkDeleteRangeCnt(historyJob)
 	}
 
 	// Check binlog.

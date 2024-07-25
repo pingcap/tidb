@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -28,7 +29,7 @@ var (
 	_ base.LogicalPlan = &LogicalProjection{}
 	_ base.LogicalPlan = &LogicalSelection{}
 	_ base.LogicalPlan = &LogicalApply{}
-	_ base.LogicalPlan = &LogicalMaxOneRow{}
+	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
 	_ base.LogicalPlan = &LogicalTableDual{}
 	_ base.LogicalPlan = &DataSource{}
 	_ base.LogicalPlan = &TiKVSingleGather{}
@@ -45,7 +46,7 @@ var (
 	_ base.LogicalPlan = &LogicalShow{}
 	_ base.LogicalPlan = &LogicalShowDDLJobs{}
 	_ base.LogicalPlan = &LogicalCTE{}
-	_ base.LogicalPlan = &LogicalCTETable{}
+	_ base.LogicalPlan = &logicalop.LogicalCTETable{}
 	_ base.LogicalPlan = &LogicalSequence{}
 )
 
