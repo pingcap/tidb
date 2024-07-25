@@ -967,6 +967,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 4096"))
 	tk.MustExec("set global tidb_txn_entry_size_limit = 0")
 	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 0"))
+
+	// test for tidb_opt_projection_push_down
+	tk.MustQuery("select @@session.tidb_opt_projection_push_down, @@global.tidb_opt_projection_push_down").Check(testkit.Rows("1 1"))
+	tk.MustExec("set global tidb_opt_projection_push_down = 'OFF'")
+	tk.MustQuery("select @@session.tidb_opt_projection_push_down, @@global.tidb_opt_projection_push_down").Check(testkit.Rows("1 0"))
+	tk.MustExec("set session tidb_opt_projection_push_down = 'OFF'")
+	tk.MustQuery("select @@session.tidb_opt_projection_push_down, @@global.tidb_opt_projection_push_down").Check(testkit.Rows("0 0"))
+	tk.MustExec("set global tidb_opt_projection_push_down = 'on'")
+	tk.MustQuery("select @@session.tidb_opt_projection_push_down, @@global.tidb_opt_projection_push_down").Check(testkit.Rows("0 1"))
+	require.Error(t, tk.ExecToErr("set global tidb_opt_projection_push_down = 'UNKNOWN'"))
 }
 
 func TestSetCollationAndCharset(t *testing.T) {

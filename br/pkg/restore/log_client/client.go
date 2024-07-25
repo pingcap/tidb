@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -681,18 +680,15 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		info := rc.dom.InfoSchema()
-		shcemas := info.AllSchemaNames()
-		for _, schema := range shcemas {
-			tblInfos, err := info.SchemaTableInfos(ctx, schema)
-			if err != nil {
-				return nil, errors.Trace(err)
+		existTiFlashTable := false
+		rc.dom.InfoSchema().ListTablesWithSpecialAttribute(func(tableInfo *model.TableInfo) bool {
+			if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
+				existTiFlashTable = true
 			}
-			for _, tableInfo := range tblInfos {
-				if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
-					return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
-				}
-			}
+			return false
+		})
+		if existTiFlashTable {
+			return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
 		}
 	}
 
@@ -1239,7 +1235,6 @@ const (
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	allSchema infoschema.InfoSchema,
 	taskName string,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
@@ -1259,7 +1254,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		}
 	}
 
-	ingestRecorder.UpdateIndexInfo(allSchema)
+	if err := ingestRecorder.UpdateIndexInfo(rc.dom.InfoSchema()); err != nil {
+		return sqls, false, errors.Trace(err)
+	}
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			addSQL  strings.Builder
@@ -1323,13 +1320,12 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
 func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, taskName string) error {
-	info := rc.dom.InfoSchema()
-
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info, taskName)
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	info := rc.dom.InfoSchema()
 	console := glue.GetConsole(g)
 NEXTSQL:
 	for _, sql := range sqls {

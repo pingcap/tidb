@@ -760,7 +760,6 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 		b.inSelectLockStmt = true
 		defer func() { b.inSelectLockStmt = false }()
 	}
-	b.hasLock = true
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
@@ -769,13 +768,15 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 	if b.err != nil {
 		return nil
 	}
-	if !b.ctx.GetSessionVars().InTxn() {
+	if !b.ctx.GetSessionVars().PessimisticLockEligible() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 		return src
 	}
+	// If the `PhysicalLock` is not ignored by the above logic, set the `hasLock` flag.
+	b.hasLock = true
 	e := &SelectLockExec{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
 		Lock:               v.Lock,

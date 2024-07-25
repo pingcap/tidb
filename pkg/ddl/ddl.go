@@ -196,8 +196,6 @@ type DDL interface {
 	GetHook() Callback
 	// SetHook sets the hook.
 	SetHook(h Callback)
-	// GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's exported for testing.
-	GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 }
@@ -357,12 +355,11 @@ type ddlCtx struct {
 	mu hookStruct
 }
 
-// TODO remove it after we remove hook and interceptor.
+// TODO remove it after we remove hook.
 type hookStruct struct {
 	sync.RWMutex
 	// see newDefaultCallBack for its value in normal flow.
-	hook        Callback
-	interceptor Interceptor
+	hook Callback
 }
 
 // the schema synchronization mechanism now requires strict incremental schema versions.
@@ -705,7 +702,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
 	ddlCtx.mu.hook = opt.Hook
-	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.schemaVersionManager = newSchemaVersionManager(ddlCtx.ctx, opt.EtcdCli)
@@ -953,17 +949,6 @@ func (d *ddl) close() {
 func (d *ddl) GetLease() time.Duration {
 	lease := d.lease
 	return lease
-}
-
-// GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's exported for testing.
-// Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to intercept the calling of d.infoHandle.Get(), use d.infoHandle.Get() instead.
-// Otherwise, the TestParallelDDLBeforeRunDDLJob will hang up forever.
-func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
-	is := d.infoCache.GetLatest()
-
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
 func (e *executor) genGlobalIDs(count int) ([]int64, error) {
@@ -1293,18 +1278,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
-}
-
-func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
-	if job.State == model.JobStateNone {
-		// We don't call the hook if the job haven't run yet.
-		return err
-	}
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	err = d.mu.hook.OnChanged(err)
-	return errors.Trace(err)
 }
 
 // SetBinlogClient implements DDL.SetBinlogClient interface.

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -86,7 +87,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
 
-		var ddlInjector func(ddl.DDL, ddl.Executor) *schematracker.Checker
+		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}

@@ -61,13 +61,15 @@ type Checker struct {
 	tracker      SchemaTracker
 	closed       atomic.Bool
 	realExecutor ddl.Executor
+	infoCache    *infoschema.InfoCache
 }
 
 // NewChecker creates a Checker.
-func NewChecker(realDDL ddl.DDL, realExecutor ddl.Executor) *Checker {
+func NewChecker(realDDL ddl.DDL, realExecutor ddl.Executor, infoCache *infoschema.InfoCache) *Checker {
 	return &Checker{
 		realDDL:      realDDL,
 		realExecutor: realExecutor,
+		infoCache:    infoCache,
 		tracker:      NewSchemaTracker(2),
 	}
 }
@@ -91,7 +93,7 @@ func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	if d.closed.Load() {
 		return
 	}
-	dbInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).SchemaByName(dbName)
+	dbInfo, _ := d.infoCache.GetLatest().SchemaByName(dbName)
 	dbInfo2 := d.tracker.SchemaByName(dbName)
 
 	if dbInfo == nil || dbInfo2 == nil {
@@ -130,7 +132,7 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model
 		return
 	}
 
-	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(context.Background(), dbName, tableName)
+	tableInfo, _ := d.infoCache.GetLatest().TableByName(context.Background(), dbName, tableName)
 	tableInfo2, _ := d.tracker.TableByName(context.Background(), dbName, tableName)
 
 	if tableInfo == nil || tableInfo2 == nil {
@@ -553,11 +555,6 @@ func (d *Checker) SetHook(h ddl.Callback) {
 	d.realDDL.SetHook(h)
 }
 
-// GetInfoSchemaWithInterceptor implements the DDL interface.
-func (d *Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
-	return d.realDDL.GetInfoSchemaWithInterceptor(ctx)
-}
-
 // DoDDLJob implements the DDL interface.
 func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	de := d.realExecutor.(ddl.ExecutorForTest)
@@ -584,7 +581,7 @@ type storageAndMore interface {
 // StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
 type StorageDDLInjector struct {
 	storageAndMore
-	Injector func(ddl.DDL, ddl.Executor) *Checker
+	Injector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *Checker
 }
 
 // NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.

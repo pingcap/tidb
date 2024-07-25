@@ -36,7 +36,6 @@ go_library(
         "//br/pkg/version",
         "//pkg/ddl/util",
         "//pkg/domain",
-        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/parser/model",
