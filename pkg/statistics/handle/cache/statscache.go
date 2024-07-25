@@ -63,8 +63,20 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 	return NewStatsCacheImpl(nil)
 }
 
+// StatsCacheUpdateChan is a channel for updating stats cache.
+var StatsCacheUpdateChan = make(chan struct{}, 1)
+
 // Update reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) error {
+func (*StatsCacheImpl) Update() error {
+	select {
+	case StatsCacheUpdateChan <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// UpdateWorker reads stats meta from store and updates the stats map.
+func (s *StatsCacheImpl) UpdateWorker(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (
