@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -1085,7 +1087,11 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 
 	tableInfos := make([]*model.TableInfo, 0)
 
+	now := time.Now()
+	bytesCount := 0
+
 	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		bytesCount += len(field) + len(value)
 		if !strings.HasPrefix(string(hack.String(field)), "Table") {
 			return nil
 		}
@@ -1110,6 +1116,13 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 		}
 		return nil
 	})
+
+	elapsed := time.Since(now)
+	speed := float64(bytesCount) / elapsed.Seconds()
+	logutil.BgLogger().Info("lance test GetAllNameToIDAndSpecialAttributeInfo",
+		zap.Duration("time", elapsed),
+		zap.Int("bytesCount", bytesCount),
+		zap.Float64("speed (B/s)", speed))
 
 	return res, tableInfos, errors.Trace(err)
 }
