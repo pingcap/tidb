@@ -18,12 +18,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "return(true)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "1*return(true)->1*return(false)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel")
 	}()
@@ -59,11 +60,13 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 
 	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
-	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
+	errs := multierr.Errors(err)
+	require.Equal(t, 2, len(errs))
+	require.Equal(t, codes.Canceled, status.Code(errors.Cause(errs[0])))
 }
 
 func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "return(true)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)->1*return(false)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
 	}()
@@ -99,8 +102,11 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 
 	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
-	require.Equal(t, codes.Unknown, status.Code(errors.Cause(err)))
+	errs := multierr.Errors(err)
+	require.Equal(t, 2, len(errs))
+	require.Equal(t, codes.Unknown, status.Code(errors.Cause(errs[0])))
 }
+
 func TestCheckStoresAlive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -397,14 +403,18 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	pctx := context.Background()
 	for _, ca := range cases {
+		ctx, cancel := context.WithCancel(pctx)
 		pdCli := utils.FakePDClient{Stores: ca.stores}
 		require.Equal(t, len(ca.content), len(ca.stores))
 		count := 0
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch strings.TrimSpace(r.URL.Path) {
 			case "/config":
+				if len(ca.content[count]) == 0 {
+					cancel()
+				}
 				_, _ = fmt.Fprint(w, ca.content[count])
 			default:
 				http.NotFoundHandler().ServeHTTP(w, r)
@@ -423,6 +433,169 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		rs, rk := mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
 		require.Equal(t, ca.regionSplitSize, rs)
 		require.Equal(t, ca.regionSplitKeys, rk)
+		mockServer.Close()
+	}
+}
+
+func TestIsLogBackupEnabled(t *testing.T) {
+	cases := []struct {
+		stores  []*metapb.Store
+		content []string
+		enable  bool
+		err     bool
+	}{
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tiflash",
+						},
+					},
+				},
+			},
+			content: []string{""},
+			enable:  true,
+			err:     false,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tiflash",
+						},
+					},
+				},
+				{
+					Id:    2,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"",
+				// Assuming the TiKV has failed due to some reason.
+				"",
+			},
+			enable: false,
+			err:    true,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
+			},
+			enable: true,
+			err:    false,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": false}}",
+			},
+			enable: false,
+			err:    false,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+				{
+					Id:    2,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": false}}",
+			},
+			enable: false,
+			err:    false,
+		},
+	}
+
+	pctx := context.Background()
+	for _, ca := range cases {
+		ctx, cancel := context.WithCancel(pctx)
+		pdCli := utils.FakePDClient{Stores: ca.stores}
+		require.Equal(t, len(ca.content), len(ca.stores))
+		count := 0
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch strings.TrimSpace(r.URL.Path) {
+			case "/config":
+				if len(ca.content[count]) == 0 {
+					cancel()
+				}
+				_, _ = fmt.Fprint(w, ca.content[count])
+			default:
+				http.NotFoundHandler().ServeHTTP(w, r)
+			}
+			count++
+		}))
+
+		for _, s := range ca.stores {
+			s.Address = mockServer.URL
+			s.StatusAddress = mockServer.URL
+		}
+
+		httpCli := mockServer.Client()
+		mgr := &Mgr{PdController: &pdutil.PdController{}}
+		mgr.PdController.SetPDClient(pdCli)
+		enable, err := mgr.IsLogBackupEnabled(ctx, httpCli)
+		if ca.err {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, ca.enable, enable)
+		}
 		mockServer.Close()
 	}
 }

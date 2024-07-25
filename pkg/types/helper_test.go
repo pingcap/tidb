@@ -52,6 +52,8 @@ func TestTruncate(t *testing.T) {
 		{123.45, 1, 123.4},
 		{123.45, 2, 123.45},
 		{123.45, 3, 123.450},
+		{123.45, -400, 0.0},
+		{123.45, 400, 123.45},
 	}
 	for _, tt := range tests {
 		res := Truncate(tt.f, tt.dec)

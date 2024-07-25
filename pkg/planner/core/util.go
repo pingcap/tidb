@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -139,6 +140,22 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(parentUsedCols, s.Schema())
+	if len(parentUsedCols) == 0 {
+		// When this operator output no columns, we return its smallest column for safety.
+		minColLen := math.MaxInt
+		chosenPos := 0
+		for i, col := range s.schema.Columns {
+			flen := col.GetType().GetFlen()
+			if flen < minColLen {
+				chosenPos = i
+				minColLen = flen
+			}
+		}
+		// It should be always true.
+		if len(used) > 0 {
+			used[chosenPos] = true
+		}
+	}
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
@@ -414,7 +431,7 @@ func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
 }
 
 // GetPhysID returns the physical table ID.
-func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, colPos int, d types.Datum) (int64, error) {
+func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID, nil
@@ -434,12 +451,11 @@ func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, co
 			len(pi.Columns) > 1 {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		newKeyPartExpr := tables.ForKeyPruning{
-			KeyPartCols: []*expression.Column{{
-				Index:    colPos,
-				UniqueID: partitionExpr.KeyPartCols[0].UniqueID,
-			}},
-		}
+		// We need to change the partition column index!
+		col := &expression.Column{}
+		*col = *partitionExpr.KeyPartCols[0]
+		col.Index = 0
+		newKeyPartExpr := tables.ForKeyPruning{KeyPartCols: []*expression.Column{col}}
 		partIdx, err := newKeyPartExpr.LocateKeyPartition(pi.Num, []types.Datum{d})
 		if err != nil {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")

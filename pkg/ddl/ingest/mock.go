@@ -17,6 +17,9 @@ package ingest
 import (
 	"context"
 	"encoding/hex"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -42,15 +45,6 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// MarkJobProcessing implements BackendCtxMgr.MarkJobProcessing interface.
-func (*MockBackendCtxMgr) MarkJobProcessing(_ int64) bool {
-	return true
-}
-
-// MarkJobFinish implements BackendCtxMgr.MarkJobFinish interface.
-func (*MockBackendCtxMgr) MarkJobFinish() {
-}
-
 // CheckAvailable implements BackendCtxMgr.Available interface.
 func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 	return len(m.runningJobs) == 0, nil
@@ -66,6 +60,7 @@ func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *
 	mockCtx := &MockBackendCtx{
 		mu:      sync.Mutex{},
 		sessCtx: sessCtx,
+		jobID:   jobID,
 	}
 	m.runningJobs[jobID] = mockCtx
 	return mockCtx, nil
@@ -104,6 +99,7 @@ func (m *MockBackendCtxMgr) ResetSessCtx() {
 type MockBackendCtx struct {
 	sessCtx       sessionctx.Context
 	mu            sync.Mutex
+	jobID         int64
 	checkpointMgr *CheckpointManager
 }
 
@@ -159,8 +155,10 @@ func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
 }
 
 // GetLocalBackend returns the local backend.
-func (*MockBackendCtx) GetLocalBackend() *local.Backend {
-	return nil
+func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
+	b := &local.Backend{}
+	b.LocalStoreDir = filepath.Join(os.TempDir(), "mock_backend", strconv.FormatInt(m.jobID, 10))
+	return b
 }
 
 // MockWriteHook the hook for write in mock engine.

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
@@ -398,6 +399,8 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	renameIndexes(tblInfo, from, to)
+	renameHiddenColumns(tblInfo, from, to)
+
 	if ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -721,6 +724,22 @@ SwitchIndexState:
 			indexInfo.State = model.StatePublic
 		}
 
+		// Inject the failpoint to prevent the progress of index creation.
+		failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
+			if sigFile, ok := v.(string); ok {
+				for {
+					time.Sleep(1 * time.Second)
+					if _, err := os.Stat(sigFile); err != nil {
+						if os.IsNotExist(err) {
+							continue
+						}
+						failpoint.Return(ver, errors.Trace(err))
+					}
+					break
+				}
+			}
+		})
+
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StatePublic)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -825,35 +844,12 @@ func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 				logutil.Logger(ctx).Warn(ingest.LitErrCleanSortPath, zap.Error(err))
 				return nil
 			}
+			failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
+				close(local.WaitRMFolderChForTest)
+			})
 		}
 	}
 	return nil
-}
-
-// IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
-func IngestJobsNotExisted(ctx sessionctx.Context) bool {
-	se := sess.NewSession(ctx)
-	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
-	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
-	rows, err := se.Execute(context.Background(), sql, "check-pitr")
-	if err != nil {
-		logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
-		return false
-	}
-	for _, row := range rows {
-		jobBinary := row.GetBytes(0)
-		runJob := model.Job{}
-		err := runJob.Decode(jobBinary)
-		if err != nil {
-			logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
-			return false
-		}
-		// Check whether this add index job is using lightning to do the backfill work.
-		if runJob.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			return false
-		}
-	}
-	return true
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -909,6 +905,11 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	case model.BackfillStateReadyToMerge:
 		logutil.BgLogger().Info("index backfill state ready to merge", zap.String("category", "ddl"), zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O), zap.String("index", allIndexInfos[0].Name.O))
+		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
+			if MockDMLExecutionStateBeforeMerge != nil {
+				MockDMLExecutionStateBeforeMerge()
+			}
+		})
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateMerging
 		}
@@ -1784,6 +1785,7 @@ func writeChunkToLocal(
 	maxIdxColCnt := maxIndexColumnCount(indexes)
 	idxDataBuf := make([]types.Datum, maxIdxColCnt)
 	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
+	var restoreDataBuf []types.Datum
 	count := 0
 	var lastHandle kv.Handle
 
@@ -1797,8 +1799,24 @@ func writeChunkToLocal(
 			unlock()
 		}
 	}()
+	needRestoreForIndexes := make([]bool, len(indexes))
+	restore := false
+	for i, index := range indexes {
+		needRestore := tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
+		needRestoreForIndexes[i] = needRestore
+		restore = restore || needRestore
+	}
+	if restore {
+		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
+	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+		if restore {
+			// restoreDataBuf should not truncate index values.
+			for i, datum := range handleDataBuf {
+				restoreDataBuf[i] = *datum.Clone()
+			}
+		}
 		h, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -1808,7 +1826,10 @@ func writeChunkToLocal(
 			idxDataBuf = extractDatumByOffsets(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			idxData := idxDataBuf[:len(index.Meta().Columns)]
-			rsData := getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, handleDataBuf)
+			var rsData []types.Datum
+			if needRestoreForIndexes[i] {
+				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
+			}
 			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -1951,6 +1972,9 @@ var MockDMLExecutionStateMerging func()
 
 // MockDMLExecutionStateBeforeImport is only used for test.
 var MockDMLExecutionStateBeforeImport func()
+
+// MockDMLExecutionStateBeforeMerge is only used for test.
+var MockDMLExecutionStateBeforeMerge func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
@@ -2109,15 +2133,10 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			return err
 		})
 	} else {
-		elemIDs := make([]int64, 0, len(reorgInfo.elements))
-		for _, elem := range reorgInfo.elements {
-			elemIDs = append(elemIDs, elem.ID)
-		}
-
 		job := reorgInfo.Job
 		taskMeta := &BackfillGlobalMeta{
 			Job:             *job.Clone(),
-			EleIDs:          elemIDs,
+			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 		}
@@ -2536,6 +2555,15 @@ func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
 		} else if isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
+		}
+	}
+}
+
+func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
+	for _, col := range tblInfo.Columns {
+		if col.Hidden && getExpressionIndexOriginName(col) == from.O {
+			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
+			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
 		}
 	}
 }

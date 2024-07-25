@@ -111,7 +111,7 @@ local connectionP = graphPanel.new(
 .addTarget(
   prometheus.target(
     'tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
-    legendFormat='{{instance}}',
+    legendFormat='{{instance}} {{resource_group}}',
   )
 )
 .addTarget(

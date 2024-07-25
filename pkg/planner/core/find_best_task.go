@@ -405,7 +405,10 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	}
 
 	// use the new cost interface
-	var taskType property.TaskType
+	var (
+		taskType         property.TaskType
+		indexPartialCost float64
+	)
 	switch t.(type) {
 	case *rootTask:
 		taskType = property.RootTaskType
@@ -442,6 +445,20 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 				taskType = property.MppTaskType
 			}
 		}
+
+		// Detail reason ref about comment in function `convertToIndexMergeScan`
+		// for cop task with {indexPlan=nil, tablePlan=xxx, idxMergePartPlans=[x,x,x], indexPlanFinished=true} we should
+		// plus the partial index plan cost into the final cost. Because t.plan() the below code used only calculate the
+		// cost about table plan.
+		if cop.indexPlanFinished && len(cop.idxMergePartPlans) != 0 {
+			for _, partialScan := range cop.idxMergePartPlans {
+				partialCost, err := getPlanCost(partialScan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+				if err != nil {
+					return 0, false, err
+				}
+				indexPartialCost += partialCost
+			}
+		}
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
@@ -449,6 +466,7 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	}
 	if t.plan() == nil {
 		// It's a very special case for index merge case.
+		// t.plan() == nil in index merge COP case, it means indexPlanFinished is false in other words.
 		cost := 0.0
 		copTsk := t.(*copTask)
 		for _, partialScan := range copTsk.idxMergePartPlans {
@@ -461,7 +479,7 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 		return cost, false, nil
 	}
 	cost, err := getPlanCost(t.plan(), taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
-	return cost, false, err
+	return cost + indexPartialCost, false, err
 }
 
 type physicalOptimizeOp struct {
@@ -725,6 +743,12 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 func compareCandidates(sctx sessionctx.Context, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
+	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
+	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
+	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
+		return 0
+	}
+
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
@@ -1374,6 +1398,11 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
 	}
+	// after we lift the limitation of intersection and cop-type task in the code in this
+	// function above, we could set its index plan finished as true once we found its table
+	// plan is pure table scan below.
+	// And this will cause cost underestimation when we estimate the cost of the entire cop
+	// task plan in function `getTaskPlanCost`.
 	if prop.TaskTp == property.RootTaskType {
 		cop.indexPlanFinished = true
 		task = cop.convertToRootTask(ds.SCtx())
@@ -2587,7 +2616,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *Plan
 
 func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, _ *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsSortItemEmpty() {
-		return nil, 1, nil
+		return invalidTask, 0, nil
 	}
 
 	pcteTable := PhysicalCTETable{IDForStorage: p.idForStorage}.Init(p.SCtx(), p.StatsInfo())

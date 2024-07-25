@@ -134,8 +134,17 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN, opt *logicalOptimize
 		}
 	}
 	if topN != nil {
+		substitutedExprs := make([]expression.Expression, 0, len(topN.ByItems))
 		for _, by := range topN.ByItems {
-			by.Expr = expression.FoldConstant(expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs))
+			substituted := expression.FoldConstant(expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs))
+			if expression.IsMutableFunc(substituted) {
+				// after substituting, if the order-by expression is un-deterministic like 'order by rand()', stop pushing down.
+				return p.baseLogicalPlan.pushDownTopN(topN, opt)
+			}
+			substitutedExprs = append(substitutedExprs, substituted)
+		}
+		for i, by := range topN.ByItems {
+			by.Expr = substitutedExprs[i]
 		}
 
 		// remove meaningless constant sort items.

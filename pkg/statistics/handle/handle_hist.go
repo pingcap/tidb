@@ -33,10 +33,16 @@ import (
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
+
+// RetryCount is the max retry count for a sync load task.
+const RetryCount = 3
+
+var globalStatsSyncLoadSingleFlight singleflight.Group
 
 type statsWrapper struct {
 	col *statistics.Column
@@ -57,6 +63,7 @@ type NeededItemTask struct {
 	ToTimeout   time.Time
 	ResultCh    chan stmtctx.StatsLoadResult
 	TableItemID model.TableItemID
+	Retry       int
 }
 
 // SendLoadRequests send neededColumns requests
@@ -77,25 +84,27 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
-	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
-	tasks := make([]*NeededItemTask, 0)
+	sc.StatsLoad.ResultCh = make([]<-chan singleflight.Result, 0, len(remainedItems))
 	for _, item := range remainedItems {
-		task := &NeededItemTask{
-			TableItemID: item,
-			ToTimeout:   time.Now().Local().Add(timeout),
-			ResultCh:    sc.StatsLoad.ResultCh,
-		}
-		tasks = append(tasks, task)
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for _, task := range tasks {
-		select {
-		case h.StatsLoad.NeededItemsCh <- task:
-			continue
-		case <-timer.C:
-			return errors.New("sync load stats channel is full and timeout sending task to channel")
-		}
+		localItem := item
+		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
+			timer := time.NewTimer(timeout)
+			defer timer.Stop()
+			task := &NeededItemTask{
+				TableItemID: localItem,
+				ToTimeout:   time.Now().Local().Add(timeout),
+				ResultCh:    make(chan stmtctx.StatsLoadResult, 1),
+			}
+			select {
+			case h.StatsLoad.NeededItemsCh <- task:
+				result, ok := <-task.ResultCh
+				intest.Assert(ok, "task.ResultCh cannot be closed")
+				return result, nil
+			case <-timer.C:
+				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
+			}
+		})
+		sc.StatsLoad.ResultCh = append(sc.StatsLoad.ResultCh, resultCh)
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
 	return nil
@@ -121,25 +130,34 @@ func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
-	for {
+	for _, resultCh := range sc.StatsLoad.ResultCh {
 		select {
-		case result, ok := <-sc.StatsLoad.ResultCh:
+		case result, ok := <-resultCh:
 			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
 			}
-			if result.HasError() {
-				errorMsgs = append(errorMsgs, result.ErrorMsg())
-			}
-			delete(resultCheckMap, result.Item)
-			if len(resultCheckMap) == 0 {
-				metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-				return nil
+			// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
+			// not the stats loading error
+			if result.Err != nil {
+				errorMsgs = append(errorMsgs, result.Err.Error())
+			} else {
+				val := result.Val.(stmtctx.StatsLoadResult)
+				// this error is from the stats loading error
+				if val.HasError() {
+					errorMsgs = append(errorMsgs, val.ErrorMsg())
+				}
+				delete(resultCheckMap, val.Item)
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return errors.New("sync load stats timeout")
 		}
 	}
+	if len(resultCheckMap) == 0 {
+		metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
+		return nil
+	}
+	return nil
 }
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
@@ -203,6 +221,9 @@ func (h *Handle) SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exit
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
+//   - If the task is handled successfully, return nil, nil.
+//   - If the task is timeout, return the task and nil. The caller should retry the timeout task without sleep.
+//   - If the task is failed, return the task, error. The caller should retry the timeout task with sleep.
 func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
@@ -212,7 +233,7 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 		}
 	}()
 	if lastTask == nil {
-		task, err = h.drainColTask(exit)
+		task, err = h.drainColTask(sctx, exit)
 		if err != nil {
 			if err != errExit {
 				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
@@ -222,51 +243,60 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
-	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
-		return h.handleOneItemTask(sctx, task)
-	})
-	timeout := time.Until(task.ToTimeout)
-	select {
-	case result := <-resultChan:
-		if result.Err == nil {
-			slr := result.Val.(*stmtctx.StatsLoadResult)
-			if slr.Error != nil {
-				return task, slr.Error
-			}
-			task.ResultCh <- *slr
-			return nil, nil
-		}
-		return task, result.Err
-	case <-time.After(timeout):
-		return task, nil
+	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
+	err = h.handleOneItemTask(task)
+	if err == nil {
+		task.ResultCh <- result
+		return nil, nil
 	}
+	if !isVaildForRetry(task) {
+		result.Error = err
+		task.ResultCh <- result
+		return nil, nil
+	}
+	return task, err
 }
 
-func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
+func isVaildForRetry(task *NeededItemTask) bool {
+	task.Retry++
+	return task.Retry <= RetryCount
+}
+
+func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
+	se, err := h.SPool().Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
+		if err == nil { // only recycle when no error
+			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
+			h.SPool().Put(se)
+		}
 	}()
-	result = &stmtctx.StatsLoadResult{Item: task.TableItemID}
-	item := result.Item
+
+	item := task.TableItemID
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
-		return result, nil
+		return nil
 	}
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
 		if !ok || index.IsFullLoad() {
-			return result, nil
+			return nil
 		}
 		wrapper.idx = index
 	} else {
 		col, ok := tbl.Columns[item.ID]
 		if !ok || col.IsFullLoad() {
-			return result, nil
+			return nil
 		}
 		wrapper.col = col
 	}
@@ -274,8 +304,7 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
 	if err != nil {
-		result.Error = err
-		return result, err
+		return err
 	}
 	if item.IsIndex {
 		if wrapper.idx != nil {
@@ -287,10 +316,10 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
-		return result, nil
+	if needUpdate {
+		h.updateCachedItem(item, wrapper.col, wrapper.idx)
 	}
-	return nil, nil
+	return nil
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
@@ -339,9 +368,9 @@ func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItem
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
 	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
@@ -380,7 +409,7 @@ func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItem
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
-func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
+func (h *Handle) drainColTask(sctx sessionctx.Context, exit chan struct{}) (*NeededItemTask, error) {
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
@@ -393,6 +422,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
+				task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}

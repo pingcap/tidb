@@ -98,6 +98,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
@@ -337,28 +338,23 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) Close() error {
+	// Be careful, this function should be re-entrant. It might be called more than once for a single connection.
+	// Any logic which is not idempotent should be in closeConn() and wrapped with `cc.closeOnce.Do`, like decresing
+	// metrics, releasing resources, etc.
+	//
+	// TODO: avoid calling this function multiple times. It's not intuitive that a connection can be closed multiple
+	// times.
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	resourceGroupName, count := "", 0
-	if ctx := cc.getCtx(); ctx != nil {
-		resourceGroupName = ctx.GetSessionVars().ResourceGroupName
-		count = cc.server.ConnNumByResourceGroup[resourceGroupName]
-		if count <= 1 {
-			delete(cc.server.ConnNumByResourceGroup, resourceGroupName)
-		} else {
-			cc.server.ConnNumByResourceGroup[resourceGroupName]--
-		}
-	}
 	cc.server.rwlock.Unlock()
-	return closeConn(cc, resourceGroupName, count)
+	return closeConn(cc)
 }
 
 // closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
-func closeConn(cc *clientConn, resourceGroupName string, connections int) error {
+func closeConn(cc *clientConn) error {
 	var err error
 	cc.closeOnce.Do(func() {
-		metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(connections))
 		if cc.connectionID > 0 {
 			cc.server.dom.ReleaseConnID(cc.connectionID)
 			cc.connectionID = 0
@@ -371,10 +367,17 @@ func closeConn(cc *clientConn, resourceGroupName string, connections int) error 
 				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 			}
 		}
+
 		// Close statements and session
-		// This will release advisory locks, row locks, etc.
+		// At first, it'll decrese the count of connections in the resource group, update the corresponding gauge.
+		// Then it'll close the statements and session, which release advisory locks, row locks, etc.
 		if ctx := cc.getCtx(); ctx != nil {
+			resourceGroupName := ctx.GetSessionVars().ResourceGroupName
+			metrics.ConnGauge.WithLabelValues(resourceGroupName).Dec()
+
 			err = ctx.Close()
+		} else {
+			metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Dec()
 		}
 	})
 	return err
@@ -382,14 +385,7 @@ func closeConn(cc *clientConn, resourceGroupName string, connections int) error 
 
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	name := cc.getCtx().GetSessionVars().ResourceGroupName
-	count := cc.server.ConnNumByResourceGroup[name]
-	if count <= 1 {
-		delete(cc.server.ConnNumByResourceGroup, name)
-	} else {
-		cc.server.ConnNumByResourceGroup[name]--
-	}
-	return closeConn(cc, name, count-1)
+	return closeConn(cc)
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
@@ -779,6 +775,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	return nil
 }
 
+// mockOSUserForAuthSocketTest should only be used in test
+var mockOSUserForAuthSocketTest atomic.Pointer[string]
+
 // Check if the Authentication Plugin of the server, client and user configuration matches
 func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Response41) ([]byte, error) {
 	// Open a context unless this was done before.
@@ -827,7 +826,15 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		if err != nil {
 			return nil, err
 		}
-		return []byte(user.Username), nil
+		uname := user.Username
+
+		if intest.InTest {
+			if p := mockOSUserForAuthSocketTest.Load(); p != nil {
+				uname = *p
+			}
+		}
+
+		return []byte(uname), nil
 	}
 	if len(userplugin) == 0 {
 		// No user plugin set, assuming MySQL Native Password
@@ -1176,7 +1183,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	if counter != nil {
 		counter.Inc()
 	} else {
-		label := strconv.Itoa(int(cmd))
+		label := server_metrics.CmdToString(cmd)
 		if err != nil {
 			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resourceGroupName).Inc()
 		} else {

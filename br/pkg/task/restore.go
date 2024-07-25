@@ -844,10 +844,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	var newTS uint64
-	if client.IsIncremental() {
-		newTS = restoreTS
-	}
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
@@ -882,6 +878,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	// preallocate the table id, because any ddl job or database creation also allocates the global ID
+	err = client.AllocTableIDs(ctx, tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// execute DDL first
 	err = client.ExecDDLs(ctx, ddlJobs)
 	if err != nil {
@@ -900,6 +902,17 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
+	var newTS uint64
+	if client.IsIncremental() {
+		// we need to get the new ts after execDDL
+		// or backfilled data in upstream may not be covered by
+		// the new ts.
+		// see https://github.com/pingcap/tidb/issues/54426
+		newTS, err = client.GetTSWithRetry(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 

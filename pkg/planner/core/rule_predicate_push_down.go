@@ -124,6 +124,11 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	if expression.ContainVirtualColumn(predicates) {
+		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
+		// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
+		return predicates, p
+	}
 	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates, opt)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	p.conditions = append(p.conditions, predicates...)
@@ -393,14 +398,6 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	outerTable := p.children[1]
 	if p.JoinType == LeftOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
-	}
-
-	// first simplify embedded outer join.
-	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
-		simplifyOuterJoin(innerPlan, predicates)
-	}
-	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
-		simplifyOuterJoin(outerPlan, predicates)
 	}
 
 	if p.JoinType == InnerJoin {

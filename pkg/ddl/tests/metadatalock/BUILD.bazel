@@ -8,10 +8,11 @@ go_test(
         "mdl_test.go",
     ],
     flaky = True,
-    shard_count = 32,
+    shard_count = 36,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/ingest/testutil",
         "//pkg/errno",
         "//pkg/server",
         "//pkg/testkit",

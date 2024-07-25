@@ -35,5 +35,8 @@ bazel-bin
 bazel-out
 bazel-testlogs
 bazel-tidb
+MODULE.bazel.lock
 .ijwb/
 /oom_record/
+*.log.json
+genkeyword

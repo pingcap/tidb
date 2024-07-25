@@ -79,14 +79,14 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
-	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
+	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20240208102409-a554af8ee11f
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20230919054518-dfd7d194838f
+	github.com/pingcap/tipb v0.0.0-20240507090649-2bf6bb0cb996
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.18.0
 	github.com/prometheus/client_model v0.5.0
@@ -104,8 +104,8 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20240321163207-b4e2443c15bf
-	github.com/tikv/pd/client v0.0.0-20240210135946-3488a653ddd9
+	github.com/tikv/client-go/v2 v2.0.8-0.20240716121331-2cd3a741ea8e
+	github.com/tikv/pd/client v0.0.0-20240708075403-19f65c59bb89
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

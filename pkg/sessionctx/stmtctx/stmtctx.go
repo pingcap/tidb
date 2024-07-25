@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
@@ -50,6 +51,7 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -165,6 +167,7 @@ type StatementContext struct {
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
 	IsDDLJobInQueue               bool
+	IsRefineComparedConstant      bool
 	DDLJobID                      int64
 	InInsertStmt                  bool
 	InUpdateStmt                  bool
@@ -191,6 +194,7 @@ type StatementContext struct {
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
+	InConstantPropagateCheck      bool
 	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
 	IgnoreExplainIDSuffix         bool
@@ -363,7 +367,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan StatsLoadResult
+		ResultCh []<-chan singleflight.Result
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
@@ -388,7 +392,7 @@ type StatementContext struct {
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
-	ColRefFromUpdatePlan []int64
+	ColRefFromUpdatePlan intset.FastIntSet
 
 	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
 	RangeFallback bool
@@ -429,6 +433,9 @@ type StatementContext struct {
 		value *uint64
 		eval  func() (uint64, error)
 	}
+
+	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
+	MDLRelatedTableIDs map[int64]int64
 }
 
 // NewStmtCtx creates a new statement context
@@ -1166,7 +1173,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 // This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
 func (sc *StatementContext) ShouldClipToZero() bool {
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue || sc.IsRefineComparedConstant
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,

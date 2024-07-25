@@ -242,7 +242,7 @@ Warning	8061	Optimizer hint unknown_hint is not supported by TiDB and is ignored
 select 1 from /*+ test1() */ t;
 1
 Level	Code	Message
-Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
+Warning	8066	Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
 drop table if exists t;
 create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);
 insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");

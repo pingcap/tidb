@@ -57,3 +57,11 @@ t2	CREATE TABLE `t2` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   UNIQUE KEY `authorIdx` (`authorId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a decimal(0,0), b decimal(0));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` decimal(10,0) DEFAULT NULL,
+  `b` decimal(10,0) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

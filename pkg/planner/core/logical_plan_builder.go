@@ -61,12 +61,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 const (
@@ -1869,7 +1871,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				if fields[offset].AuxiliaryColInAgg {
 					continue
 				}
-				item := fd.NewFastIntSet()
+				item := intset.NewFastIntSet()
 				switch x := expr.(type) {
 				case *expression.Column:
 					item.Insert(int(x.UniqueID))
@@ -1911,7 +1913,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				baseCols := expression.ExtractColumns(expr)
 				errShowCol := baseCols[0]
 				for _, col := range baseCols {
-					colSet := fd.NewFastIntSet(int(col.UniqueID))
+					colSet := intset.NewFastIntSet(int(col.UniqueID))
 					if !colSet.SubsetOf(strictClosure) {
 						errShowCol = col
 						break
@@ -1936,7 +1938,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			}
 			if fds.GroupByCols.Only1Zero() {
 				// maxOneRow is delayed from agg's ExtractFD logic since some details listed in it.
-				projectionUniqueIDs := fd.NewFastIntSet()
+				projectionUniqueIDs := intset.NewFastIntSet()
 				for _, expr := range proj.Exprs {
 					switch x := expr.(type) {
 					case *expression.Column:
@@ -1996,7 +1998,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	} else if b.GetType() == mysql.TypeNull {
 		return a
 	}
-	resultTp := types.NewFieldType(types.MergeFieldType(a.GetType(), b.GetType()))
+	resultTp := types.AggFieldType([]*types.FieldType{a, b})
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
 	if resultTp.GetType() == mysql.TypeNewDecimal {
 		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.
@@ -3343,7 +3345,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
-		if g.exprDepth == 1 {
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
@@ -3381,6 +3383,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				} else if ast.HasWindowFlag(ret) {
 					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
+					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+						isParam.UseAsValueInGbyByClause = true
+					}
 					return ret, true
 				}
 			}
@@ -3419,8 +3424,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableInfo {
-	var tableList []*ast.TableName
-	tableList = extractTableList(from, tableList, true)
+	tableList := ExtractTableList(from, true)
 	for _, field := range tableList {
 		if field.Name.L == name.TblName.L {
 			return field.TableInfo
@@ -5439,7 +5443,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 	// Once the all conditions are not equal to nil, built it again.
 	if ds.fdSet == nil || ds.allConds != nil {
 		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
-		allCols := fd.NewFastIntSet()
+		allCols := intset.NewFastIntSet()
 		// should use the column's unique ID avoiding fdSet conflict.
 		for _, col := range ds.TblCols {
 			// todo: change it to int64
@@ -5447,7 +5451,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		}
 		// int pk doesn't store its index column in indexInfo.
 		if ds.tableInfo.PKIsHandle {
-			keyCols := fd.NewFastIntSet()
+			keyCols := intset.NewFastIntSet()
 			for _, col := range ds.TblCols {
 				if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 					keyCols.Insert(int(col.UniqueID))
@@ -5473,7 +5477,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		}
 		// other indices including common handle.
 		for _, idx := range ds.tableInfo.Indices {
-			keyCols := fd.NewFastIntSet()
+			keyCols := intset.NewFastIntSet()
 			allColIsNotNull := true
 			if ds.isForUpdateRead && changed {
 				latestIndex, ok := latestIndexes[idx.ID]
@@ -5532,14 +5536,14 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		// the generated column is sequentially dependent on the forward column.
 		// a int, b int as (a+1), c int as (b+1), here we can build the strict FD down:
 		// {a} -> {b}, {b} -> {c}, put the maintenance of the dependencies between generated columns to the FD graph.
-		notNullCols := fd.NewFastIntSet()
+		notNullCols := intset.NewFastIntSet()
 		for _, col := range ds.TblCols {
 			if col.VirtualExpr != nil {
-				dependencies := fd.NewFastIntSet()
+				dependencies := intset.NewFastIntSet()
 				dependencies.Insert(int(col.UniqueID))
 				// dig out just for 1 level.
 				directBaseCol := expression.ExtractColumns(col.VirtualExpr)
-				determinant := fd.NewFastIntSet()
+				determinant := intset.NewFastIntSet()
 				for _, col := range directBaseCol {
 					determinant.Insert(int(col.UniqueID))
 				}
@@ -5780,12 +5784,14 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
+		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, ErrInternal) &&
 			terror.ErrorNotEqual(err, ErrFieldNotInGroupBy) &&
 			terror.ErrorNotEqual(err, ErrMixOfGroupFuncAndFields) &&
-			terror.ErrorNotEqual(err, ErrViewNoExplain) {
+			terror.ErrorNotEqual(err, ErrViewNoExplain) &&
+			terror.ErrorNotEqual(err, ErrNotSupportedYet) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
@@ -6094,8 +6100,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 
-	var tableList []*ast.TableName
-	tableList = extractTableList(update.TableRefs.TableRefs, tableList, false)
+	tableList := ExtractTableList(update.TableRefs.TableRefs, false)
 	for _, t := range tableList {
 		dbName := t.Schema.L
 		if dbName == "" {
@@ -6383,7 +6388,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if expr := extractDefaultExpr(assign.Expr); expr != nil {
 				expr.Name = assign.Column
 			}
-			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
+			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true)
 			if err != nil {
 				return nil, nil, false, err
 			}
@@ -6407,7 +6412,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess(assign))
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign))
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err
@@ -6430,8 +6435,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			allAssignmentsAreConstant = false
 		}
 		p = np
-		if col, ok := newExpr.(*expression.Column); ok {
-			b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan = append(b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan, col.UniqueID)
+		if cols := expression.ExtractColumnSet(newExpr); cols.Len() > 0 {
+			b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan.UnionWith(cols)
 		}
 		newList = append(newList, &expression.Assignment{Col: col, ColName: name.ColName, Expr: newExpr})
 		dbName := name.DBName.L
@@ -6623,8 +6628,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		}
 	} else {
 		// Delete from a, b, c, d.
-		var tableList []*ast.TableName
-		tableList = extractTableList(ds.TableRefs.TableRefs, tableList, false)
+		tableList := ExtractTableList(ds.TableRefs.TableRefs, false)
 		for _, v := range tableList {
 			if isCTE(v) {
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
@@ -6843,6 +6847,14 @@ func (b *PlanBuilder) buildByItemsForWindow(
 		}
 		if col, ok := it.(*expression.Column); ok {
 			retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
+			// We need to attempt to add this column because a subquery may be created during the expression rewrite process.
+			// Therefore, we need to ensure that the column from the newly created query plan is added.
+			// If the column is already in the schema, we don't need to add it again.
+			if !proj.schema.Contains(col) {
+				proj.Exprs = append(proj.Exprs, col)
+				proj.names = append(proj.names, types.EmptyName)
+				proj.schema.Append(col)
+			}
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, it)
@@ -7436,17 +7448,6 @@ func buildWindowSpecs(specs []ast.WindowSpec) (map[string]*ast.WindowSpec, error
 	return specsMap, nil
 }
 
-func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectList) {
-	for _, sel := range list.Selects {
-		switch s := sel.(type) {
-		case *ast.SelectStmt:
-			unfoldList.Selects = append(unfoldList.Selects, s)
-		case *ast.SetOprSelectList:
-			unfoldSelectList(s, unfoldList)
-		}
-	}
-}
-
 type updatableTableListResolver struct {
 	updatableTableList []*ast.TableName
 }
@@ -7475,111 +7476,149 @@ func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-// extractTableList extracts all the TableNames from node.
+// ExtractTableList is a wrapper for tableListExtractor and removes duplicate TableName
 // If asName is true, extract AsName prior to OrigName.
 // Privilege check should use OrigName, while expression may use AsName.
-// TODO: extracting all tables by vistor model maybe a better way
-func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast.TableName {
-	switch x := node.(type) {
-	case *ast.SelectStmt:
-		if x.From != nil {
-			input = extractTableList(x.From.TableRefs, input, asName)
-		}
-		if x.Where != nil {
-			input = extractTableList(x.Where, input, asName)
-		}
-		if x.With != nil {
-			for _, cte := range x.With.CTEs {
-				input = extractTableList(cte.Query, input, asName)
+func ExtractTableList(node ast.Node, asName bool) []*ast.TableName {
+	if node == nil {
+		return []*ast.TableName{}
+	}
+	e := &tableListExtractor{
+		asName:     asName,
+		tableNames: []*ast.TableName{},
+	}
+	node.Accept(e)
+	tableNames := e.tableNames
+	m := make(map[string]map[string]*ast.TableName) // k1: schemaName, k2: tableName, v: ast.TableName
+	for _, x := range tableNames {
+		k1, k2 := x.Schema.L, x.Name.L
+		// allow empty schema name OR empty table name
+		if k1 != "" || k2 != "" {
+			if _, ok := m[k1]; !ok {
+				m[k1] = make(map[string]*ast.TableName)
 			}
+			m[k1][k2] = x
 		}
-		for _, f := range x.Fields.Fields {
-			if s, ok := f.Expr.(*ast.SubqueryExpr); ok {
-				input = extractTableList(s, input, asName)
-			}
+	}
+	tableNames = tableNames[:0]
+	for _, x := range m {
+		for _, v := range x {
+			tableNames = append(tableNames, v)
 		}
-	case *ast.DeleteStmt:
-		input = extractTableList(x.TableRefs.TableRefs, input, asName)
-		if x.IsMultiTable {
-			for _, t := range x.Tables.Tables {
-				input = extractTableList(t, input, asName)
-			}
+	}
+	return tableNames
+}
+
+// tableListExtractor extracts all the TableNames from node.
+type tableListExtractor struct {
+	asName     bool
+	tableNames []*ast.TableName
+}
+
+func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
+	innerExtract := func(inner ast.Node) []*ast.TableName {
+		if inner == nil {
+			return nil
 		}
-		if x.Where != nil {
-			input = extractTableList(x.Where, input, asName)
+		innerExtractor := &tableListExtractor{
+			asName:     e.asName,
+			tableNames: []*ast.TableName{},
 		}
-		if x.With != nil {
-			for _, cte := range x.With.CTEs {
-				input = extractTableList(cte.Query, input, asName)
-			}
-		}
-	case *ast.UpdateStmt:
-		input = extractTableList(x.TableRefs.TableRefs, input, asName)
-		for _, e := range x.List {
-			input = extractTableList(e.Expr, input, asName)
-		}
-		if x.Where != nil {
-			input = extractTableList(x.Where, input, asName)
-		}
-		if x.With != nil {
-			for _, cte := range x.With.CTEs {
-				input = extractTableList(cte.Query, input, asName)
-			}
-		}
-	case *ast.InsertStmt:
-		input = extractTableList(x.Table.TableRefs, input, asName)
-		input = extractTableList(x.Select, input, asName)
-	case *ast.SetOprStmt:
-		l := &ast.SetOprSelectList{}
-		unfoldSelectList(x.SelectList, l)
-		for _, s := range l.Selects {
-			input = extractTableList(s.(ast.ResultSetNode), input, asName)
-		}
-	case *ast.PatternInExpr:
-		if s, ok := x.Sel.(*ast.SubqueryExpr); ok {
-			input = extractTableList(s, input, asName)
-		}
-	case *ast.ExistsSubqueryExpr:
-		if s, ok := x.Sel.(*ast.SubqueryExpr); ok {
-			input = extractTableList(s, input, asName)
-		}
-	case *ast.BinaryOperationExpr:
-		if s, ok := x.R.(*ast.SubqueryExpr); ok {
-			input = extractTableList(s, input, asName)
-		}
-	case *ast.SubqueryExpr:
-		input = extractTableList(x.Query, input, asName)
-	case *ast.Join:
-		input = extractTableList(x.Left, input, asName)
-		input = extractTableList(x.Right, input, asName)
+		inner.Accept(innerExtractor)
+		return innerExtractor.tableNames
+	}
+
+	switch x := n.(type) {
+	case *ast.TableName:
+		e.tableNames = append(e.tableNames, x)
 	case *ast.TableSource:
 		if s, ok := x.Source.(*ast.TableName); ok {
-			if x.AsName.L != "" && asName {
+			if x.AsName.L != "" && e.asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
 				newTableName.Schema = model.NewCIStr("")
-				input = append(input, &newTableName)
+				e.tableNames = append(e.tableNames, &newTableName)
 			} else {
-				input = append(input, s)
+				e.tableNames = append(e.tableNames, s)
 			}
 		} else if s, ok := x.Source.(*ast.SelectStmt); ok {
 			if s.From != nil {
-				var innerList []*ast.TableName
-				innerList = extractTableList(s.From.TableRefs, innerList, asName)
+				innerList := innerExtract(s.From.TableRefs)
 				if len(innerList) > 0 {
 					innerTableName := innerList[0]
-					if x.AsName.L != "" && asName {
+					if x.AsName.L != "" && e.asName {
 						newTableName := *innerList[0]
 						newTableName.Name = x.AsName
 						newTableName.Schema = model.NewCIStr("")
 						innerTableName = &newTableName
 					}
-					input = append(input, innerTableName)
+					e.tableNames = append(e.tableNames, innerTableName)
 				}
 			}
 		}
+		return n, true
+
+	case *ast.ShowStmt:
+		if x.DBName != "" {
+			e.tableNames = append(e.tableNames, &ast.TableName{Schema: model.NewCIStr(x.DBName)})
+		}
+	case *ast.CreateDatabaseStmt:
+		e.tableNames = append(e.tableNames, &ast.TableName{Schema: x.Name})
+	case *ast.AlterDatabaseStmt:
+		e.tableNames = append(e.tableNames, &ast.TableName{Schema: x.Name})
+	case *ast.DropDatabaseStmt:
+		e.tableNames = append(e.tableNames, &ast.TableName{Schema: x.Name})
+
+	case *ast.FlashBackDatabaseStmt:
+		e.tableNames = append(e.tableNames, &ast.TableName{Schema: x.DBName})
+		e.tableNames = append(e.tableNames, &ast.TableName{Schema: model.NewCIStr(x.NewName)})
+	case *ast.FlashBackToTimestampStmt:
+		if x.DBName.L != "" {
+			e.tableNames = append(e.tableNames, &ast.TableName{Schema: x.DBName})
+		}
+	case *ast.FlashBackTableStmt:
+		if newName := x.NewName; newName != "" {
+			e.tableNames = append(e.tableNames, &ast.TableName{
+				Schema: x.Table.Schema,
+				Name:   model.NewCIStr(newName)})
+		}
+
+	case *ast.GrantStmt:
+		if x.ObjectType == ast.ObjectTypeTable || x.ObjectType == ast.ObjectTypeNone {
+			if x.Level.Level == ast.GrantLevelDB || x.Level.Level == ast.GrantLevelTable {
+				e.tableNames = append(e.tableNames, &ast.TableName{
+					Schema: model.NewCIStr(x.Level.DBName),
+					Name:   model.NewCIStr(x.Level.TableName),
+				})
+			}
+		}
+	case *ast.RevokeStmt:
+		if x.ObjectType == ast.ObjectTypeTable || x.ObjectType == ast.ObjectTypeNone {
+			if x.Level.Level == ast.GrantLevelDB || x.Level.Level == ast.GrantLevelTable {
+				e.tableNames = append(e.tableNames, &ast.TableName{
+					Schema: model.NewCIStr(x.Level.DBName),
+					Name:   model.NewCIStr(x.Level.TableName),
+				})
+			}
+		}
+	case *ast.BRIEStmt:
+		if x.Kind == ast.BRIEKindBackup || x.Kind == ast.BRIEKindRestore {
+			for _, v := range x.Schemas {
+				e.tableNames = append(e.tableNames, &ast.TableName{Schema: model.NewCIStr(v)})
+			}
+		}
+	case *ast.UseStmt:
+		e.tableNames = append(e.tableNames, &ast.TableName{Schema: model.NewCIStr(x.DBName)})
+	case *ast.ExecuteStmt:
+		if v, ok := x.PrepStmt.(*PlanCacheStmt); ok {
+			e.tableNames = append(e.tableNames, innerExtract(v.PreparedAst.Stmt)...)
+		}
 	}
-	return input
+	return n, false
+}
+
+func (*tableListExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
 }
 
 func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {

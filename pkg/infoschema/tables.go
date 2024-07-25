@@ -209,6 +209,8 @@ const (
 	TableRunawayWatches = "RUNAWAY_WATCHES"
 	// TableCheckConstraints is the list of CHECK constraints.
 	TableCheckConstraints = "CHECK_CONSTRAINTS"
+	// TableKeywords is the list of keywords.
+	TableKeywords = "KEYWORDS"
 )
 
 const (
@@ -318,6 +320,7 @@ var tableIDMap = map[string]int64{
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
+	TableKeywords:                        autoid.InformationSchemaDBID + 92,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1509,7 +1512,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.StartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Start time of the transaction"},
 	{name: txninfo.CurrentSQLDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
 	{name: txninfo.CurrentSQLDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The normalized sql the transaction are currently running"},
-	{name: txninfo.StateStr, tp: mysql.TypeEnum, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
+	{name: txninfo.StateStr, tp: mysql.TypeEnum, size: 16, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
 	{name: txninfo.WaitingStartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Current lock waiting's start time"},
 	{name: txninfo.MemBufferKeysStr, tp: mysql.TypeLonglong, size: 64, comment: "How many entries are in MemDB"},
 	{name: txninfo.MemBufferBytesStr, tp: mysql.TypeLonglong, size: 64, comment: "MemDB used memory"},
@@ -1646,6 +1649,11 @@ var tableCheckConstraintsCols = []columnInfo{
 	{name: "CONSTRAINT_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CONSTRAINT_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+}
+
+var tableKeywords = []columnInfo{
+	{name: "WORD", tp: mysql.TypeVarchar, size: 128},
+	{name: "RESERVED", tp: mysql.TypeLong, size: 11},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -2166,6 +2174,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableResourceGroups:                     tableResourceGroupsCols,
 	TableRunawayWatches:                     tableRunawayWatchListCols,
 	TableCheckConstraints:                   tableCheckConstraintsCols,
+	TableKeywords:                           tableKeywords,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

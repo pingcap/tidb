@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -94,6 +95,7 @@ type memtableRetriever struct {
 	retrieved   bool
 	initialized bool
 	extractor   plannercore.MemTablePredicateExtractor
+	memTracker  *memory.Tracker
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -196,11 +198,16 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
 			err = e.setDataFromCheckConstraints(sctx, dbs)
+		case infoschema.TableKeywords:
+			err = e.setDataFromKeywords()
 		}
 		if err != nil {
 			return nil, err
 		}
 		e.initialized = true
+		if e.memTracker != nil {
+			e.memTracker.Consume(calculateDatumsSize(e.rows))
+		}
 	}
 
 	// Adjust the amount of each return
@@ -691,7 +698,6 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
-	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	if tbl.IsView() {
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
@@ -700,6 +706,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
+				is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
 				var err error
 				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl, nil, nil)
@@ -1737,11 +1744,11 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) err
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+	allSchemas := tikvHelper.FilterMemDBs(ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas())
 	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
 	if err != nil {
 		return err
@@ -3381,6 +3388,16 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			)
 			rows = append(rows, row)
 		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromKeywords() error {
+	rows := make([][]types.Datum, 0, len(parser.Keywords))
+	for _, kw := range parser.Keywords {
+		row := types.MakeDatums(kw.Word, kw.Reserved)
+		rows = append(rows, row)
 	}
 	e.rows = rows
 	return nil

@@ -6,12 +6,15 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,9 +34,9 @@ const (
 	backupSSTWaitInterval    = 2 * time.Second
 	backupSSTMaxWaitInterval = 3 * time.Second
 
-	resetTSRetryTime       = 16
+	resetTSRetryTime       = 32
 	resetTSWaitInterval    = 50 * time.Millisecond
-	resetTSMaxWaitInterval = 500 * time.Millisecond
+	resetTSMaxWaitInterval = 2 * time.Second
 
 	resetTSRetryTimeExt       = 600
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
@@ -60,6 +63,20 @@ func isGRPCCancel(err error) bool {
 		}
 	}
 	return false
+}
+
+// ConstantBackoff is a backoffer that retry forever until success.
+type ConstantBackoff time.Duration
+
+// NextBackoff returns a duration to wait before retrying again
+func (c ConstantBackoff) NextBackoff(err error) time.Duration {
+	return time.Duration(c)
+}
+
+// Attempt returns the remain attempt times
+func (c ConstantBackoff) Attempt() int {
+	// A large enough value. Also still safe for arithmetic operations (won't easily overflow).
+	return math.MaxInt16
 }
 
 // RetryState is the mutable state needed for retrying.
@@ -167,14 +184,15 @@ func NewBackupSSTBackoffer() Backoffer {
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
-	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
 	// we don't care storeID here.
-	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
+	errs := multierr.Errors(err)
+	lastErr := errs[len(errs)-1]
+	res := bo.errContext.HandleErrorMsg(lastErr.Error(), 0)
 	if res.Strategy == RetryStrategy {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
-		e := errors.Cause(err)
+		e := errors.Cause(lastErr)
 		switch e { // nolint:errorlint
 		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed, berrors.ErrPDLeaderNotFound:
 			bo.delayTime = 2 * bo.delayTime
@@ -189,7 +207,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:
-				if isGRPCCancel(err) {
+				if isGRPCCancel(lastErr) {
 					bo.delayTime = 2 * bo.delayTime
 					bo.attempt--
 				} else {
@@ -249,8 +267,12 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	default:
+		// If the connection timeout, pd client would cancel the context, and return grpc context cancel error.
+		// So make the codes.Canceled retryable too.
+		// It's OK to retry the grpc context cancel error, because the parent context cancel returns context.Canceled.
+		// For example, cancel the `ectx` and then pdClient.GetTS(ectx) returns context.Canceled instead of grpc context canceled.
 		switch status.Code(e) {
-		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
+		case codes.DeadlineExceeded, codes.Canceled, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
 		default:
@@ -261,6 +283,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		}
 	}
 
+	failpoint.Inject("set-attempt-to-one", func(_ failpoint.Value) {
+		bo.attempt = 1
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}

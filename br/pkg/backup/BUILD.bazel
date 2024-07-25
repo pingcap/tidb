@@ -35,6 +35,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/util",
         "//pkg/util/codec",
+        "//pkg/util/mathutil",
         "//pkg/util/ranger",
         "//pkg/util/table-filter",
         "@com_github_google_btree//:btree",
@@ -70,7 +71,7 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",

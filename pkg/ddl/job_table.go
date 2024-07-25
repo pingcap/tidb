@@ -224,17 +224,6 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
-		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-			job.State == model.JobStateQueueing &&
-			job.ReorgMeta != nil &&
-			job.ReorgMeta.IsFastReorg &&
-			ingest.LitBackCtxMgr != nil {
-			succeed := ingest.LitBackCtxMgr.MarkJobProcessing(job.ID)
-			if !succeed {
-				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
-				return false, nil
-			}
-		}
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
 			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
@@ -273,6 +262,15 @@ func (d *ddl) startDispatchLoop() {
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
+		failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
+			if ingest.ResignOwnerForTest.Load() {
+				err2 := d.ownerManager.ResignOwner(context.Background())
+				if err2 != nil {
+					logutil.BgLogger().Info("resign meet error", zap.Error(err2))
+				}
+				ingest.ResignOwnerForTest.Store(false)
+			}
+		})
 		select {
 		case <-d.ddlJobCh:
 		case <-ticker.C:
@@ -358,6 +356,9 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 	d.delivery2worker(wk, pool, job)
 }
 
+// AfterDeliverToWorkerForTest is only used for test.
+var AfterDeliverToWorkerForTest func(*model.Job)
+
 // delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
@@ -365,6 +366,9 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
+			if AfterDeliverToWorkerForTest != nil {
+				AfterDeliverToWorkerForTest(job)
+			}
 			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
@@ -386,7 +390,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 						return
 					}
 					d.setAlreadyRunOnce(job.ID)
-					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
+					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 					// Don't have a worker now.
 					return
 				}
@@ -426,7 +430,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 				logutil.BgLogger().Info("wait latest schema version error", zap.String("category", "ddl"), zap.Error(err))
 				return
 			}
-			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
+			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 			d.synced(job)
 
 			if RunInGoTest {
