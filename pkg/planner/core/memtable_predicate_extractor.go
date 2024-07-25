@@ -1900,6 +1900,8 @@ func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
 
 var _ TableSchemaSelector = (*InfoSchemaTablesExtractor)(nil)
 
+// TableSchemaSelector is used to help determine if a specified table/schema name contained in predicate condition,
+// and return all specified table/schema names in predicate condition.
 type TableSchemaSelector interface {
 	ContainTableName(table string) bool
 	ContainSchemaName(schema string) bool
@@ -1908,27 +1910,27 @@ type TableSchemaSelector interface {
 	SelectedSchemaNames() []model.CIStr
 }
 
-// ContainTableName returns whether the given table is contained in selection.
+// ContainTableName returns whether the given table is contained in predicate condition.
 func (e *InfoSchemaTablesExtractor) ContainTableName(table string) bool {
 	return !e.Filter("table_name", table)
 }
 
-// ContainSchemaName returns whether the given schema is contained in selection.
+// ContainSchemaName returns whether the given schema is contained in predicate condition.
 func (e *InfoSchemaTablesExtractor) ContainSchemaName(schema string) bool {
 	return !e.Filter("table_schema", schema)
 }
 
-// SelectedTableNames gets the table names specified in selection.
+// SelectedTableNames gets the table names specified in predicate condition.
 func (e *InfoSchemaTablesExtractor) SelectedTableNames() []model.CIStr {
 	return e.getSchemaObjectNames("table_name")
 }
 
-// SelectedSchemaNames gets the schema names specified in selection.
+// SelectedSchemaNames gets the schema names specified in predicate condition.
 func (e *InfoSchemaTablesExtractor) SelectedSchemaNames() []model.CIStr {
 	return e.getSchemaObjectNames("table_schema")
 }
 
-// getSchemaObjectNames gets the schema object names specified in selection of given column name.
+// getSchemaObjectNames gets the schema object names specified in predicate condition of given column name.
 func (e *InfoSchemaTablesExtractor) getSchemaObjectNames(colName string) []model.CIStr {
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
