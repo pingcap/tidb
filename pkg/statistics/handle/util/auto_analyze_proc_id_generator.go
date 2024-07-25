@@ -95,6 +95,7 @@ func (g *globalAutoAnalyzeProcessList) All() []uint64 {
 	return maps.Keys(g.processes)
 }
 
+// Contains checks whether the auto analyze process ID is in the list.
 func (g *globalAutoAnalyzeProcessList) Contains(id uint64) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
