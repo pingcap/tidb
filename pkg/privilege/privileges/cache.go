@@ -727,7 +727,6 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 		case f.ColumnAsName.L == "password_require_current":
 			if row.IsNull(i) {
 				value.PasswordRequireCurrent = pwRequireCurrentDefault
-				continue
 			} else if row.GetEnum(i).String() == "Y" {
 				value.PasswordRequireCurrent = pwRequireCurrent
 			} else if row.GetEnum(i).String() == "N" {
