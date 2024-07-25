@@ -4,6 +4,7 @@ go_library(
     name = "logicalop",
     srcs = [
         "base_logical_plan.go",
+        "logical_cte_table.go",
         "logical_max_one_row.go",
         "logical_schema_producer.go",
     ],

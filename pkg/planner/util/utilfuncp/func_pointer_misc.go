@@ -92,3 +92,7 @@ var PruneByItems func(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrac
 // ExhaustPhysicalPlans4LogicalMaxOneRow will be called by LogicalMaxOneRow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
+
+// FindBestTask4LogicalCTETable will be called by LogicalCTETable in logicalOp pkg.
+var FindBestTask4LogicalCTETable func(lp base.LogicalPlan, prop *property.PhysicalProperty, _ *base.PlanCounterTp,
+	_ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error)
