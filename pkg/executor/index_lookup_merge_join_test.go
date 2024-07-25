@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+<<<<<<< HEAD:pkg/executor/index_lookup_merge_join_test.go
 func TestIndexLookupMergeJoinHang(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/IndexMergeJoinMockOOM", `return(true)`))
 	defer func() {
@@ -41,6 +42,8 @@ func TestIndexLookupMergeJoinHang(t *testing.T) {
 	require.Equal(t, "OOM test index merge join doesn't hang here.", err.Error())
 }
 
+=======
+>>>>>>> 628b7ed6739 (planner: deprecate index lookup merge join. (#54681)):pkg/executor/join/index_lookup_merge_join_test.go
 func TestIssue18068(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIssue18068", `return(true)`))
 	defer func() {
@@ -63,4 +66,19 @@ func TestIssue18068(t *testing.T) {
 	// Do not hang in index merge join when the second and third execute.
 	tk.MustExec("select  /*+ inl_merge_join(s)*/ 1 from t join s on t.a = s.a limit 1")
 	tk.MustExec("select  /*+ inl_merge_join(s)*/ 1 from t join s on t.a = s.a limit 1")
+}
+
+func TestIssue54064(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists A, B")
+	tk.MustExec("create table A\n(id int primary key nonclustered auto_increment,\nx varchar(32) not null,\ny char(5) not null,\nz varchar(25) not null,\nkey idx_sub_tsk(z,x,y)\n)")
+	tk.MustExec("create table B\n( y char(5) not null,\nz varchar(25) not null,\nx varchar(32) not null,\nprimary key(z, x, y) nonclustered\n)\n")
+	tk.MustExec("insert into A (y, z, x) values\n('CN000', '123', 'RW '),\n('CN000', '456', '123');")
+	tk.MustExec("insert into B values\n('CN000', '123', 'RW '),\n('CN000', '456', '123');")
+	tk.MustQuery("select /*+ inl_merge_join(a, b) */\na.*\nfrom a join b on a.y=b.y and a.z=b.z and a.x = b.x\nwhere a.y='CN000' order by 1,2;").Check(
+		testkit.Rows("1 RW  CN000 123", "2 123 CN000 456"))
+	res := tk.MustQuery("explain format='brief' select /*+ inl_merge_join(a, b) */\na.*\nfrom a join b on a.y=b.y and a.z=b.z and a.x = b.x\nwhere a.y='CN000' order by 1,2;")
+	require.NotRegexp(t, "IndexMergeJoin_.*", res.Rows()[0][0])
 }

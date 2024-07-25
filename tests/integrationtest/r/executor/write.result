@@ -1776,6 +1776,8 @@ a
 a
 b
 update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a;
+Level	Code	Message
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 select * from t;
 a
 a
