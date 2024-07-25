@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -151,8 +151,6 @@ func TestDropNotNullColumn(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		if job.SchemaState == model.StateWriteOnly {
 			switch sqlNum {
 			case 0:
@@ -1508,7 +1506,7 @@ func TestDDLIfExists(t *testing.T) {
 // In a cluster, TiDB "a" executes the DDL.
 // TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
 func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1521,20 +1519,16 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 
-	intercept := &callback.TestInterceptor{}
-
 	var sessionToStart sync.WaitGroup // sessionToStart is a waitgroup to wait for two session to get the same information schema
 	sessionToStart.Add(2)
 	firstDDLFinished := make(chan struct{})
 
-	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetSchemaAndTableByIdent", func(ctx sessionctx.Context) {
 		// The following code is for testing.
 		// Make sure the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
-		var info infoschema.InfoSchema
 		sessionToStart.Done()
 		sessionToStart.Wait()
-		info = is
 
 		// Make sure the two session have got the same information schema. And the first session can continue to go on,
 		// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
@@ -1542,11 +1536,7 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 		if currID != 1 {
 			<-firstDDLFinished
 		}
-
-		return info
-	}
-	d := dom.DDL()
-	d.(ddl.DDLForTest).SetInterceptor(intercept)
+	})
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
@@ -1563,9 +1553,6 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 	})
 
 	wg.Wait()
-
-	intercept = &callback.TestInterceptor{}
-	d.(ddl.DDLForTest).SetInterceptor(intercept)
 }
 
 func TestParallelAlterSchemaCharsetAndCollate(t *testing.T) {
@@ -1661,8 +1648,6 @@ func TestCreateExpressionIndex(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1843,8 +1828,6 @@ func TestDropExpressionIndex(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {

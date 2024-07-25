@@ -30,32 +30,6 @@ func preparePossibleProperties(lp base.LogicalPlan) [][]*expression.Column {
 	return lp.PreparePossibleProperties(lp.Schema(), childrenProperties...)
 }
 
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
-
-	for _, path := range ds.PossibleAccessPaths {
-		if path.IsIntHandlePath {
-			col := ds.getPKIsHandleCol()
-			if col != nil {
-				result = append(result, []*expression.Column{col})
-			}
-			continue
-		}
-
-		if len(path.IdxCols) == 0 {
-			continue
-		}
-		result = append(result, make([]*expression.Column, len(path.IdxCols)))
-		copy(result[len(result)-1], path.IdxCols)
-		for i := 0; i < path.EqCondCount && i+1 < len(path.IdxCols); i++ {
-			result = append(result, make([]*expression.Column, len(path.IdxCols)-i-1))
-			copy(result[len(result)-1], path.IdxCols[i+1:])
-		}
-	}
-	return result
-}
-
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {

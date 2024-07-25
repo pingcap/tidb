@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/docker/go-units"
 	"github.com/gogo/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -32,7 +33,7 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
-const pb uint64 = 1024 * 1024 * 1024 * 1024 * 1024
+const pb uint64 = units.PB
 
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	mockStores := []*metapb.Store{
@@ -492,23 +493,26 @@ func TestTikvUsage(t *testing.T) {
 		{Name: "F5", Size_: 5 * pb},
 	}
 	replica := uint64(3)
-	storeCnt := 6
+	storeCnt := uint64(6)
 	total := uint64(0)
 	for _, f := range files {
 		total += f.GetSize_()
 	}
 	ret := task.EstimateTikvUsage(files, replica, storeCnt)
-	require.Equal(t, total*replica/uint64(storeCnt), ret)
+	require.Equal(t, total*replica/storeCnt, ret)
 }
 
 func TestTiflashUsage(t *testing.T) {
 	tables := []*metautil.Table{
-		{TiFlashReplicas: 0, Files: []*backuppb.File{{Size_: 1 * pb}}},
-		{TiFlashReplicas: 1, Files: []*backuppb.File{{Size_: 2 * pb}}},
-		{TiFlashReplicas: 2, Files: []*backuppb.File{{Size_: 3 * pb}}},
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 0}},
+			Files: []*backuppb.File{{Size_: 1 * pb}}},
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1}},
+			Files: []*backuppb.File{{Size_: 2 * pb}}},
+		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 2}},
+			Files: []*backuppb.File{{Size_: 3 * pb}}},
 	}
 
-	storeCnt := 3
+	var storeCnt uint64 = 3
 	ret := task.EstimateTiflashUsage(tables, storeCnt)
 	require.Equal(t, 8*pb/3, ret)
 }

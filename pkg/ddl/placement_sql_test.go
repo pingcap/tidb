@@ -335,13 +335,13 @@ func TestPlacementMode(t *testing.T) {
 	newPolicy := existPolicy.Clone()
 	newPolicy.Followers = 8
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
+	err = dom.DDLExecutor().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
+	err = dom.DDLExecutor().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
 	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
@@ -351,7 +351,7 @@ func TestPlacementMode(t *testing.T) {
 	newPolicy.Name = model.NewCIStr("p3")
 	newPolicy.Followers = 8
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy, ddl.OnExistError)
+	err = dom.DDLExecutor().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
@@ -535,7 +535,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NotNil(t, tbl.PlacementPolicyRef)
 	tbl.Name = model.NewCIStr("t2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, nil, ddl.WithOnExist(ddl.OnExistError))
+	err = dom.DDLExecutor().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, nil, ddl.WithOnExist(ddl.OnExistError))
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -549,7 +549,7 @@ func TestPlacementMode(t *testing.T) {
 	tbl.Name = model.NewCIStr("t2")
 	tbl.PlacementPolicyRef.Name = model.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, nil, ddl.WithOnExist(ddl.OnExistError))
+	err = dom.DDLExecutor().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, nil, ddl.WithOnExist(ddl.OnExistError))
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -562,7 +562,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NotNil(t, db1.PlacementPolicyRef)
 	db1.Name = model.NewCIStr("db2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
+	err = dom.DDLExecutor().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 
@@ -574,7 +574,7 @@ func TestPlacementMode(t *testing.T) {
 	db1.Name = model.NewCIStr("db2")
 	db1.PlacementPolicyRef.Name = model.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
+	err = dom.DDLExecutor().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 }

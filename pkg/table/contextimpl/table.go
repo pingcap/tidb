@@ -15,11 +15,14 @@
 package contextimpl
 
 import (
+	"github.com/pingcap/failpoint"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -75,16 +78,6 @@ func (ctx *TableContextImpl) EnableMutationChecker() bool {
 	return ctx.vars().EnableMutationChecker
 }
 
-// BinlogEnabled returns whether the binlog is enabled.
-func (ctx *TableContextImpl) BinlogEnabled() bool {
-	return ctx.vars().BinlogClient != nil
-}
-
-// GetBinlogMutation returns a `binlog.TableMutation` object for a table.
-func (ctx *TableContextImpl) GetBinlogMutation(tblID int64) *binlog.TableMutation {
-	return ctx.Context.StmtGetMutation(tblID)
-}
-
 // GetRowEncodingConfig returns the RowEncodingConfig.
 func (ctx *TableContextImpl) GetRowEncodingConfig() context.RowEncodingConfig {
 	vars := ctx.vars()
@@ -97,6 +90,59 @@ func (ctx *TableContextImpl) GetRowEncodingConfig() context.RowEncodingConfig {
 // GetMutateBuffers implements the MutateContext interface.
 func (ctx *TableContextImpl) GetMutateBuffers() *context.MutateBuffers {
 	return ctx.mutateBuffers
+}
+
+// GetRowIDShardGenerator implements the MutateContext interface.
+func (ctx *TableContextImpl) GetRowIDShardGenerator() *variable.RowIDShardGenerator {
+	return ctx.vars().GetRowIDShardGenerator()
+}
+
+// GetReservedRowIDAlloc implements the MutateContext interface.
+func (ctx *TableContextImpl) GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAlloc, bool) {
+	if sc := ctx.vars().StmtCtx; sc != nil {
+		return &sc.ReservedRowIDAlloc, true
+	}
+	// `StmtCtx` should not be nil in the `variable.SessionVars`.
+	// We just put an assertion that will panic only if in test here.
+	// In production code, here returns (nil, false) to make code safe
+	// because some old code checks `StmtCtx != nil` but we don't know why.
+	intest.Assert(false, "SessionVars.StmtCtx should not be nil")
+	return nil, false
+}
+
+// GetBinlogSupport implements the MutateContext interface.
+func (ctx *TableContextImpl) GetBinlogSupport() (context.BinlogSupport, bool) {
+	failpoint.Inject("forceWriteBinlog", func() {
+		// Just to cover binlog related code in this package, since the `BinlogClient` is
+		// still nil, mutations won't be written to pump on commit.
+		failpoint.Return(ctx, true)
+	})
+	if ctx.vars().BinlogClient != nil {
+		return ctx, true
+	}
+	return nil, false
+}
+
+// GetBinlogMutation implements the BinlogSupport interface.
+func (ctx *TableContextImpl) GetBinlogMutation(tblID int64) *binlog.TableMutation {
+	return ctx.Context.StmtGetMutation(tblID)
+}
+
+// GetStatisticsSupport implements the MutateContext interface.
+func (ctx *TableContextImpl) GetStatisticsSupport() (context.StatisticsSupport, bool) {
+	if ctx.vars().TxnCtx != nil {
+		return ctx, true
+	}
+	return nil, false
+}
+
+// UpdatePhysicalTableDelta implements the StatisticsSupport interface.
+func (ctx *TableContextImpl) UpdatePhysicalTableDelta(
+	physicalTableID int64, delta int64, count int64, cols variable.DeltaCols,
+) {
+	if txnCtx := ctx.vars().TxnCtx; txnCtx != nil {
+		txnCtx.UpdateDeltaForTable(physicalTableID, delta, count, cols)
+	}
 }
 
 func (ctx *TableContextImpl) vars() *variable.SessionVars {

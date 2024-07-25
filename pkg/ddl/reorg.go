@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -143,13 +143,13 @@ func (rc *reorgCtx) notifyJobState(state model.JobState) {
 }
 
 func (rc *reorgCtx) isReorgCanceled() bool {
-	return int32(model.JobStateCancelled) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
-		int32(model.JobStateCancelling) == atomic.LoadInt32((*int32)(&rc.jobState))
+	s := atomic.LoadInt32((*int32)(&rc.jobState))
+	return int32(model.JobStateCancelled) == s || int32(model.JobStateCancelling) == s
 }
 
 func (rc *reorgCtx) isReorgPaused() bool {
-	return int32(model.JobStatePaused) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
-		int32(model.JobStatePausing) == atomic.LoadInt32((*int32)(&rc.jobState))
+	s := atomic.LoadInt32((*int32)(&rc.jobState))
+	return int32(model.JobStatePaused) == s || int32(model.JobStatePausing) == s
 }
 
 func (rc *reorgCtx) setRowCount(count int64) {
@@ -333,14 +333,17 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
 		return nil
 	}
-	start, end, pid, err := getCheckpointReorgHandle(sess, job)
+	start, pid, err := getImportedKeyFromCheckpoint(sess, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if pid > 0 {
+	if pid != reorgInfo.PhysicalTableID {
+		// Current physical ID does not match checkpoint physical ID.
+		// Don't overwrite reorgInfo.StartKey.
+		return nil
+	}
+	if len(start) > 0 {
 		reorgInfo.StartKey = start
-		reorgInfo.EndKey = end
-		reorgInfo.PhysicalTableID = pid
 	}
 	return nil
 }
@@ -923,8 +926,8 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 	return removeDDLReorgHandle(r.s, job, elements)
 }
 
-// CleanupDDLReorgHandles removes the job reorganization related handles.
-func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
+// cleanupDDLReorgHandles removes the job reorganization related handles.
+func cleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
 		// Job is given, but it is neither finished nor synced; do nothing
 		return
