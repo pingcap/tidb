@@ -12,6 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -235,8 +236,8 @@ type DrainResult struct {
 }
 
 // Files returns all files of this drain result.
-func (result DrainResult) Files() []TableIDWithFiles {
-	tableIDWithFiles := make([]TableIDWithFiles, 0, len(result.TableEndOffsetInRanges))
+func (result DrainResult) Files() []sstfiles.SstFilesInfo {
+	tableIDWithFiles := make([]sstfiles.SstFilesInfo, 0, len(result.TableEndOffsetInRanges))
 	var startOffset int = 0
 	for i, endOffset := range result.TableEndOffsetInRanges {
 		tableID := result.TablesToSend[i].Table.ID
@@ -250,7 +251,7 @@ func (result DrainResult) Files() []TableIDWithFiles {
 		if r, ok := result.RewriteRulesMap[tableID]; ok {
 			rules = r
 		}
-		tableIDWithFiles = append(tableIDWithFiles, TableIDWithFiles{
+		tableIDWithFiles = append(tableIDWithFiles, sstfiles.SstFilesInfo{
 			TableID:      tableID,
 			Files:        files,
 			RewriteRules: rules,
@@ -281,7 +282,7 @@ func (b *Batcher) filterOutRanges(checkpointSet map[string]struct{}, drained []r
 	for i, rg := range drained {
 		newFiles := make([]*backuppb.File, 0, len(rg.Files))
 		for _, f := range rg.Files {
-			rangeKey := getFileRangeKey(f.Name)
+			rangeKey := sstfiles.GetFileRangeKey(f.Name)
 			if _, exists := checkpointSet[rangeKey]; exists {
 				// the range has been import done, so skip it and
 				// update the summary information

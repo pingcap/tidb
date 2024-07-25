@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package snapclient
+package sstfiles
 
 import (
 	"bytes"
@@ -130,12 +130,17 @@ func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeToke
 }
 
 type SnapFileImporter struct {
+	cipher     *backuppb.CipherInfo
+	apiVersion kvrpcpb.APIVersion
+
 	metaClient   split.SplitClient
 	importClient importclient.ImporterClient
 	backend      *backuppb.StorageBackend
 
 	downloadTokensMap *storeTokenChannelMap
 	ingestTokensMap   *storeTokenChannelMap
+
+	closeCallbacks []func(*SnapFileImporter) error
 
 	concurrencyPerStore uint
 
@@ -150,6 +155,8 @@ type SnapFileImporter struct {
 
 func NewSnapFileImporter(
 	ctx context.Context,
+	cipher *backuppb.CipherInfo,
+	apiVersion kvrpcpb.APIVersion,
 	metaClient split.SplitClient,
 	importClient importclient.ImporterClient,
 	backend *backuppb.StorageBackend,
@@ -158,6 +165,8 @@ func NewSnapFileImporter(
 	tikvStores []*metapb.Store,
 	rewriteMode RewriteMode,
 	concurrencyPerStore uint,
+	createCallBacks []func(*SnapFileImporter) error,
+	closeCallbacks []func(*SnapFileImporter) error,
 ) (*SnapFileImporter, error) {
 	kvMode := TiDB
 	if isRawKvMode {
@@ -168,6 +177,8 @@ func NewSnapFileImporter(
 	}
 
 	fileImporter := &SnapFileImporter{
+		cipher:              cipher,
+		apiVersion:          apiVersion,
 		metaClient:          metaClient,
 		backend:             backend,
 		importClient:        importClient,
@@ -178,10 +189,16 @@ func NewSnapFileImporter(
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 		concurrencyPerStore: concurrencyPerStore,
 		cond:                sync.NewCond(new(sync.Mutex)),
+		closeCallbacks:      closeCallbacks,
 	}
 
-	err := fileImporter.checkMultiIngestSupport(ctx, tikvStores)
-	return fileImporter, errors.Trace(err)
+	for _, f := range createCallBacks {
+		err := f(fileImporter)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return fileImporter, nil
 }
 
 func (importer *SnapFileImporter) WaitUntilUnblock() {
@@ -210,6 +227,12 @@ func (importer *SnapFileImporter) releaseToken(tokenCh chan struct{}) {
 
 func (importer *SnapFileImporter) Close() error {
 	if importer != nil && importer.importClient != nil {
+		for _, f := range importer.closeCallbacks {
+			err := f(importer)
+			if err != nil {
+				log.Warn("failed on close snap importer", zap.Error(err))
+			}
+		}
 		return importer.importClient.CloseGrpcClient()
 	}
 	return nil
@@ -223,8 +246,8 @@ func (importer *SnapFileImporter) SetDownloadSpeedLimit(ctx context.Context, sto
 	return errors.Trace(err)
 }
 
-// checkMultiIngestSupport checks whether all stores support multi-ingest
-func (importer *SnapFileImporter) checkMultiIngestSupport(ctx context.Context, tikvStores []*metapb.Store) error {
+// CheckMultiIngestSupport checks whether all stores support multi-ingest
+func (importer *SnapFileImporter) CheckMultiIngestSupport(ctx context.Context, tikvStores []*metapb.Store) error {
 	storeIDs := make([]uint64, 0, len(tikvStores))
 	for _, s := range tikvStores {
 		if s.State != metapb.StoreState_Up {
@@ -308,8 +331,6 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 	ctx context.Context,
 	files []*backuppb.File,
 	rewriteRules *restoreutils.RewriteRules,
-	cipher *backuppb.CipherInfo,
-	apiVersion kvrpcpb.APIVersion,
 ) error {
 	start := time.Now()
 	log.Debug("import file", logutil.Files(files))
@@ -334,7 +355,7 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 		for _, regionInfo := range regionInfos {
 			info := regionInfo
 			// Try to download file.
-			downloadMetas, errDownload := importer.download(ctx, info, files, rewriteRules, cipher, apiVersion)
+			downloadMetas, errDownload := importer.download(ctx, info, files, rewriteRules, importer.cipher, importer.apiVersion)
 			if errDownload != nil {
 				for _, e := range multierr.Errors(errDownload) {
 					switch errors.Cause(e) { // nolint:errorlint
