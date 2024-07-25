@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
@@ -248,6 +249,206 @@ func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
 	isd.schemaMap.Set(item)
 	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name.O, tomb: true})
+}
+
+// resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
+// TODO: write a generics version to avoid repeated code.
+func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
+	resetTableInfoResidentBeforeFullLoad(isd.tableInfoResident, schemaVersion)
+
+	resetByIDBeforeFullLoad(isd.byID, schemaVersion)
+	resetByNameBeforeFullLoad(isd.byName, schemaVersion)
+
+	resetSchemaMapBeforeFullLoad(isd.schemaMap, schemaVersion)
+	resetSchemaID2NameBeforeFullLoad(isd.schemaID2Name, schemaVersion)
+
+	resetPID2TIDBeforeFullLoad(isd.pid2tid, schemaVersion)
+}
+
+func resetByIDBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+
+	batchSize := 1000
+	if bt.Len() < batchSize {
+		batchSize = bt.Len()
+	}
+	items := make([]tableItem, 0, batchSize)
+	items = append(items, pivot)
+	for {
+		bt.Descend(pivot, func(item tableItem) bool {
+			if pivot.tableID == item.tableID {
+				return true // skip MVCC version
+			}
+			pivot = item
+			items = append(items, pivot)
+			return len(items) < cap(items)
+		})
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			bt.Set(tableItem{
+				dbName:        item.dbName,
+				dbID:          item.dbID,
+				tableName:     item.tableName,
+				tableID:       item.tableID,
+				schemaVersion: schemaVersion,
+				tomb:          true,
+			})
+		}
+		items = items[:0]
+	}
+}
+
+func resetByNameBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+
+	batchSize := 1000
+	if bt.Len() < batchSize {
+		batchSize = bt.Len()
+	}
+	items := make([]tableItem, 0, batchSize)
+	items = append(items, pivot)
+	for {
+		bt.Descend(pivot, func(item tableItem) bool {
+			if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+				return true // skip MVCC version
+			}
+			pivot = item
+			items = append(items, pivot)
+			return len(items) < cap(items)
+		})
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			bt.Set(tableItem{
+				dbName:        item.dbName,
+				dbID:          item.dbID,
+				tableName:     item.tableName,
+				tableID:       item.tableID,
+				schemaVersion: schemaVersion,
+				tomb:          true,
+			})
+		}
+		items = items[:0]
+	}
+}
+
+func resetTableInfoResidentBeforeFullLoad(bt *btree.BTreeG[tableInfoItem], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+	items := make([]tableInfoItem, 0, bt.Len())
+	items = append(items, pivot)
+	bt.Descend(pivot, func(item tableInfoItem) bool {
+		if pivot.dbName == item.dbName && pivot.tableID == item.tableID {
+			return true // skip MVCC version
+		}
+		pivot = item
+		items = append(items, pivot)
+		return true
+	})
+	for _, item := range items {
+		bt.Set(tableInfoItem{
+			dbName:        item.dbName,
+			tableID:       item.tableID,
+			schemaVersion: schemaVersion,
+			tomb:          true,
+		})
+	}
+}
+
+func resetSchemaMapBeforeFullLoad(bt *btree.BTreeG[schemaItem], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+	items := make([]schemaItem, 0, bt.Len())
+	items = append(items, pivot)
+	bt.Descend(pivot, func(item schemaItem) bool {
+		if pivot.Name() == item.Name() {
+			return true // skip MVCC version
+		}
+		pivot = item
+		items = append(items, pivot)
+		return true
+	})
+	for _, item := range items {
+		bt.Set(schemaItem{
+			dbInfo:        item.dbInfo,
+			schemaVersion: schemaVersion,
+			tomb:          true,
+		})
+	}
+}
+
+func resetSchemaID2NameBeforeFullLoad(bt *btree.BTreeG[schemaIDName], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+	items := make([]schemaIDName, 0, bt.Len())
+	items = append(items, pivot)
+	bt.Descend(pivot, func(item schemaIDName) bool {
+		if pivot.id == item.id {
+			return true // skip MVCC version
+		}
+		pivot = item
+		items = append(items, pivot)
+		return true
+	})
+	for _, item := range items {
+		bt.Set(schemaIDName{
+			id:            item.id,
+			name:          item.name,
+			schemaVersion: schemaVersion,
+			tomb:          true,
+		})
+	}
+}
+
+func resetPID2TIDBeforeFullLoad(bt *btree.BTreeG[partitionItem], schemaVersion int64) {
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+
+	batchSize := 1000
+	if bt.Len() < batchSize {
+		batchSize = bt.Len()
+	}
+	items := make([]partitionItem, 0, batchSize)
+	items = append(items, pivot)
+	for {
+		bt.Descend(pivot, func(item partitionItem) bool {
+			if pivot.partitionID == item.partitionID {
+				return true // skip MVCC version
+			}
+			pivot = item
+			items = append(items, pivot)
+			return len(items) < cap(items)
+		})
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			bt.Set(partitionItem{
+				partitionID:   item.partitionID,
+				tableID:       item.tableID,
+				schemaVersion: schemaVersion,
+				tomb:          true,
+			})
+		}
+		items = items[:0]
+	}
 }
 
 func compareByID(a, b tableItem) bool {
@@ -531,7 +732,7 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 }
 
 // SchemaTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
+func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -540,15 +741,15 @@ func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 			for _, tbl := range schTbls.tables {
 				tables = append(tables, tbl)
 			}
-			return getTableInfoList(tables)
+			return getTableInfoList(tables), nil
 		}
-		return nil // something wrong?
+		return nil, nil // something wrong?
 	}
 
 retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
@@ -558,23 +759,26 @@ retry:
 	tblInfos, err := m.ListTables(dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			return nil
+			return nil, nil
 		}
 		// Flashback statement could cause such kind of error.
 		// In theory that error should be handled in the lower layer, like client-go.
 		// But it's not done, so we retry here.
 		if strings.Contains(err.Error(), "in flashback progress") {
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			goto retry
 		}
-		// TODO: error could happen, so do not panic!
-		panic(err)
+		return nil, errors.Trace(err)
 	}
-	return tblInfos
+	return tblInfos, nil
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaSimpleTableInfos(schema model.CIStr) []*model.TableNameInfo {
+func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableNameInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -586,15 +790,15 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(schema model.CIStr) []*model.Tabl
 					Name: tbl.Meta().Name,
 				})
 			}
-			return ret
+			return ret, nil
 		}
-		return nil // something wrong?
+		return nil, nil // something wrong?
 	}
 
 retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
@@ -604,19 +808,22 @@ retry:
 	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			return nil
+			return nil, nil
 		}
 		// Flashback statement could cause such kind of error.
 		// In theory that error should be handled in the lower layer, like client-go.
 		// But it's not done, so we retry here.
 		if strings.Contains(err.Error(), "in flashback progress") {
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			goto retry
 		}
-		// TODO: error could happen, so do not panic!
-		panic(err)
+		return nil, errors.Trace(err)
 	}
-	return tblInfos
+	return tblInfos, nil
 }
 
 // FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
@@ -798,57 +1005,6 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return nil, false
 	}
 	return is.SchemaByName(model.NewCIStr(name))
-}
-
-func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	if IsSpecialDB(schema.L) {
-		raw, ok := is.Data.specials.Load(schema.L)
-		if ok {
-			schTbls := raw.(*schemaTables)
-			tables := make([]table.Table, 0, len(schTbls.tables))
-			for _, tbl := range schTbls.tables {
-				tables = append(tables, tbl)
-			}
-			return tables
-		}
-	}
-
-retry:
-	dbInfo, ok := is.SchemaByName(schema)
-	if !ok {
-		return
-	}
-	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
-	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
-	// the meta region leader is slow.
-	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-	m := meta.NewSnapshotMeta(snapshot)
-	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			return nil
-		}
-		// Flashback statement could cause such kind of error.
-		// In theory that error should be handled in the lower layer, like client-go.
-		// But it's not done, so we retry here.
-		if strings.Contains(err.Error(), "in flashback progress") {
-			time.Sleep(200 * time.Millisecond)
-			goto retry
-		}
-		// TODO: error could happen, so do not panic!
-		panic(err)
-	}
-
-	tables = make([]table.Table, 0, len(tblInfos))
-	for _, tblInfo := range tblInfos {
-		tbl, ok := is.tableByID(tblInfo.ID, true)
-		if !ok {
-			// what happen?
-			continue
-		}
-		tables = append(tables, tbl)
-	}
-	return
 }
 
 func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
@@ -1078,9 +1234,9 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 	}
 
 	tableIDs := make([]int64, 0, len(di.Tables))
-	tables := b.infoschemaV2.SchemaTables(di.Name)
-	for _, table := range tables {
-		tbl := table.Meta()
+	tables, err := b.infoschemaV2.SchemaTableInfos(context.Background(), di.Name)
+	terror.Log(err)
+	for _, tbl := range tables {
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
 	}
 
@@ -1232,13 +1388,23 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 	return false
 }
 
+// TableLockAttribute is the Table Lock attribute filter used by ListTablesWithSpecialAttribute.
+var TableLockAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.Lock != nil
+}
+
+// ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
+var ForeignKeysAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	return len(t.ForeignKeys) > 0
+}
+
 // PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
 var PartitionAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
 }
 
 func hasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.

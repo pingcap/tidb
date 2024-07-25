@@ -527,7 +527,7 @@ type Job struct {
 	// Now it's the TS when we actually start the job.
 	RealStartTS uint64 `json:"real_start_ts"`
 	// StartTS uses timestamp allocated by TSO.
-	// Now it's the TS when we put the job to TiKV queue.
+	// Now it's the TS when we put the job to job table.
 	StartTS uint64 `json:"start_ts"`
 	// DependencyID is the largest job ID before current job and current job depends on.
 	DependencyID int64 `json:"dependency_id"`
@@ -547,10 +547,15 @@ type Job struct {
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
 
-	// SeqNum is the total order in all DDLs, it's used to identify the order of
-	// moving the job into DDL history, not the order of the job execution.
-	// fast create table doesn't honor this field, there might duplicate seq_num in this case.
-	// TODO: deprecated it, as it forces 'moving jobs into DDL history' part to be serial.
+	// SeqNum is used to identify the order of moving the job into DDL history, it's
+	// not the order of the job execution. for jobs with dependency, or if they are
+	// run in the same session, their SeqNum will be in increasing order.
+	// when using fast create table, there might duplicate seq_num as any TiDB can
+	// execute the DDL in this case.
+	// since 8.3, we only honor previous semantic when DDL owner not changed, on
+	// owner change, new owner will start it from 1. as previous semantic forces
+	// 'moving jobs into DDL history' part to be serial, it hurts performance, and
+	// has very limited usage scenario.
 	SeqNum uint64 `json:"seq_num"`
 
 	// Charset is the charset when the DDL Job is created.

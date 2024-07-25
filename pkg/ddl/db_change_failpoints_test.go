@@ -105,12 +105,12 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		// Mock for table tiflash replica was available.
-		err1 = domain.GetDomain(tk1.Session()).DDL().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
+		err1 = domain.GetDomain(tk1.Session()).DDLExecutor().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
 	})
 	wg.Run(func() {
 		<-ch
 		// Mock for table tiflash replica was available.
-		err2 = domain.GetDomain(tk2.Session()).DDL().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
+		err2 = domain.GetDomain(tk2.Session()).DDLExecutor().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
 	})
 	wg.Wait()
 	require.NoError(t, err1)

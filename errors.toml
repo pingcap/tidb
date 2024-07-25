@@ -111,6 +111,11 @@ error = '''
 tikv cluster ID mismatch
 '''
 
+["BR:KV:ErrKVDiskFull"]
+error = '''
+disk is full
+'''
+
 ["BR:KV:ErrKVDownloadFailed"]
 error = '''
 download sst failed

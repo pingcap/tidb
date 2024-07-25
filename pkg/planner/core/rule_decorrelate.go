@@ -20,11 +20,14 @@ import (
 	"fmt"
 	"math"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
@@ -146,7 +149,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			apply.SetChildren(outerPlan, innerPlan)
 			appendRemoveSelectionTraceStep(apply, sel, opt)
 			return s.optimize(ctx, p, opt)
-		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
+		} else if m, ok := innerPlan.(*logicalop.LogicalMaxOneRow); ok {
 			if m.Children()[0].MaxOneRow() {
 				innerPlan = m.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
@@ -249,7 +252,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
 				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
-				resetNotNullFlag(apply.Schema(), outerPlan.Schema().Len(), apply.Schema().Len())
+				util.ResetNotNullFlag(apply.Schema(), outerPlan.Schema().Len(), apply.Schema().Len())
 				for i, aggFunc := range agg.AggFuncs {
 					aggArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 					for _, arg := range aggFunc.Args {
@@ -409,7 +412,7 @@ func appendRemoveSelectionTraceStep(p base.LogicalPlan, s *LogicalSelection, opt
 	opt.AppendStepToCurrent(s.ID(), s.TP(), reason, action)
 }
 
-func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveMaxOneRowTraceStep(m *logicalop.LogicalMaxOneRow, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", m.TP(), m.ID())
 	}
@@ -492,21 +495,21 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.StringWithCtx(evalCtx))
+			buffer.WriteString(col.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 		}
 		buffer.WriteString("], and functions added [")
 		for i, f := range appendedAggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(f.StringWithCtx(evalCtx))
+			buffer.WriteString(f.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "], and %v_%v's conditions added [", p.TP(), p.ID())
 		for i, cond := range eqCondWithCorCol {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.StringWithCtx(evalCtx))
+			buffer.WriteString(cond.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -517,7 +520,7 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.StringWithCtx(evalCtx))
+			buffer.WriteString(cond.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are correlated to %v_%v and pulled up as %v_%v's join key",
 			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())

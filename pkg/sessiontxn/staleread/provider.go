@@ -120,11 +120,11 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			InfoSchema:  is,
 			CreateTime:  time.Now(),
 			StartTS:     txn.StartTS(),
-			ShardStep:   int(sessVars.ShardAllocateStep),
 			IsStaleness: true,
 			TxnScope:    txnScope,
 		},
 	}
+	sessVars.GetRowIDShardGenerator().SetShardStep(int(sessVars.ShardAllocateStep))
 	sessVars.TxnCtxMu.Unlock()
 
 	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, is); interceptor != nil {
