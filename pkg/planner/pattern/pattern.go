@@ -109,7 +109,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandTiKVSingleGather
 	case *plannercore.LogicalTableScan:
 		return OperandTableScan
-	case *plannercore.LogicalMemTable:
+	case *logicalop.LogicalMemTable:
 		return OperandMemTableScan
 	case *plannercore.LogicalIndexScan:
 		return OperandIndexScan

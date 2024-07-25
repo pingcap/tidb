@@ -42,7 +42,7 @@ var (
 	_ base.LogicalPlan = &LogicalWindow{}
 	_ base.LogicalPlan = &LogicalExpand{}
 	_ base.LogicalPlan = &LogicalUnionScan{}
-	_ base.LogicalPlan = &LogicalMemTable{}
+	_ base.LogicalPlan = &logicalop.LogicalMemTable{}
 	_ base.LogicalPlan = &LogicalShow{}
 	_ base.LogicalPlan = &LogicalShowDDLJobs{}
 	_ base.LogicalPlan = &LogicalCTE{}
