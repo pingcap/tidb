@@ -650,7 +650,7 @@ func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 	oracleStore := sctx.GetStore().GetOracle()
 	option := &oracle.Option{TxnScope: scope}
 
-	if sctx.GetSessionVars().LowResolutionTSO {
+	if sctx.GetSessionVars().UseLowResolutionTSO() {
 		return oracleStore.GetLowResolutionTimestampAsync(ctx, option)
 	}
 	return oracleStore.GetTimestampAsync(ctx, option)
