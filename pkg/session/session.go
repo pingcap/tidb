@@ -3480,9 +3480,11 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	if err != nil {
 		return nil, err
 	}
-	logutil.BgLogger().Warn("before set timezone", zap.String("tz", tz))
+	systemTZ, err := timeutil.GetSystemTZ()
+	logutil.BgLogger().Warn("before set timezone", zap.String("tz", systemTZ), zap.Error(err))
 	timeutil.SetSystemTZ(tz)
-	logutil.BgLogger().Warn("after set timezone", zap.String("tz", tz))
+	systemTZ, err = timeutil.GetSystemTZ()
+	logutil.BgLogger().Warn("after set timezone", zap.String("tz", systemTZ), zap.Error(err))
 
 	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
 	newCollationEnabled, err := loadCollationParameter(ctx, ses[0])
