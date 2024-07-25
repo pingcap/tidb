@@ -1265,8 +1265,8 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	return cli, err
 }
 
-// Init initializes a domain, after domain returns, session can be used to do DMLs
-// but not DDLs, they can be used after domain Start.
+// Init initializes a domain. after return, session can be used to do DMLs but not
+// DDLs which can be used after domain Start.
 func (do *Domain) Init(
 	ddlLease time.Duration,
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
@@ -1409,7 +1409,6 @@ func (do *Domain) Init(
 
 // Start starts the domain.
 func (do *Domain) Start() error {
-	pdCli := do.GetPDClient()
 	if do.etcdClient != nil {
 		do.wg.Add(1)
 		go do.serverIDKeeper()
@@ -1426,7 +1425,7 @@ func (do *Domain) Start() error {
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
 
-	// step 4: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
+	// start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
 	err := do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
@@ -1447,6 +1446,7 @@ func (do *Domain) Start() error {
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
+	pdCli := do.GetPDClient()
 	if pdCli != nil {
 		do.wg.Run(func() {
 			do.closestReplicaReadCheckLoop(do.ctx, pdCli)
