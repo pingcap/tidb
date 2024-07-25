@@ -2012,8 +2012,6 @@ func BenchmarkPipelinedInsertIgnoreNoDuplicates(b *testing.B) {
 }
 
 func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
-	require.NoError(b, failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return"))
-	defer require.NoError(b, failpoint.Disable("tikvclient/pipelinedSkipResolveLock"))
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -2048,8 +2046,6 @@ func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
 }
 
 func BenchmarkPipelinedDelete(b *testing.B) {
-	require.NoError(b, failpoint.Enable("tikvclient/pipelinedSkipResolveLock", "return"))
-	defer require.NoError(b, failpoint.Disable("tikvclient/pipelinedSkipResolveLock"))
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -2109,5 +2105,39 @@ func BenchmarkPipelinedReplaceNoDuplicates(b *testing.B) {
 		se.Execute(context.Background(), "replace into tmp select * from src")
 	}
 	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}
+
+func BenchmarkPipelinedUpdate(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table src (id int, dt varchar(128))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 128))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InUpdateStmt = true
+
+	b.StopTimer()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StartTimer()
+		if i%2 == 0 {
+			se.Execute(context.Background(), "update src set dt = left(concat('y', dt), 128)")
+		} else {
+			se.Execute(context.Background(), "update src set dt = left(concat('z', dt), 128)")
+		}
+		b.StopTimer()
+	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
 }
