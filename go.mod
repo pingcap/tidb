@@ -82,15 +82,9 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
-<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20240208102409-a554af8ee11f
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
-=======
-	github.com/pingcap/kvproto v0.0.0-20240716095229-5f7ffec83ea7
-	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
-	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
->>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20240507090649-2bf6bb0cb996
 	github.com/pkg/errors v0.9.1
@@ -110,16 +104,9 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20240716121331-2cd3a741ea8e
-	github.com/tikv/pd/client v0.0.0-20240708075403-19f65c59bb89
+	github.com/tikv/pd/client v0.0.0-20240724132535-fcb34c90790c
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
-=======
-	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503
-	github.com/tikv/pd/client v0.0.0-20240724130437-83f32e9221f2
-	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
->>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
