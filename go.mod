@@ -84,7 +84,11 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20240227073058-929ab83f9754
+=======
+	github.com/pingcap/kvproto v0.0.0-20240716095229-5f7ffec83ea7
+>>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -106,8 +110,13 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20240710074025-be14c9979918
 	github.com/tikv/pd/client v0.0.0-20240708074802-cb8da1b1ad2f
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503
+	github.com/tikv/pd/client v0.0.0-20240724130437-83f32e9221f2
+>>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
