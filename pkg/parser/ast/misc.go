@@ -4168,12 +4168,12 @@ type QueryWatchTextOption struct {
 	node
 	Type          model.RunawayWatchType
 	PatternExpr   ExprNode
-	SpecifiedType bool
+	TypeSpecified bool
 }
 
 // Restore implements Node interface.
 func (n *QueryWatchTextOption) Restore(ctx *format.RestoreCtx) error {
-	if n.SpecifiedType {
+	if n.TypeSpecified {
 		ctx.WriteKeyWord("SQL TEXT ")
 		ctx.WriteKeyWord(n.Type.String())
 		ctx.WriteKeyWord(" TO ")

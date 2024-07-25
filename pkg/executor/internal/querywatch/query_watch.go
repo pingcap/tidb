@@ -76,7 +76,7 @@ func setWatchOption(ctx context.Context,
 		}
 		watchType := textOption.Type
 		record.Watch = rmpb.RunawayWatchType(watchType)
-		if textOption.SpecifiedType {
+		if textOption.TypeSpecified {
 			p := parser.New()
 			stmts, _, err := p.ParseSQL(strval)
 			if err != nil {

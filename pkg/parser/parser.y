@@ -16315,7 +16315,7 @@ QueryWatchTextOption:
 		$$ = &ast.QueryWatchTextOption{
 			Type:          $3.(model.RunawayWatchType),
 			PatternExpr:   $5,
-			SpecifiedType: true,
+			TypeSpecified: true,
 		}
 	}
 
