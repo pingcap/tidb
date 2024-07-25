@@ -56,6 +56,9 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
+// Get or create the domain for store.
+// TODO decouple domain create from it, it's more clear to create domain explicitly
+// before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
