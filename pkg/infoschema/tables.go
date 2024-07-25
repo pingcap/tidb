@@ -205,6 +205,8 @@ const (
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
 	// TableResourceGroups is the metadata of resource groups.
 	TableResourceGroups = "RESOURCE_GROUPS"
+	// TableServerlessMeta is the metadata of the current serverless cluster.
+	TableServerlessMeta = "KEYSPACE_META"
 	// TableRunawayWatches is the query list of runaway watch.
 	TableRunawayWatches = "RUNAWAY_WATCHES"
 	// TableCheckConstraints is the list of CHECK constraints.
@@ -336,6 +338,7 @@ var tableIDMap = map[string]int64{
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
+	TableServerlessMeta:                  autoid.InformationSchemaDBID + 95,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1653,6 +1656,11 @@ var tableResourceGroupsCols = []columnInfo{
 	{name: "BACKGROUND", tp: mysql.TypeVarchar, size: 256},
 }
 
+var tableServerlessMetaCols = []columnInfo{
+	{name: "KEYSPACE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "KEYSPACE_ID", tp: mysql.TypeVarchar, size: 64},
+}
+
 var tableRunawayWatchListCols = []columnInfo{
 	{name: "ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "RESOURCE_GROUP_NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
@@ -2350,6 +2358,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableServerlessMeta:                     tableServerlessMetaCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

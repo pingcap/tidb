@@ -199,6 +199,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
+		case infoschema.TableServerlessMeta:
+			e.setKeyspaceMeta(sctx)
 		case infoschema.TableRunawayWatches:
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
@@ -3784,6 +3786,27 @@ func (e *memtableRetriever) setDataForClusterIndexUsage(ctx context.Context, sct
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setKeyspaceMeta(sctx sessionctx.Context) {
+	var (
+		keyspaceName string
+		keyspaceID   string
+
+		keyspaceMeta = sctx.GetStore().GetCodec().GetKeyspaceMeta()
+	)
+
+	e.rows = make([][]types.Datum, 1)
+
+	if keyspaceMeta != nil {
+		keyspaceName = keyspaceMeta.Name
+		keyspaceID = fmt.Sprintf("%d", keyspaceMeta.Id)
+	}
+
+	e.rows[0] = types.MakeDatums(
+		keyspaceName,
+		keyspaceID,
+	)
 }
 
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
