@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "logicalop_test",
+    name = "logicalop_test_test",
     timeout = "short",
     srcs = ["logical_mem_table_predicate_extractor_test.go"],
     flaky = True,
