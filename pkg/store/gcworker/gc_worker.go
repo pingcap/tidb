@@ -316,7 +316,7 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 	return nil
 }
 
-func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
+func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency gcConcurrency) error {
 	// Get safe point from PD.
 	// The GC safe point is updated only after the global GC have done resolveLocks phase globally.
 	// So, in the following code, resolveLocks must have been done by the global GC on the ranges to be deleted,
@@ -341,7 +341,7 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 	keyspaceID := w.store.GetCodec().GetKeyspaceID()
 	logutil.Logger(ctx).Info("start keyspace delete range", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
-		zap.Int("concurrency", concurrency),
+		zap.Int("concurrency", concurrency.v),
 		zap.Uint32("keyspaceID", uint32(keyspaceID)),
 		zap.Uint64("GCSafepoint", safePoint))
 
@@ -416,14 +416,14 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	logutil.Logger(ctx).Info("starts the whole job", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
-		zap.Int("concurrency", concurrency))
+		zap.Int("concurrency", concurrency.v))
 	go func() {
 		w.done <- w.runGCJob(ctx, safePoint, concurrency)
 	}()
 	return nil
 }
 
-func (w *GCWorker) runKeyspaceGCJob(ctx context.Context, concurrency int) error {
+func (w *GCWorker) runKeyspaceGCJob(ctx context.Context, concurrency gcConcurrency) error {
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
 	if time.Since(w.lastFinish) < gcWaitTime {
@@ -596,7 +596,12 @@ func (w *GCWorker) loadBooleanWithDefault(key string, defaultValue bool) (bool, 
 	return strings.EqualFold(str, booleanTrue), nil
 }
 
-func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
+type gcConcurrency struct {
+	v      int
+	isAuto bool
+}
+
+func (w *GCWorker) getGCConcurrency(ctx context.Context) (gcConcurrency, error) {
 	useAutoConcurrency, err := w.checkUseAutoConcurrency()
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to load config gc_auto_concurrency. use default value.", zap.String("category", "gc worker"),
@@ -605,7 +610,8 @@ func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
 		useAutoConcurrency = gcDefaultAutoConcurrency
 	}
 	if !useAutoConcurrency {
-		return w.loadGCConcurrencyWithDefault()
+		v, err := w.loadGCConcurrencyWithDefault()
+		return gcConcurrency{v, useAutoConcurrency}, err
 	}
 
 	stores, err := w.getStoresForGC(ctx)
@@ -627,10 +633,10 @@ func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
 	if concurrency == 0 {
 		logutil.Logger(ctx).Error("no store is up", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid))
-		return 0, errors.New("[gc worker] no store is up")
+		return gcConcurrency{0, useAutoConcurrency}, errors.New("[gc worker] no store is up")
 	}
 
-	return concurrency, nil
+	return gcConcurrency{concurrency, useAutoConcurrency}, nil
 }
 
 func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
@@ -734,13 +740,13 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 	return safePoint, nil
 }
 
-func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency int) error {
+func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency gcConcurrency) error {
 	failpoint.Inject("mockRunGCJobFail", func() {
 		failpoint.Return(errors.New("mock failure of runGCJoB"))
 	})
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
 
-	err := w.resolveLocks(ctx, safePoint, concurrency)
+	err := w.resolveLocks(ctx, safePoint, concurrency.v)
 	if err != nil {
 		logutil.Logger(ctx).Error("resolve locks returns an error", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
@@ -788,7 +794,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 			return errors.Trace(err)
 		}
 	} else {
-		err = w.doGC(ctx, safePoint, concurrency)
+		err = w.doGC(ctx, safePoint, concurrency.v)
 		if err != nil {
 			logutil.Logger(ctx).Error("do GC returns an error", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
@@ -803,7 +809,11 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
 // `concurrency` specifies the concurrency to send NotifyDeleteRange.
-func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
+func (w *GCWorker) deleteRanges(
+	ctx context.Context,
+	safePoint uint64,
+	concurrency gcConcurrency,
+) error {
 	metrics.GCWorkerCounter.WithLabelValues("delete_range").Inc()
 
 	s := createSession(w.store)
@@ -825,8 +835,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		zap.Int("ranges", len(ranges)))
 	startTime := time.Now()
 
-	concurrency = calcDeleteRangeConcurrency(concurrency, len(ranges))
-	concurrencyLimiter := make(chan struct{}, concurrency)
+	deleteRangeConcurrency := w.calcDeleteRangeConcurrency(concurrency, len(ranges))
+	concurrencyLimiter := make(chan struct{}, deleteRangeConcurrency)
 
 	f := func(r util.DelRangeTask) {
 		var err error
@@ -839,7 +849,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		startKey, endKey := r.Range()
 		if v2 {
 			// In raftstore-v2, we use delete range instead to avoid deletion omission
-			task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
+			task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, deleteRangeConcurrency)
 			err = task.Execute(ctx)
 		} else {
 			err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
@@ -912,15 +922,19 @@ const (
 	// These values are conservatively chosen to minimize GC impact on foreground requests.
 )
 
-func calcDeleteRangeConcurrency(concurrency int, n int) int {
-	maxConcurrency := concurrency / ConcurrencyDivisor
+func (w *GCWorker) calcDeleteRangeConcurrency(concurrency gcConcurrency, n int) int {
+	maxConcurrency := concurrency.v / ConcurrencyDivisor
 	threadsBasedOnRequests := n / RequestsPerThread
-	return max(1, min(maxConcurrency, threadsBasedOnRequests))
+	if concurrency.isAuto {
+		return max(1, min(maxConcurrency, threadsBasedOnRequests))
+	}
+	return max(1, maxConcurrency)
 }
 
 // redoDeleteRanges checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
 // `concurrency` specifies the concurrency to send NotifyDeleteRange.
-func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
+func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
+	concurrency gcConcurrency) error {
 	metrics.GCWorkerCounter.WithLabelValues("redo_delete_range").Inc()
 
 	// We check delete range records that are deleted about 24 hours ago.
@@ -938,8 +952,8 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 		zap.Int("num of ranges", len(ranges)))
 	startTime := time.Now()
 
-	concurrency = calcDeleteRangeConcurrency(concurrency, len(ranges))
-	concurrencyLimiter := make(chan struct{}, concurrency)
+	deleteRangeConcurrency := w.calcDeleteRangeConcurrency(concurrency, len(ranges))
+	concurrencyLimiter := make(chan struct{}, deleteRangeConcurrency)
 
 	f := func(r util.DelRangeTask) {
 		startKey, endKey := r.Range()
@@ -1806,5 +1820,5 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 func (w *MockGCWorker) DeleteRanges(ctx context.Context, safePoint uint64) error {
 	logutil.Logger(ctx).Error("deleteRanges is called")
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnGC)
-	return w.worker.deleteRanges(ctx, safePoint, 1)
+	return w.worker.deleteRanges(ctx, safePoint, gcConcurrency{1, false})
 }

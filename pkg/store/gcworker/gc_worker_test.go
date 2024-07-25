@@ -537,13 +537,13 @@ func TestGetGCConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	concurrency, err := s.gcWorker.getGCConcurrency(ctx)
 	require.NoError(t, err)
-	require.Equal(t, concurrencyConfig, concurrency)
+	require.Equal(t, concurrencyConfig, concurrency.v)
 
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
 	require.NoError(t, err)
 	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
 	require.NoError(t, err)
-	require.Len(t, s.cluster.GetAllStores(), concurrency)
+	require.Len(t, s.cluster.GetAllStores(), concurrency.v)
 }
 
 func TestDoGC(t *testing.T) {
@@ -743,7 +743,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 				failKey = ranges[0].StartKey
 				failStore = stores[0]
 
-				err = deleteRangeFunc(gcContext(), 20, 1)
+				err = deleteRangeFunc(gcContext(), 20, gcConcurrency{1, false})
 				require.NoError(t, err)
 
 				s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
@@ -759,7 +759,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 				failStore = nil
 
 				// Delete the remaining range again.
-				err = deleteRangeFunc(gcContext(), 20, 1)
+				err = deleteRangeFunc(gcContext(), 20, gcConcurrency{1, false})
 				require.NoError(t, err)
 				s.checkDestroyRangeReq(t, sendReqCh, ranges[:1], stores)
 
@@ -819,7 +819,7 @@ func TestConcurrentDeleteRanges(t *testing.T) {
 	}
 	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
 
-	err = s.gcWorker.deleteRanges(gcContext(), 20, 3)
+	err = s.gcWorker.deleteRanges(gcContext(), 20, gcConcurrency{3, false})
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
@@ -936,7 +936,7 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	}
 	defer func() { s.client.deleteRangeHandler = nil }()
 
-	err = s.gcWorker.deleteRanges(gcContext(), 8, 1)
+	err = s.gcWorker.deleteRanges(gcContext(), 8, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[:1])
@@ -947,7 +947,7 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ranges[1:], remainingRanges)
 
-	err = s.gcWorker.deleteRanges(gcContext(), 20, 1)
+	err = s.gcWorker.deleteRanges(gcContext(), 20, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[1:])
@@ -1283,7 +1283,7 @@ func TestRunGCJob(t *testing.T) {
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	require.True(t, useDistributedGC)
 	safePoint := s.mustAllocTs(t)
-	err := s.gcWorker.runGCJob(gcContext(), safePoint, 1)
+	err := s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	pdSafePoint := s.mustGetSafePointFromPd(t)
@@ -1298,7 +1298,7 @@ func TestRunGCJob(t *testing.T) {
 	require.Equal(t, safePoint, etcdSafePoint)
 
 	// Test distributed mode with safePoint regressing (although this is impossible)
-	err = s.gcWorker.runGCJob(gcContext(), safePoint-1, 1)
+	err = s.gcWorker.runGCJob(gcContext(), safePoint-1, gcConcurrency{1, false})
 	require.Error(t, err)
 
 	// Central mode is deprecated in v5.0, fallback to distributed mode if it's set.
@@ -1309,7 +1309,7 @@ func TestRunGCJob(t *testing.T) {
 
 	p := s.createGCProbe(t, "k1")
 	safePoint = s.mustAllocTs(t)
-	err = s.gcWorker.runGCJob(gcContext(), safePoint, 1)
+	err = s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
 	s.checkCollected(t, p)
 
