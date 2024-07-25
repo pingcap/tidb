@@ -38,19 +38,9 @@ import (
 
 // DDLForTest exports for testing.
 type DDLForTest interface {
-	// SetInterceptor sets the interceptor.
-	SetInterceptor(h Interceptor)
 	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
-}
-
-// SetInterceptor implements DDL.SetInterceptor interface.
-func (d *ddl) SetInterceptor(i Interceptor) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.interceptor = i
 }
 
 // IsReorgCanceled exports for testing.

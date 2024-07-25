@@ -2508,9 +2508,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 					}
 					return k
 				},
-				Tbl:  w.table.Meta(),
-				Idx:  idxInfo,
-				Sctx: w.sctx,
+				Tbl:             w.table.Meta(),
+				Idx:             idxInfo,
+				EnableRedactLog: w.sctx.GetSessionVars().EnableRedactLog,
+				Storage:         w.sctx.GetStore(),
 			}
 		}
 

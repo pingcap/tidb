@@ -314,6 +314,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildCompactTable(v)
 	case *plannercore.AdminShowBDRRole:
 		return b.buildAdminShowBDRRole(v)
+	case *plannercore.PhysicalExpand:
+		return b.buildExpand(v)
 	default:
 		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -758,7 +760,6 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 		b.inSelectLockStmt = true
 		defer func() { b.inSelectLockStmt = false }()
 	}
-	b.hasLock = true
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
@@ -767,13 +768,15 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 	if b.err != nil {
 		return nil
 	}
-	if !b.ctx.GetSessionVars().InTxn() {
+	if !b.ctx.GetSessionVars().PessimisticLockEligible() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 		return src
 	}
+	// If the `PhysicalLock` is not ignored by the above logic, set the `hasLock` flag.
+	b.hasLock = true
 	e := &SelectLockExec{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
 		Lock:               v.Lock,
@@ -1182,6 +1185,7 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) exec.Executor {
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) exec.Executor {
 	e := &DDLExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		ddlExecutor:  domain.GetDomain(b.ctx).DDLExecutor(),
 		stmt:         v.Statement,
 		is:           b.is,
 		tempTableDDL: temptable.GetTemporaryTableDDL(b.ctx),
@@ -1966,6 +1970,41 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.
 		selectionExecutorContext: newSelectionExecutorContext(b.ctx),
 		BaseExecutorV2:           exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
 		filters:                  v.Conditions,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	levelES := make([]*expression.EvaluatorSuite, 0, len(v.LevelExprs))
+	for _, exprs := range v.LevelExprs {
+		// column evaluator can always refer others inside expand.
+		// grouping column's nullability change should be seen as a new column projecting.
+		// since input inside expand logic should be targeted and reused for N times.
+		// column evaluator's swapping columns logic will pollute the input data.
+		levelE := expression.NewEvaluatorSuite(exprs, true)
+		levelES = append(levelES, levelE)
+	}
+	e := &ExpandExec{
+		BaseExecutor:        exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
+		numWorkers:          int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
+		levelEvaluatorSuits: levelES,
+	}
+
+	// If the calculation row count for this Projection operator is smaller
+	// than a Chunk size, we turn back to the un-parallel Projection
+	// implementation to reduce the goroutine overhead.
+	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
+	}
+
+	// Use un-parallel projection for query that write on memdb to avoid data race.
+	// See also https://github.com/pingcap/tidb/issues/26832
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+		e.numWorkers = 0
 	}
 	return e
 }
@@ -3635,7 +3674,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	return ret
 }
 
-func buildIndexRangeForEachPartition(ctx sessionctx.Context, usedPartitions []table.PhysicalTable, contentPos []int64,
+func buildIndexRangeForEachPartition(rctx *rangerctx.RangerContext, usedPartitions []table.PhysicalTable, contentPos []int64,
 	lookUpContent []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (map[int64][]*ranger.Range, error) {
 	contentBucket := make(map[int64][]*join.IndexJoinLookUpContent)
 	for _, p := range usedPartitions {
@@ -3648,7 +3687,7 @@ func buildIndexRangeForEachPartition(ctx sessionctx.Context, usedPartitions []ta
 	}
 	nextRange := make(map[int64][]*ranger.Range)
 	for _, p := range usedPartitions {
-		ranges, err := buildRangesForIndexJoin(ctx, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
+		ranges, err := buildRangesForIndexJoin(rctx, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
 		}
@@ -3776,28 +3815,29 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	paging := b.ctx.GetSessionVars().EnablePaging
 
 	e := &IndexReaderExecutor{
-		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		indexUsageReporter: b.buildIndexUsageReporter(v),
-		dagPB:              dagReq,
-		startTS:            startTS,
-		txnScope:           b.txnScope,
-		readReplicaScope:   b.readReplicaScope,
-		isStaleness:        b.isStaleness,
-		netDataSize:        v.GetNetDataSize(),
-		physicalTableID:    physicalTableID,
-		table:              tbl,
-		index:              is.Index,
-		keepOrder:          is.KeepOrder,
-		desc:               is.Desc,
-		columns:            is.Columns,
-		byItems:            is.ByItems,
-		paging:             paging,
-		corColInFilter:     b.corColInDistPlan(v.IndexPlans),
-		corColInAccess:     b.corColInAccess(v.IndexPlans[0]),
-		idxCols:            is.IdxCols,
-		colLens:            is.IdxColLens,
-		plans:              v.IndexPlans,
-		outputColumns:      v.OutputColumns,
+		indexReaderExecutorContext: newIndexReaderExecutorContext(b.ctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
+		indexUsageReporter:         b.buildIndexUsageReporter(v),
+		dagPB:                      dagReq,
+		startTS:                    startTS,
+		txnScope:                   b.txnScope,
+		readReplicaScope:           b.readReplicaScope,
+		isStaleness:                b.isStaleness,
+		netDataSize:                v.GetNetDataSize(),
+		physicalTableID:            physicalTableID,
+		table:                      tbl,
+		index:                      is.Index,
+		keepOrder:                  is.KeepOrder,
+		desc:                       is.Desc,
+		columns:                    is.Columns,
+		byItems:                    is.ByItems,
+		paging:                     paging,
+		corColInFilter:             b.corColInDistPlan(v.IndexPlans),
+		corColInAccess:             b.corColInAccess(v.IndexPlans[0]),
+		idxCols:                    is.IdxCols,
+		colLens:                    is.IdxColLens,
+		plans:                      v.IndexPlans,
+		outputColumns:              v.OutputColumns,
 	}
 
 	for _, col := range v.OutputColumns {
@@ -3954,29 +3994,30 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 
 	e := &IndexLookUpExecutor{
-		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		indexUsageReporter: b.buildIndexUsageReporter(v),
-		dagPB:              indexReq,
-		startTS:            startTS,
-		table:              tbl,
-		index:              is.Index,
-		keepOrder:          is.KeepOrder,
-		byItems:            is.ByItems,
-		desc:               is.Desc,
-		tableRequest:       tableReq,
-		columns:            ts.Columns,
-		indexPaging:        indexPaging,
-		dataReaderBuilder:  readerBuilder,
-		corColInIdxSide:    b.corColInDistPlan(v.IndexPlans),
-		corColInTblSide:    b.corColInDistPlan(v.TablePlans),
-		corColInAccess:     b.corColInAccess(v.IndexPlans[0]),
-		idxCols:            is.IdxCols,
-		colLens:            is.IdxColLens,
-		idxPlans:           v.IndexPlans,
-		tblPlans:           v.TablePlans,
-		PushedLimit:        v.PushedLimit,
-		idxNetDataSize:     v.GetAvgTableRowSize(),
-		avgRowSize:         v.GetAvgTableRowSize(),
+		indexLookUpExecutorContext: newIndexLookUpExecutorContext(b.ctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
+		indexUsageReporter:         b.buildIndexUsageReporter(v),
+		dagPB:                      indexReq,
+		startTS:                    startTS,
+		table:                      tbl,
+		index:                      is.Index,
+		keepOrder:                  is.KeepOrder,
+		byItems:                    is.ByItems,
+		desc:                       is.Desc,
+		tableRequest:               tableReq,
+		columns:                    ts.Columns,
+		indexPaging:                indexPaging,
+		dataReaderBuilder:          readerBuilder,
+		corColInIdxSide:            b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide:            b.corColInDistPlan(v.TablePlans),
+		corColInAccess:             b.corColInAccess(v.IndexPlans[0]),
+		idxCols:                    is.IdxCols,
+		colLens:                    is.IdxColLens,
+		idxPlans:                   v.IndexPlans,
+		tblPlans:                   v.TablePlans,
+		PushedLimit:                v.PushedLimit,
+		idxNetDataSize:             v.GetAvgTableRowSize(),
+		avgRowSize:                 v.GetAvgTableRowSize(),
 	}
 
 	if v.ExtraHandleCol != nil {
@@ -4591,7 +4632,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		kvRanges, err := buildKvRangesForIndexJoin(e.Ctx().GetDistSQLCtx(), e.Ctx().GetRangerCtx(), e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
+		kvRanges, err := buildKvRangesForIndexJoin(e.dctx, e.rctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
@@ -4605,7 +4646,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		if err != nil {
 			return nil, err
 		}
-		if e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
+		if e.ranges, err = buildRangesForIndexJoin(e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
 			return nil, err
 		}
 		if err := exec.Open(ctx, e); err != nil {
@@ -4621,7 +4662,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 	if len(usedPartition) != 0 {
 		if canPrune {
-			rangeMap, err := buildIndexRangeForEachPartition(e.Ctx(), usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			rangeMap, err := buildIndexRangeForEachPartition(e.rctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 			if err != nil {
 				return nil, err
 			}
@@ -4630,7 +4671,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 			e.partRangeMap = rangeMap
 		} else {
 			e.partitions = usedPartition
-			if e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
+			if e.ranges, err = buildRangesForIndexJoin(e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
 				return nil, err
 			}
 		}
@@ -4653,7 +4694,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		e.kvRanges, err = buildKvRangesForIndexJoin(e.Ctx().GetDistSQLCtx(), e.Ctx().GetRangerCtx(), getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		e.kvRanges, err = buildKvRangesForIndexJoin(e.dctx, e.rctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
@@ -4667,7 +4708,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		if err != nil {
 			return nil, err
 		}
-		e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		e.ranges, err = buildRangesForIndexJoin(e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
 		}
@@ -4684,7 +4725,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 	if len(usedPartition) != 0 {
 		if canPrune {
-			rangeMap, err := buildIndexRangeForEachPartition(e.Ctx(), usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			rangeMap, err := buildIndexRangeForEachPartition(e.rctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 			if err != nil {
 				return nil, err
 			}
@@ -4693,7 +4734,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 			e.partitionRangeMap = rangeMap
 		} else {
 			e.prunedPartitions = usedPartition
-			e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			e.ranges, err = buildRangesForIndexJoin(e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 			if err != nil {
 				return nil, err
 			}
@@ -4761,7 +4802,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 }
 
 // buildRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*join.IndexJoinLookUpContent,
+func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*join.IndexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) ([]*ranger.Range, error) {
 	retRanges := make([]*ranger.Range, 0, len(ranges)*len(lookUpContents))
 	lastPos := len(ranges[0].LowVal) - 1
@@ -4780,7 +4821,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*join.Inde
 			}
 			continue
 		}
-		nextColRanges, err := cwc.BuildRangesByRow(ctx.GetRangerCtx(), content.Row)
+		nextColRanges, err := cwc.BuildRangesByRow(rctx, content.Row)
 		if err != nil {
 			return nil, err
 		}
@@ -4800,7 +4841,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*join.Inde
 		return retRanges, nil
 	}
 
-	return ranger.UnionRanges(ctx.GetRangerCtx(), tmpDatumRanges, true)
+	return ranger.UnionRanges(rctx, tmpDatumRanges, true)
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.

@@ -112,6 +112,7 @@ go_library(
         "//pkg/util/password-validation",
         "//pkg/util/plancodec",
         "//pkg/util/printer",
+        "//pkg/util/redact",
         "//pkg/util/sem",
         "//pkg/util/set",
         "//pkg/util/size",

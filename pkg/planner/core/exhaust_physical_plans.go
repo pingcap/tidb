@@ -886,7 +886,7 @@ func buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx()))
+			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -1018,13 +1018,15 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
 	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
+	// It is to build the range info which is used in explain. It is necessary to redact the range info.
+	redact := ectx.GetTiDBRedactLog()
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx))
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx, redact))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -2587,14 +2589,19 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 	return newKeys
 }
 
-// ExhaustPhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
+// ExhaustPhysicalPlans enumerate all the possible physical plan for expand operator.
+// The second boolean means whether we should resort to enforcer to satisfy prop requirement.
+// false means we should, while true means we should not.
 func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
 		// false, meaning we can add a sort enforcer.
 		return nil, false, nil
 	}
-	// RootTaskType is the default one, meaning no option. (we can give them a mpp choice)
+	// when TiDB Expand execution is introduced: we can deal with two kind of physical plans.
+	// RootTaskType means expand should be run at TiDB node.
+	//	(RootTaskType is the default option, we can also generate a mpp candidate for it)
+	// MPPTaskType means expand should be run at TiFlash node.
 	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
 		return nil, true, nil
 	}
@@ -2604,8 +2611,10 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
+	var physicalExpands []base.PhysicalPlan
 	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
+	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
 		mppProp := prop.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		expand := PhysicalExpand{
@@ -2614,10 +2623,29 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 			ExtraGroupingColNames: p.ExtraGroupingColNames,
 		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), mppProp)
 		expand.SetSchema(p.Schema())
-		return []base.PhysicalPlan{expand}, true, nil
+		physicalExpands = append(physicalExpands, expand)
+		// when the MppTaskType is required, we can return the physical plan directly.
+		if prop.TaskTp == property.MppTaskType {
+			return physicalExpands, true, nil
+		}
 	}
-	// if MPP switch is shutdown, nothing can be generated.
-	return nil, true, nil
+	// for property.RootTaskType, we can give a TiDB Expand.
+	{
+		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.MppTaskType, property.RootTaskType}
+		for _, taskType := range taskTypes {
+			// require cop task type for children.F
+			tidbProp := prop.CloneEssentialFields()
+			tidbProp.TaskTp = taskType
+			expand := PhysicalExpand{
+				GroupingSets:          p.RollupGroupingSets,
+				LevelExprs:            p.LevelExprs,
+				ExtraGroupingColNames: p.ExtraGroupingColNames,
+			}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), tidbProp)
+			expand.SetSchema(p.Schema())
+			physicalExpands = append(physicalExpands, expand)
+		}
+	}
+	return physicalExpands, true, nil
 }
 
 func exhaustPhysicalPlans4Projection(p *LogicalProjection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
@@ -2744,12 +2772,12 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHashJoin {
+func GetHashJoin(la *LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
 	return getHashJoin(&la.LogicalJoin, prop, 1, false)
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// ExhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
+func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
@@ -2760,7 +2788,7 @@ func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.Children()[0])
-	join := la.GetHashJoin(prop)
+	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
 		columns = append(columns, &colColumn.Column)
@@ -3527,7 +3555,8 @@ func getNominalSortSimple(ls *LogicalSort, reqProp *property.PhysicalProperty) *
 	return ps
 }
 
-func exhaustPhysicalPlans4LogicalMaxOneRow(p *LogicalMaxOneRow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalMaxOneRow)
 	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil

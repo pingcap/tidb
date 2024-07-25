@@ -19,6 +19,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
@@ -35,6 +36,18 @@ type RowEncodingConfig struct {
 	RowEncoder *rowcodec.Encoder
 }
 
+// BinlogSupport is used for binlog operations
+type BinlogSupport interface {
+	// GetBinlogMutation returns a `binlog.TableMutation` object for a table.
+	GetBinlogMutation(tblID int64) *binlog.TableMutation
+}
+
+// StatisticsSupport is used for statistics update operations.
+type StatisticsSupport interface {
+	// UpdatePhysicalTableDelta updates the physical table delta.
+	UpdatePhysicalTableDelta(physicalTableID int64, delta int64, count int64, cols variable.DeltaCols)
+}
+
 // MutateContext is used to when mutating a table.
 type MutateContext interface {
 	AllocatorContext
@@ -47,10 +60,6 @@ type MutateContext interface {
 	// If the active parameter is true, call this function will wait for the pending txn
 	// to become valid.
 	Txn(active bool) (kv.Transaction, error)
-	// BinlogEnabled returns whether the binlog is enabled.
-	BinlogEnabled() bool
-	// GetBinlogMutation returns a `binlog.TableMutation` object for a table.
-	GetBinlogMutation(tblID int64) *binlog.TableMutation
 	// GetDomainInfoSchema returns the latest information schema in domain
 	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// TxnRecordTempTable record the temporary table to the current transaction.
@@ -71,6 +80,16 @@ type MutateContext interface {
 	// which is a buffer for table related structures that aims to reuse memory and
 	// saves allocation.
 	GetMutateBuffers() *MutateBuffers
+	// GetRowIDShardGenerator returns the `RowIDShardGenerator` object to shard rows.
+	GetRowIDShardGenerator() *variable.RowIDShardGenerator
+	// GetReservedRowIDAlloc returns the `ReservedRowIDAlloc` object to allocate row id from reservation.
+	GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAlloc, bool)
+	// GetBinlogSupport returns a `BinlogSupport` if the context supports it.
+	// If the context does not support binlog, the second return value will be false.
+	GetBinlogSupport() (BinlogSupport, bool)
+	// GetStatisticsSupport returns a `StatisticsSupport` if the context supports it.
+	// If the context does not support statistics update, the second return value will be false.
+	GetStatisticsSupport() (StatisticsSupport, bool)
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.

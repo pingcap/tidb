@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -142,15 +143,6 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 
 type TestReorgDDLCallback struct {
 	*callback.TestDDLCallback
-	syncChan chan bool
-}
-
-func (tc *TestReorgDDLCallback) OnChanged(err error) error {
-	err = tc.TestDDLCallback.OnChanged(err)
-	<-tc.syncChan
-	// We want to wait here
-	<-tc.syncChan
-	return err
 }
 
 func TestReorgPartitionConcurrent(t *testing.T) {
@@ -170,8 +162,13 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	defer dom.DDL().SetHook(originHook)
 	syncOnChanged := make(chan bool)
 	defer close(syncOnChanged)
-	hook := &TestReorgDDLCallback{TestDDLCallback: &callback.TestDDLCallback{Do: dom}, syncChan: syncOnChanged}
+	hook := &TestReorgDDLCallback{TestDDLCallback: &callback.TestDDLCallback{Do: dom}}
 	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorganizePartition", func() {
+		<-syncOnChanged
+		// We want to wait here
+		<-syncOnChanged
+	})
 
 	wait := make(chan bool)
 	defer close(wait)

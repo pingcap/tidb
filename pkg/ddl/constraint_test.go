@@ -48,13 +48,11 @@ func TestAlterConstraintAddDrop(t *testing.T) {
 
 	var checkErr error
 	d := dom.DDL()
-	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
-		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteOnly {
 			_, checkErr = tk1.Exec("insert into t (a, b) values(5,6) ")
 		}
@@ -83,13 +81,11 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 
 	var checkErr error
 	d := dom.DDL()
-	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
-		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteReorganization {
 			tk1.MustQuery(fmt.Sprintf("select count(1) from `%s`.`%s` where not %s limit 1", "test", "t", "a > 10")).Check(testkit.Rows("0"))
 			// set constraint state
@@ -131,11 +127,9 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 	tk1.MustExec("insert into t values(12)")
 
 	d := dom.DDL()
-	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	// StatNone -> StateWriteOnly
 	onJobUpdatedExportedFunc1 := func(job *model.Job) {
-		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteOnly {
 			// set constraint state
 			constraintTable := external.GetTableByName(t, tk1, "test", "t")
@@ -171,11 +165,9 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 	tk1.MustExec("insert into t values(12)")
 
 	d := dom.DDL()
-	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	// StateWriteOnly -> StateWriteReorganization
 	onJobUpdatedExportedFunc2 := func(job *model.Job) {
-		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteReorganization {
 			// set constraint state
 			constraintTable := external.GetTableByName(t, tk1, "test", "t")
@@ -210,14 +202,12 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 
 	addCheckDone := false
 	d := dom.DDL()
-	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	// StateWriteReorganization -> StatePublic
 	onJobUpdatedExportedFunc3 := func(job *model.Job) {
 		if job.Type != model.ActionAddCheckConstraint || job.TableName != "t" {
 			return
 		}
-		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StatePublic && job.IsDone() {
 			// set constraint state
 			constraintTable := external.GetTableByName(t, tk1, "test", "t")
@@ -258,11 +248,9 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 	tk1.MustExec("insert into t values(12)")
 
 	d := dom.DDL()
-	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	// StateWriteReorganization -> StatePublic
 	onJobUpdatedExportedFunc3 := func(job *model.Job) {
-		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteReorganization {
 			// set constraint state
 			constraintTable := external.GetTableByName(t, tk1, "test", "t")
