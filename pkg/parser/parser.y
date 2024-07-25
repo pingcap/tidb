@@ -10570,9 +10570,24 @@ SetStmt:
 	{
 		$$ = &ast.SetPwdStmt{Password: $4}
 	}
+|	"SET" "PASSWORD" EqOrAssignmentEq PasswordOpt "REPLACE" stringLit
+	{
+		$$ = &ast.SetPwdStmt{
+			Password: $4,
+			ReplaceString: $6,
+		}
+	}
 |	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt
 	{
 		$$ = &ast.SetPwdStmt{User: $4.(*auth.UserIdentity), Password: $6}
+	}
+|	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt "REPLACE" stringLit
+	{
+		$$ = &ast.SetPwdStmt{
+			User: $4.(*auth.UserIdentity),
+			Password: $6,
+			ReplaceString: $8,
+		}
 	}
 |	"SET" "GLOBAL" "TRANSACTION" TransactionChars
 	{

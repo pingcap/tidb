@@ -1218,6 +1218,7 @@ type SetPwdStmt struct {
 
 	User     *auth.UserIdentity
 	Password string
+	ReplaceString string
 }
 
 // Restore implements Node interface.
@@ -1231,6 +1232,11 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain("=")
 	ctx.WriteString(n.Password)
+
+	if n.ReplaceString != "" {
+		ctx.WriteKeyWord("REPLACE")
+		ctx.WriteString(n.ReplaceString)
+	}
 	return nil
 }
 

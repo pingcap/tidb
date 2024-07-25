@@ -1837,7 +1837,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if spec.AuthOpt != nil {
 			// Only use `REPLACE <pwd>` when changing the current user
-			if user != nil && (spec.User.Username == user.AuthUsername && spec.User.Hostname == user.AuthHostname) {
+			if user != nil &&
+				(spec.User.Username == user.AuthUsername &&
+					spec.User.Hostname == user.AuthHostname) {
 				err = checker.CheckCurrentPassword(spec.User.Username, spec.User.Hostname, spec.AuthOpt.ReplaceString, e.Ctx().GetSessionVars())
 				if err != nil {
 					return err
@@ -2523,6 +2525,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 
 	var u, h string
 	disableSandboxMode := false
+	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if s.User == nil || s.User.CurrentUser {
 		if e.Ctx().GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
@@ -2533,7 +2536,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		u = s.User.Username
 		h = s.User.Hostname
 
-		checker := privilege.GetPrivilegeManager(e.Ctx())
 		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := e.Ctx().GetSessionVars().User
@@ -2555,7 +2557,22 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		disableSandboxMode = true
 	}
 
-	authplugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(u, h)
+	fmt.Printf("User: %s@%s\n", u, h)
+	fmt.Printf("Session User: %s@%s\n", e.Ctx().GetSessionVars().User.AuthUsername, e.Ctx().GetSessionVars().User.AuthHostname)
+
+	// Check the current passsword against the policy if the user tries to change its own password
+	if (u == e.Ctx().GetSessionVars().User.AuthUsername) &&
+		(h == e.Ctx().GetSessionVars().User.AuthHostname) {
+		err = checker.CheckCurrentPassword(u, h, s.ReplaceString, e.Ctx().GetSessionVars())
+		if err != nil {
+			return err
+		}
+	} else if s.ReplaceString != "" {
+		// Don't allow the current password when changing another users password
+		return exeerrors.ErrCurrentPasswordNotRequired
+	}
+
+	authplugin, err := checker.GetAuthPlugin(u, h)
 	if err != nil {
 		return err
 	}
