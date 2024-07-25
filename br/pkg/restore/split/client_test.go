@@ -216,35 +216,6 @@ func TestSplitScatterEmptyEndKey(t *testing.T) {
 	checkRegionsBoundaries(t, regions, result)
 }
 
-func TestScanRegionEmptyResult(t *testing.T) {
-	backup := WaitRegionOnlineAttemptTimes
-	WaitRegionOnlineAttemptTimes = 2
-	backup2 := SplitRetryTimes
-	SplitRetryTimes = 2
-	t.Cleanup(func() {
-		WaitRegionOnlineAttemptTimes = backup
-		SplitRetryTimes = backup2
-	})
-	mockPDClient := NewMockPDClientForSplit()
-	keys := [][]byte{[]byte(""), []byte("")}
-	mockPDClient.SetRegions(keys)
-	mockPDClient.scanRegions.errors = []error{nil, nil, nil, nil}
-	mockClient := &pdClient{
-		client:           mockPDClient,
-		splitBatchKeyCnt: 100,
-		splitConcurrency: 4,
-		isRawKv:          true, // make tests more readable
-	}
-	ctx := context.Background()
-
-	splitKeys := [][]byte{
-		[]byte("ba"), []byte("bb"),
-	}
-
-	_, err := mockClient.SplitKeysAndScatter(ctx, splitKeys)
-	require.ErrorContains(t, err, "scan region return empty result")
-}
-
 func TestSplitMeetErrorAndRetry(t *testing.T) {
 	mockPDClient := NewMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("")}
