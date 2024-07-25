@@ -19,6 +19,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
@@ -79,6 +80,10 @@ type MutateContext interface {
 	// which is a buffer for table related structures that aims to reuse memory and
 	// saves allocation.
 	GetMutateBuffers() *MutateBuffers
+	// GetRowIDShardGenerator returns the `RowIDShardGenerator` object to shard rows.
+	GetRowIDShardGenerator() *variable.RowIDShardGenerator
+	// GetReservedRowIDAlloc returns the `ReservedRowIDAlloc` object to allocate row id from reservation.
+	GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAlloc, bool)
 	// GetBinlogSupport returns a `BinlogSupport` if the context supports it.
 	// If the context does not support binlog, the second return value will be false.
 	GetBinlogSupport() (BinlogSupport, bool)

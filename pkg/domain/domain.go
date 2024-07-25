@@ -144,6 +144,7 @@ type Domain struct {
 	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
+	ddlExecutor     ddl.Executor
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
@@ -565,6 +566,24 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
+
+	failpoint.Inject("MockTryLoadDiffError", func(val failpoint.Value) {
+		switch val.(string) {
+		case "exchangepartition":
+			if diffs[0].Type == model.ActionExchangeTablePartition {
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+			}
+		case "renametable":
+			if diffs[0].Type == model.ActionRenameTable {
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+			}
+		case "dropdatabase":
+			if diffs[0].Type == model.ActionDropSchema {
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+			}
+		}
+	})
+
 	builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -650,9 +669,15 @@ func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
 }
 
+// DDLExecutor gets the ddl executor from domain.
+func (do *Domain) DDLExecutor() ddl.Executor {
+	return do.ddlExecutor
+}
+
 // SetDDL sets DDL to domain, it's only used in tests.
-func (do *Domain) SetDDL(d ddl.DDL) {
+func (do *Domain) SetDDL(d ddl.DDL, executor ddl.Executor) {
 	do.ddl = d
+	do.ddlExecutor = executor
 }
 
 // InfoSyncer gets infoSyncer from domain.
@@ -1256,7 +1281,7 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 func (do *Domain) Init(
 	ddlLease time.Duration,
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
-	ddlInjector func(ddl.DDL) *schematracker.Checker,
+	ddlInjector func(ddl.DDL, ddl.Executor) *schematracker.Checker,
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
@@ -1308,7 +1333,8 @@ func (do *Domain) Init(
 	}
 	callback = newCallbackFunc(do)
 	d := do.ddl
-	do.ddl = ddl.NewDDL(
+	eBak := do.ddlExecutor
+	do.ddl, do.ddlExecutor = ddl.NewDDL(
 		ctx,
 		ddl.WithEtcdClient(do.etcdClient),
 		ddl.WithStore(do.store),
@@ -1322,12 +1348,14 @@ func (do *Domain) Init(
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			do.ddl = d
+			do.ddlExecutor = eBak
 		}
 	})
 	if ddlInjector != nil {
-		checker := ddlInjector(do.ddl)
+		checker := ddlInjector(do.ddl, do.ddlExecutor)
 		checker.CreateTestDB(nil)
 		do.ddl = checker
+		do.ddlExecutor = checker
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.

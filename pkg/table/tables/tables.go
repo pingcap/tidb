@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -378,30 +377,6 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 	return t.writableConstraints
 }
 
-// CheckRowConstraint verify row check constraints.
-func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
-	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		ectx := ctx.GetExprCtx().GetEvalCtx()
-		row := chunk.MutRowFromDatums(rowToCheck).ToRow()
-		return checkRowConstraint(ectx, constraints, row)
-	}
-	return nil
-}
-
-// checkRowConstraint verify row check constraints.
-func checkRowConstraint(ctx exprctx.EvalContext, constraints []*table.Constraint, rowToCheck chunk.Row) error {
-	for _, constraint := range constraints {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
-		if err != nil {
-			return err
-		}
-		if ok == 0 && !isNull {
-			return table.ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
-		}
-	}
-	return nil
-}
-
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	return t.fullHiddenColsAndVisibleColumns
@@ -532,7 +507,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	// check data constraint
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err = checkRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err = table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
 			return err
 		}
 	}
@@ -841,11 +816,12 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			// The reserved ID could be used in the future within this statement, by the
 			// following AddRecord() operation.
 			// Make the IDs continuous benefit for the performance of TiKV.
-			sessVars := sctx.GetSessionVars()
-			stmtCtx := sessVars.StmtCtx
-			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
-			if err != nil {
-				return nil, err
+			if reserved, ok := sctx.GetReservedRowIDAlloc(); ok {
+				var baseRowID, maxRowID int64
+				if baseRowID, maxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID)); err != nil {
+					return nil, err
+				}
+				reserved.Reset(baseRowID, maxRowID)
 			}
 		}
 
@@ -917,8 +893,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 	}
 	// check data constraint
-	err = t.CheckRowConstraint(sctx, r)
-	if err != nil {
+	if err = table.CheckRowConstraintWithDatum(evalCtx, t.WritableConstraint(), r); err != nil {
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
@@ -1606,11 +1581,10 @@ func GetColDefaultValue(ctx exprctx.BuildContext, col *table.Column, defaultVals
 func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (kv.IntHandle,
 	error) {
 	if mctx != nil {
-		if stmtCtx := mctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+		if reserved, ok := mctx.GetReservedRowIDAlloc(); ok {
 			// First try to alloc if the statement has reserved auto ID.
-			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
-				stmtCtx.BaseRowID++
-				return kv.IntHandle(stmtCtx.BaseRowID), nil
+			if rowID, ok := reserved.Consume(); ok {
+				return kv.IntHandle(rowID), nil
 			}
 		}
 	}
@@ -1640,7 +1614,7 @@ func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table
 			// shard = 0010000000000000000000000000000000000000000000000000000000000000
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
-		shard := mctx.GetSessionVars().GetCurrentShard(int(n))
+		shard := mctx.GetRowIDShardGenerator().GetCurrentShard(int(n))
 		base = shardFmt.Compose(shard, base)
 		maxID = shardFmt.Compose(shard, maxID)
 	}

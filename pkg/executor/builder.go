@@ -314,6 +314,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildCompactTable(v)
 	case *plannercore.AdminShowBDRRole:
 		return b.buildAdminShowBDRRole(v)
+	case *plannercore.PhysicalExpand:
+		return b.buildExpand(v)
 	default:
 		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -758,7 +760,6 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 		b.inSelectLockStmt = true
 		defer func() { b.inSelectLockStmt = false }()
 	}
-	b.hasLock = true
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
@@ -767,13 +768,15 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 	if b.err != nil {
 		return nil
 	}
-	if !b.ctx.GetSessionVars().InTxn() {
+	if !b.ctx.GetSessionVars().PessimisticLockEligible() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 		return src
 	}
+	// If the `PhysicalLock` is not ignored by the above logic, set the `hasLock` flag.
+	b.hasLock = true
 	e := &SelectLockExec{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
 		Lock:               v.Lock,
@@ -1182,6 +1185,7 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) exec.Executor {
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) exec.Executor {
 	e := &DDLExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		ddlExecutor:  domain.GetDomain(b.ctx).DDLExecutor(),
 		stmt:         v.Statement,
 		is:           b.is,
 		tempTableDDL: temptable.GetTemporaryTableDDL(b.ctx),
@@ -1966,6 +1970,41 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.
 		selectionExecutorContext: newSelectionExecutorContext(b.ctx),
 		BaseExecutorV2:           exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
 		filters:                  v.Conditions,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	levelES := make([]*expression.EvaluatorSuite, 0, len(v.LevelExprs))
+	for _, exprs := range v.LevelExprs {
+		// column evaluator can always refer others inside expand.
+		// grouping column's nullability change should be seen as a new column projecting.
+		// since input inside expand logic should be targeted and reused for N times.
+		// column evaluator's swapping columns logic will pollute the input data.
+		levelE := expression.NewEvaluatorSuite(exprs, true)
+		levelES = append(levelES, levelE)
+	}
+	e := &ExpandExec{
+		BaseExecutor:        exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
+		numWorkers:          int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
+		levelEvaluatorSuits: levelES,
+	}
+
+	// If the calculation row count for this Projection operator is smaller
+	// than a Chunk size, we turn back to the un-parallel Projection
+	// implementation to reduce the goroutine overhead.
+	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
+	}
+
+	// Use un-parallel projection for query that write on memdb to avoid data race.
+	// See also https://github.com/pingcap/tidb/issues/26832
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+		e.numWorkers = 0
 	}
 	return e
 }

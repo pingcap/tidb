@@ -19,8 +19,10 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -88,6 +90,24 @@ func (ctx *TableContextImpl) GetRowEncodingConfig() context.RowEncodingConfig {
 // GetMutateBuffers implements the MutateContext interface.
 func (ctx *TableContextImpl) GetMutateBuffers() *context.MutateBuffers {
 	return ctx.mutateBuffers
+}
+
+// GetRowIDShardGenerator implements the MutateContext interface.
+func (ctx *TableContextImpl) GetRowIDShardGenerator() *variable.RowIDShardGenerator {
+	return ctx.vars().GetRowIDShardGenerator()
+}
+
+// GetReservedRowIDAlloc implements the MutateContext interface.
+func (ctx *TableContextImpl) GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAlloc, bool) {
+	if sc := ctx.vars().StmtCtx; sc != nil {
+		return &sc.ReservedRowIDAlloc, true
+	}
+	// `StmtCtx` should not be nil in the `variable.SessionVars`.
+	// We just put an assertion that will panic only if in test here.
+	// In production code, here returns (nil, false) to make code safe
+	// because some old code checks `StmtCtx != nil` but we don't know why.
+	intest.Assert(false, "SessionVars.StmtCtx should not be nil")
+	return nil, false
 }
 
 // GetBinlogSupport implements the MutateContext interface.

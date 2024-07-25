@@ -1040,8 +1040,10 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
-var checkSubstringsInOrder = [4]string{
+var checkSubstringsInOrder = [6]string{
+	`"fk_info":null`,
 	`"partition":null`,
+	`"Lock":null`,
 	`"tiflash_replica":null`,
 	`"policy_ref_info":null`,
 	`"ttl_info":null`,

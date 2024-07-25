@@ -141,14 +141,13 @@ func (c *Checker) CheckLockInDB(db string, privilege mysql.PrivilegeType) error 
 	if privilege == mysql.CreatePriv {
 		return nil
 	}
-	tables, err := c.is.SchemaTableInfos(stdctx.Background(), model.NewCIStr(db))
-	if err != nil {
-		return err
-	}
-	for _, tbl := range tables {
-		err := c.CheckTableLock(db, tbl.Name.L, privilege, false)
-		if err != nil {
-			return err
+	rs := c.is.ListTablesWithSpecialAttribute(infoschema.TableLockAttribute)
+	for _, schema := range rs {
+		for _, tbl := range schema.TableInfos {
+			err := c.CheckTableLock(db, tbl.Name.L, privilege, false)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -211,9 +212,9 @@ func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expressio
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
 	if joinType == LeftOuterJoin {
-		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == RightOuterJoin {
-		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
 }
@@ -231,9 +232,9 @@ func BuildPhysicalJoinSchema(joinType JoinType, join base.PhysicalPlan) *express
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
 	if joinType == LeftOuterJoin {
-		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == RightOuterJoin {
-		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
 }
