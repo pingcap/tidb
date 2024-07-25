@@ -14,6 +14,12 @@
 
 package util
 
+import (
+	"sync"
+
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+)
+
 // AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
 type AutoAnalyzeProcIDGenerator interface {
 	// AutoAnalyzeProcID generates an analyze ID.
@@ -37,4 +43,51 @@ func NewGenerator(autoAnalyzeProcIDGetter func() uint64) AutoAnalyzeProcIDGenera
 // AutoAnalyzeProcID implements AutoAnalyzeProcIDGenerator.
 func (g *generator) AutoAnalyzeProcID() uint64 {
 	return g.autoAnalyzeProcIDGetter()
+}
+
+var GlobalAutoAnalyzeProcessList = newGlobalAutoAnalyzeProcessList()
+
+type globalAutoAnalyzeProcessList struct {
+	mu        sync.RWMutex
+	processes map[uint64]struct{}
+}
+
+func newGlobalAutoAnalyzeProcessList() *globalAutoAnalyzeProcessList {
+	return &globalAutoAnalyzeProcessList{
+		processes: make(map[uint64]struct{}),
+	}
+}
+
+func (g *globalAutoAnalyzeProcessList) Tracker(id uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.processes[id] = struct{}{}
+}
+
+func (g *globalAutoAnalyzeProcessList) Untracker(id uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.processes, id)
+}
+
+type AutoAnalyzeTracker struct {
+	track   func(id uint64, ctx sysproctrack.TrackProc) error
+	untrack func(id uint64)
+}
+
+func NewAutoAnalyzeTracker(track func(id uint64, ctx sysproctrack.TrackProc) error, untrack func(id uint64)) *AutoAnalyzeTracker {
+	return &AutoAnalyzeTracker{
+		track:   track,
+		untrack: untrack,
+	}
+}
+
+func (t *AutoAnalyzeTracker) Track(id uint64, ctx sysproctrack.TrackProc) error {
+	GlobalAutoAnalyzeProcessList.Tracker(id)
+	return t.track(id, ctx)
+}
+
+func (t *AutoAnalyzeTracker) UnTrack(id uint64) {
+	GlobalAutoAnalyzeProcessList.Untracker(id)
+	t.untrack(id)
 }

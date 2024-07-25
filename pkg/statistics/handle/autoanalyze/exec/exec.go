@@ -81,12 +81,13 @@ func execAnalyzeStmt(
 ) ([]chunk.Row, []*ast.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
+	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
 	optFuncs := []sqlexec.OptionFuncAlias{
 		execOptionForAnalyze[statsVer],
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
 		sqlexec.GetPartitionPruneModeOption(pruneMode),
 		sqlexec.ExecOptionUseCurSession,
-		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), sysProcTracker.Track, sysProcTracker.UnTrack),
+		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), autoAnalyzeTracker.Track, autoAnalyzeTracker.UnTrack),
 	}
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }

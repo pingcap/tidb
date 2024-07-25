@@ -2841,7 +2841,6 @@ func (do *Domain) ReleaseConnID(connID uint64) {
 }
 
 // GetAutoAnalyzeProcID returns processID for auto analyze
-// TODO: support IDs for concurrent auto-analyze
 func (do *Domain) GetAutoAnalyzeProcID() uint64 {
 	return do.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
 }
