@@ -3665,7 +3665,14 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
 			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
-			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action).String())
+			actionType := model.RunawayActionType(setting.ActionV2.GetType())
+			switch actionType {
+			case model.RunawayActionDryRun, model.RunawayActionCooldown, model.RunawayActionKill:
+				fmt.Fprintf(limitBuilder, ", ACTION=%s", actionType.String())
+			case model.RunawayActionSwitchGroup:
+				fmt.Fprintf(limitBuilder, ", ACTION=%s(%s)", actionType.String(), setting.ActionV2.GetSwitchGroupName())
+			default:
+			}
 			if setting.Watch != nil {
 				if setting.Watch.LastingDurationMs > 0 {
 					dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond

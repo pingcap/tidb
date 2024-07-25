@@ -799,6 +799,7 @@ var tokenMap = map[string]int{
 	"SURVIVAL_PREFERENCES":     survivalPreferences,
 	"SWAPS":                    swaps,
 	"SWITCHES":                 switchesSym,
+	"SWITCH_GROUP":             switchGroup,
 	"SYSTEM":                   system,
 	"SYSTEM_TIME":              systemTime,
 	"TARGET":                   target,
