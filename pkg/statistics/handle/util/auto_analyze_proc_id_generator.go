@@ -51,15 +51,15 @@ func (g *generator) AutoAnalyzeProcID() uint64 {
 
 // ReleaseAutoAnalyzeProcID implements AutoAnalyzeProcIDGenerator.
 func (g *generator) ReleaseAutoAnalyzeProcID(id uint64) {
-	g.ReleaseAutoAnalyzeProcID(id)
+	g.releaseAutoAnalyzeProcID(id)
 }
 
 // GlobalAutoAnalyzeProcessList is used to track the auto analyze process.
 var GlobalAutoAnalyzeProcessList = newGlobalAutoAnalyzeProcessList()
 
 type globalAutoAnalyzeProcessList struct {
-	mu        sync.RWMutex
 	processes map[uint64]struct{}
+	mu        sync.RWMutex
 }
 
 func newGlobalAutoAnalyzeProcessList() *globalAutoAnalyzeProcessList {
