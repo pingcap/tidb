@@ -153,15 +153,10 @@ func (impl *ldapAuthImpl) tryConnectLDAPThroughTLS(address string) (*ldap.Conn, 
 	tlsConfig := &tls.Config{
 		RootCAs:    impl.caPool,
 		ServerName: impl.ldapServerHost,
-<<<<<<< HEAD
-	})
-=======
-		MinVersion: tls.VersionTLS12,
 	}
 	ldapConnection, err := ldap.DialURL("ldaps://"+address, ldap.DialWithTLSDialer(tlsConfig, &net.Dialer{
 		Timeout: ldapTimeout,
 	}))
->>>>>>> d9406195cc1 (ldap: add timeout and retry-backoff for ldap (#51927))
 	if err != nil {
 		return nil, err
 	}

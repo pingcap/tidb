@@ -32,9 +32,6 @@ go_test(
         "test/ldap.key",
     ],
     flaky = True,
-<<<<<<< HEAD
-=======
-    shard_count = 4,
->>>>>>> d9406195cc1 (ldap: add timeout and retry-backoff for ldap (#51927))
+    shard_count = 3,
     deps = ["@com_github_stretchr_testify//require"],
 )
