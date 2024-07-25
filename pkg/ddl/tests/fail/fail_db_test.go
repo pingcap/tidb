@@ -91,8 +91,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema
 	tk.MustExec("alter table t comment 'test1'")
-	err = s.dom.DDL().GetHook().OnChanged(nil)
-	require.NoError(t, err)
 
 	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
@@ -120,8 +118,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustQuery("select * from tx").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table tx comment 'tx'")
-	err = s.dom.DDL().GetHook().OnChanged(nil)
-	require.NoError(t, err)
 
 	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
@@ -147,8 +143,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustQuery("select * from nt").Check(testkit.Rows("7"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table pt comment 'pt'")
-	err = s.dom.DDL().GetHook().OnChanged(nil)
-	require.NoError(t, err)
 
 	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")

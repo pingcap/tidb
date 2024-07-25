@@ -1264,7 +1264,7 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 func (do *Domain) Init(
 	ddlLease time.Duration,
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
-	ddlInjector func(ddl.DDL, ddl.Executor) *schematracker.Checker,
+	ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker,
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
@@ -1335,7 +1335,7 @@ func (do *Domain) Init(
 		}
 	})
 	if ddlInjector != nil {
-		checker := ddlInjector(do.ddl, do.ddlExecutor)
+		checker := ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
 		checker.CreateTestDB(nil)
 		do.ddl = checker
 		do.ddlExecutor = checker

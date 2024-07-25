@@ -617,7 +617,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) 
 		}
 	})
 
-	failpoint.InjectCall("beforeWaitSchemaChanged", job)
+	failpoint.InjectCall("beforeWaitSchemaChanged", job, schemaVer)
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
@@ -626,13 +626,6 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) 
 	}
 	s.cleanMDLInfo(job, ownerID)
 	s.synced(job)
-
-	if RunInGoTest {
-		// s.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
-		s.mu.RLock()
-		s.mu.hook.OnSchemaStateChanged(schemaVer)
-		s.mu.RUnlock()
-	}
 
 	s.mu.RLock()
 	s.mu.hook.OnJobUpdated(job)
