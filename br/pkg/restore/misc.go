@@ -75,7 +75,7 @@ const maxUserTablesNum = 10
 func AssertUserDBsEmpty(dom *domain.Domain) error {
 	databases := dom.InfoSchema().AllSchemas()
 	m := meta.NewSnapshotMeta(dom.Store().GetSnapshot(kv.MaxVersion))
-	userTables := make([]string, 0, maxUserTablesNum)
+	userTables := make([]string, 0, maxUserTablesNum+1)
 	appendTables := func(dbName, tableName string) bool {
 		if len(userTables) >= maxUserTablesNum {
 			userTables = append(userTables, "...")
