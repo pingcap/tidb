@@ -956,6 +956,10 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
 	concurrencyLimiter := make(chan struct{}, deleteRangeConcurrency)
 
 	f := func(r util.DelRangeTask) {
+		defer func() {
+			<-concurrencyLimiter
+		}()
+		var err error
 		startKey, endKey := r.Range()
 
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
@@ -967,9 +971,8 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
 				zap.Error(err))
 			return
 		}
-
 		se := createSession(w.store)
-		err := util.DeleteDoneRecord(se, r)
+		err = util.DeleteDoneRecord(se, r)
 		se.Close()
 		if err != nil {
 			logutil.Logger(ctx).Error("failed to remove delete_range_done record", zap.String("category", "gc worker"),
@@ -986,6 +989,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
 		concurrencyLimiter <- struct{}{}
 		wg.Run(func() { f(r) })
 	}
+	wg.Wait()
 	logutil.Logger(ctx).Info("finish redo-delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Int("num of ranges", len(ranges)),
