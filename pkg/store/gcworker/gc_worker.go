@@ -825,9 +825,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		zap.Int("ranges", len(ranges)))
 	startTime := time.Now()
 
-	if concurrency < 1 {
-		concurrency = 1
-	}
+	concurrency = calcDeleteRangeConcurrency(concurrency, len(ranges))
 	concurrencyLimiter := make(chan struct{}, concurrency)
 
 	f := func(r util.DelRangeTask) {
@@ -902,6 +900,24 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	return nil
 }
 
+const (
+	// ConcurrencyDivisor reduces the input concurrency to avoid overwhelming the system
+	ConcurrencyDivisor = 4
+	// RequestsPerThread is the number of requests handled by a single thread
+	RequestsPerThread = 100000
+
+	// Assuming an average request takes 50ms:
+	// With ideal parallelism and sufficient concurrency,
+	// the maximum duration for a round of deleteRanges is 100,000 * 50ms = 5,000s.
+	// These values are conservatively chosen to minimize GC impact on foreground requests.
+)
+
+func calcDeleteRangeConcurrency(concurrency int, n int) int {
+	maxConcurrency := concurrency / ConcurrencyDivisor
+	threadsBasedOnRequests := n / RequestsPerThread
+	return max(1, min(maxConcurrency, threadsBasedOnRequests))
+}
+
 // redoDeleteRanges checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
 // `concurrency` specifies the concurrency to send NotifyDeleteRange.
 func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
@@ -922,9 +938,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 		zap.Int("num of ranges", len(ranges)))
 	startTime := time.Now()
 
-	if concurrency < 1 {
-		concurrency = 1
-	}
+	concurrency = calcDeleteRangeConcurrency(concurrency, len(ranges))
 	concurrencyLimiter := make(chan struct{}, concurrency)
 
 	f := func(r util.DelRangeTask) {
