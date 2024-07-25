@@ -82,13 +82,17 @@ func execAnalyzeStmt(
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
+	autoAnalyzeProcID := statsHandle.AutoAnalyzeProcID()
 	optFuncs := []sqlexec.OptionFuncAlias{
 		execOptionForAnalyze[statsVer],
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
 		sqlexec.GetPartitionPruneModeOption(pruneMode),
 		sqlexec.ExecOptionUseCurSession,
-		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), autoAnalyzeTracker.Track, autoAnalyzeTracker.UnTrack),
+		sqlexec.ExecOptionWithSysProcTrack(autoAnalyzeProcID, autoAnalyzeTracker.Track, autoAnalyzeTracker.UnTrack),
 	}
+	defer func() {
+		statsHandle.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
+	}()
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }
 

@@ -113,6 +113,7 @@ func NewHandle(
 	pool util.SessionPool,
 	tracker sysproctrack.Tracker,
 	autoAnalyzeProcIDGetter func() uint64,
+	releaseAutoAnalyzeProcID func(uint64),
 ) (*Handle, error) {
 	handle := &Handle{
 		InitStatsDone:   make(chan struct{}),
@@ -128,7 +129,7 @@ func NewHandle(
 		return nil, err
 	}
 	handle.Pool = util.NewPool(pool)
-	handle.AutoAnalyzeProcIDGenerator = util.NewGenerator(autoAnalyzeProcIDGetter)
+	handle.AutoAnalyzeProcIDGenerator = util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID)
 	handle.LeaseGetter = util.NewLeaseGetter(lease)
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)

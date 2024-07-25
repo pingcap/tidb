@@ -25,25 +25,33 @@ import (
 type AutoAnalyzeProcIDGenerator interface {
 	// AutoAnalyzeProcID generates an analyze ID.
 	AutoAnalyzeProcID() uint64
+	ReleaseAutoAnalyzeProcID(uint64)
 }
 
 var _ AutoAnalyzeProcIDGenerator = (*generator)(nil)
 
 type generator struct {
 	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
-	autoAnalyzeProcIDGetter func() uint64
+	autoAnalyzeProcIDGetter  func() uint64
+	releaseAutoAnalyzeProcID func(uint64)
 }
 
 // NewGenerator creates a new Generator.
-func NewGenerator(autoAnalyzeProcIDGetter func() uint64) AutoAnalyzeProcIDGenerator {
+func NewGenerator(autoAnalyzeProcIDGetter func() uint64, releaseAutoAnalyzeProcID func(uint64)) AutoAnalyzeProcIDGenerator {
 	return &generator{
-		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
+		autoAnalyzeProcIDGetter:  autoAnalyzeProcIDGetter,
+		releaseAutoAnalyzeProcID: releaseAutoAnalyzeProcID,
 	}
 }
 
 // AutoAnalyzeProcID implements AutoAnalyzeProcIDGenerator.
 func (g *generator) AutoAnalyzeProcID() uint64 {
 	return g.autoAnalyzeProcIDGetter()
+}
+
+// ReleaseAutoAnalyzeProcID implements AutoAnalyzeProcIDGenerator.
+func (g *generator) ReleaseAutoAnalyzeProcID(id uint64) {
+	g.ReleaseAutoAnalyzeProcID(id)
 }
 
 // GlobalAutoAnalyzeProcessList is used to track the auto analyze process.
