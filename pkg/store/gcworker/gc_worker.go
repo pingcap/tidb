@@ -859,7 +859,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			return
 		}
 
-		err = doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache)
+		err = doGCPlacementRules(se, safePoint, r, &gcPlacementRuleCache)
 		if err != nil {
 			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
@@ -1526,7 +1526,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
 func doGCPlacementRules(se sessiontypes.Session, _ uint64,
-	dr util.DelRangeTask, gcPlacementRuleCache sync.Map) (err error) {
+	dr util.DelRangeTask, gcPlacementRuleCache *sync.Map) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
