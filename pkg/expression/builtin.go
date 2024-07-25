@@ -135,7 +135,7 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 	return bf, nil
 }
 
-func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalType, ec *ExprCollation) (*types.FieldType, error) {
+func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalType, ec *ExprCollation) *types.FieldType {
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -156,8 +156,6 @@ func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalTyp
 		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
 	case types.ETVectorFloat32:
 		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeTiDBVectorFloat32).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).BuildP()
-	default:
-		return nil, errors.Errorf("%s is not supported", retType)
 	}
 	if mysql.HasBinaryFlag(fieldType.GetFlag()) && fieldType.GetType() != mysql.TypeJSON {
 		fieldType.SetCharset(charset.CharsetBin)
@@ -166,7 +164,7 @@ func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalTyp
 	if _, ok := booleanFunctions[funcName]; ok {
 		fieldType.AddFlag(mysql.IsBooleanFlag)
 	}
-	return fieldType, nil
+	return fieldType
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -213,10 +211,8 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 		}
 	}
 
-	fieldType, err := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
-	if err != nil {
-		return baseBuiltinFunc{}, err
-	}
+	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
+
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
@@ -277,10 +273,8 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 		}
 	}
 
-	fieldType, err := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
-	if err != nil {
-		return baseBuiltinFunc{}, err
-	}
+	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
+
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
