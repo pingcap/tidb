@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package logicalop_test
 
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"regexp"
 	"slices"
 	"sort"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -51,7 +51,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
-	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
+	logicalPlan, err := plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	// Obtain the leaf plan
