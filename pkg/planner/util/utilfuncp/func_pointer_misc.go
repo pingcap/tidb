@@ -98,5 +98,6 @@ var FindBestTask4LogicalCTETable func(lp base.LogicalPlan, prop *property.Physic
 	_ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error)
 
 // FindBestTask4LogicalMemTable will be called by LogicalMemTable in logicalOp pkg.
-var FindBestTask4LogicalMemTable func(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error)
+var FindBestTask4LogicalMemTable func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task,
+	cntPlan int64, err error)
