@@ -2266,3 +2266,4 @@ drop table if exists aaa;
 prepare stmt from "create table aaa(id bigint primary key) partition by range (id) interval (100) first partition\n less than (100) last partition less than (500)";
 execute stmt;
 show create table aaa;
+
