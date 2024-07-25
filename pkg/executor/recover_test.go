@@ -690,3 +690,37 @@ func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
 }
+
+func TestFlashbackClusterWithManyDBs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	backup := kv.TxnEntrySizeLimit.Load()
+	kv.TxnEntrySizeLimit.Store(50000)
+	t.Cleanup(func() {
+		kv.TxnEntrySizeLimit.Store(backup)
+	})
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
+	tk.MustExec("set @@global.tidb_enable_fast_create_table=ON")
+
+	for i := 0; i < 400; i++ {
+		tk.MustExec(fmt.Sprintf("create database db_%d", i))
+	}
+
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+
+	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS))
+
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
+}
