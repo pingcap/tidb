@@ -16,6 +16,7 @@ package disjointset
 
 // Set is the universal implementation of disjoint set.
 // It's designed for sparse case or not integer type.
+// If you are dealing with continuous integer, you should use SimpleIntSet to avoid the cost of hash map.
 // We hash the original value to an integer index and then apply the core disjoint set algorithm.
 // Time complexity: the union operation is inverse ackermann function, which is very close to O(1).
 type Set[T comparable] struct {
