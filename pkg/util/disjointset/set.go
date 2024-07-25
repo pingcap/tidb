@@ -25,6 +25,7 @@ type Set[T comparable] struct {
 	tailIdx int
 }
 
+// NewSet creates the disjoint set.
 func NewSet[T comparable](size int) *Set[T] {
 	return &Set[T]{
 		parent:  make([]int, 0, size),
@@ -54,10 +55,12 @@ func (s *Set[T]) findRoot(a int) int {
 	return s.parent[a]
 }
 
+// InSameGroup checks whether a and b are in the same group.
 func (s *Set[T]) InSameGroup(a T, b T) bool {
 	return s.findRootOrigialVal(a) == s.findRootOrigialVal(b)
 }
 
+// Union unions two sets in disjoint set.
 func (s *Set[T]) Union(a T, b T) {
 	rootA := s.findRootOrigialVal(a)
 	rootB := s.findRootOrigialVal(b)
