@@ -1797,6 +1797,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc = vars.InitStatementContext()
 	}
+	logutil.BgLogger().Warn("get location", zap.String("location", vars.Location().String()))
 	sc.SetTimeZone(vars.Location())
 	sc.TaskID = stmtctx.AllocateTaskID()
 	if sc.CTEStorageMap == nil {

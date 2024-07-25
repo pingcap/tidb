@@ -19,10 +19,10 @@ package systable
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 var (
@@ -117,7 +117,9 @@ func (mgr *manager) GetMinJobID(ctx context.Context, prevMinJobID int64) (int64,
 	var minID int64
 	if err := mgr.withNewSession(func(se *session.Session) error {
 		sql := fmt.Sprintf(`select min(job_id) from mysql.tidb_ddl_job where job_id >= %d`, prevMinJobID)
+		logutil.BgLogger().Warn("before execute get-min-job-id")
 		rows, err := se.Execute(ctx, sql, "get-min-job-id")
+		logutil.BgLogger().Warn("after execute get-min-job-id")
 		if err != nil {
 			return errors.Trace(err)
 		}
