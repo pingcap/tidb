@@ -830,65 +830,66 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	}
 	concurrencyLimiter := make(chan struct{}, concurrency)
 
+	f := func(r util.DelRangeTask) {
+		var err error
+		defer func() {
+			<-concurrencyLimiter
+		}()
+		se := createSession(w.store)
+		defer se.Close()
+
+		startKey, endKey := r.Range()
+		if v2 {
+			// In raftstore-v2, we use delete range instead to avoid deletion omission
+			task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
+			err = task.Execute(ctx)
+		} else {
+			err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
+		}
+		failpoint.Inject("ignoreDeleteRangeFailed", func() {
+			err = nil
+		})
+
+		if err != nil {
+			logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
+				zap.String("uuid", w.uuid),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
+				zap.Error(err))
+			return
+		}
+
+		err = doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache)
+		if err != nil {
+			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Error(err))
+		}
+		if err := w.doGCLabelRules(r); err != nil {
+			logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Error(err))
+			return
+		}
+
+		err = util.CompleteDeleteRange(se, r, !v2)
+		if err != nil {
+			logutil.Logger(ctx).Error("failed to mark delete range task done", zap.String("category", "gc worker"),
+				zap.String("uuid", w.uuid),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
+				zap.Error(err))
+			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
+		}
+	}
 	var wg util2.WaitGroupWrapper
 	for _, r := range ranges {
+		r := r
 		concurrencyLimiter <- struct{}{}
-		f := func(r util.DelRangeTask) {
-			var err error
-			defer func() {
-				<-concurrencyLimiter
-			}()
-			se := createSession(w.store)
-			defer se.Close()
-
-			startKey, endKey := r.Range()
-			if v2 {
-				// In raftstore-v2, we use delete range instead to avoid deletion omission
-				task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
-				err = task.Execute(ctx)
-			} else {
-				err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
-			}
-			failpoint.Inject("ignoreDeleteRangeFailed", func() {
-				err = nil
-			})
-
-			if err != nil {
-				logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
-					zap.String("uuid", w.uuid),
-					zap.Stringer("startKey", startKey),
-					zap.Stringer("endKey", endKey),
-					zap.Error(err))
-				return
-			}
-
-			err = doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache)
-			if err != nil {
-				logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
-					zap.String("uuid", w.uuid),
-					zap.Int64("jobID", r.JobID),
-					zap.Int64("elementID", r.ElementID),
-					zap.Error(err))
-			}
-			if err := w.doGCLabelRules(r); err != nil {
-				logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
-					zap.String("uuid", w.uuid),
-					zap.Int64("jobID", r.JobID),
-					zap.Int64("elementID", r.ElementID),
-					zap.Error(err))
-				return
-			}
-
-			err = util.CompleteDeleteRange(se, r, !v2)
-			if err != nil {
-				logutil.Logger(ctx).Error("failed to mark delete range task done", zap.String("category", "gc worker"),
-					zap.String("uuid", w.uuid),
-					zap.Stringer("startKey", startKey),
-					zap.Stringer("endKey", endKey),
-					zap.Error(err))
-				metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
-			}
-		}
 		wg.Run(func() { f(r) })
 	}
 	wg.Wait()
@@ -920,17 +921,23 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 		zap.String("uuid", w.uuid),
 		zap.Int("num of ranges", len(ranges)))
 	startTime := time.Now()
-	for _, r := range ranges {
+
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	concurrencyLimiter := make(chan struct{}, concurrency)
+
+	f := func(r util.DelRangeTask) {
 		startKey, endKey := r.Range()
 
-		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
+		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
 			logutil.Logger(ctx).Error("redo-delete range failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Stringer("startKey", startKey),
 				zap.Stringer("endKey", endKey),
 				zap.Error(err))
-			continue
+			return
 		}
 
 		se := createSession(w.store)
@@ -945,6 +952,12 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save_redo").Inc()
 		}
 	}
+	var wg util2.WaitGroupWrapper
+	for _, r := range ranges {
+		r := r
+		concurrencyLimiter <- struct{}{}
+		wg.Run(func() { f(r) })
+	}
 	logutil.Logger(ctx).Info("finish redo-delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Int("num of ranges", len(ranges)),
@@ -953,7 +966,9 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 	return nil
 }
 
-func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte, _ int) error {
+func (w *GCWorker) doUnsafeDestroyRangeRequest(
+	ctx context.Context, startKey []byte, endKey []byte,
+) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
 	stores, err := w.getStoresForGC(ctx)
 	if err != nil {
