@@ -747,7 +747,7 @@ SwitchIndexState:
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		tbl, err := getTable((*asAutoIDRequirement)(d), schemaID, tblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -871,8 +871,14 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 	return true, ver, err
 }
 
-func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+func doReorgWorkForCreateIndex(
+	w *worker,
+	d *ddlCtx,
+	t *meta.Meta,
+	job *model.Job,
+	tbl table.Table,
+	allIndexInfos []*model.IndexInfo,
+) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
 	reorgTp, err = pickBackfillType(job)
 	if err != nil {
@@ -954,28 +960,6 @@ func runIngestReorgJobDist(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 
 func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
-	if ok && bc.Done() {
-		return true, 0, nil
-	}
-	ctx := tidblogutil.WithCategory(w.ctx, "ddl-ingest")
-	var discovery pd.ServiceDiscovery
-	if d != nil {
-		//nolint:forcetypeassert
-		discovery = d.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	}
-	hasUnique := false
-	for _, indexInfo := range allIndexInfos {
-		if indexInfo.Unique {
-			hasUnique = true
-			break
-		}
-	}
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
-		return false, ver, errors.Trace(err)
-	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	if err != nil {
 		if kv.ErrKeyExists.Equal(err) {
@@ -990,11 +974,8 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		return false, ver, errors.Trace(err)
 	}
-	if !done {
-		return false, ver, nil
-	}
-	bc.SetDone()
-	return true, ver, nil
+	failpoint.InjectCall("afterRunIngestReorgJob", job, done)
+	return done, ver, nil
 }
 
 func errorIsRetryable(err error, job *model.Job) bool {
@@ -1011,8 +992,15 @@ func errorIsRetryable(err error, job *model.Job) bool {
 	return true
 }
 
-func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
+func runReorgJobAndHandleErr(
+	w *worker,
+	d *ddlCtx,
+	t *meta.Meta,
+	job *model.Job,
+	tbl table.Table,
+	allIndexInfos []*model.IndexInfo,
+	mergingTmpIdx bool,
+) (done bool, ver int64, err error) {
 	elements := make([]*meta.Element, 0, len(allIndexInfos))
 	for _, indexInfo := range allIndexInfos {
 		elements = append(elements, &meta.Element{ID: indexInfo.ID, TypeKey: meta.IndexElementKey})
@@ -1289,7 +1277,7 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 		return nil, from, to, errors.Trace(err)
 	}
 
-	// Double check. See function `RenameIndex` in ddl_api.go
+	// Double check. See function `RenameIndex` in executor.go
 	duplicate, err := ValidateRenameIndex(from, to, tblInfo)
 	if duplicate {
 		return nil, from, to, nil
@@ -1908,9 +1896,6 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				break
 			}
-			w.ddlCtx.mu.RLock()
-			w.ddlCtx.mu.hook.OnUpdateReorgInfo(reorgInfo.Job, reorgInfo.PhysicalTableID)
-			w.ddlCtx.mu.RUnlock()
 
 			finish, err = updateReorgInfo(w.sessPool, tbl, reorgInfo)
 			if err != nil {

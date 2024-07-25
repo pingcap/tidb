@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	SeedStat     *property.StatsInfo
 	Name         string
@@ -37,7 +37,7 @@ type LogicalCTETable struct {
 
 // Init only assigns type and context.
 func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
 	return &p
 }
 
@@ -51,7 +51,7 @@ func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
 func (p *LogicalCTETable) FindBestTask(prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return findBestTask4LogicalCTETable(p, prop, nil, nil)
+	return utilfuncp.FindBestTask4LogicalCTETable(p, prop, nil, nil)
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.

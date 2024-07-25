@@ -897,6 +897,15 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Greater(t, len(lt), 2)
 
+	resp, err = ts.FetchStatus("/schema/tidb?id_name_only=true")
+	require.NoError(t, err)
+	var lti []*model.TableNameInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&lti)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Greater(t, len(lti), 2)
+
 	resp, err = ts.FetchStatus("/schema/abc")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -1191,19 +1200,21 @@ func TestWriteDBTablesData(t *testing.T) {
 	// No table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{})
 	rc := httptest.NewRecorder()
-	tbs := info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err := info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 0, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
 	decoder := json.NewDecoder(rc.Body)
-	err := decoder.Decode(&ti)
+	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 1, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
@@ -1216,7 +1227,8 @@ func TestWriteDBTablesData(t *testing.T) {
 	// Two tables in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 2, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
