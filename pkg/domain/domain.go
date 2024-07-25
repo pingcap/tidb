@@ -504,7 +504,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo)
 			}
 		}
-		di.Tables = make([]*model.TableInfo, 0, len(tables))
+		diTables := make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
 			if tbl.State != model.StatePublic {
 				// schema is not public, can't be used outside.
@@ -522,8 +522,9 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 				// haven't been deleted from the repair table list.
 				// Since the repairment is done and table is visible, we should load it.
 			}
-			di.Tables = append(di.Tables, tbl)
+			diTables = append(diTables, tbl)
 		}
+		di.Deprecated.Tables = diTables
 	}
 	done <- nil
 }

@@ -100,7 +100,8 @@ type SchemaAndTableName struct {
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := newInfoSchema()
-	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
+	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test")}
+	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
@@ -140,7 +141,8 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 			State: model.StatePublic,
 		},
 	}
-	mysqlDBInfo := &model.DBInfo{ID: 2, Name: model.NewCIStr("mysql"), Tables: tables}
+	mysqlDBInfo := &model.DBInfo{ID: 2, Name: model.NewCIStr("mysql")}
+	mysqlDBInfo.Deprecated.Tables = tables
 	tableNames = &schemaTables{
 		dbInfo: mysqlDBInfo,
 		tables: make(map[string]table.Table),
@@ -164,7 +166,8 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := newInfoSchema()
-	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
+	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test")}
+	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
@@ -469,8 +472,8 @@ func init() {
 		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
-		Tables:  infoSchemaTables,
 	}
+	infoSchemaDB.Deprecated.Tables = infoSchemaTables
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
 	util.GetSequenceByName = func(is context.MetaOnlyInfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)

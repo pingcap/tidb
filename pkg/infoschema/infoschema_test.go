@@ -91,11 +91,11 @@ func TestBasic(t *testing.T) {
 	dbID, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	dbInfo := &model.DBInfo{
-		ID:     dbID,
-		Name:   dbName,
-		Tables: []*model.TableInfo{tblInfo},
-		State:  model.StatePublic,
+		ID:    dbID,
+		Name:  dbName,
+		State: model.StatePublic,
 	}
+	dbInfo.Deprecated.Tables = []*model.TableInfo{tblInfo}
 	tblInfo.DBID = dbInfo.ID
 
 	dbInfos := []*model.DBInfo{dbInfo}
@@ -232,7 +232,7 @@ func TestBasic(t *testing.T) {
 	is = builder.Build(math.MaxUint64)
 	schema, ok = is.SchemaByID(dbID)
 	require.True(t, ok)
-	require.Equal(t, 1, len(schema.Tables))
+	require.Equal(t, 1, len(schema.Deprecated.Tables))
 }
 
 func TestMockInfoSchema(t *testing.T) {
@@ -336,11 +336,11 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	}()
 
 	dbInfo := &model.DBInfo{
-		ID:     1,
-		Name:   model.NewCIStr("test"),
-		Tables: []*model.TableInfo{},
-		State:  model.StatePublic,
+		ID:    1,
+		Name:  model.NewCIStr("test"),
+		State: model.StatePublic,
 	}
+	dbInfo.Deprecated.Tables = []*model.TableInfo{}
 	dbInfos := []*model.DBInfo{dbInfo}
 	data := infoschema.NewData()
 	builder, err := infoschema.NewBuilder(re, nil, data).InitWithDBInfos(dbInfos, nil, nil, 1)
@@ -444,7 +444,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	newDB, ok := newIS.SchemaByName(model.NewCIStr("test"))
 	tblInfos, err := newIS.SchemaTableInfos(context.Background(), newDB.Name)
 	require.NoError(t, err)
-	newDB.Tables = tblInfos
+	newDB.Deprecated.Tables = tblInfos
 	require.True(t, ok)
 	builder, err = infoschema.NewBuilder(re, nil, data).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
@@ -571,9 +571,9 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is, tbl2.Meta().ID, nil)
 	assertBundle(is, p1.ID, p1Bundle)
 
-	if len(db.Tables) == 0 {
+	if len(db.Deprecated.Tables) == 0 {
 		var err error
-		db.Tables, err = is.SchemaTableInfos(context.Background(), db.Name)
+		db.Deprecated.Tables, err = is.SchemaTableInfos(context.Background(), db.Name)
 		require.NoError(t, err)
 	}
 	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())

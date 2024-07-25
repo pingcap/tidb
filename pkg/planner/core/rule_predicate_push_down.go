@@ -100,18 +100,6 @@ func BreakDownPredicates(p *LogicalProjection, predicates []expression.Expressio
 	return canBePushed, canNotBePushed
 }
 
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
-	// condition related with grouping column shouldn't be pushed down through it.
-	// currently, since expand is adjacent to aggregate, any filter above aggregate wanted to be push down through expand only have two cases:
-	// 		1. agg function related filters. (these condition is always above aggregate)
-	// 		2. group-by item related filters. (there condition is always related with grouping sets columns, which can't be pushed down)
-	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
-	remained, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return append(remained, predicates...), child
-}
-
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
 // conditions for left/right child pushdown.
 func DeriveOtherConditions(
