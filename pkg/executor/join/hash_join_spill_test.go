@@ -17,7 +17,6 @@ package join
 import (
 	"testing"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -70,7 +69,7 @@ func getExpectedResults(t *testing.T, info *hashJoinInfo, resultTypes []*types.F
 }
 
 func spillOnlyTriggeredInBuildStageCase(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 60000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 6000000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -122,7 +121,7 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 
 	expectedResult := getExpectedResults(t, info, retTypes, leftDataSource, rightDataSource)
 
-	log.Info("xzxdebug -----------------------") // TODO remove it
+	// log.Info("xzxdebug -----------------------") // TODO remove it
 
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
@@ -130,6 +129,7 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 	spillOnlyTriggeredInBuildStageCase(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 
 	// TODO trigger spill only in build stage
+	// TODO trigger spill only when hash table is built
 	// TODO trigger spill in build stage and retrigger in restore stage
 }
 

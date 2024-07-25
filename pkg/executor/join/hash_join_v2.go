@@ -17,7 +17,6 @@ package join
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -25,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -76,8 +76,13 @@ func (htc *hashTableContext) reset() {
 func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
 	totalMemoryUsage := int64(0)
 	for _, tables := range htc.rowTables {
-		totalMemoryUsage += tables[partID].getTotalUsedBytesInSegments()
+		if tables != nil && tables[partID] != nil {
+			totalMemoryUsage += tables[partID].getTotalUsedBytesInSegments()
+		}
 	}
+
+	totalMemoryUsage += htc.hashTable.getPartitionMemoryUsage(partID)
+
 	return totalMemoryUsage
 }
 
@@ -86,16 +91,30 @@ func (htc *hashTableContext) getSegments(workerID, partitionID int) []*rowTableS
 		panic("xzxdebug") // TODO remove it in the future
 	}
 
-	return htc.rowTables[workerID][partitionID].getSegments()
+	if htc.rowTables[workerID] != nil && htc.rowTables[workerID][partitionID] != nil {
+		return htc.rowTables[workerID][partitionID].getSegments()
+	}
+
+	return nil
 }
 
 func (htc *hashTableContext) clearSegments(workerID, partitionID int) {
-	if workerID == -1 {
+	if workerID == -1 { // TODO maybe we need to remove it in the future
 		htc.hashTable.tables[partitionID].rowData.clearSegments()
 		htc.hashTable.tables[partitionID].hashTable = nil
 		return
 	}
-	htc.rowTables[workerID][partitionID].clearSegments()
+	if htc.rowTables[workerID] != nil && htc.rowTables[workerID][partitionID] != nil {
+		htc.rowTables[workerID][partitionID].clearSegments()
+	}
+}
+
+func (htc *hashTableContext) getHashTableSegments(partitionID int) []*rowTableSegment {
+	return htc.hashTable.getPartitionSegments(partitionID)
+}
+
+func (htc *hashTableContext) clearHashTableSegments(partitionID int) {
+	htc.hashTable.clearPartitionSegments(partitionID)
 }
 
 func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, allowCreate bool) *rowTableSegment {
@@ -117,6 +136,11 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, all
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, false)
 	seg.rowStartOffset = append(seg.rowStartOffset, builder.startPosInRawData[partitionID]...)
+
+	if len(seg.rowStartOffset) < len(seg.validJoinKeyPos) {
+		panic("xzxdebug panic") // TODO remove it
+	}
+
 	builder.crrntSizeOfRowTable[partitionID] = 0
 	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
@@ -126,19 +150,18 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	}
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int) int {
+func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < partitionNumber; i++ {
 		rowTables[i] = newRowTable()
 	}
-	totalSegmentCnt := 0
+
 	for _, rowTablesPerWorker := range htc.rowTables {
 		for partIdx, rt := range rowTablesPerWorker {
 			if rt == nil {
 				continue
 			}
 			rowTables[partIdx].merge(rt)
-			totalSegmentCnt += len(rt.segments)
 		}
 	}
 
@@ -149,7 +172,22 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int) int 
 	for i := range htc.rowTables {
 		htc.rowTables[i] = nil
 	}
-	return totalSegmentCnt
+
+	htc.hashTable.isBuilt = true
+
+	if spillHelper != nil && spillHelper.isSpillNeeded() {
+		err := spillHelper.spillBuildRows()
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	totalSegmentCnt := 0
+	for _, table := range htc.hashTable.tables {
+		totalSegmentCnt += table.getSegmentNum()
+	}
+
+	return totalSegmentCnt, nil
 }
 
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
@@ -189,9 +227,21 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 	hCtx.hashTableContext.hashTable = &hashTableV2{
 		tables:          make([]*subTable, hCtx.PartitionNumber),
 		partitionNumber: uint64(hCtx.PartitionNumber),
+		isBuilt:         false,
 	}
 	hCtx.finalSync = make(chan struct{})
 	hCtx.hashTableContext.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
+}
+
+func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
+	for index := range hCtx.hashTableContext.rowTables {
+		hCtx.hashTableContext.rowTables[index] = make([]*rowTable, hCtx.PartitionNumber)
+	}
+	hCtx.hashTableContext.hashTable = &hashTableV2{
+		tables:          make([]*subTable, hCtx.PartitionNumber),
+		partitionNumber: uint64(hCtx.PartitionNumber),
+		isBuilt:         false,
+	}
 }
 
 // ProbeSideTupleFetcherV2 reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -274,6 +324,11 @@ func (e *HashJoinV2Exec) needUsedFlag() bool {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinV2Exec) Open(ctx context.Context) error {
+	if e.PartitionNumber > len(e.BuildWorkers) {
+		// Result will be incorrect if partition number is greater than concurrency when spill is triggered
+		return errors.NewNoStackError("Partition number shouldn't be greater than concurrency")
+	}
+
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		e.closeCh = nil
 		e.prepared = false
@@ -379,12 +434,12 @@ func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorker
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				log.Info(fmt.Sprintf("xzxdebug start probe worker %d", workerID))
+				// log.Info(fmt.Sprintf("xzxdebug start probe worker %d", workerID))
 				defer trace.StartRegion(ctx, "HashJoinWorker").End()
 				e.ProbeWorkers[workerID].runJoinWorker()
 			},
 			func(r any) {
-				log.Info(fmt.Sprintf("xzxdebug leave probe worker %d...", workerID))
+				// log.Info(fmt.Sprintf("xzxdebug leave probe worker %d...", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				fetcherAndWorkerSyncer.Done()
 			},
@@ -395,11 +450,11 @@ func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorker
 func (e *HashJoinV2Exec) startFinalWorker(syncer chan struct{}) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			log.Info("xzxdebug start final worker")
+			// log.Info("xzxdebug start final worker")
 			e.finalWorker(syncer)
 		},
 		func(r any) {
-			log.Info("xzxdebug leave final worker...")
+			// log.Info("xzxdebug leave final worker...")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)
@@ -480,12 +535,12 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			log.Info("xzxdebug start probe fetcher")
+			// log.Info("xzxdebug start probe fetcher")
 			defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
 			e.startProbeFetcher(ctx)
 		},
 		func(r any) {
-			log.Info("xzxdebug leave probe fetcher")
+			// log.Info("xzxdebug leave probe fetcher")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)
@@ -513,12 +568,12 @@ func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 				workerID := i
 				e.waiterWg.RunWithRecover(
 					func() {
-						log.Info(fmt.Sprintf("xzxdebug start final subworker %d", workerID))
+						// log.Info(fmt.Sprintf("xzxdebug start final subworker %d", workerID))
 						// Error has been handled in the function
 						_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
 					},
 					func(r any) {
-						log.Info(fmt.Sprintf("xzxdebug leave final subworker %d...", workerID))
+						// log.Info(fmt.Sprintf("xzxdebug leave final subworker %d...", workerID))
 						handleError(e.joinResultCh, &e.finished, r)
 						wg.Done()
 					},
@@ -664,7 +719,7 @@ func (e *HashJoinV2Exec) checkBalance(totalSegmentCnt int) bool {
 	return isBalanced
 }
 
-func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) bool {
+func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, error) {
 	buildTaskCh := make(chan *buildTask, e.Concurrency)
 	wg := &sync.WaitGroup{}
 	defer func() {
@@ -674,12 +729,16 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) bool {
 
 	<-syncer
 	if e.finished.Load() {
-		return false
+		return false, nil
 	}
 
 	e.startBuildWorkers(buildTaskCh, wg)
 
-	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.PartitionNumber)
+	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(e.PartitionNumber, e.spillHelper)
+	if err != nil {
+		return false, err
+	}
+
 	isBalanced := e.checkBalance(totalSegmentCnt)
 	segStep := max(1, totalSegmentCnt/int(e.Concurrency))
 	subTables := e.HashJoinCtxV2.hashTableContext.hashTable.tables
@@ -695,7 +754,7 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) bool {
 			case <-syncer:
 				// syncer is closed by build fetcher in advance,
 				// this means that there happen some errors.
-				return false
+				return false, nil
 			case buildTaskCh <- createBuildTask(partIdx, 0, segmentsLen):
 			}
 			continue
@@ -706,32 +765,36 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) bool {
 			case <-syncer:
 				// syncer is closed by build fetcher in advance,
 				// this means that there happen some errors.
-				return false
+				return false, nil
 			case buildTaskCh <- createBuildTask(partIdx, startIdx, endIdx):
 			}
 			continue
 		}
 	}
 
-	return true
+	return true, nil
 }
 
-func (e *HashJoinV2Exec) dispatchBuildTasks(syncer chan struct{}) {
+func (e *HashJoinV2Exec) dispatchBuildTasks(syncer chan struct{}) error {
 	defer close(e.buildFinished)
 	ifContinue := true
+	var err error
 
 	for ifContinue {
-		ifContinue = e.dispatchBuildTasksImpl(syncer)
-		// TODO check spill when build is done
+		ifContinue, err = e.dispatchBuildTasksImpl(syncer)
+		if err != nil {
+			return err
+		}
 
 		// Wake up probe fetcher, we do not pass error by buildFinished in hash join v2
 		e.buildFinished <- nil
 	}
+	return nil
 }
 
 func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
-	log.Info("xzxdebug start build fetcher")
-	defer log.Info("xzxdebug leave build fetcher...")
+	// log.Info("xzxdebug start build fetcher")
+	// defer log.Info("xzxdebug leave build fetcher...")
 
 	// TODO we need to re-handle it
 	if e.stats != nil {
@@ -797,7 +860,11 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 			return
 		}
 
-		e.spillHelper.prepareForRestoring(lastRound)
+		err := e.spillHelper.prepareForRestoring(lastRound)
+		if err != nil {
+			handleError(e.joinResultCh, &e.finished, err)
+			return
+		}
 
 		restoredPartition := e.spillHelper.stack.pop()
 		if restoredPartition == nil {
@@ -806,12 +873,12 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 			return
 		}
 
-		log.Info("xzxdebug start a restore round")
+		log.Info("xzxdebug start a restore round ------------")
 
 		// Collect, so that we can close them in the end.
 		// We must collect them once they are popped from stack, or the resource may
 		// fail to be recycled because of the possible panic.
-		err := e.spillHelper.discardInDisks([][]*chunk.DataInDiskByChunks{restoredPartition.buildSideChunks, restoredPartition.probeSideChunks})
+		err = e.spillHelper.discardInDisks([][]*chunk.DataInDiskByChunks{restoredPartition.buildSideChunks, restoredPartition.probeSideChunks})
 		if err != nil {
 			handleError(e.joinResultCh, &e.finished, err)
 			return
@@ -831,14 +898,14 @@ func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetche
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				log.Info(fmt.Sprintf("xzxdebug start prebuild worker %d", workerID))
+				// log.Info(fmt.Sprintf("xzxdebug start prebuild worker %d", workerID))
 				err := e.BuildWorkers[workerID].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
 				if err != nil {
 					handleError(e.joinResultCh, &e.finished, err)
 				}
 			},
 			func(r any) {
-				log.Info(fmt.Sprintf("xzxdebug leave prebuild worker %d...", workerID))
+				// log.Info(fmt.Sprintf("xzxdebug leave prebuild worker %d...", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				wg.Done()
 			},
@@ -852,14 +919,14 @@ func (e *HashJoinV2Exec) startPrebuildWorkersForRestore(restoredPartition *resto
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				log.Info(fmt.Sprintf("xzxdebug start restore prebuild worker %d", workerID))
+				// log.Info(fmt.Sprintf("xzxdebug start restore prebuild worker %d", workerID))
 				err := e.BuildWorkers[workerID].restoreAndPrebuild(restoredPartition.buildSideChunks[workerID], syncCh, fetcherAndWorkerSyncer)
 				if err != nil {
 					handleError(e.joinResultCh, &e.finished, err)
 				}
 			},
 			func(r any) {
-				log.Info(fmt.Sprintf("xzxdebug leave restore prebuild worker %d...", workerID))
+				// log.Info(fmt.Sprintf("xzxdebug leave restore prebuild worker %d...", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				wg.Done()
 			},
@@ -870,11 +937,14 @@ func (e *HashJoinV2Exec) startPrebuildWorkersForRestore(restoredPartition *resto
 func (e *HashJoinV2Exec) startBuildTaskDispatcher(syncer chan struct{}) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			log.Info("xzxdebug start dispatcher")
-			e.dispatchBuildTasks(syncer)
+			// log.Info("xzxdebug start dispatcher")
+			err := e.dispatchBuildTasks(syncer)
+			if err != nil {
+				handleError(e.joinResultCh, &e.finished, err)
+			}
 		},
 		func(r any) {
-			log.Info("xzxdebug leave dispatcher...")
+			// log.Info("xzxdebug leave dispatcher...")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)
@@ -886,14 +956,14 @@ func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask, wg *sync
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				log.Info(fmt.Sprintf("xzxdebug start build worker %d", workerID))
+				// log.Info(fmt.Sprintf("xzxdebug start build worker %d", workerID))
 				err := e.BuildWorkers[workerID].buildHashTable(buildTaskCh)
 				if err != nil {
 					handleError(e.joinResultCh, &e.finished, err)
 				}
 			},
 			func(r any) {
-				log.Info(fmt.Sprintf("xzxdebug leave build worker %d", workerID))
+				// log.Info(fmt.Sprintf("xzxdebug leave build worker %d", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				wg.Done()
 			},

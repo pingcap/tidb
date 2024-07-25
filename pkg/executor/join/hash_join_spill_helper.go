@@ -16,6 +16,7 @@ package join
 
 import (
 	"bytes"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"slices"
@@ -23,6 +24,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -174,6 +176,7 @@ func (h *hashJoinSpillHelper) setPartitionSpilled(partIDs []int) {
 func (h *hashJoinSpillHelper) setNotSpilled() {
 	h.cond.L.Lock()
 	defer h.cond.L.Unlock()
+	log.Info("xzxdebug set notSpilled")
 	h.spillStatus = notSpilled
 }
 
@@ -244,8 +247,10 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 		releasedMemoryUsage += partitionsMemoryUsage[partID]
 	}
 
-	bytesLimit := h.memTracker.GetBytesLimit()
+	// We need to get the latest memory consumption
 	bytesConsumed := h.memTracker.BytesConsumed()
+
+	bytesLimit := h.bytesLimit.Load()
 	bytesConsumedAfterReleased := bytesConsumed - releasedMemoryUsage
 
 	// Check if it's enough to spill existing spilled partitions
@@ -319,7 +324,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDisk(workerID int, partID int, segm
 		h.buildRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
 		h.probeRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
 	}
-	
+
 	if h.buildRowsInDisk[workerID][partID] == nil {
 		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
@@ -383,6 +388,30 @@ func (h *hashJoinSpillHelper) init() {
 	}
 }
 
+func (h *hashJoinSpillHelper) spillWhenHashTableIsNotBuilt(workerID int, partitionsNeedSpill []int, errChannel chan error) {
+	for _, partID := range partitionsNeedSpill {
+		// finalize current segment of every partition in the worker
+		worker := h.hashJoinExec.BuildWorkers[workerID]
+		builder := worker.builder
+
+		startPosInRawData := builder.startPosInRawData[partID]
+		if len(startPosInRawData) > 0 {
+			worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
+		}
+		spilledSegments := worker.getSegments(partID)
+		worker.clearSegments(partID)
+
+		err := h.spillSegmentsToDisk(workerID, partID, spilledSegments)
+		if err != nil {
+			errChannel <- util.GetRecoverError(err)
+		}
+	}
+}
+
+func (h *hashJoinSpillHelper) spillWhenHashTableIsBuilt() {
+
+}
+
 func (h *hashJoinSpillHelper) spillBuildRows() error {
 	h.setInSpilling()
 	defer h.cond.Broadcast()
@@ -399,11 +428,16 @@ func (h *hashJoinSpillHelper) spillBuildRows() error {
 
 	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill()
 
-	workerNum := len(h.hashJoinExec.BuildWorkers)
+	var workerNum int
+	if h.hashJoinExec.hashTableContext.hashTable.isBuilt {
+		workerNum = len(partitionsNeedSpill)
+	} else {
+		workerNum = len(h.hashJoinExec.BuildWorkers)
+	}
 	errChannel := make(chan error, workerNum)
 
 	waiter := &sync.WaitGroup{}
-	waiter.Add(len(partitionsNeedSpill))
+	waiter.Add(workerNum)
 
 	h.setPartitionSpilled(partitionsNeedSpill)
 
@@ -417,23 +451,12 @@ func (h *hashJoinSpillHelper) spillBuildRows() error {
 				defer waiter.Done()
 			}()
 
-			for _, partID := range partitionsNeedSpill {
-				// finalize current segment of every partition in the worker
-				worker := h.hashJoinExec.BuildWorkers[workerID]
-				builder := worker.builder
-
-				startPosInRawData := builder.startPosInRawData[partID]
-				if len(startPosInRawData) > 0 {
-					worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
-				}
-				spilledSegments := worker.getSegments(partID)
-				worker.clearSegments(partID)
-
-				err := h.spillSegmentsToDisk(workerID, partID, spilledSegments)
-				if err != nil {
-					errChannel <- util.GetRecoverError(err)
-				}
+			if h.hashJoinExec.hashTableContext.hashTable.isBuilt {
+				h.spillWhenHashTableIsBuilt()
+			} else {
+				h.spillWhenHashTableIsNotBuilt()
 			}
+
 
 		}(i)
 	}
@@ -444,6 +467,11 @@ func (h *hashJoinSpillHelper) spillBuildRows() error {
 		return err
 	}
 	h.hashJoinExec.hashTableContext.memoryTracker.Consume(-totalReleasedMemory)
+	spilledPartition := ""
+	for _, partID := range partitionsNeedSpill {
+		spilledPartition = fmt.Sprintf("%s %d", spilledPartition, partID)
+	}
+	log.Info(fmt.Sprintf("xzxdebug release mem: %d, mem consumption: %d, spilled partition: %s", totalReleasedMemory, h.hashJoinExec.hashTableContext.memoryTracker.BytesConsumed(), spilledPartition))
 	return nil
 }
 
@@ -460,9 +488,13 @@ func (h *hashJoinSpillHelper) reset() {
 	h.spillTriggered = false
 }
 
-func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) {
+func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
+	if lastRound+1 > h.hashJoinExec.maxSpillRound {
+		return errors.NewNoStackError("Exceed max spill round")
+	}
+
 	if h.buildRowsInDisk == nil {
-		return
+		return nil
 	}
 
 	partNum := h.hashJoinExec.PartitionNumber
@@ -472,10 +504,14 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) {
 		buildInDisks := make([]*chunk.DataInDiskByChunks, 0)
 		probeInDisks := make([]*chunk.DataInDiskByChunks, 0)
 		for j := 0; j < concurrency; j++ {
-			if h.buildRowsInDisk[j][i] != nil {
+			if h.buildRowsInDisk[j] != nil && h.buildRowsInDisk[j][i] != nil {
 				buildInDisks = append(buildInDisks, h.buildRowsInDisk[j][i])
 				probeInDisks = append(probeInDisks, h.probeRowsInDisk[j][i])
 			}
+		}
+
+		if len(buildInDisks) == 0 {
+			continue
 		}
 
 		rd := &restorePartition{
@@ -486,22 +522,17 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) {
 		h.stack.push(rd)
 	}
 
+	h.hashJoinExec.HashJoinCtxV2.resetHashTableContextForRestore()
+
 	// Reset something as spill may still be triggered during restoring
 	h.reset()
+	return nil
 }
 
 func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 	if len(h.tmpSpillBuildSideChunks) < h.hashJoinExec.PartitionNumber {
 		for i := len(h.tmpSpillBuildSideChunks); i < h.hashJoinExec.PartitionNumber; i++ {
 			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
-		}
-	}
-}
-
-func (h *hashJoinSpillHelper) initTmpSpillProbeSideChunks() {
-	if len(h.tmpSpillProbeSideChunks) == 0 {
-		for i := 0; i < h.hashJoinExec.PartitionNumber; i++ {
-			h.tmpSpillProbeSideChunks = append(h.tmpSpillProbeSideChunks, chunk.NewChunkFromPoolWithCapacity(h.probeFieldTypes, spillChunkSize))
 		}
 	}
 }

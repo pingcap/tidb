@@ -34,12 +34,12 @@ func (st *subTable) lookup(hashValue uint64) uintptr {
 	return st.hashTable[hashValue&st.posMask]
 }
 
-func (st *subTable) getAllRowTablesMemoryUsage() int64 {
-	return st.rowData.getTotalMemoryUsage()
-}
-
 func (st *subTable) getTotalMemoryUsage() int64 {
 	return st.rowData.getTotalMemoryUsage() + int64(len(st.hashTable))*serialization.UnsafePointerLen
+}
+
+func (st *subTable) getSegmentNum() int {
+	return st.rowData.getSegmentNum()
 }
 
 func nextPowerOfTwo(value uint64) uint64 {
@@ -116,14 +116,28 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 type hashTableV2 struct {
 	tables          []*subTable
 	partitionNumber uint64
+	isBuilt         bool
 }
 
-func (ht *hashTableV2) getAllMemoryUsage() int64 {
-	totalMemoryUsage := int64(0)
-	for _, table := range ht.tables {
-		totalMemoryUsage += table.getTotalMemoryUsage()
+func (ht *hashTableV2) getPartitionSegments(partID int) []*rowTableSegment {
+	if ht.tables[partID] != nil {
+		return ht.tables[partID].rowData.getSegments()
 	}
-	return totalMemoryUsage
+	return nil
+}
+
+func (ht *hashTableV2) getPartitionMemoryUsage(partID int) int64 {
+	if ht.tables[partID] != nil {
+		return ht.tables[partID].getTotalMemoryUsage()
+	}
+	return 0
+}
+
+func (ht *hashTableV2) clearPartitionSegments(partID int) {
+	if ht.tables[partID] != nil {
+		ht.tables[partID].rowData.clearSegments()
+		ht.tables[partID].hashTable = nil
+	}
 }
 
 type rowPos struct {

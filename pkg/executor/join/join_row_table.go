@@ -239,6 +239,10 @@ type rowTable struct {
 	segments []*rowTableSegment
 }
 
+func (rt *rowTable) getSegmentNum() int {
+	return len(rt.segments)
+}
+
 func (rt *rowTable) getTotalMemoryUsage() int64 {
 	totalMemoryUsage := int64(0)
 	for _, seg := range rt.segments {
@@ -683,29 +687,36 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 		oldHashValue := row.GetInt64(0)
 		rowData := row.GetBytes(2)
 
-		hasValidJoinKey := binary.BigEndian.Uint64(validJoinKey)
-
-		if b.crrntSizeOfRowTable[partID] >= maxRowTableSegmentSize {
-			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, b, true)
+		var hasValidJoinKey uint64
+		if validJoinKey[0] != byte(0) {
+			hasValidJoinKey = 1
+		} else {
+			hasValidJoinKey = 0
 		}
 
-		seg := hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true)
+		var seg *rowTableSegment
 		if hasValidJoinKey != 0 {
-			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 			newHashValue, partID, err = b.regenerateHashValueAndPartIndex(uint64(oldHashValue), partitionNumber)
 			if err != nil {
 				return err
 			}
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true)
+			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		} else {
 			partID = int(fakePartIndex)
 			newHashValue = fakePartIndex
 			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true)
 		}
 
 		seg.hashValues = append(seg.hashValues, newHashValue)
 		b.startPosInRawData[partID] = append(b.startPosInRawData[partID], uint64(len(seg.rawData)))
 		seg.rawData = append(seg.rawData, rowData...)
 		b.crrntSizeOfRowTable[partID]++
+
+		if b.crrntSizeOfRowTable[partID] >= maxRowTableSegmentSize {
+			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, b, true)
+		}
 	}
 	return nil
 }
