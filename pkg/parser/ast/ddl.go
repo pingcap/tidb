@@ -2273,35 +2273,78 @@ const (
 
 // ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
 type ResourceGroupRunawayOption struct {
-	Tp       RunawayOptionType
-	StrValue string
-	IntValue int32
+	Tp           RunawayOptionType
+	RuleOption   *ResourceGroupRunawayRuleOption
+	ActionOption *ResourceGroupRunawayActionOption
+	WatchOption  *ResourceGroupRunawayWatchOption
 }
 
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case RunawayRule:
-		ctx.WriteKeyWord("EXEC_ELAPSED ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
+		n.RuleOption.restore(ctx)
 	case RunawayAction:
-		ctx.WriteKeyWord("ACTION ")
-		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+		n.ActionOption.Restore(ctx)
 	case RunawayWatch:
-		ctx.WriteKeyWord("WATCH ")
-		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
-		ctx.WritePlain(" ")
-		ctx.WriteKeyWord("DURATION ")
-		ctx.WritePlain("= ")
-		if len(n.StrValue) > 0 {
-			ctx.WriteString(n.StrValue)
-		} else {
-			ctx.WriteKeyWord("UNLIMITED")
-		}
+		n.WatchOption.restore(ctx)
 	default:
 		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
+	}
+	return nil
+}
+
+// ResourceGroupRunawayRuleOption is used for parsing the resource group/query watch runaway rule.
+type ResourceGroupRunawayRuleOption struct {
+	ExecElapsed string
+}
+
+func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("EXEC_ELAPSED ")
+	ctx.WritePlain("= ")
+	ctx.WriteString(n.ExecElapsed)
+	return nil
+}
+
+// ResourceGroupRunawayActionOption is used for parsing the resource group runaway action.
+type ResourceGroupRunawayActionOption struct {
+	node
+	Type model.RunawayActionType
+}
+
+// Restore implements Node interface.
+func (n *ResourceGroupRunawayActionOption) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ACTION ")
+	ctx.WritePlain("= ")
+	ctx.WriteKeyWord(n.Type.String())
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ResourceGroupRunawayActionOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
+}
+
+// ResourceGroupRunawayWatchOption is used for parsing the resource group runaway watch.
+type ResourceGroupRunawayWatchOption struct {
+	Type     model.RunawayWatchType
+	Duration string
+}
+
+func (n *ResourceGroupRunawayWatchOption) restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("WATCH ")
+	ctx.WritePlain("= ")
+	ctx.WriteKeyWord(n.Type.String())
+	ctx.WritePlain(" ")
+	ctx.WriteKeyWord("DURATION ")
+	ctx.WritePlain("= ")
+	if len(n.Duration) > 0 {
+		ctx.WriteString(n.Duration)
+	} else {
+		ctx.WriteKeyWord("UNLIMITED")
 	}
 	return nil
 }

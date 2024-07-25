@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -253,17 +254,6 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, sc
 	return expr
 }
 
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column) {
-	la.LogicalJoin.ReplaceExprColumns(replace)
-	for _, coCol := range la.CorCols {
-		dst := replace[string(coCol.Column.HashCode())]
-		if dst != nil {
-			coCol.Column = *dst
-		}
-	}
-}
-
 func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }
@@ -277,7 +267,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *opti
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(expr.StringWithCtx(ectx))
+			buffer.WriteString(expr.StringWithCtx(ectx, perrors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()

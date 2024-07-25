@@ -15,17 +15,13 @@
 package callback
 
 import (
-	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/stretchr/testify/require"
 )
 
 func TestCallback(t *testing.T) {
 	cb := &ddl.BaseCallback{}
-	require.Nil(t, cb.OnChanged(nil))
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)
-	cb.OnWatched(context.TODO())
 }

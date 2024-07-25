@@ -35,6 +35,8 @@ func init() {
 	utilfuncp.GetStreamAggs = getStreamAggs
 	utilfuncp.GetHashAggs = getHashAggs
 	utilfuncp.PruneByItems = pruneByItems
+	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
+	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
 
 	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan

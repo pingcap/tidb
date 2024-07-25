@@ -38,7 +38,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
@@ -134,7 +134,7 @@ func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 	return dbInfo, nil
 }
 
-func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo) *model.Job {
+func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -168,7 +168,7 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 	}
 }
 
-func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
@@ -227,8 +227,8 @@ func TestSchema(t *testing.T) {
 
 	// create a database.
 	tk := testkit.NewTestKit(t, store)
-	d := domain.DDL()
-	job := testCreateSchema(t, tk.Session(), d, dbInfo)
+	de := domain.DDLExecutor().(ddl.ExecutorForTest)
+	job := testCreateSchema(t, tk.Session(), de, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
 
@@ -236,7 +236,7 @@ func TestSchema(t *testing.T) {
 	// create table t with 100 records.
 	tblInfo1, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
-	tJob1 := testCreateTable(t, tk.Session(), d, dbInfo, tblInfo1)
+	tJob1 := testCreateTable(t, tk.Session(), de, dbInfo, tblInfo1)
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
@@ -250,7 +250,7 @@ func TestSchema(t *testing.T) {
 	tblInfo2, err := testTableInfo(store, "t1", 3)
 	require.NoError(t, err)
 	tk2 := testkit.NewTestKit(t, store)
-	tJob2 := testCreateTable(t, tk2.Session(), d, dbInfo, tblInfo2)
+	tJob2 := testCreateTable(t, tk2.Session(), de, dbInfo, tblInfo2)
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
@@ -261,7 +261,7 @@ func TestSchema(t *testing.T) {
 		require.NoError(t, err)
 	}
 	tk3 := testkit.NewTestKit(t, store)
-	job, v := testDropSchema(t, tk3.Session(), d, dbInfo)
+	job, v := testDropSchema(t, tk3.Session(), de, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
@@ -277,16 +277,16 @@ func TestSchema(t *testing.T) {
 	}
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
 	dbInfo1, err := testSchemaInfo(store, "test1")
 	require.NoError(t, err)
-	job = testCreateSchema(t, ctx, d, dbInfo1)
+	job = testCreateSchema(t, ctx, de, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
-	job, _ = testDropSchema(t, ctx, d, dbInfo1)
+	job, _ = testDropSchema(t, ctx, de, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StateNone)
 	testCheckJobDone(t, store, job.ID, false)
 }
@@ -296,13 +296,14 @@ func TestSchemaWaitJob(t *testing.T) {
 
 	require.True(t, domain.DDL().OwnerManager().IsOwner())
 
-	d2 := ddl.NewDDL(context.Background(),
+	d2, de2 := ddl.NewDDL(context.Background(),
 		ddl.WithEtcdClient(domain.EtcdClient()),
 		ddl.WithStore(store),
 		ddl.WithInfoCache(domain.InfoCache()),
 		ddl.WithLease(testLease),
 		ddl.WithSchemaLoader(domain),
 	)
+	det2 := de2.(ddl.ExecutorForTest)
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
 		session.GetSessionVars().CommonGlobalLoaded = true
@@ -322,7 +323,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	dbInfo, err := testSchemaInfo(store, "test_schema")
 	require.NoError(t, err)
 	se := testkit.NewTestKit(t, store).Session()
-	testCreateSchema(t, se, d2, dbInfo)
+	testCreateSchema(t, se, det2, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
@@ -331,7 +332,8 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema, []any{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
+	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema,
+		[]any{dbInfo}, testkit.NewTestKit(t, store).Session(), det2, store)
 }
 
 func doDDLJobErr(
@@ -341,7 +343,7 @@ func doDDLJobErr(
 	tp model.ActionType,
 	args []any,
 	ctx sessionctx.Context,
-	d ddl.DDL,
+	d ddl.ExecutorForTest,
 	store kv.Storage,
 ) *model.Job {
 	job := &model.Job{
