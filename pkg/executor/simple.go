@@ -2557,11 +2557,9 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		disableSandboxMode = true
 	}
 
-	fmt.Printf("User: %s@%s\n", u, h)
-	fmt.Printf("Session User: %s@%s\n", e.Ctx().GetSessionVars().User.AuthUsername, e.Ctx().GetSessionVars().User.AuthHostname)
-
 	// Check the current passsword against the policy if the user tries to change its own password
-	if (u == e.Ctx().GetSessionVars().User.AuthUsername) &&
+	if e.Ctx().GetSessionVars().User != nil &&
+		(u == e.Ctx().GetSessionVars().User.AuthUsername) &&
 		(h == e.Ctx().GetSessionVars().User.AuthHostname) {
 		err = checker.CheckCurrentPassword(u, h, s.ReplaceString, e.Ctx().GetSessionVars())
 		if err != nil {
