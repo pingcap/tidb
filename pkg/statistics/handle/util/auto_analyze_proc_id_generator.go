@@ -95,6 +95,14 @@ func (g *globalAutoAnalyzeProcessList) All() []uint64 {
 	return maps.Keys(g.processes)
 }
 
+func (g *globalAutoAnalyzeProcessList) Contains(id uint64) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	_, ok := g.processes[id]
+	return ok
+
+}
+
 // NewAutoAnalyzeTracker creates a new AutoAnalyzeTracker.
 func NewAutoAnalyzeTracker(track func(id uint64, ctx sysproctrack.TrackProc) error, untrack func(id uint64)) *AutoAnalyzeTracker {
 	return &AutoAnalyzeTracker{

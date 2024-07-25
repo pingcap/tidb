@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -3406,7 +3405,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CONNECTION_ADMIN"}, false, err)
 					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
-			} else if autoAnalyzeProcsID := handleutil.GlobalAutoAnalyzeProcessList.All(); slices.Contains(autoAnalyzeProcsID, raw.ConnectionID) {
+			} else if handleutil.GlobalAutoAnalyzeProcessList.Contains(raw.ConnectionID) {
 				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
 				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CONNECTION_ADMIN"}, false, err)
