@@ -818,7 +818,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
-	gcPlacementRuleCache := make(map[int64]any, len(ranges))
+	var gcPlacementRuleCache sync.Map
 
 	logutil.Logger(ctx).Info("start delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
@@ -829,7 +829,6 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		concurrency = 1
 	}
 	concurrencyLimiter := make(chan struct{}, concurrency)
-	var cacheMu sync.Mutex
 
 	var wg util2.WaitGroupWrapper
 	for _, r := range ranges {
@@ -863,7 +862,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				return
 			}
 
-			err = w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache, &cacheMu)
+			err = doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache)
 			if err != nil {
 				logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
 					zap.String("uuid", w.uuid),
@@ -1511,8 +1510,8 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, _ uint64,
-	dr util.DelRangeTask, gcPlacementRuleCache map[int64]any, cacheMu *sync.Mutex) (err error) {
+func doGCPlacementRules(se sessiontypes.Session, _ uint64,
+	dr util.DelRangeTask, gcPlacementRuleCache sync.Map) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -1555,14 +1554,12 @@ func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, _ uint64,
 	}
 
 	// Skip table ids that's already successfully handled.
-	cacheMu.Lock()
 	tmp := physicalTableIDs[:0]
 	for _, id := range physicalTableIDs {
-		if _, ok := gcPlacementRuleCache[id]; !ok {
+		if _, ok := gcPlacementRuleCache.Load(id); !ok {
 			tmp = append(tmp, id)
 		}
 	}
-	cacheMu.Unlock()
 	physicalTableIDs = tmp
 
 	if len(physicalTableIDs) == 0 {
@@ -1582,11 +1579,9 @@ func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, _ uint64,
 	}
 
 	// Cache the table id if its related rule are deleted successfully.
-	cacheMu.Lock()
 	for _, id := range physicalTableIDs {
-		gcPlacementRuleCache[id] = struct{}{}
+		gcPlacementRuleCache.Store(id, struct{}{})
 	}
-	cacheMu.Unlock()
 	return nil
 }
 
