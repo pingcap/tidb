@@ -2270,7 +2270,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.NextConnID)
 	if err != nil {
 		return err
 	}
@@ -2347,7 +2347,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.NextConnID)
 	if err != nil {
 		return err
 	}
@@ -2842,7 +2842,7 @@ func (do *Domain) ReleaseConnID(connID uint64) {
 
 // GetAutoAnalyzeProcID returns processID for auto analyze
 func (do *Domain) GetAutoAnalyzeProcID() uint64 {
-	return do.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
+	return do.connIDAllocator.NextID()
 }
 
 const (

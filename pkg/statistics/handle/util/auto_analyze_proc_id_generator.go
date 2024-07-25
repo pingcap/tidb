@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"golang.org/x/exp/maps"
 )
 
 // AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
@@ -45,6 +46,7 @@ func (g *generator) AutoAnalyzeProcID() uint64 {
 	return g.autoAnalyzeProcIDGetter()
 }
 
+// GlobalAutoAnalyzeProcessList is used to track the auto analyze process.
 var GlobalAutoAnalyzeProcessList = newGlobalAutoAnalyzeProcessList()
 
 type globalAutoAnalyzeProcessList struct {
@@ -58,23 +60,34 @@ func newGlobalAutoAnalyzeProcessList() *globalAutoAnalyzeProcessList {
 	}
 }
 
+// Tracker is used to track the auto analyze process.
 func (g *globalAutoAnalyzeProcessList) Tracker(id uint64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.processes[id] = struct{}{}
 }
 
+// Untracker is used to untrack the auto analyze process.
 func (g *globalAutoAnalyzeProcessList) Untracker(id uint64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.processes, id)
 }
 
+// AutoAnalyzeTracker is used to track the auto analyze process.
 type AutoAnalyzeTracker struct {
 	track   func(id uint64, ctx sysproctrack.TrackProc) error
 	untrack func(id uint64)
 }
 
+// All returns all the auto analyze process IDs.
+func (g *globalAutoAnalyzeProcessList) All() []uint64 {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return maps.Keys(g.processes)
+}
+
+// NewAutoAnalyzeTracker creates a new AutoAnalyzeTracker.
 func NewAutoAnalyzeTracker(track func(id uint64, ctx sysproctrack.TrackProc) error, untrack func(id uint64)) *AutoAnalyzeTracker {
 	return &AutoAnalyzeTracker{
 		track:   track,
@@ -82,11 +95,13 @@ func NewAutoAnalyzeTracker(track func(id uint64, ctx sysproctrack.TrackProc) err
 	}
 }
 
+// Track is used to track the auto analyze process.
 func (t *AutoAnalyzeTracker) Track(id uint64, ctx sysproctrack.TrackProc) error {
 	GlobalAutoAnalyzeProcessList.Tracker(id)
 	return t.track(id, ctx)
 }
 
+// UnTrack is used to untrack the auto analyze process.
 func (t *AutoAnalyzeTracker) UnTrack(id uint64) {
 	GlobalAutoAnalyzeProcessList.Untracker(id)
 	t.untrack(id)
