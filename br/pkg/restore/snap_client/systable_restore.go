@@ -39,6 +39,7 @@ var statsTables = map[string]map[string]struct{}{
 		"stats_meta_history": {},
 		"stats_table_locked": {},
 		"stats_top_n":        {},
+		"column_stats_usage": {},
 	},
 }
 
@@ -57,10 +58,8 @@ var sysPrivilegeTableMap = map[string]string{
 var unRecoverableTable = map[string]map[string]struct{}{
 	"mysql": {
 		// some variables in tidb (e.g. gc_safe_point) cannot be recovered.
-		"tidb":             {},
-		"global_variables": {},
-
-		"column_stats_usage":               {},
+		"tidb":                             {},
+		"global_variables":                 {},
 		"capture_plan_baselines_blacklist": {},
 		// gc info don't need to recover.
 		"gc_delete_range":      {},

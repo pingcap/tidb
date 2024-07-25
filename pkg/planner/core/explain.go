@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -77,6 +78,7 @@ func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
 	if len(p.rangeInfo) > 0 {
 		if !normalized {
@@ -95,7 +97,7 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(expr.StringWithCtx(ectx))
+				buffer.WriteString(expr.StringWithCtx(ectx, redact))
 			}
 			buffer.WriteString("], ")
 		}
@@ -105,7 +107,7 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 		} else if !p.isFullScan() {
 			buffer.WriteString("range:")
 			for _, idxRange := range p.Ranges {
-				buffer.WriteString(idxRange.String())
+				buffer.WriteString(idxRange.Redact(redact))
 				buffer.WriteString(", ")
 			}
 		}
@@ -184,6 +186,7 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
 	if len(p.rangeInfo) > 0 {
 		if !normalized {
@@ -202,7 +205,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(AccessCondition.StringWithCtx(ectx))
+				buffer.WriteString(AccessCondition.StringWithCtx(ectx, redact))
 			}
 			buffer.WriteString("], ")
 		}
@@ -212,7 +215,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		} else if !p.isFullScan() {
 			buffer.WriteString("range:")
 			for _, idxRange := range p.Ranges {
-				buffer.WriteString(idxRange.String())
+				buffer.WriteString(idxRange.Redact(redact))
 				buffer.WriteString(", ")
 			}
 		}
@@ -376,7 +379,9 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	exprStr := expression.ExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Exprs, p.schema)
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
+	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.schema, enableRedactLog)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
@@ -386,22 +391,23 @@ func (p *PhysicalProjection) ExplainInfo() string {
 func (p *PhysicalExpand) explainInfoV2() string {
 	sb := strings.Builder{}
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
 	for i, oneL := range p.LevelExprs {
 		if i == 0 {
 			sb.WriteString("level-projection:")
 			sb.WriteString("[")
-			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema))
+			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema, enableRedactLog))
 			sb.WriteString("]")
 		} else {
 			sb.WriteString(",[")
-			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema))
+			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.schema, enableRedactLog))
 			sb.WriteString("]")
 		}
 	}
 	sb.WriteString("; schema: [")
 	colStrs := make([]string, 0, len(p.schema.Columns))
 	for _, col := range p.schema.Columns {
-		colStrs = append(colStrs, col.StringWithCtx(evalCtx))
+		colStrs = append(colStrs, col.StringWithCtx(evalCtx, perrors.RedactLogDisable))
 	}
 	sb.WriteString(strings.Join(colStrs, ","))
 	sb.WriteString("]")
@@ -437,12 +443,18 @@ func (p *PhysicalSort) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
 		buffer = explainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
-		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
-	} else {
+		fmt.Fprintf(buffer, ", ")
+	}
+	if redact == perrors.RedactLogDisable {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	} else if redact == perrors.RedactLogMarker {
+		fmt.Fprintf(buffer, "offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+	} else if redact == perrors.RedactLogEnable {
+		fmt.Fprintf(buffer, "offset:?, count:?")
 	}
 	return buffer.String()
 }
@@ -457,9 +469,9 @@ func (p *PhysicalExpand) ExplainInfo() string {
 	str.WriteString("group set num:")
 	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
 	str.WriteString(", groupingID:")
-	str.WriteString(p.GroupingIDCol.StringWithCtx(ectx))
+	str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
 	str.WriteString(", ")
-	str.WriteString(p.GroupingSets.StringWithCtx(ectx))
+	str.WriteString(p.GroupingSets.StringWithCtx(ectx, perrors.RedactLogDisable))
 	return str.String()
 }
 
@@ -598,7 +610,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
-
+	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	buffer := new(strings.Builder)
 
 	if len(p.EqualConditions) == 0 {
@@ -622,7 +634,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(EqualConditions.StringWithCtx(evalCtx))
+				buffer.WriteString(EqualConditions.StringWithCtx(evalCtx, redact))
 			}
 			buffer.WriteString("]")
 		}
@@ -637,7 +649,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(NAEqualCondition.StringWithCtx(evalCtx))
+				buffer.WriteString(NAEqualCondition.StringWithCtx(evalCtx, redact))
 			}
 			buffer.WriteString("]")
 		}
@@ -652,7 +664,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(LeftConditions.StringWithCtx(evalCtx))
+				buffer.WriteString(LeftConditions.StringWithCtx(evalCtx, redact))
 			}
 			buffer.WriteString("]")
 		}
@@ -706,11 +718,8 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 			expression.ExplainColumnList(evalCtx, p.RightJoinKeys))
 	}
 	if len(p.LeftConditions) > 0 {
-		if normalized {
-			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
-		} else {
-			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
-		}
+		fmt.Fprintf(buffer, ", left cond:%s",
+			sortedExplainExpressionList(evalCtx, p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
@@ -758,7 +767,14 @@ func (p *PhysicalTopN) ExplainInfo() string {
 		}
 		buffer = explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
 	}
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	switch p.SCtx().GetSessionVars().EnableRedactLog {
+	case perrors.RedactLogDisable:
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	case perrors.RedactLogMarker:
+		fmt.Fprintf(buffer, ", offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+	case perrors.RedactLogEnable:
+		fmt.Fprintf(buffer, ", offset:?, count:?")
+	}
 	return buffer.String()
 }
 
@@ -800,7 +816,14 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 			fmt.Fprintf(buffer, "%s", sf.GetArgs()[1].ExplainInfo(evalCtx))
 		}
 	} else {
-		fmt.Fprintf(buffer, "%d", bound.Num)
+		switch p.SCtx().GetSessionVars().EnableRedactLog {
+		case perrors.RedactLogDisable:
+			fmt.Fprintf(buffer, "%d", bound.Num)
+		case perrors.RedactLogMarker:
+			fmt.Fprintf(buffer, "‹%d›", bound.Num)
+		case perrors.RedactLogEnable:
+			fmt.Fprintf(buffer, "?")
+		}
 	}
 	if bound.Type == ast.Preceding {
 		buffer.WriteString(" preceding")
@@ -878,62 +901,9 @@ func formatWindowFuncDescs(ctx expression.EvalContext, buffer *bytes.Buffer, des
 		if i != 0 {
 			buffer.WriteString(", ")
 		}
-		fmt.Fprintf(buffer, "%v->%v", desc.StringWithCtx(ctx), schema.Columns[winFuncStartIdx+i])
+		fmt.Fprintf(buffer, "%v->%v", desc.StringWithCtx(ctx, perrors.RedactLogDisable), schema.Columns[winFuncStartIdx+i])
 	}
 	return buffer
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalJoin) ExplainInfo() string {
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString(p.JoinType.String())
-	if len(p.EqualConditions) > 0 {
-		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
-	}
-	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s",
-			expression.SortedExplainExpressionList(evalCtx, p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.SortedExplainExpressionList(evalCtx, p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.SortedExplainExpressionList(evalCtx, p.OtherConditions))
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalProjection) ExplainInfo() string {
-	return expression.ExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Exprs, p.Schema())
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalSelection) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalApply) ExplainInfo() string {
-	return p.LogicalJoin.ExplainInfo()
-}
-
-// ExplainInfo implements Plan interface.
-func (ds *DataSource) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	tblName := ds.TableInfo.Name.O
-	if ds.TableAsName != nil && ds.TableAsName.O != "" {
-		tblName = ds.TableAsName.O
-	}
-	fmt.Fprintf(buffer, "table:%s", tblName)
-	if ds.PartitionDefIdx != nil {
-		if pi := ds.TableInfo.GetPartitionInfo(); pi != nil {
-			fmt.Fprintf(buffer, ", partition:%s", pi.Definitions[*ds.PartitionDefIdx].Name.O)
-		}
-	}
-	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -977,15 +947,6 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 	return res
 }
 
-// ExplainInfo implements Plan interface.
-func (p *LogicalUnionScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "conds:%s",
-		expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.conditions))
-	fmt.Fprintf(buffer, ", handle:%s", p.handleCols)
-	return buffer.String()
-}
-
 func explainByItems(ctx expression.EvalContext, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		if item.Desc {
@@ -1014,29 +975,6 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 		}
 	}
 	return buffer
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalIndexScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	index := p.Index
-	if len(index.Columns) > 0 {
-		buffer.WriteString(", index:")
-		for i, idxCol := range index.Columns {
-			if tblCol := p.Source.TableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(index.Columns) {
-				buffer.WriteString(", ")
-			}
-		}
-	}
-	if len(p.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
-	}
-	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.

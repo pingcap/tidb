@@ -208,7 +208,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, err)
 	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("db"))
 	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(model.NewCIStr("db"), model.NewCIStr("tb"))
+	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("db"), model.NewCIStr("tb"))
 	require.NoError(t, err)
 	plan := &importer.Plan{
 		DBID:             dbInfo.ID,
@@ -229,7 +229,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
 	// rebase success
 	tk.MustExec("create table db.tb2(id int auto_increment primary key)")
-	table, err = do.InfoSchema().TableByName(model.NewCIStr("db"), model.NewCIStr("tb2"))
+	table, err = do.InfoSchema().TableByName(context.Background(), model.NewCIStr("db"), model.NewCIStr("tb2"))
 	require.NoError(t, err)
 	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
 	integration.BeforeTestExternal(t)
@@ -260,7 +260,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	require.NoError(t, err)
 	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tableName))
 	require.NoError(t, err)
 	var selectPlan base.PhysicalPlan
 	if path == "" {

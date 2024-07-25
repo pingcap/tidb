@@ -38,6 +38,8 @@ var (
 	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupNotExists)
 	// ErrResourceGroupInvalidBackgroundTaskName return for unknown resource group background task name.
 	ErrResourceGroupInvalidBackgroundTaskName = dbterror.ClassExecutor.NewStd(mysql.ErrResourceGroupInvalidBackgroundTaskName)
+	// ErrResourceGroupInvalidForRole return for invalid resource group for role.
+	ErrResourceGroupInvalidForRole = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupInvalidForRole)
 	// ErrReservedSyntax for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.

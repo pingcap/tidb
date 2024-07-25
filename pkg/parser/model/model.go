@@ -1687,13 +1687,14 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                 int64          `json:"id"`      // Database ID
-	Name               CIStr          `json:"db_name"` // DB name.
-	Charset            string         `json:"charset"`
-	Collate            string         `json:"collate"`
-	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
-	State              SchemaState    `json:"state"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	ID                 int64            `json:"id"`      // Database ID
+	Name               CIStr            `json:"db_name"` // DB name.
+	Charset            string           `json:"charset"`
+	Collate            string           `json:"collate"`
+	Tables             []*TableInfo     `json:"-"` // Tables in the DB.
+	State              SchemaState      `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
+	TableName2ID       map[string]int64 `json:"-"`
 }
 
 // Clone clones DBInfo.

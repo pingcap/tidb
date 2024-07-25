@@ -136,7 +136,7 @@
       },
       {
         "SQL": "select f from t where a > 1",
-        "Best": "TableReader(Table(t))->Projection"
+        "Best": "TableReader(Table(t)->Projection)"
       },
       {
         "SQL": "select f from t where a > 1 limit 10",

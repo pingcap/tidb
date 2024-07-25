@@ -17,6 +17,7 @@ package context
 import (
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -97,6 +98,7 @@ func TestEncodeRow(t *testing.T) {
 			oldFormat: true,
 		},
 	} {
+		// test encode and write to mem buffer
 		cfg := RowEncodingConfig{
 			RowEncoder:                &rowcodec.Encoder{Enable: !c.oldFormat},
 			IsRowLevelChecksumEnabled: c.rowLevelChecksum,
@@ -115,9 +117,11 @@ func TestEncodeRow(t *testing.T) {
 
 		memBuffer := &mockMemBuffer{}
 		if len(c.flags) == 0 {
-			memBuffer.On("Set", kv.Key("key1"), expectedVal).Return(nil).Once()
+			memBuffer.On("Set", kv.Key("key1"), expectedVal).
+				Return(nil).Once()
 		} else {
-			memBuffer.On("SetWithFlags", kv.Key("key1"), expectedVal, c.flags).Return(nil).Once()
+			memBuffer.On("SetWithFlags", kv.Key("key1"), expectedVal, c.flags).
+				Return(nil).Once()
 		}
 		err = buffer.WriteMemBufferEncoded(
 			cfg, c.loc, errctx.StrictNoWarningContext,
@@ -125,9 +129,19 @@ func TestEncodeRow(t *testing.T) {
 		)
 		require.NoError(t, err)
 		memBuffer.AssertExpectations(t)
-
 		// the encoding result should be cached as a buffer
 		require.Equal(t, expectedVal, buffer.writeStmtBufs.RowValBuf)
+
+		// test encode val for binlog
+		expectedVal, err =
+			tablecodec.EncodeOldRow(c.loc, []types.Datum{d1, d2, d3}, []int64{1, 2, 3}, nil, nil)
+		require.NoError(t, err)
+		encoded, err := buffer.EncodeBinlogRowData(c.loc, errctx.StrictNoWarningContext)
+		require.NoError(t, err)
+		require.Equal(t, expectedVal, encoded)
+		// the encoded should not be referenced by any inner buffer
+		require.True(t, unsafe.SliceData(encoded) != unsafe.SliceData(buffer.writeStmtBufs.RowValBuf))
+		require.True(t, unsafe.SliceData(encoded) != unsafe.SliceData(buffer.writeStmtBufs.IndexKeyBuf))
 	}
 }
 
@@ -158,11 +172,6 @@ func TestEncodeBufferReserve(t *testing.T) {
 	require.Equal(t, 4, len(buffer.writeStmtBufs.AddRowValues))
 	addRowValuesCap := cap(buffer.writeStmtBufs.AddRowValues)
 
-	// GetColDataBuffer should return the underlying buffer
-	colIDs, row := buffer.GetColDataBuffer()
-	require.Equal(t, buffer.colIDs, colIDs)
-	require.Equal(t, buffer.row, row)
-
 	// reset should not shrink the capacity
 	buffer.Reset(2)
 	require.Equal(t, 6, cap(buffer.colIDs))
@@ -181,7 +190,10 @@ func TestCheckRowBuffer(t *testing.T) {
 	buffer.AddColVal(types.NewIntDatum(1))
 	buffer.AddColVal(types.NewIntDatum(2))
 	require.Equal(t, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)}, buffer.rowToCheck)
-	require.Equal(t, buffer.rowToCheck, buffer.GetRowToCheck())
+	rowToCheck := buffer.GetRowToCheck()
+	require.Equal(t, 2, rowToCheck.Len())
+	require.Equal(t, int64(1), rowToCheck.GetInt64(0))
+	require.Equal(t, int64(2), rowToCheck.GetInt64(1))
 
 	// reset should not shrink the capacity
 	buffer.Reset(2)
@@ -194,10 +206,23 @@ func TestColSizeDeltaBuffer(t *testing.T) {
 	buffer.Reset(6)
 	require.Equal(t, 0, len(buffer.delta))
 	require.Equal(t, 6, cap(buffer.delta))
+	require.Nil(t, buffer.UpdateColSizeMap(nil))
+
 	buffer.AddColSizeDelta(1, 2)
-	buffer.AddColSizeDelta(3, 4)
-	require.Equal(t, []variable.ColSize{{ColID: 1, Size: 2}, {ColID: 3, Size: 4}}, buffer.delta)
-	require.Equal(t, buffer.delta, buffer.GetColSizeDelta())
+	buffer.AddColSizeDelta(3, -4)
+	buffer.AddColSizeDelta(10, 11)
+	require.Equal(t, []variable.ColSize{{ColID: 1, Size: 2}, {ColID: 3, Size: -4}, {ColID: 10, Size: 11}}, buffer.delta)
+
+	require.Equal(t, map[int64]int64{1: 2, 3: -4, 10: 11}, buffer.UpdateColSizeMap(nil))
+	m := make(map[int64]int64)
+	m2 := buffer.UpdateColSizeMap(m)
+	require.Equal(t, map[int64]int64{1: 2, 3: -4, 10: 11}, m2)
+	require.Equal(t, m2, m)
+
+	m = map[int64]int64{1: 3, 3: 5, 5: 7}
+	m2 = buffer.UpdateColSizeMap(m)
+	require.Equal(t, map[int64]int64{1: 5, 3: 1, 5: 7, 10: 11}, m2)
+	require.Equal(t, m2, m)
 
 	// reset should not shrink the capacity
 	buffer.Reset(2)
@@ -218,6 +243,8 @@ func TestMutateBuffersGetter(t *testing.T) {
 
 	colSize := buffers.GetColSizeDeltaBufferWithCap(6)
 	require.Equal(t, 6, cap(colSize.delta))
+
+	require.Same(t, stmtBufs, buffers.GetWriteStmtBufs())
 }
 
 func TestEnsureCapacityAndReset(t *testing.T) {

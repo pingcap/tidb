@@ -304,7 +304,7 @@ func (s *session) cleanRetryInfo() {
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
 			preparedObj, ok = preparedPointer.(*plannercore.PlanCacheStmt)
 			if ok {
-				cacheKey, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
+				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -315,7 +315,7 @@ func (s *session) cleanRetryInfo() {
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedObj != nil {
-				cacheKey, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
+				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -442,7 +442,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 			return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
 		}
 	}
-	table, err := is.TableByName(dbName, tName)
+	table, err := is.TableByName(context.Background(), dbName, tName)
 	if err != nil {
 		return nil, err
 	}
@@ -2412,10 +2412,15 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 		if err2 != nil {
 			logutil.BgLogger().Error("close detached record set failed", zap.Error(err2))
 		}
-		return nil, false, err
+		return nil, true, err
 	}
 
 	return crs, true, nil
+}
+
+// GetExecutor4Test exports the internal executor for test purpose.
+func (rs *execStmtResult) GetExecutor4Test() any {
+	return rs.RecordSet.(interface{ GetExecutor4Test() any }).GetExecutor4Test()
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -2535,7 +2540,7 @@ func (s *session) Close() {
 			time.Sleep(time.Duration(ds) * time.Millisecond)
 		}
 		lockedTables := s.GetAllTableLocks()
-		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
+		err := domain.GetDomain(s).DDLExecutor().UnlockTables(s, lockedTables)
 		if err != nil {
 			logutil.BgLogger().Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
 		}
@@ -2785,7 +2790,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 	}
 
 	if variable.EnableResourceControl.Load() && info.ResourceGroupName != "" {
-		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
+		s.sessionVars.SetResourceGroupName(info.ResourceGroupName)
 	}
 
 	if info.InSandBoxMode {
@@ -3317,6 +3322,32 @@ func InitMDLVariableForBootstrap(store kv.Storage) error {
 	return nil
 }
 
+// InitTiDBSchemaCacheSize initializes the tidb schema cache size.
+func InitTiDBSchemaCacheSize(store kv.Storage) error {
+	var (
+		isNull bool
+		size   uint64
+		err    error
+	)
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		size, isNull, err = t.GetSchemaCacheSize()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			size = variable.DefTiDBSchemaCacheSize
+			return t.SetSchemaCacheSize(size)
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	variable.SchemaCacheSize.Store(size)
+	return nil
+}
+
 // InitMDLVariableForUpgrade initializes the metadata lock variable.
 func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 	isNull := false
@@ -3395,6 +3426,10 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		return nil, err
 	}
 	err = InitDDLJobTables(store, meta.BackfillTableVersion)
+	if err != nil {
+		return nil, err
+	}
+	err = InitTiDBSchemaCacheSize(store)
 	if err != nil {
 		return nil, err
 	}
@@ -3701,7 +3736,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars = variable.NewSessionVars(s)
 	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
@@ -3764,7 +3799,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
@@ -3918,7 +3953,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future:    future,
 		store:     s.store,
 		txnScope:  scope,
-		pipelined: s.usePipelinedDmlOrWarn(),
+		pipelined: s.usePipelinedDmlOrWarn(ctx),
 	})
 	return nil
 }
@@ -4398,7 +4433,7 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 }
 
 // usePipelinedDmlOrWarn returns the current statement can be executed as a pipelined DML.
-func (s *session) usePipelinedDmlOrWarn() bool {
+func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	if !s.sessionVars.BulkDMLEnabled {
 		return false
 	}
@@ -4461,7 +4496,7 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 	}
 	for _, t := range stmtCtx.Tables {
 		// get table schema from current infoschema
-		tbl, err := is.TableByName(model.NewCIStr(t.DB), model.NewCIStr(t.Table))
+		tbl, err := is.TableByName(ctx, model.NewCIStr(t.DB), model.NewCIStr(t.Table))
 		if err != nil {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get table schema. Fallback to standard mode"))
 			return false

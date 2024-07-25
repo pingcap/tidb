@@ -250,6 +250,7 @@ type JSONTable struct {
 	DatabaseName      string                 `json:"database_name"`
 	TableName         string                 `json:"table_name"`
 	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
+	PredicateColumns  []*JSONPredicateColumn `json:"predicate_columns"`
 	Count             int64                  `json:"count"`
 	ModifyCount       int64                  `json:"modify_count"`
 	Version           uint64                 `json:"version"`
@@ -290,4 +291,11 @@ func (col *JSONColumn) TotalMemoryUsage() (size int64) {
 		size += int64(col.FMSketch.Size())
 	}
 	return size
+}
+
+// JSONPredicateColumn contains the information of the columns used in the predicate.
+type JSONPredicateColumn struct {
+	LastUsedAt     *string `json:"last_used_at"`
+	LastAnalyzedAt *string `json:"last_analyzed_at"`
+	ID             int64   `json:"id"`
 }

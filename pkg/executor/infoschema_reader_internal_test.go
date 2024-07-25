@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -75,7 +76,7 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 	dbs := []model.CIStr{
 		model.NewCIStr("test"),
 	}
-	err := mt.setDataFromCheckConstraints(sctx, dbs)
+	err := mt.setDataFromCheckConstraints(context.Background(), sctx, dbs)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(mt.rows))    // 1 row
@@ -138,7 +139,7 @@ func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 	dbs := []model.CIStr{
 		model.NewCIStr("test"),
 	}
-	err := mt.setDataFromTiDBCheckConstraints(sctx, dbs)
+	err := mt.setDataFromTiDBCheckConstraints(context.Background(), sctx, dbs)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(mt.rows))    // 1 row

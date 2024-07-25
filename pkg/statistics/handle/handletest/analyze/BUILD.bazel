@@ -16,6 +16,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/testkit",
+        "//pkg/testkit/analyzehelper",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

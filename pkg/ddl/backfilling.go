@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -26,9 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -37,8 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -55,12 +55,19 @@ import (
 type backfillerType byte
 
 const (
-	typeAddIndexWorker         backfillerType = 0
-	typeUpdateColumnWorker     backfillerType = 1
-	typeCleanUpIndexWorker     backfillerType = 2
-	typeAddIndexMergeTmpWorker backfillerType = 3
-	typeReorgPartitionWorker   backfillerType = 4
+	typeAddIndexWorker backfillerType = iota
+	typeUpdateColumnWorker
+	typeCleanUpIndexWorker
+	typeAddIndexMergeTmpWorker
+	typeReorgPartitionWorker
+
+	typeCount
 )
+
+// BackupFillerTypeCount represents the count of ddl jobs that need to do backfill.
+func BackupFillerTypeCount() int {
+	return int(typeCount)
+}
 
 func (bT backfillerType) String() string {
 	switch bT {
@@ -420,77 +427,91 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	}
 }
 
-func splitAndValidateTableRanges(
+// loadTableRanges load table key ranges from PD between given start key and end key.
+// It returns up to `limit` ranges.
+func loadTableRanges(
 	ctx context.Context,
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
-	ranges, err := splitTableRanges(ctx, t, store, startKey, endKey, limit)
-	if err != nil {
-		return nil, err
-	}
-	return validateTableRanges(ranges, startKey, endKey)
-}
-
-func validateTableRanges(ranges []kv.KeyRange, start, end kv.Key) ([]kv.KeyRange, error) {
-	for i, r := range ranges {
-		if len(r.StartKey) == 0 {
-			if i != 0 {
-				return nil, errors.Errorf("get empty start key in the middle of ranges")
-			}
-			r.StartKey = start
-		}
-		if len(r.EndKey) == 0 {
-			if i != len(ranges)-1 {
-				return nil, errors.Errorf("get empty end key in the middle of ranges")
-			}
-			r.EndKey = end
-		}
-	}
-	return ranges, nil
-}
-
-// splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
-// to speed up backfilling data in table with disperse handle.
-// The `t` should be a non-partitioned table or a partition.
-func splitTableRanges(
-	ctx context.Context,
-	t table.PhysicalTable,
-	store kv.Storage,
-	startKey, endKey kv.Key,
-	limit int,
-) ([]kv.KeyRange, error) {
-	logutil.DDLLogger().Info("split table range from PD",
-		zap.Int64("physicalTableID", t.GetPhysicalID()),
-		zap.String("start key", hex.EncodeToString(startKey)),
-		zap.String("end key", hex.EncodeToString(endKey)))
 	if len(startKey) == 0 && len(endKey) == 0 {
-		logutil.DDLLogger().Info("split table range from PD, get noop table range",
+		logutil.DDLLogger().Info("load noop table range",
 			zap.Int64("physicalTableID", t.GetPhysicalID()))
 		return []kv.KeyRange{}, nil
 	}
 
-	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
 		// Only support split ranges in tikv.Storage now.
-		return []kv.KeyRange{kvRange}, nil
+		logutil.DDLLogger().Info("load table ranges failed, unsupported storage",
+			zap.String("storage", fmt.Sprintf("%T", store)),
+			zap.Int64("physicalTableID", t.GetPhysicalID()))
+		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 	}
 
+	rc := s.GetRegionCache()
 	maxSleep := 10000 // ms
-	bo := backoff.NewBackofferWithVars(ctx, maxSleep, nil)
-	rc := copr.NewRegionCache(s.GetRegionCache())
-	ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange}, limit)
+	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
+	var ranges []kv.KeyRange
+	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+		logutil.DDLLogger().Info("load table ranges from PD",
+			zap.Int64("physicalTableID", t.GetPhysicalID()),
+			zap.String("start key", hex.EncodeToString(startKey)),
+			zap.String("end key", hex.EncodeToString(endKey)))
+		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		ranges = make([]kv.KeyRange, 0, len(rs))
+		for _, r := range rs {
+			ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
+		}
+		err = validateAndFillRanges(ranges, startKey, endKey)
+		if err != nil {
+			return true, errors.Trace(err)
+		}
+		return false, nil
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(ranges) == 0 {
-		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
-		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
-	}
+	logutil.DDLLogger().Info("load table ranges from PD done",
+		zap.Int64("physicalTableID", t.GetPhysicalID()),
+		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
+		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
+		zap.Int("range count", len(ranges)))
 	return ranges, nil
+}
+
+func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	if len(ranges) == 0 {
+		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
+			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
+	}
+	for i, r := range ranges {
+		if i == 0 {
+			s := r.StartKey
+			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
+				ranges[i].StartKey = startKey
+			}
+		}
+		if i == len(ranges)-1 {
+			e := r.EndKey
+			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
+				ranges[i].EndKey = endKey
+			}
+		}
+		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
+			return errors.Errorf("get empty start/end key in the middle of ranges")
+		}
+		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
+			return errors.Errorf("ranges are not continuous")
+		}
+	}
+	return nil
 }
 
 func getBatchTasks(
@@ -660,15 +681,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 	defer ingest.LitBackCtxMgr.Unregister(job.ID)
-	engines, err := bcCtx.Register(indexIDs, uniques, t.Meta())
-	if err != nil {
-		logutil.DDLIngestLogger().Error("cannot register new engine",
-			zap.Int64("jobID", job.ID),
-			zap.Error(err),
-			zap.Int64s("index IDs", indexIDs))
-		return errors.Trace(err)
-	}
-	defer bcCtx.UnregisterEngines()
 	sctx, err := sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -677,11 +689,11 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	cpMgr, err := ingest.NewCheckpointManager(
 		ctx,
-		bcCtx,
 		sessPool,
+		reorgInfo.PhysicalTableID,
 		job.ID,
 		indexIDs,
-		bcCtx.GetLocalBackend().LocalStoreDir,
+		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
 		dc.store.(kv.StorageWithPD).GetPDClient(),
 	)
 	if err != nil {
@@ -690,7 +702,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Error(err))
 	} else {
 		defer cpMgr.Close()
-		cpMgr.Reset(t.GetPhysicalID(), reorgInfo.StartKey, reorgInfo.EndKey)
 		bcCtx.AttachCheckpointManager(cpMgr)
 	}
 
@@ -704,6 +715,15 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
 	concurrency := int(variable.GetDDLReorgWorkerCounter())
+
+	engines, err := bcCtx.Register(indexIDs, uniques, t)
+	if err != nil {
+		logutil.DDLIngestLogger().Error("cannot register new engine",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err),
+			zap.Int64s("index IDs", indexIDs))
+		return errors.Trace(err)
+	}
 
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
@@ -725,26 +745,33 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	err = pipe.Execute()
+	err = executeAndClosePipeline(opCtx, pipe)
+	if err != nil {
+		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
+		if err1 != nil {
+			logutil.DDLIngestLogger().Error("unregister engine failed",
+				zap.Int64("jobID", job.ID),
+				zap.Error(err1),
+				zap.Int64s("index IDs", indexIDs))
+		}
+		return err
+	}
+	if cpMgr != nil {
+		cpMgr.AdvanceWatermark(true, true)
+	}
+	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
+}
+
+func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline) error {
+	err := pipe.Execute()
 	if err != nil {
 		return err
 	}
 	err = pipe.Close()
-	if opCtx.OperatorErr() != nil {
-		return opCtx.OperatorErr()
+	if opErr := ctx.OperatorErr(); opErr != nil {
+		return opErr
 	}
-	if err != nil {
-		return err
-	}
-	for i, isUK := range uniques {
-		if isUK {
-			err := bcCtx.CollectRemoteDuplicateRows(indexIDs[i], t)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return err
 }
 
 type localRowCntListener struct {
@@ -886,7 +913,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := splitAndValidateTableRanges(egCtx, t, reorgInfo.d.store, start, end, backfillTaskChanSize)
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}

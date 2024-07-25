@@ -1331,7 +1331,7 @@ NEXTSQL:
 	for _, sql := range sqls {
 		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
 
-		tableInfo, err := info.TableByName(sql.SchemaName, sql.TableName)
+		tableInfo, err := info.TableByName(ctx, sql.SchemaName, sql.TableName)
 		if err != nil {
 			return errors.Trace(err)
 		}

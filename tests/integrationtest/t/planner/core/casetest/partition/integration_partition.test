@@ -35,9 +35,9 @@ create table tdecimal (a decimal(30, 10)) partition by list columns(a) (partitio
 insert into tint values (0), (1), (2), (3);
 insert into tdate values ('2000-01-01'), ('2000-01-02'), ('2000-01-03'), ('2000-01-04');
 insert into tstring values ('a'), ('b'), ('c'), ('d');
-analyze table tint;
-analyze table tdate;
-analyze table tstring;
+analyze table tint all columns;
+analyze table tdate all columns;
+analyze table tstring all columns;
 explain format = 'brief' select * from tint where a<=1;
 explain format = 'brief' select * from tint where a in (0, 1);
 select * from tint where a<=1 order by a;

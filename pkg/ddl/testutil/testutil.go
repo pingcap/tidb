@@ -71,7 +71,7 @@ func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, don
 // ExtractAllTableHandles extracts all handles of a given table.
 func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]int64, error) {
 	dom := domain.GetDomain(se)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tbName))
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]i
 
 // FindIdxInfo is to get IndexInfo by index name.
 func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tbName))
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
 		return nil

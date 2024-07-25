@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -164,20 +165,8 @@ func (*PointGetPlan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executo
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *PointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
-}
-
-// CloneForPlanCache implements PhysicalPlan interface.
-func (p *PointGetPlan) CloneForPlanCache() (base.Plan, bool) {
-	cloned := new(PointGetPlan)
-	*cloned = *p
-	cloned.IndexValues = make([]types.Datum, len(p.IndexValues))
-	copy(cloned.IndexValues, p.IndexValues)
-	if p.Handle != nil {
-		cloned.Handle = p.Handle.Copy()
-	}
-	return cloned, true
 }
 
 // ExplainInfo implements Plan interface.
@@ -208,11 +197,15 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?")
 		} else {
+			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
-			if p.UnsignedHandle {
-				buffer.WriteString(strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
+			if redactOn {
+				buffer.WriteString("?")
+			} else if p.UnsignedHandle {
+				redact.WriteRedact(&buffer, strconv.FormatUint(uint64(p.Handle.IntValue()), 10), redactMode)
 			} else {
-				buffer.WriteString(p.Handle.String())
+				redact.WriteRedact(&buffer, p.Handle.String(), redactMode)
 			}
 		}
 	}
@@ -349,6 +342,17 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	}
 	if p.IndexInfo != nil && p.IndexInfo.Global {
 		// reading for the Global Index / table id
+		return false
+	}
+	// _tidb_rowid + specify a partition
+	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
+		for i, def := range pi.Definitions {
+			if def.Name.L == p.PartitionNames[0].L {
+				idx := i
+				p.PartitionIdx = &idx
+				break
+			}
+		}
 		return false
 	}
 	// If tryPointGetPlan did generate the plan,
@@ -493,25 +497,8 @@ func (p *BatchPointGetPlan) SetCost(cost float64) {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *BatchPointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
-}
-
-// CloneForPlanCache implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) CloneForPlanCache() (base.Plan, bool) {
-	cloned := new(BatchPointGetPlan)
-	*cloned = *p
-	cloned.Handles = make([]kv.Handle, len(p.Handles))
-	for i, h := range p.Handles {
-		cloned.Handles[i] = h.Copy()
-	}
-	cloned.IndexValues = make([][]types.Datum, len(p.IndexValues))
-	for i, values := range p.IndexValues {
-		cloned.IndexValues[i] = make([]types.Datum, len(values))
-		copy(cloned.IndexValues[i], values)
-	}
-
-	return cloned, true
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -1738,7 +1725,11 @@ func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model
 			return nil, false
 		}
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
-		if col == nil { // Handling the case when the column is _tidb_rowid.
+		if col == nil {
+			// Partition table can't use `_tidb_rowid` to generate PointGet Plan.
+			if tbl.GetPartitionInfo() != nil && colName.Name.Name.L == model.ExtraHandleName.L {
+				return nil, false
+			}
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
 		}
 

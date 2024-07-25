@@ -4765,6 +4765,19 @@ func TestOptimizerHints(t *testing.T) {
 
 	require.Equal(t, "no_index_merge_join", hints[1].HintName.L)
 	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test HYPO_INDEX
+	stmt, _, err = p.Parse("select /*+ HYPO_INDEX(t1, a), HYPO_INDEX(t3, a, b, c) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "hypo_index", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "hypo_index", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 }
 
 func TestType(t *testing.T) {

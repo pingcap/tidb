@@ -1067,7 +1067,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	currentShard := e.Ctx().GetSessionVars().GetCurrentShard(1)
+	currentShard := e.Ctx().GetSessionVars().GetRowIDShardGenerator().GetCurrentShard(1)
 	return shardFmt.Compose(currentShard, autoRandomID), nil
 }
 
@@ -1437,6 +1437,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 			}
 		}
 	}
+
+	if e.Table.Meta().TTLInfo != nil {
+		// update the TTL metrics if the table is a TTL table
+		vars.TxnCtx.InsertTTLRowsCount++
+	}
+
 	return nil
 }
 

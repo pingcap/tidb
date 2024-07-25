@@ -63,6 +63,10 @@ type Table struct {
 	HistColl
 	Version uint64
 	// It's the timestamp of the last analyze time.
+	// We used it in auto-analyze to determine if this table has been analyzed.
+	// The source of this field comes from two parts:
+	// 1. Initialized by snapshot when loading stats_meta.
+	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
@@ -211,7 +215,7 @@ const (
 	ExtendedStatsDeleted
 )
 
-// HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
+// HistColl is a collection of histograms. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	// Note that when used in a query, Column use UniqueID as the key while Indices use the index ID in the
 	// metadata. (See GenerateHistCollFromColumnInfo() for details)
