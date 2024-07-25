@@ -416,9 +416,7 @@ func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 	t := time.Now()
 	colMap := make(map[model.TableItemID]time.Time, len(predicateColumns))
 	for _, col := range predicateColumns {
-		if col.IsIndex {
-			continue
-		}
+		intest.Assert(!col.IsIndex, "predicate column should only be table column")
 		colMap[col] = t
 	}
 	s.statsCollector.UpdateColStatsUsage(colMap)
