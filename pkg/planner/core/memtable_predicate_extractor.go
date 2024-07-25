@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1895,4 +1896,50 @@ func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
 	}
 	// No need to filter records since no predicate for the column exists.
 	return false
+}
+
+var _ TableSchemaSelector = (*InfoSchemaTablesExtractor)(nil)
+
+type TableSchemaSelector interface {
+	ContainTableName(table string) bool
+	ContainSchemaName(schema string) bool
+
+	SelectedTableNames() []model.CIStr
+	SelectedSchemaNames() []model.CIStr
+}
+
+// ContainTableName returns whether the given table is contained in selection.
+func (e *InfoSchemaTablesExtractor) ContainTableName(table string) bool {
+	return !e.Filter("table_name", table)
+}
+
+// ContainSchemaName returns whether the given schema is contained in selection.
+func (e *InfoSchemaTablesExtractor) ContainSchemaName(schema string) bool {
+	return !e.Filter("table_schema", schema)
+}
+
+// SelectedTableNames gets the table names specified in selection.
+func (e *InfoSchemaTablesExtractor) SelectedTableNames() []model.CIStr {
+	return e.getSchemaObjectNames("table_name")
+}
+
+// SelectedSchemaNames gets the schema names specified in selection.
+func (e *InfoSchemaTablesExtractor) SelectedSchemaNames() []model.CIStr {
+	return e.getSchemaObjectNames("table_schema")
+}
+
+// getSchemaObjectNames gets the schema object names specified in selection of given column name.
+func (e *InfoSchemaTablesExtractor) getSchemaObjectNames(colName string) []model.CIStr {
+	predVals, ok := e.ColPredicates[colName]
+	if ok && len(predVals) > 0 {
+		tableNames := make([]model.CIStr, 0, len(predVals))
+		predVals.IterateWith(func(n string) {
+			tableNames = append(tableNames, model.NewCIStr(n))
+		})
+		slices.SortFunc(tableNames, func(a, b model.CIStr) int {
+			return strings.Compare(a.L, b.L)
+		})
+		return tableNames
+	}
+	return nil
 }

@@ -112,7 +112,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		e.is = is
-		dbs := is.AllSchemaNames()
+
+		var dbs []model.CIStr
+		if ex, ok := e.extractor.(plannercore.TableSchemaSelector); ok {
+			dbs = ex.SelectedSchemaNames()
+		}
+		if len(dbs) == 0 {
+			dbs = is.AllSchemaNames()
+		}
 		slices.SortFunc(dbs, func(a, b model.CIStr) int {
 			return strings.Compare(a.L, b.L)
 		})
@@ -563,6 +570,46 @@ func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	return false
 }
 
+func getAllTableInfos(
+	ctx context.Context,
+	extractor base.MemTablePredicateExtractor,
+	schema model.CIStr,
+	is infoschema.InfoSchema,
+) ([]*model.TableInfo, error) {
+	ex := extractor.(plannercore.TableSchemaSelector)
+	var tables []*model.TableInfo
+	if ex != nil {
+		// Find all table infos from where condition.
+		selectedNames := ex.SelectedTableNames()
+		tables = make([]*model.TableInfo, 0, len(selectedNames))
+		for _, n := range selectedNames {
+			tbl, err := is.TableByName(ctx, schema, n)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tables = append(tables, tbl.Meta())
+		}
+	}
+	// There is no specified table in where condition.
+	if len(tables) == 0 {
+		var err error
+		tables, err = is.SchemaTableInfos(ctx, schema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if ex != nil {
+			tmp := tables[:0]
+			for _, tbl := range tables {
+				if ex.ContainTableName(tbl.Name.L) {
+					tmp = append(tmp, tbl)
+				}
+			}
+			tables = tmp
+		}
+	}
+	return tables, nil
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -573,22 +620,19 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if loc == nil {
 		loc = time.Local
 	}
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
-	if ok && extractor.SkipRequest {
+	tableEx := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if tableEx != nil && tableEx.SkipRequest {
 		return nil
 	}
 	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+		if tableEx != nil && !tableEx.ContainSchemaName(schema.L) {
 			continue
 		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
+		tables, err := getAllTableInfos(ctx, e.extractor, schema, e.is)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
-			if ok && extractor.Filter("table_name", table.Name.L) {
-				continue
-			}
 			collation := table.Collate
 			if collation == "" {
 				collation = mysql.DefaultCollationName
