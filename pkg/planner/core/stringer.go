@@ -185,7 +185,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		if pl := in.(*PhysicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
-	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
+	case *logicalop.LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
 	case *LogicalSort, *PhysicalSort:
 		str = "Sort"

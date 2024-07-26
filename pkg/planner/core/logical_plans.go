@@ -44,7 +44,7 @@ var (
 	_ base.LogicalPlan = &LogicalUnionScan{}
 	_ base.LogicalPlan = &logicalop.LogicalMemTable{}
 	_ base.LogicalPlan = &logicalop.LogicalShow{}
-	_ base.LogicalPlan = &LogicalShowDDLJobs{}
+	_ base.LogicalPlan = &logicalop.LogicalShowDDLJobs{}
 	_ base.LogicalPlan = &LogicalCTE{}
 	_ base.LogicalPlan = &logicalop.LogicalCTETable{}
 	_ base.LogicalPlan = &LogicalSequence{}
