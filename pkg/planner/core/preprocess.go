@@ -1746,10 +1746,6 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
-	if node.Tp.GetType() == mysql.TypeTiDBVectorFloat32 {
-		p.err = errors.Errorf("vector type is not supported")
-		return
-	}
 }
 
 func (p *preprocessor) updateStateFromStaleReadProcessor() error {
