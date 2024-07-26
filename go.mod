@@ -70,7 +70,6 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
-<<<<<<< HEAD
 	github.com/pingcap/errors v0.11.5-0.20231212100244-799fae176cfb
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
@@ -86,24 +85,6 @@ require (
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/sasha-s/go-deadlock v0.2.0
 	github.com/shirou/gopsutil/v3 v3.23.3
-=======
-	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
-	github.com/pingcap/failpoint v0.0.0-20240527053858-9b3b6e34194a
-	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20240716095229-5f7ffec83ea7
-	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
-	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
-	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20240318032315-55a7867ddd50
-	github.com/prometheus/client_golang v1.19.1
-	github.com/prometheus/client_model v0.6.1
-	github.com/prometheus/common v0.55.0
-	github.com/prometheus/prometheus v0.50.1
-	github.com/qri-io/jsonschema v0.2.1
-	github.com/robfig/cron/v3 v3.0.1
-	github.com/sasha-s/go-deadlock v0.3.1
-	github.com/shirou/gopsutil/v3 v3.24.4
->>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.6.1
@@ -113,16 +94,9 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20240710074042-ce640b992b7c
-	github.com/tikv/pd/client v0.0.0-20240708075102-05207d6819fb
+	github.com/tikv/pd/client v0.0.0-20240725070735-fb162bf0aa3f
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
-=======
-	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503
-	github.com/tikv/pd/client v0.0.0-20240724130437-83f32e9221f2
-	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
->>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
@@ -136,11 +110,11 @@ require (
 	go.etcd.io/etcd/tests/v3 v3.5.2
 	go.opencensus.io v0.24.0
 	go.uber.org/atomic v1.11.0
-	go.uber.org/automaxprocs v1.4.0
-	go.uber.org/goleak v1.2.1
+	go.uber.org/automaxprocs v1.5.3
+	go.uber.org/goleak v1.1.12
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.24.0
-	golang.org/x/exp v0.0.0-20221023144134-a1e5550cf13e
+	golang.org/x/exp v0.0.0-20220722155223-a9213eeb770e
 	golang.org/x/net v0.17.0
 	golang.org/x/oauth2 v0.7.0
 	golang.org/x/sync v0.2.0

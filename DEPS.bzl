@@ -3420,19 +3420,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-<<<<<<< HEAD
         sum = "h1:so6ffMPEx9HYGOOi9T0ezTZlI7LvpYBUQyWWyz8kND8=",
         version = "v0.0.0-20231011074246-fa00d2b03372",
-=======
-        sha256 = "b1af34db24f2650cd2a687fa9c58bd746eb3ca76e08afe5dbe2ac569ce54b597",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20240716095229-5f7ffec83ea7",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240716095229-5f7ffec83ea7.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240716095229-5f7ffec83ea7.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240716095229-5f7ffec83ea7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240716095229-5f7ffec83ea7.zip",
-        ],
->>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4205,19 +4194,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-<<<<<<< HEAD
-        sum = "h1:YAgGB92AiNCZdM5a65vdnJRX+gS+cc4OcUplWEU6O4w=",
-        version = "v0.0.0-20240708075102-05207d6819fb",
-=======
-        sha256 = "9ca4b7c7f070194aab4c537cbf58c39918341c59834fc2eb1d81d53865aaed36",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20240724130437-83f32e9221f2",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240724130437-83f32e9221f2.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240724130437-83f32e9221f2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240724130437-83f32e9221f2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240724130437-83f32e9221f2.zip",
-        ],
->>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
+        sum = "h1:Szw9YxqGGEneSniBd4ep09jgB77cKUy+AuhKOmdGPdE=",
+        version = "v0.0.0-20240725070735-fb162bf0aa3f",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
@@ -6013,8 +5991,8 @@ def go_deps():
         name = "org_golang_x_exp",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/exp",
-        sum = "h1:SkwG94eNiiYJhbeDE018Grw09HIN/KB9NlRmZsrzfWs=",
-        version = "v0.0.0-20221023144134-a1e5550cf13e",
+        sum = "h1:+WEEuIdZHnUeJJmEUjyYC2gfUMj69yZXw17EnHg/otA=",
+        version = "v0.0.0-20220722155223-a9213eeb770e",
     )
     go_repository(
         name = "org_golang_x_exp_typeparams",
@@ -6217,8 +6195,8 @@ def go_deps():
         name = "org_uber_go_automaxprocs",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/automaxprocs",
-        sum = "h1:CpDZl6aOlLhReez+8S3eEotD7Jx0Os++lemPlMULQP0=",
-        version = "v1.4.0",
+        sum = "h1:kWazyxZUrS3Gs4qUpbwo5kEIMGe/DAvi5Z4tl2NW4j8=",
+        version = "v1.5.3",
     )
     go_repository(
         name = "org_uber_go_dig",
@@ -6239,8 +6217,8 @@ def go_deps():
         name = "org_uber_go_goleak",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/goleak",
-        sum = "h1:NBol2c7O1ZokfZ0LEU9K6Whx/KnwvepVetCUhtKja4A=",
-        version = "v1.2.1",
+        sum = "h1:gZAh5/EyT/HQwlpkCy6wTpqfH9H8Lz8zbm3dZh+OyzA=",
+        version = "v1.1.12",
     )
     go_repository(
         name = "org_uber_go_multierr",
