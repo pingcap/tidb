@@ -6231,34 +6231,11 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 		if !validAddMonth(v, t.Year(), int(t.Month())) {
 			return tb, true, nil
 		}
-		tb = t.AddDate(0, int(v), 0)
 
-		originMonth := int64(t.Month())
-		absV := int64(math.Abs(v))
-		for originMonth < absV {
-			originMonth += 12
-		}
-
-		expectMonth := (originMonth + int64(v)) % 12
-
-		if expectMonth < int64(time.January)%12 && expectMonth > int64(time.December)%12 {
-			panic("Get unexpected expectMonth")
-		}
-
-		loopCount := 0
-
-		// For corner case: timestampadd(month,1,date '2024-01-31') = "2024-02-29", timestampadd(month,1,date '2024-01-30') = "2024-02-29"
-		// `tb.Month()` refers to the actual result, `t.Month()+v` refers to the expect result.
-		// Actual result may be greater than expect result, we need to judge and modify it.
-		for int64(tb.Month())%12 != expectMonth {
-			tb = tb.AddDate(0, 0, -1)
-
-			// TODO remove it in the future
-			// Prevent infinity loop when there are bugs
-			loopCount++
-			if loopCount > 100000 {
-				panic("Enter into infinity loop because of bugs")
-			}
+		var err error
+		tb, err = types.AddDate(0, int64(v), 0, t)
+		if err != nil {
+			return tb, false, err
 		}
 	case "QUARTER":
 		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
