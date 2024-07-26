@@ -6948,6 +6948,90 @@ func (b *builtinTimestampAddSig) Clone() builtinFunc {
 	return newSig
 }
 
+<<<<<<< HEAD:expression/builtin_time.go
+=======
+var (
+	minDatetimeInGoTime, _ = types.MinDatetime.GoTime(time.Local)
+	minDatetimeNanos       = float64(minDatetimeInGoTime.Unix())*1e9 + float64(minDatetimeInGoTime.Nanosecond())
+	maxDatetimeInGoTime, _ = types.MaxDatetime.GoTime(time.Local)
+	maxDatetimeNanos       = float64(maxDatetimeInGoTime.Unix())*1e9 + float64(maxDatetimeInGoTime.Nanosecond())
+	minDatetimeMonths      = float64(types.MinDatetime.Year()*12 + types.MinDatetime.Month() - 1) // 0001-01-01 00:00:00
+	maxDatetimeMonths      = float64(types.MaxDatetime.Year()*12 + types.MaxDatetime.Month() - 1) // 9999-12-31 00:00:00
+)
+
+func validAddTime(nano1 float64, nano2 float64) bool {
+	return nano1+nano2 >= minDatetimeNanos && nano1+nano2 <= maxDatetimeNanos
+}
+
+func validAddMonth(month1 float64, year, month int) bool {
+	tmp := month1 + float64(year)*12 + float64(month-1)
+	return tmp >= minDatetimeMonths && tmp <= maxDatetimeMonths
+}
+
+func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error) {
+	s := math.Trunc(v * 1000000)
+	// round to the nearest int
+	v = math.Round(v)
+	var tb time.Time
+	nano := float64(t.Unix())*1e9 + float64(t.Nanosecond())
+	switch unit {
+	case "MICROSECOND":
+		if !validAddTime(v*float64(time.Microsecond), nano) {
+			return tb, true, nil
+		}
+		tb = t.Add(time.Duration(v) * time.Microsecond)
+	case "SECOND":
+		if !validAddTime(s*float64(time.Microsecond), nano) {
+			return tb, true, nil
+		}
+		tb = t.Add(time.Duration(s) * time.Microsecond)
+	case "MINUTE":
+		if !validAddTime(v*float64(time.Minute), nano) {
+			return tb, true, nil
+		}
+		tb = t.Add(time.Duration(v) * time.Minute)
+	case "HOUR":
+		if !validAddTime(v*float64(time.Hour), nano) {
+			return tb, true, nil
+		}
+		tb = t.Add(time.Duration(v) * time.Hour)
+	case "DAY":
+		if !validAddTime(v*24*float64(time.Hour), nano) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(0, 0, int(v))
+	case "WEEK":
+		if !validAddTime(v*24*7*float64(time.Hour), nano) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(0, 0, 7*int(v))
+	case "MONTH":
+		if !validAddMonth(v, t.Year(), int(t.Month())) {
+			return tb, true, nil
+		}
+
+		var err error
+		tb, err = types.AddDate(0, int64(v), 0, t)
+		if err != nil {
+			return tb, false, err
+		}
+	case "QUARTER":
+		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(0, 3*int(v), 0)
+	case "YEAR":
+		if !validAddMonth(v*12, t.Year(), int(t.Month())) {
+			return tb, true, nil
+		}
+		tb = t.AddDate(int(v), 0, 0)
+	default:
+		return tb, false, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, unit)
+	}
+	return tb, false, nil
+}
+
+>>>>>>> a8d29c27d56 (expression: fix infinity loop in `timestampadd` (#54916)):pkg/expression/builtin_time.go
 // evalString evals a builtinTimestampAddSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error) {
