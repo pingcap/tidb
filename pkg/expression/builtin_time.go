@@ -6190,20 +6190,24 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 		}
 		tb = t.AddDate(0, int(v), 0)
 
-		originMonth := int(t.Month())
-		absV := int(math.Abs(v))
+		originMonth := int64(t.Month())
+		absV := int64(math.Abs(v))
 		for originMonth < absV {
 			originMonth += 12
 		}
 
-		expectMonth := (originMonth + int(v)) % 12
+		expectMonth := (originMonth + int64(v)) % 12
+
+		if expectMonth < int64(time.January)%12 && expectMonth > int64(time.December)%12 {
+			panic("Get unexpected expectMonth")
+		}
 
 		loopCount := 0
 
 		// For corner case: timestampadd(month,1,date '2024-01-31') = "2024-02-29", timestampadd(month,1,date '2024-01-30') = "2024-02-29"
 		// `tb.Month()` refers to the actual result, `t.Month()+v` refers to the expect result.
 		// Actual result may be greater than expect result, we need to judge and modify it.
-		for int(tb.Month())%12 != expectMonth {
+		for int64(tb.Month())%12 != expectMonth {
 			tb = tb.AddDate(0, 0, -1)
 
 			// TODO remove it in the future
