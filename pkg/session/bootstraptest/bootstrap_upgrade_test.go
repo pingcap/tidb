@@ -435,9 +435,9 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -526,9 +526,9 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -588,9 +588,9 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -766,8 +766,8 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
-	dom.Close()
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
