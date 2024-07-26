@@ -17,13 +17,13 @@ package contextimpl
 import (
 	"github.com/pingcap/failpoint"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -47,10 +47,18 @@ func NewTableContextImpl(sctx sessionctx.Context) *TableContextImpl {
 	}
 }
 
-// TxnRecordTempTable record the temporary table to the current transaction.
-// This method will be called when the temporary table is modified in the transaction.
-func (ctx *TableContextImpl) TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable {
-	return ctx.vars().GetTemporaryTable(tbl)
+// AlternativeAllocators implements the AllocatorContext interface
+func (ctx *TableContextImpl) AlternativeAllocators(tbl *model.TableInfo) (allocators autoid.Allocators, ok bool) {
+	// Use an independent allocator for global temporary tables.
+	if tbl.TempTableType == model.TempTableGlobal {
+		if tempTbl := ctx.vars().GetTemporaryTable(tbl); tempTbl != nil {
+			if alloc := tempTbl.GetAutoIDAllocator(); alloc != nil {
+				return autoid.NewAllocators(false, alloc), true
+			}
+		}
+		// If the session is not in a txn, for example, in "show create table", use the original allocator.
+	}
+	return
 }
 
 // GetExprCtx returns the ExprContext
@@ -143,6 +151,48 @@ func (ctx *TableContextImpl) UpdatePhysicalTableDelta(
 	if txnCtx := ctx.vars().TxnCtx; txnCtx != nil {
 		txnCtx.UpdateDeltaForTable(physicalTableID, delta, count, cols)
 	}
+}
+
+// GetCachedTableSupport implements the MutateContext interface.
+func (ctx *TableContextImpl) GetCachedTableSupport() (context.CachedTableSupport, bool) {
+	if ctx.vars().TxnCtx != nil {
+		return ctx, true
+	}
+	return nil, false
+}
+
+// AddCachedTableHandleToTxn implements `CachedTableSupport` interface
+func (ctx *TableContextImpl) AddCachedTableHandleToTxn(tableID int64, handle any) {
+	txnCtx := ctx.vars().TxnCtx
+	if txnCtx.CachedTables == nil {
+		txnCtx.CachedTables = make(map[int64]any)
+	}
+	if _, ok := txnCtx.CachedTables[tableID]; !ok {
+		txnCtx.CachedTables[tableID] = handle
+	}
+}
+
+// GetTemporaryTableSupport implements the MutateContext interface.
+func (ctx *TableContextImpl) GetTemporaryTableSupport() (context.TemporaryTableSupport, bool) {
+	if ctx.vars().TxnCtx == nil {
+		return nil, false
+	}
+	return ctx, true
+}
+
+// GetTemporaryTableSizeLimit implements TemporaryTableSupport interface.
+func (ctx *TableContextImpl) GetTemporaryTableSizeLimit() int64 {
+	return ctx.vars().TMPTableSize
+}
+
+// AddTemporaryTableToTxn implements the TemporaryTableSupport interface.
+func (ctx *TableContextImpl) AddTemporaryTableToTxn(tblInfo *model.TableInfo) (context.TemporaryTableHandler, bool) {
+	vars := ctx.vars()
+	if tbl := vars.GetTemporaryTable(tblInfo); tbl != nil {
+		tbl.SetModified(true)
+		return context.NewTemporaryTableHandler(tbl, vars.TemporaryTableData), true
+	}
+	return context.TemporaryTableHandler{}, false
 }
 
 func (ctx *TableContextImpl) vars() *variable.SessionVars {

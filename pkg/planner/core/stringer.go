@@ -175,9 +175,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *LogicalShow:
+	case *logicalop.LogicalShow:
 		str = "Show"
-		if pl := in.(*LogicalShow); pl.Extractor != nil {
+		if pl := in.(*logicalop.LogicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
 	case *PhysicalShow:

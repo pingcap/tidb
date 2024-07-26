@@ -17,14 +17,25 @@ package contextimpl_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 )
+
+type mockTemporaryData struct {
+	variable.TemporaryTableData
+	size int64
+}
+
+func (m *mockTemporaryData) GetTableSize(tableID int64) int64 {
+	return tableID*1000000 + m.size
+}
 
 func TestMutateContextImplFields(t *testing.T) {
 	sctx := mock.NewContext()
@@ -114,4 +125,48 @@ func TestMutateContextImplFields(t *testing.T) {
 	require.Equal(t, int64(1), deltaMap.Delta)
 	require.Equal(t, int64(2), deltaMap.Count)
 	require.Equal(t, map[int64]int64{3: 4, 5: 6}, deltaMap.ColSize)
+	// cached table support
+	sctx.GetSessionVars().TxnCtx = nil
+	cachedTableSupport, ok := ctx.GetCachedTableSupport()
+	require.False(t, ok)
+	require.Nil(t, cachedTableSupport)
+	sctx.GetSessionVars().TxnCtx = txnCtx
+	cachedTableSupport, ok = ctx.GetCachedTableSupport()
+	require.True(t, ok)
+	type mockCachedTable struct {
+		table.CachedTable
+	}
+	handle := &mockCachedTable{}
+	require.Nil(t, sctx.GetSessionVars().TxnCtx.CachedTables[123])
+	cachedTableSupport.AddCachedTableHandleToTxn(123, handle)
+	cached := sctx.GetSessionVars().TxnCtx.CachedTables[123]
+	require.Same(t, handle, cached)
+	// temporary table support
+	sctx.GetSessionVars().TxnCtx = nil
+	tempTableSupport, ok := ctx.GetTemporaryTableSupport()
+	require.False(t, ok)
+	require.Nil(t, tempTableSupport)
+	sctx.GetSessionVars().TxnCtx = txnCtx
+	mockTempData := &mockTemporaryData{}
+	sctx.GetSessionVars().TemporaryTableData = mockTempData
+	tempTableSupport, ok = ctx.GetTemporaryTableSupport()
+	require.True(t, ok)
+	require.Nil(t, txnCtx.TemporaryTables[456])
+	tmpTblHandler, ok := tempTableSupport.AddTemporaryTableToTxn(&model.TableInfo{
+		ID:            456,
+		TempTableType: model.TempTableGlobal,
+	})
+	require.True(t, ok)
+	require.NotNil(t, tmpTblHandler)
+	tmpTblTable := txnCtx.TemporaryTables[456]
+	require.NotNil(t, tmpTblTable)
+	require.True(t, tmpTblTable.GetModified())
+	require.Equal(t, int64(456000000), tmpTblHandler.GetCommittedSize())
+	mockTempData.size = 111
+	require.Equal(t, int64(456000111), tmpTblHandler.GetCommittedSize())
+	require.Equal(t, int64(0), tmpTblHandler.GetDirtySize())
+	tmpTblHandler.UpdateTxnDeltaSize(333)
+	require.Equal(t, int64(333), tmpTblHandler.GetDirtySize())
+	tmpTblHandler.UpdateTxnDeltaSize(-1)
+	require.Equal(t, int64(332), tmpTblHandler.GetDirtySize())
 }
