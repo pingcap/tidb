@@ -1461,6 +1461,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if !variable.EnableVectorType.Load() {
 			return errors.Errorf("vector type is not supported")
 		}
+		if tp.GetFlen() != types.UnspecifiedLength {
+			if err := types.CheckVectorDimValid(tp.GetFlen()); err != nil {
+				return err
+			}
+		}
 	default:
 		// TODO: Add more types.
 	}
@@ -1746,10 +1751,12 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
-	if node.Tp.GetType() == mysql.TypeTiDBVectorFloat32 {
-		p.err = errors.Errorf("vector type is not supported")
-		return
-	}
+	/*
+		if node.Tp.GetType() == mysql.TypeTiDBVectorFloat32 {
+			p.err = errors.Errorf("vector type is not supported")
+			return
+		}
+	*/
 }
 
 func (p *preprocessor) updateStateFromStaleReadProcessor() error {

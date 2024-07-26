@@ -781,8 +781,14 @@ func (b *builtinCastStringAsVectorFloat32Sig) evalVectorFloat32(ctx EvalContext,
 	if isNull || err != nil {
 		return types.ZeroVectorFloat32, isNull, err
 	}
-	res, err := types.ParseVectorFloat32(val)
-	return res, false, err
+	vec, err := types.ParseVectorFloat32(val)
+	if err != nil {
+		return types.ZeroVectorFloat32, false, err
+	}
+	if err = vec.CheckDimsFitColumn(b.tp.GetFlen()); err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	return vec, false, nil
 }
 
 type builtinCastVectorFloat32AsVectorFloat32Sig struct {
@@ -796,7 +802,14 @@ func (b *builtinCastVectorFloat32AsVectorFloat32Sig) Clone() builtinFunc {
 }
 
 func (b *builtinCastVectorFloat32AsVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
-	return b.args[0].EvalVectorFloat32(ctx, row)
+	val, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	if err = val.CheckDimsFitColumn(b.tp.GetFlen()); err != nil {
+		return types.ZeroVectorFloat32, isNull, err
+	}
+	return val, false, nil
 }
 
 type builtinCastIntAsIntSig struct {

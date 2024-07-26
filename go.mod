@@ -161,6 +161,7 @@ require (
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
+	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 )
