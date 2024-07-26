@@ -1386,8 +1386,6 @@ func pickRanges(rangeAndRegions []RangeAndRegion, regionProcessingMap *sync.Map,
 			}
 		}
 	}
-	fmt.Printf("current finish2: index: %d, finish %d\n", index, finished)
-	// bestRange = rangeAndRegions[finished]
 	for store, count := range bestRange.regions {
 		increaseByKey(regionProcessingMap, store, count)
 	}
