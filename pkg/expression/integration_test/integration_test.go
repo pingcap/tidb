@@ -221,6 +221,7 @@ func TestVectorCompare(t *testing.T) {
 	tk.MustQuery("SELECT VEC_FROM_TEXT('[1, 2, 3]') <= '[1]';").Check(testkit.Rows("0"))
 }
 
+// here needs additional info
 func TestVectorConversion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
