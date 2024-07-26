@@ -1793,29 +1793,29 @@ ResourceGroupRunawayOptionList:
 ResourceGroupRunawayWatchOption:
 	"EXACT"
 	{
-		$$ = int32(model.WatchExact)
+		$$ = model.WatchExact
 	}
 |	"SIMILAR"
 	{
-		$$ = int32(model.WatchSimilar)
+		$$ = model.WatchSimilar
 	}
 |	"PLAN"
 	{
-		$$ = int32(model.WatchPlan)
+		$$ = model.WatchPlan
 	}
 
 ResourceGroupRunawayActionOption:
 	"DRYRUN"
 	{
-		$$ = int32(model.RunawayActionDryRun)
+		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionDryRun}
 	}
 |	"COOLDOWN"
 	{
-		$$ = int32(model.RunawayActionCooldown)
+		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionCooldown}
 	}
 |	"KILL"
 	{
-		$$ = int32(model.RunawayActionKill)
+		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionKill}
 	}
 
 DirectResourceGroupRunawayOption:
@@ -1826,11 +1826,19 @@ DirectResourceGroupRunawayOption:
 			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED option is not a valid duration: %s", err.Error()))
 			return 1
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayRule, StrValue: $3}
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp: ast.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{
+				ExecElapsed: $3,
+			},
+		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, IntValue: $3.(int32)}
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:           ast.RunawayAction,
+			ActionOption: $3.(*ast.ResourceGroupRunawayActionOption),
+		}
 	}
 |	"WATCH" EqOpt ResourceGroupRunawayWatchOption WatchDurationOption
 	{
@@ -1845,7 +1853,13 @@ DirectResourceGroupRunawayOption:
 				return 1
 			}
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: dur, IntValue: $3.(int32)}
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp: ast.RunawayWatch,
+			WatchOption: &ast.ResourceGroupRunawayWatchOption{
+				Type:     $3.(model.RunawayWatchType),
+				Duration: dur,
+			},
+		}
 	}
 
 WatchDurationOption:
@@ -16250,33 +16264,59 @@ QueryWatchOptionList:
 QueryWatchOption:
 	"RESOURCE" "GROUP" ResourceGroupName
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchResourceGroup, StrValue: model.NewCIStr($3)}
+		$$ = &ast.QueryWatchOption{
+			Tp: ast.QueryWatchResourceGroup,
+			ResourceGroupOption: &ast.QueryWatchResourceGroupOption{
+				GroupNameStr: model.NewCIStr($3),
+			},
+		}
 	}
 |	"RESOURCE" "GROUP" UserVariable
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchResourceGroup, ExprValue: $3}
+		$$ = &ast.QueryWatchOption{
+			Tp: ast.QueryWatchResourceGroup,
+			ResourceGroupOption: &ast.QueryWatchResourceGroupOption{
+				GroupNameExpr: $3,
+			},
+		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchAction, IntValue: $3.(int32)}
+		$$ = &ast.QueryWatchOption{
+			Tp:           ast.QueryWatchAction,
+			ActionOption: $3.(*ast.ResourceGroupRunawayActionOption),
+		}
 	}
 |	QueryWatchTextOption
 	{
-		$$ = $1.(*ast.QueryWatchOption)
+		$$ = &ast.QueryWatchOption{
+			Tp:         ast.QueryWatchType,
+			TextOption: $1.(*ast.QueryWatchTextOption),
+		}
 	}
 
 QueryWatchTextOption:
 	"SQL" "DIGEST" SimpleExpr
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: int32(model.WatchSimilar), ExprValue: $3}
+		$$ = &ast.QueryWatchTextOption{
+			Type:        model.WatchSimilar,
+			PatternExpr: $3,
+		}
 	}
 |	"PLAN" "DIGEST" SimpleExpr
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: int32(model.WatchPlan), ExprValue: $3}
+		$$ = &ast.QueryWatchTextOption{
+			Type:        model.WatchPlan,
+			PatternExpr: $3,
+		}
 	}
 |	"SQL" "TEXT" ResourceGroupRunawayWatchOption "TO" SimpleExpr
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: $3.(int32), ExprValue: $5, BoolValue: true}
+		$$ = &ast.QueryWatchTextOption{
+			Type:          $3.(model.RunawayWatchType),
+			PatternExpr:   $5,
+			TypeSpecified: true,
+		}
 	}
 
 DropQueryWatchStmt:

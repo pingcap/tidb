@@ -416,9 +416,8 @@ func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 	t := time.Now()
 	colMap := make(map[model.TableItemID]time.Time, len(predicateColumns))
 	for _, col := range predicateColumns {
-		if col.IsIndex {
-			continue
-		}
+		// TODO: Remove this assertion once it has been confirmed to operate correctly over a period of time.
+		intest.Assert(!col.IsIndex, "predicate column should only be table column")
 		colMap[col] = t
 	}
 	s.statsCollector.UpdateColStatsUsage(colMap)
@@ -2540,7 +2539,7 @@ func (s *session) Close() {
 			time.Sleep(time.Duration(ds) * time.Millisecond)
 		}
 		lockedTables := s.GetAllTableLocks()
-		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
+		err := domain.GetDomain(s).DDLExecutor().UnlockTables(s, lockedTables)
 		if err != nil {
 			logutil.BgLogger().Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
 		}

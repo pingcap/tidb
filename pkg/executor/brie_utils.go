@@ -53,7 +53,7 @@ func showRestoredCreateDatabase(sctx sessionctx.Context, db *model.DBInfo, brCom
 
 // BRIECreateDatabase creates the database with OnExistIgnore option
 func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment string) error {
-	d := domain.GetDomain(sctx).DDL()
+	d := domain.GetDomain(sctx).DDLExecutor()
 	query, err := showRestoredCreateDatabase(sctx, schema, brComment)
 	if err != nil {
 		return errors.Trace(err)
@@ -92,7 +92,7 @@ func BRIECreateTable(
 	brComment string,
 	cs ...ddl.CreateTableOption,
 ) error {
-	d := domain.GetDomain(sctx).DDL()
+	d := domain.GetDomain(sctx).DDLExecutor()
 	query, err := showRestoredCreateTable(sctx, table, brComment)
 	if err != nil {
 		return err
@@ -161,7 +161,7 @@ func BRIECreateTables(
 func splitBatchCreateTable(sctx sessionctx.Context, schema model.CIStr,
 	infos []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	var err error
-	d := domain.GetDomain(sctx).DDL()
+	d := domain.GetDomain(sctx).DDLExecutor()
 	err = d.BatchCreateTableWithInfo(sctx, schema, infos, append(cs, ddl.WithOnExist(ddl.OnExistIgnore))...)
 	if kv.ErrEntryTooLarge.Equal(err) {
 		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))

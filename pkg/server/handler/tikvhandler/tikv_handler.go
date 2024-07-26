@@ -645,11 +645,16 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
 	allDBs := schema.AllSchemaNames()
 	for _, db := range allDBs {
-		tbls := schema.SchemaTables(db)
+		tbls, err := schema.SchemaTableInfos(context.Background(), db)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
 		for _, tbl := range tbls {
-			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
+			replicaInfos = h.getTiFlashReplicaInfo(tbl, replicaInfos)
 		}
 	}
+
 	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
 	if err != nil {
 		handler.WriteError(w, err)
@@ -772,7 +777,7 @@ func (h FlashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	defer s.Close()
 
 	available := status.checkTableFlashReplicaAvailable()
-	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
+	err = do.DDLExecutor().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
 		handler.WriteError(w, err)
 	}
@@ -1008,11 +1013,19 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
 			if a := req.FormValue(handler.IDNameOnly); a == "true" {
-				tbs := schema.SchemaSimpleTableInfos(cDBName)
+				tbs, err := schema.SchemaSimpleTableInfos(context.Background(), cDBName)
+				if err != nil {
+					handler.WriteError(w, err)
+					return
+				}
 				writeDBSimpleTablesData(w, tbs)
 				return
 			}
-			tbs := schema.SchemaTableInfos(cDBName)
+			tbs, err := schema.SchemaTableInfos(context.Background(), cDBName)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
 			WriteDBTablesData(w, tbs)
 			return
 		}
@@ -1471,12 +1484,12 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			ctx := context.Background()
-			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema.AllSchemas())
+			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema, nil)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
 			}
-			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema.AllSchemas())
+			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema, nil)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
@@ -1528,9 +1541,13 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if util.IsMemDB(dbName.L) {
 			continue
 		}
-		tables := schema.SchemaTables(dbName)
+		tables, err := schema.SchemaTableInfos(context.Background(), dbName)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
 		for _, tableVal := range tables {
-			regionDetail.addTableInRange(dbName.String(), tableVal.Meta(), frameRange)
+			regionDetail.addTableInRange(dbName.String(), tableVal, frameRange)
 		}
 	}
 	handler.WriteData(w, regionDetail)
