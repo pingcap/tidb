@@ -291,6 +291,10 @@ func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tbl
 	tblInfo.ExchangePartitionInfo = nil
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StatePublic
+	if job.Type == model.ActionConvertPartitionToTable {
+		// TODO:...
+		return 0, errors.New("FIXME")
+	}
 	if len(tblInfo.Constraints) == 0 {
 		return updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	}

@@ -92,20 +92,21 @@ const (
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	// not used
-	ActionAlterTableStatsOptions ActionType = 58
-	ActionAlterNoCacheTable      ActionType = 59
-	ActionCreateTables           ActionType = 60
-	ActionMultiSchemaChange      ActionType = 61
-	ActionFlashbackCluster       ActionType = 62
-	ActionRecoverSchema          ActionType = 63
-	ActionReorganizePartition    ActionType = 64
-	ActionAlterTTLInfo           ActionType = 65
-	ActionAlterTTLRemove         ActionType = 67
-	ActionCreateResourceGroup    ActionType = 68
-	ActionAlterResourceGroup     ActionType = 69
-	ActionDropResourceGroup      ActionType = 70
-	ActionAlterTablePartitioning ActionType = 71
-	ActionRemovePartitioning     ActionType = 72
+	ActionAlterTableStatsOptions  ActionType = 58
+	ActionAlterNoCacheTable       ActionType = 59
+	ActionCreateTables            ActionType = 60
+	ActionMultiSchemaChange       ActionType = 61
+	ActionFlashbackCluster        ActionType = 62
+	ActionRecoverSchema           ActionType = 63
+	ActionReorganizePartition     ActionType = 64
+	ActionAlterTTLInfo            ActionType = 65
+	ActionAlterTTLRemove          ActionType = 67
+	ActionCreateResourceGroup     ActionType = 68
+	ActionAlterResourceGroup      ActionType = 69
+	ActionDropResourceGroup       ActionType = 70
+	ActionAlterTablePartitioning  ActionType = 71
+	ActionRemovePartitioning      ActionType = 72
+	ActionConvertPartitionToTable ActionType = 73
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -177,6 +178,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
+	ActionConvertPartitionToTable:       "alter table convert partition to table",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -266,6 +268,7 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionReorganizePartition,
 		ActionAlterTablePartitioning,
 		ActionRemovePartitioning,
+		ActionConvertPartitionToTable,
 	},
 	UnmanagementDDL: {
 		ActionCreatePlacementPolicy,
@@ -492,7 +495,7 @@ type Job struct {
 	ID   int64      `json:"id"`
 	Type ActionType `json:"type"`
 	// SchemaID means different for different job types:
-	// - ExchangeTablePartition: db id of non-partitioned table
+	// - ExchangeTablePartition/Convert{Table|Partition}To...: db id of non-partitioned table
 	SchemaID int64 `json:"schema_id"`
 	// TableID means different for different job types:
 	// - ExchangeTablePartition: non-partitioned table id
@@ -509,7 +512,8 @@ type Job struct {
 	Mu       sync.Mutex `json:"-"`
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
-	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
+	// for ExchangeTablePartition, RenameTables, RenameTable, ConvertPartitionToTable,
+	// it's [slice-of-db-id, slice-of-table-id]
 	CtxVars []interface{} `json:"-"`
 	// Note: it might change when state changes, such as when rollback on AddColumn.
 	// - CreateTable, it's [model.TableInfo, foreignKeyCheck]
@@ -517,6 +521,8 @@ type Job struct {
 	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
 	// - RenameTable: [old-db-id, new-table-name, old-db-name]
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
+	// - ConvertPartitionToTable:
+	//   [partition-id, pt-db-id, pt-id, partition-name, with-validation, tblIdent]
 	Args []interface{} `json:"-"`
 	// RawArgs : We must use json raw message to delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
@@ -816,15 +822,16 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 				return true, nil
 			}
 		}
-		if job.Type == ActionExchangeTablePartition {
+		if job.Type == ActionExchangeTablePartition || job.Type == ActionConvertPartitionToTable {
 			var (
 				defID          int64
 				ptSchemaID     int64
 				ptID           int64
 				partName       string
 				withValidation bool
+				tblIdent       CIStr
 			)
-			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation, &tblIdent); err != nil {
 				return false, errors.Trace(err)
 			}
 			if other.SchemaID == ptSchemaID {
@@ -836,31 +843,33 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 }
 
 func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
-	if job.Type == ActionExchangeTablePartition {
+	if job.Type == ActionExchangeTablePartition || job.Type == ActionConvertPartitionToTable {
 		var (
 			defID          int64
 			ptSchemaID     int64
 			ptID           int64
 			partName       string
 			withValidation bool
+			tblIdent       CIStr
 		)
 
-		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation, &tblIdent); err != nil {
 			return false, errors.Trace(err)
 		}
 		if ptID == other.TableID || defID == other.TableID {
 			return true, nil
 		}
 
-		if other.Type == ActionExchangeTablePartition {
+		if other.Type == ActionExchangeTablePartition || other.Type == ActionConvertPartitionToTable {
 			var (
 				otherDefID          int64
 				otherPtSchemaID     int64
 				otherPtID           int64
 				otherPartName       string
 				otherWithValidation bool
+				otherTblIdent       CIStr
 			)
-			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation, &otherTblIdent); err != nil {
 				return false, errors.Trace(err)
 			}
 			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {

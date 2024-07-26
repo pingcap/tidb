@@ -3342,13 +3342,13 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 		Args: []any{
 			flashbackTS,
 			map[string]any{},
-			true,         /* tidb_gc_enable */
-			variable.On,  /* tidb_enable_auto_analyze */
-			variable.Off, /* tidb_super_read_only */
-			0,            /* totalRegions */
-			0,            /* startTS */
-			0,            /* commitTS */
-			variable.On,  /* tidb_ttl_job_enable */
+			true,           /* tidb_gc_enable */
+			variable.On,    /* tidb_enable_auto_analyze */
+			variable.Off,   /* tidb_super_read_only */
+			0,              /* totalRegions */
+			0,              /* startTS */
+			0,              /* commitTS */
+			variable.On,    /* tidb_ttl_job_enable */
 			[]kv.KeyRange{} /* flashback key_ranges */},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		// FLASHBACK CLUSTER affects all schemas and tables.
@@ -4158,6 +4158,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			}
 		case ast.AlterTableExchangePartition:
 			err = e.ExchangeTablePartition(sctx, ident, spec)
+		case ast.AlterTableConvertPartitionToTable:
+			err = e.ConvertPartitionToTable(sctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -5509,6 +5511,55 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 	}
 
 	return nil
+}
+
+func (e *executor) ConvertPartitionToTable(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	ptSchema, pt, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ptMeta := pt.Meta()
+
+	partName := spec.PartitionNames[0].L
+
+	defID, err := tables.FindPartitionByName(ptMeta, partName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+	is := e.infoCache.GetLatest()
+	ntSchema, ok := is.SchemaByName(ntIdent.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ntIdent.Schema)
+	}
+
+	job := &model.Job{
+		SchemaID:       ntSchema.ID,
+		TableID:        defID,
+		SchemaName:     ptSchema.Name.L,
+		TableName:      ptMeta.Name.L,
+		Type:           model.ActionConvertPartitionToTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation, spec.NewTable.Name},
+		CtxVars:        []any{[]int64{ntSchema.ID, ptSchema.ID}, []int64{defID, ptMeta.ID}},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{Database: ptSchema.Name.L, Table: ptMeta.Name.L},
+			{Database: ntIdent.Schema.L, Table: ntIdent.Name.L},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+
+	err = e.DoDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// TODO: Add this to be triggered automatically
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("after the convert partition to table, please analyze related table of the exchange to update statistics"))
+	err = e.callHookOnChanged(job, err)
+	return errors.Trace(err)
 }
 
 func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {

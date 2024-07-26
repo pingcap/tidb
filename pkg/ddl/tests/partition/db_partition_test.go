@@ -3764,3 +3764,61 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.True(t, idxInfo.Primary)
 	}
 }
+
+func TestConvertPartitionToTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b varchar (255)) partition by range (a) (partition p0 values less than (1000), partition p1 values less than (10000))")
+	tk.MustExec(`insert into t values (1,1),(100,100),(1000,1000),(9999,9999)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "100 100", "1000 1000", "9999 9999"))
+	tk.MustExec(`alter table t convert partition p0 to table t1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (10000))"))
+	tk.MustQuery(`show create table t1`).Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1000 1000", "9999 9999"))
+	tk.MustQuery(`select * from t1`).Sort().Check(testkit.Rows("1 1", "100 100"))
+	tk.MustExec(`drop table t, t1`)
+
+	// Global index
+	tk.MustExec(`set tidb_enable_global_index=ON`)
+	defer tk.MustExec(`set tidb_enable_global_index=default`)
+	tk.MustExec("create table t (a int, b varchar (255) not null, primary key (b) nonclustered) partition by range (a) (partition p0 values less than (1000), partition p1 values less than (10000))")
+	tk.MustExec(`insert into t values (1,1),(100,100),(1000,1000),(9999,9999)`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "100 100", "1000 1000", "9999 9999"))
+	tk.MustExec(`alter table t convert partition p0 to table t1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) NOT NULL,\n" +
+		"  PRIMARY KEY (`b`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (10000))"))
+	// Since the PK was global, it will also remove it by default (TODO: have an option for CONVERT...)
+	tk.MustQuery(`show create table t1`).Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) NOT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1000 1000", "9999 9999"))
+	tk.MustQuery(`select * from t1`).Sort().Check(testkit.Rows("1 1", "100 100"))
+	tk.MustExec(`drop table t, t1`)
+
+	// KEY/HASH is not allowed, since it would mean reorganize to one fewer partition afterwards...
+	tk.MustExec("create table t (a int, b varchar (255) not null) partition by hash (a) partitions 3")
+	tk.MustContainErrMsg(`alter table t convert partition p0 to table t1`, "partition type not supported, only LIST and RANGE support CONVERT PARTITION TO TABLE, please use EXCHANGE PARTITION instead")
+	tk.MustExec(`alter table t partition by key (a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t convert partition p0 to table t1`, "partition type not supported, only LIST and RANGE support CONVERT PARTITION TO TABLE, please use EXCHANGE PARTITION instead")
+}

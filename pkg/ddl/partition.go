@@ -2771,6 +2771,292 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	return ver, nil
 }
 
+// onConvertPartitionToTable converts a partition to a table.
+// Similar to Exchange partition, but simpler for the user and may avoid double writing
+// some indexes due to having the data unavailable during data/index reorg.
+func (w *worker) onConvertPartitionToTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var (
+		// defID only for updateSchemaVersion
+		defID          int64
+		ptSchemaID     int64
+		ptID           int64
+		partName       string
+		withValidation bool
+		tblName        model.CIStr
+	)
+
+	if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation, &tblName); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	/*
+		ntDbInfo, err := t.GetDatabase(job.SchemaID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		ptDbInfo, err := t.GetDatabase(ptSchemaID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	*/
+
+	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+	pi := pt.GetPartitionInfo()
+	if pi == nil {
+		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+	}
+	if pi.Type != model.PartitionTypeList && pi.Type != model.PartitionTypeRange {
+		job.State = model.JobStateCancelled
+		// TODO: better error
+		return ver, errors.Trace(errors.New("partition type not supported, only LIST and RANGE support CONVERT PARTITION TO TABLE, please use EXCHANGE PARTITION instead"))
+	}
+	// don't check nt yet, it depends on the state.
+
+	if job.IsRollingback() {
+		return rollbackExchangeTablePartition(d, t, job, pt)
+	}
+
+	if job.SchemaState == model.StateNone {
+		if pt.State != model.StatePublic {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
+		}
+
+		_, partDef, err := getPartitionDef(pt, partName)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		if defID != partDef.ID {
+			logutil.DDLLogger().Info("Exchange partition id changed, updating to actual id",
+				zap.Stringer("job", job), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
+			job.Args[0] = partDef.ID
+			defID = partDef.ID
+			err = updateDDLJob2Table(w.sess, job, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+		// Check that new table does not exists
+		_, err = getTableInfo(t, job.TableID, job.SchemaID)
+		if !infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+			// TODO: better error!!!
+			return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s already exists", tblName.O)
+		}
+		// Create new table
+		nt := pt.Clone()
+		nt.Partition = nil
+		nt.ID = defID
+		nt.Name = tblName
+		// TODO: allow recreating Unique indexes, i.e. convert Global to Local index for the new table
+		globalIdxs := make([]*model.IndexInfo, 0)
+		for _, idx := range nt.Indices {
+			if idx.Global {
+				globalIdxs = append(globalIdxs, idx)
+			}
+		}
+		// TODO: have an ALTER option for this!
+		convertGlobalToLocal := false
+		for _, idx := range globalIdxs {
+			if convertGlobalToLocal {
+				idx.Global = false
+			} else {
+				removeIndexInfo(nt, idx)
+			}
+		}
+		// No good 'Hidden' status?!?
+		nt.State = model.StateDeleteOnly
+		// TODO: handle AutoIDs
+		err = t.CreateTableOrView(job.SchemaID, job.SchemaName, nt)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		// TODO: how to handle the first range partition, or if LIST has a default partition?
+		// Same as DROP, i.e. allow two different partitions matching the same data depending
+		// on State?
+
+		pids := updateDroppingPartitionInfo(pt, []string{partName})
+		if len(pids) != 1 || pids[0] != defID {
+			job.State = model.JobStateCancelled
+			// TODO: Better error
+			return ver, errors.Trace(errors.New("Could not find correct partition to convert"))
+		}
+		// TODO: Handle TiFlash and bundles?
+
+		if len(globalIdxs) == 0 {
+			// No global indexes, then we are done!
+			job.SchemaState = model.StatePublic
+			nt.State = model.StatePublic
+			ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+			newAutoIDs := meta.AutoIDGroup{
+				RowID:       ptAutoIDs.RowID,
+				IncrementID: ptAutoIDs.IncrementID,
+				RandomID:    ptAutoIDs.RandomID,
+			}
+			err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: nt}, schemaIDAndTableInfo{schemaID: ptSchemaID, tblInfo: pt})
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.FinishMultipleTableJob(model.JobStateDone, model.StateNone, ver, []*model.TableInfo{pt, nt})
+			// TODO: Verify the statistics with a test
+			event := statsutil.NewExchangePartitionEvent(job.SchemaID, pt, &model.PartitionInfo{Definitions: []model.PartitionDefinition{partDef.Clone()}}, nt.Clone())
+			asyncNotifyEvent(d, event)
+			return ver, nil
+		}
+		job.SchemaState = model.StateWriteOnly
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: nt}, schemaIDAndTableInfo{schemaID: ptSchemaID, tblInfo: pt})
+	}
+	// From now on, nt (the non-partitioned table) is created, but not public
+	// So we need to rollback that change, i.e. move the partition back from being a table and drop the new table info
+
+	if d.lease > 0 {
+		delayForAsyncCommit()
+	}
+
+	/* TODO: fix this
+	if pt.TiFlashReplica != nil {
+		for i, id := range pt.TiFlashReplica.AvailablePartitionIDs {
+			if id == partDef.ID {
+				pt.TiFlashReplica.AvailablePartitionIDs[i] = nt.ID
+				break
+			}
+		}
+	}
+	*/
+
+	failpoint.Inject("ConvertPartitionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
+		}
+	})
+
+	// As late as possible, get the AutoIDs from the partitioned table and use it to set the nt autoids
+
+	// partition table auto IDs.
+	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Set both tables to the maximum auto IDs between normal table and partitioned table.
+	// TODO: Fix the issue of big transactions during EXCHANGE PARTITION with AutoID.
+	// Similar to https://github.com/pingcap/tidb/issues/46904
+	newAutoIDs := meta.AutoIDGroup{
+		RowID:       ptAutoIDs.RowID,
+		IncrementID: ptAutoIDs.IncrementID,
+		RandomID:    ptAutoIDs.RandomID,
+	}
+	err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Put(newAutoIDs)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	failpoint.Inject("convertPartitionAutoID", func(val failpoint.Value) {
+		if val.(bool) {
+			seCtx, err := w.sessPool.Get()
+			defer w.sessPool.Put(seCtx)
+			if err != nil {
+				failpoint.Return(ver, err)
+			}
+			se := sess.NewSession(seCtx)
+			_, err = se.Execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
+			if err != nil {
+				failpoint.Return(ver, err)
+			}
+		}
+	})
+
+	// the follow code is a swap function for rules of two partitions
+	// though partitions has exchanged their ID, swap still take effect
+
+	/* TODO: FIXME
+	bundles, err := bundlesForExchangeTablePartition(t, pt, partDef, nt)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	ntrID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, nt.Name.L)
+	ptrID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, pt.Name.L, partDef.Name.L)
+
+	rules, err := infosync.GetLabelRules(context.TODO(), []string{ntrID, ptrID})
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed to get PD the label rules")
+	}
+
+	ntr := rules[ntrID]
+	ptr := rules[ptrID]
+
+	// This must be a bug, nt cannot be partitioned!
+	partIDs := getPartitionIDs(nt)
+
+	var setRules []*label.Rule
+	var deleteRules []string
+	if ntr != nil && ptr != nil {
+		setRules = append(setRules, ntr.Clone().Reset(job.SchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		setRules = append(setRules, ptr.Clone().Reset(job.SchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
+	} else if ptr != nil {
+		setRules = append(setRules, ptr.Clone().Reset(job.SchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
+		// delete ptr
+		deleteRules = append(deleteRules, ptrID)
+	} else if ntr != nil {
+		setRules = append(setRules, ntr.Clone().Reset(job.SchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		// delete ntr
+		deleteRules = append(deleteRules, ntrID)
+	}
+
+	patch := label.NewRulePatch(setRules, deleteRules)
+	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	if err != nil {
+		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
+	}
+
+	*/
+
+	// TODO: remove DroppingDefinitions
+	// TODO: Actually rebuild the Global indexes!
+	nt, err := getTableInfo(t, job.TableID, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.SchemaState = model.StatePublic
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: nt}, schemaIDAndTableInfo{schemaID: ptSchemaID, tblInfo: pt})
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
+	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
+		job.SchemaID,
+		pt,
+		// TODO: FIXME, is this really the right parameters and function to use?
+		&model.PartitionInfo{Definitions: []model.PartitionDefinition{pi.DroppingDefinitions[0].Clone()}},
+		nt.Clone(),
+	)
+	asyncNotifyEvent(d, exchangePartitionEvent)
+	return ver, nil
+}
+
 func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []string, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
