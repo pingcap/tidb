@@ -129,8 +129,8 @@ type PhysicalTableReader struct {
 	physicalSchemaProducer
 
 	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans []base.PhysicalPlan
 	tablePlan  base.PhysicalPlan
+	TablePlans []base.PhysicalPlan
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
@@ -144,7 +144,7 @@ type PhysicalTableReader struct {
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
-	TableScanAndPartitionInfos []tableScanAndPartitionInfo
+	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
 
 // PhysPlanPartInfo indicates partition helper info in physical plan.
@@ -302,8 +302,8 @@ type PhysicalIndexReader struct {
 	physicalSchemaProducer
 
 	// IndexPlans flats the indexPlan to construct executor pb.
-	IndexPlans []base.PhysicalPlan
 	indexPlan  base.PhysicalPlan
+	IndexPlans []base.PhysicalPlan
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
@@ -431,12 +431,12 @@ func (p *PushedDownLimit) MemoryUsage() (sum int64) {
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
 
+	indexPlan base.PhysicalPlan
+	tablePlan base.PhysicalPlan
 	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []base.PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []base.PhysicalPlan
-	indexPlan  base.PhysicalPlan
-	tablePlan  base.PhysicalPlan
 	Paging     bool
 
 	ExtraHandleCol *expression.Column
@@ -582,14 +582,14 @@ type PhysicalIndexMergeReader struct {
 	// ByItems is used to support sorting the handles returned by partialPlans.
 	ByItems []*util.ByItems
 
-	// PartialPlans flats the partialPlans to construct executor pb.
-	PartialPlans [][]base.PhysicalPlan
-	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans []base.PhysicalPlan
 	// partialPlans are the partial plans that have not been flatted. The type of each element is permitted PhysicalIndexScan or PhysicalTableScan.
 	partialPlans []base.PhysicalPlan
 	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
 	tablePlan base.PhysicalPlan
+	// PartialPlans flats the partialPlans to construct executor pb.
+	PartialPlans [][]base.PhysicalPlan
+	// TablePlans flats the tablePlan to construct executor pb.
+	TablePlans []base.PhysicalPlan
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
