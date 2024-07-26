@@ -113,7 +113,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandMemTableScan
 	case *plannercore.LogicalIndexScan:
 		return OperandIndexScan
-	case *plannercore.LogicalShow:
+	case *logicalop.LogicalShow:
 		return OperandShow
 	case *plannercore.LogicalWindow:
 		return OperandWindow

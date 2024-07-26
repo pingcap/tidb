@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -2547,7 +2548,7 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 type PhysicalShow struct {
 	physicalSchemaProducer
 
-	ShowContents
+	logicalop.ShowContents
 
 	Extractor base.ShowPredicateExtractor
 }
