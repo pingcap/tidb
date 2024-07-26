@@ -584,14 +584,19 @@ func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 }
 
 func getMatchSchemas(
-	ctx context.Context,
 	extractor base.MemTablePredicateExtractor,
 	is infoschema.InfoSchema,
 ) []model.CIStr {
 	ex := extractor.(plannercore.TableSchemaSelector)
 	if ex != nil {
 		if schemas := ex.SelectedSchemaNames(); len(schemas) > 0 {
-			return schemas
+			tmp := schemas[:0]
+			for _, s := range schemas {
+				if is.SchemaExists(s) {
+					tmp = append(tmp, s)
+				}
+			}
+			return tmp
 		}
 	}
 	schemas := is.AllSchemaNames()
@@ -643,11 +648,8 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if tableEx != nil && tableEx.SkipRequest {
 		return nil
 	}
-	schemas := getMatchSchemas(ctx, e.extractor, e.is)
+	schemas := getMatchSchemas(e.extractor, e.is)
 	for _, schema := range schemas {
-		if tableEx != nil && !tableEx.ContainSchemaName(schema.L) {
-			continue
-		}
 		tables, err := getMatchTableInfos(ctx, e.extractor, schema, e.is)
 		if err != nil {
 			return errors.Trace(err)

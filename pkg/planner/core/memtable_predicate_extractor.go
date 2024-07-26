@@ -1903,21 +1903,8 @@ var _ TableSchemaSelector = (*InfoSchemaTablesExtractor)(nil)
 // TableSchemaSelector is used to help determine if a specified table/schema name contained in predicate condition,
 // and return all specified table/schema names in predicate condition.
 type TableSchemaSelector interface {
-	ContainTableName(table string) bool
-	ContainSchemaName(schema string) bool
-
 	SelectedTableNames() []model.CIStr
 	SelectedSchemaNames() []model.CIStr
-}
-
-// ContainTableName returns whether the given table is contained in predicate condition.
-func (e *InfoSchemaTablesExtractor) ContainTableName(table string) bool {
-	return !e.Filter("table_name", table)
-}
-
-// ContainSchemaName returns whether the given schema is contained in predicate condition.
-func (e *InfoSchemaTablesExtractor) ContainSchemaName(schema string) bool {
-	return !e.Filter("table_schema", schema)
 }
 
 // SelectedTableNames gets the table names specified in predicate condition.
