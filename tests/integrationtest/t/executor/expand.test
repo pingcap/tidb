@@ -110,3 +110,24 @@ GROUP BY prod WITH ROLLUP;
 --sorted_result
 SELECT CONCAT(product,':',country_id), 1+1, SUM(profit)/COUNT(*) FROM t1
 GROUP BY CONCAT(product,':',country_id) WITH ROLLUP;
+
+SET @saved_sql_mode = @@session.sql_mode;
+SET SESSION sql_mode= '';
+--echo
+--sorted_result
+SELECT UPPER(product) AS prod,
+       SUM(profit)/COUNT(*)
+  FROM t1 GROUP BY prod WITH ROLLUP HAVING prod='COMPUTER' ;
+SET SESSION sql_mode= @saved_sql_mode;
+
+--echo
+--echo # Joins
+--sorted_result
+SELECT product, country , year, SUM(profit) FROM t1,t2 WHERE
+t1.country_id=t2.country_id GROUP BY product, country, year WITH ROLLUP;
+
+--echo
+--sorted_result
+SELECT product, `SUM` FROM (SELECT product, SUM(profit) AS 'sum' FROM t1
+                            GROUP BY product WITH ROLLUP) AS tmp
+WHERE product is null;
