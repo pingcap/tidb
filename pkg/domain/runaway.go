@@ -216,7 +216,7 @@ func (do *Domain) GetRunawayWatchList() []*resourcegroup.QuarantineRecord {
 	return do.runawayManager.GetWatchList()
 }
 
-// TryToUpdateRunawayWatch is used to to update watch list including
+// TryToUpdateRunawayWatch is used to update watch list including
 // creation and deletion by manual trigger.
 func (do *Domain) TryToUpdateRunawayWatch() error {
 	return do.updateNewAndDoneWatch()

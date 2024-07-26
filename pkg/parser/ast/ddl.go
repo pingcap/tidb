@@ -2202,7 +2202,11 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	case ResourceRURate:
 		ctx.WriteKeyWord("RU_PER_SEC ")
 		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
+		if n.BoolValue {
+			ctx.WriteKeyWord("UNLIMITED")
+		} else {
+			ctx.WritePlainf("%d", n.UintValue)
+		}
 	case ResourcePriority:
 		ctx.WriteKeyWord("PRIORITY ")
 		ctx.WritePlain("= ")

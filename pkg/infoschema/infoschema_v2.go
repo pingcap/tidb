@@ -227,7 +227,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 }
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
-	dbInfo.Tables = nil
+	dbInfo.Deprecated.Tables = nil
 	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name.O})
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
@@ -1233,7 +1233,7 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 		return nil
 	}
 
-	tableIDs := make([]int64, 0, len(di.Tables))
+	tableIDs := make([]int64, 0, len(di.Deprecated.Tables))
 	tables, err := b.infoschemaV2.SchemaTableInfos(context.Background(), di.Name)
 	terror.Log(err)
 	for _, tbl := range tables {
