@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package logicalop_test
 
 import (
 	"context"
@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -41,7 +42,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
+func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -50,7 +51,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
-	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
+	logicalPlan, err := plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	// Obtain the leaf plan
@@ -59,7 +60,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 		leafPlan = leafPlan.Children()[0]
 	}
 
-	logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
+	logicalMemTable := leafPlan.(*logicalop.LogicalMemTable)
 	return logicalMemTable
 }
 

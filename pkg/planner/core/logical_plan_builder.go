@@ -4851,7 +4851,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	}
 
 	// NOTE: Add a `LogicalUnionScan` if we support update memory table in the future
-	p := LogicalMemTable{
+	p := logicalop.LogicalMemTable{
 		DBName:    dbName,
 		TableInfo: tableInfo,
 		Columns:   make([]*model.ColumnInfo, len(tableInfo.Columns)),
