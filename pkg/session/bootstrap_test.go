@@ -498,7 +498,6 @@ func TestANSISQLMode(t *testing.T) {
 
 	// Do some clean up, BootstrapSession will not create a new domain otherwise.
 	dom.Close()
-	domap.Delete(store)
 
 	// Set ANSI sql_mode and bootstrap again, to cover a bugfix.
 	// Once we have a SQL like that:
@@ -1136,7 +1135,6 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	require.Equal(t, 0, chk.NumRows())
 
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1261,7 +1259,6 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 
 	// Upgrade to 6.5.
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1316,7 +1313,6 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 
 	// Upgrade to 6.5.1+.
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1371,7 +1367,6 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 
 	// Upgrade to 6.5.1+.
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1433,7 +1428,6 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 
 	// Upgrade to 6.6.0.
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1555,7 +1549,6 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 	})
 	MustExec(t, seV135, "set global tidb_ddl_enable_fast_reorg = 1")
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV135)
@@ -1594,7 +1587,6 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	MustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err := getBootstrapVersion(s)
@@ -1645,7 +1637,6 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 
 	// Upgrade to 7.0
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1709,7 +1700,6 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 
 	// Upgrade to 6.5.
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1762,7 +1752,6 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 
 	// Upgrade to version 138.
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1804,7 +1793,6 @@ func TestTiDBUpgradeToVer143(t *testing.T) {
 	require.Equal(t, int64(ver142), ver)
 
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV142)
@@ -1848,7 +1836,6 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 
 	// Upgrade to 7.1.
 	do.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1890,7 +1877,6 @@ func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T
 
 	// upgrade to ver144
 	do.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -1940,7 +1926,6 @@ func TestTiDBUpgradeToVer145(t *testing.T) {
 	require.Equal(t, int64(ver144), ver)
 
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV144)
@@ -1971,7 +1956,6 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 	require.Equal(t, int64(ver169), ver)
 
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV169)
@@ -2035,7 +2019,6 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 
 	// upgrade to ver175
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -2087,7 +2070,6 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 	require.Equal(t, int64(ver175), ver)
 
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV175)
@@ -2119,7 +2101,6 @@ func TestTiDBUpgradeToVer177(t *testing.T) {
 	require.Equal(t, int64(ver176), ver)
 
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV176)
@@ -2180,7 +2161,6 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 
 	// upgrade to current version
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -2222,7 +2202,6 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 	require.Equal(t, int64(ver178), ver)
 
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV178)
@@ -2271,7 +2250,6 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 	}()
 
 	do.Close()
-	domap.Delete(store)
 	fatal2panic := false
 	fc := func() {
 		defer func() {
@@ -2311,7 +2289,6 @@ func TestTiDBUpgradeToVer209(t *testing.T) {
 
 	// upgrade to ver209
 	dom.Close()
-	domap.Delete(store)
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()
@@ -2388,7 +2365,6 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	MustExec(t, seV210, "alter table mysql.tidb_background_subtask_history drop column summary;")
 
 	do.Close()
-	domap.Delete(store)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV210)
