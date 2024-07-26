@@ -994,7 +994,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	}
 
 	// Collect the table filters.
-	// Since it's the intersection type index merge here, as lone as a filter appears in one path, we don't need it in
+	// Since it's the intersection type index merge here, as long as a filter appears in one path, we don't need it in
 	// the table filters.
 	var tableFilters []expression.Expression
 	for _, CNFItem := range remainedCNFs {
