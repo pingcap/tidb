@@ -101,7 +101,6 @@ func (g *globalAutoAnalyzeProcessList) Contains(id uint64) bool {
 	defer g.mu.RUnlock()
 	_, ok := g.processes[id]
 	return ok
-
 }
 
 // NewAutoAnalyzeTracker creates a new AutoAnalyzeTracker.
