@@ -48,6 +48,10 @@ type failedSuite struct {
 }
 
 func createFailDBSuite(t *testing.T) (s *failedSuite) {
+	return createFailDBSuiteWithLease(t, 200*time.Millisecond)
+}
+
+func createFailDBSuiteWithLease(t *testing.T, lease time.Duration) (s *failedSuite) {
 	s = new(failedSuite)
 	var err error
 	s.store, err = mockstore.NewMockStore(
@@ -57,7 +61,7 @@ func createFailDBSuite(t *testing.T) (s *failedSuite) {
 		}),
 	)
 	require.NoError(t, err)
-	session.SetSchemaLease(200 * time.Millisecond)
+	session.SetSchemaLease(lease)
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -220,7 +224,7 @@ func TestAddIndexFailed(t *testing.T) {
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
 func TestFailSchemaSyncer(t *testing.T) {
-	s := createFailDBSuite(t)
+	s := createFailDBSuiteWithLease(t, 10*time.Second)
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
