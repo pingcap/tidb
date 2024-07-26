@@ -1272,6 +1272,12 @@ func (do *Domain) Init(
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
 	ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker,
 ) error {
+	// TODO there are many place set ddlLease to 0, remove them completely, we want
+	//  UT and even local uni-store to run similar code path as normal.
+	if ddlLease == 0 {
+		ddlLease = time.Second
+	}
+
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
@@ -1386,12 +1392,6 @@ func (do *Domain) Init(
 	err = do.Reload()
 	if err != nil {
 		return err
-	}
-
-	// TODO there are many place set ddlLease to 0, remove them completely, we want
-	//  UT and even local uni-store to run similar code path as normal.
-	if ddlLease == 0 {
-		ddlLease = time.Second
 	}
 
 	sub := time.Since(startReloadTime)
