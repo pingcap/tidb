@@ -1420,7 +1420,7 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 func (n *UserSpec) SecurityString() string {
 	withPassword := false
 	if opt := n.AuthOpt; opt != nil {
-		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 {
+		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 || len(opt.ReplaceString) > 0 {
 			withPassword = true
 		}
 	}
