@@ -39,7 +39,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+=======
+>>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -743,11 +746,19 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+<<<<<<< HEAD
 	originalVal3 := autoanalyze.AutoAnalyzeMinCnt
 	defer func() {
 		autoanalyze.AutoAnalyzeMinCnt = originalVal3
 	}()
 	autoanalyze.AutoAnalyzeMinCnt = 0
+=======
+	originalVal3 := statistics.AutoAnalyzeMinCnt
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = originalVal3
+	}()
+	statistics.AutoAnalyzeMinCnt = 0
+>>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1085,11 +1096,19 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+<<<<<<< HEAD
 	originalVal3 := autoanalyze.AutoAnalyzeMinCnt
 	defer func() {
 		autoanalyze.AutoAnalyzeMinCnt = originalVal3
 	}()
 	autoanalyze.AutoAnalyzeMinCnt = 0
+=======
+	originalVal3 := statistics.AutoAnalyzeMinCnt
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = originalVal3
+	}()
+	statistics.AutoAnalyzeMinCnt = 0
+>>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 	originalVal4 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal4))
@@ -1966,9 +1985,15 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+<<<<<<< HEAD
 	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
 		autoanalyze.AutoAnalyzeMinCnt = 1000
+=======
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+>>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -2050,9 +2075,15 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+<<<<<<< HEAD
 	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
 		autoanalyze.AutoAnalyzeMinCnt = 1000
+=======
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+>>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -2805,12 +2836,21 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 		"3 0",
 	))
 
+<<<<<<< HEAD
 	originalVal1 := autoanalyze.AutoAnalyzeMinCnt
 	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	autoanalyze.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
 		autoanalyze.AutoAnalyzeMinCnt = originalVal1
+=======
+	originalVal1 := statistics.AutoAnalyzeMinCnt
+	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
+	statistics.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = originalVal1
+>>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 
