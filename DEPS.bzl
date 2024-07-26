@@ -5884,7 +5884,6 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-<<<<<<< HEAD
         sha256 = "07dff29e9848e79f36ac8dcd0d5b48bbfbb2796308702451afb862accb79fedb",
         strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20240227073058-929ab83f9754",
         urls = [
@@ -5892,15 +5891,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240227073058-929ab83f9754.zip",
             "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240227073058-929ab83f9754.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240227073058-929ab83f9754.zip",
-=======
-        sha256 = "b1af34db24f2650cd2a687fa9c58bd746eb3ca76e08afe5dbe2ac569ce54b597",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20240716095229-5f7ffec83ea7",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240716095229-5f7ffec83ea7.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240716095229-5f7ffec83ea7.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240716095229-5f7ffec83ea7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240716095229-5f7ffec83ea7.zip",
->>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
         ],
     )
     go_repository(
@@ -7090,23 +7080,13 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-<<<<<<< HEAD
-        sha256 = "289e42d456a8528576b83ba069a1f5b21cb2ae7599bce600db2afdc59be091c7",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20240708074802-cb8da1b1ad2f",
+        sha256 = "e2fe0801c24673fb037acb4b8aaef75ccc6988328d8ad5aa24f1b5c5a0bfca77",
+        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20240725040006-f1a90966c375",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240708074802-cb8da1b1ad2f.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240708074802-cb8da1b1ad2f.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240708074802-cb8da1b1ad2f.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240708074802-cb8da1b1ad2f.zip",
-=======
-        sha256 = "9ca4b7c7f070194aab4c537cbf58c39918341c59834fc2eb1d81d53865aaed36",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20240724130437-83f32e9221f2",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240724130437-83f32e9221f2.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240724130437-83f32e9221f2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240724130437-83f32e9221f2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240724130437-83f32e9221f2.zip",
->>>>>>> d12f841f274 (mod: update pd-client to fix the resource limiter issue (#54898))
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240725040006-f1a90966c375.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240725040006-f1a90966c375.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240725040006-f1a90966c375.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240725040006-f1a90966c375.zip",
         ],
     )
     go_repository(
