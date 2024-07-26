@@ -3699,7 +3699,7 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	resourceGroupSettings := groupInfo.ResourceGroupSettings
 	switch opt.Tp {
 	case ast.ResourceRURate:
-		return SetDirectResourceGroupRUSecondOption(resourceGroupSettings, opt.UintValue, opt.RUUnlimited)
+		return SetDirectResourceGroupRUSecondOption(resourceGroupSettings, opt.UintValue, opt.BoolValue)
 	case ast.ResourcePriority:
 		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:

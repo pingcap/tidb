@@ -1882,7 +1882,7 @@ DirectResourceGroupOption:
 	}
 |	"RU_PER_SEC" EqOpt "UNLIMITED"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, RUUnlimited: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, BoolValue: true}
 	}
 |	"PRIORITY" EqOpt ResourceGroupPriorityOption
 	{
