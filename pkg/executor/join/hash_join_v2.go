@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
 var (
@@ -86,11 +86,7 @@ func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
 	return totalMemoryUsage
 }
 
-func (htc *hashTableContext) getSegments(workerID, partitionID int) []*rowTableSegment {
-	if workerID == -1 {
-		panic("xzxdebug") // TODO remove it in the future
-	}
-
+func (htc *hashTableContext) getSegmentsInRowTable(workerID, partitionID int) []*rowTableSegment {
 	if htc.rowTables[workerID] != nil && htc.rowTables[workerID][partitionID] != nil {
 		return htc.rowTables[workerID][partitionID].getSegments()
 	}
@@ -98,23 +94,44 @@ func (htc *hashTableContext) getSegments(workerID, partitionID int) []*rowTableS
 	return nil
 }
 
-func (htc *hashTableContext) clearSegments(workerID, partitionID int) {
-	if workerID == -1 { // TODO maybe we need to remove it in the future
-		htc.hashTable.tables[partitionID].rowData.clearSegments()
-		htc.hashTable.tables[partitionID].hashTable = nil
-		return
+func (htc *hashTableContext) getAllSegmentsMemoryUsageInRowTable() int64 {
+	totalMemoryUsage := int64(0)
+	for _, tables := range htc.rowTables {
+		for _, table := range tables {
+			totalMemoryUsage += table.getTotalMemoryUsage()
+		}
 	}
+	return totalMemoryUsage
+}
+
+func (htc *hashTableContext) clearAllSegmentsInRowTable() {
+	for _, tables := range htc.rowTables {
+		for _, table := range tables {
+			table.clearSegments()
+		}
+	}
+}
+
+func (htc *hashTableContext) clearSegmentsInRowTable(workerID, partitionID int) {
 	if htc.rowTables[workerID] != nil && htc.rowTables[workerID][partitionID] != nil {
 		htc.rowTables[workerID][partitionID].clearSegments()
 	}
 }
 
-func (htc *hashTableContext) getHashTableSegments(partitionID int) []*rowTableSegment {
-	return htc.hashTable.getPartitionSegments(partitionID)
+func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
+	partNum := len(htc.hashTable.tables)
+	totalMemoryUsage := int64(0)
+	for i := 0; i < partNum; i++ {
+		totalMemoryUsage += htc.hashTable.getPartitionMemoryUsage(i)
+	}
+	return totalMemoryUsage
 }
 
-func (htc *hashTableContext) clearHashTableSegments(partitionID int) {
-	htc.hashTable.clearPartitionSegments(partitionID)
+func (htc *hashTableContext) clearHashTable() {
+	partNum := len(htc.hashTable.tables)
+	for i := 0; i < partNum; i++ {
+		htc.hashTable.clearPartitionSegments(i)
+	}
 }
 
 func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, allowCreate bool) *rowTableSegment {
@@ -150,6 +167,15 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	}
 }
 
+func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) int64 {
+	totalMemoryUsage := int64(0)
+	for _, table := range rowTables {
+		hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
+		totalMemoryUsage += int64(hashTableLength) * serialization.UnsafePointerLen
+	}
+	return totalMemoryUsage
+}
+
 func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < partitionNumber; i++ {
@@ -165,22 +191,28 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 		}
 	}
 
-	for i := 0; i < partitionNumber; i++ {
-		htc.hashTable.tables[i] = newSubTable(rowTables[i], htc.memoryTracker)
-	}
-
-	for i := range htc.rowTables {
-		htc.rowTables[i] = nil
-	}
-
-	htc.hashTable.isBuilt = true
+	memoryUsage := htc.calculateHashTableMemoryUsage(rowTables)
+	htc.memoryTracker.Consume(memoryUsage)
 
 	if spillHelper != nil && spillHelper.isSpillNeeded() {
-		err := spillHelper.spillBuildRows()
+		err := spillHelper.spillRowTable()
 		if err != nil {
 			return 0, err
 		}
+
+		spilledPartition := spillHelper.getSpilledPartitions()
+		for _, partID := range spilledPartition {
+			// Clear spilled row tables
+			rowTables[partID].clearSegments()
+		}
 	}
+
+	for i := 0; i < partitionNumber; i++ {
+		// No tracker needs to be passed as memory has been consumed before
+		htc.hashTable.tables[i] = newSubTable(rowTables[i], nil)
+	}
+
+	htc.clearAllSegmentsInRowTable()
 
 	totalSegmentCnt := 0
 	for _, table := range htc.hashTable.tables {
@@ -227,21 +259,19 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 	hCtx.hashTableContext.hashTable = &hashTableV2{
 		tables:          make([]*subTable, hCtx.PartitionNumber),
 		partitionNumber: uint64(hCtx.PartitionNumber),
-		isBuilt:         false,
 	}
 	hCtx.finalSync = make(chan struct{})
 	hCtx.hashTableContext.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
 }
 
 func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
-	for index := range hCtx.hashTableContext.rowTables {
-		hCtx.hashTableContext.rowTables[index] = make([]*rowTable, hCtx.PartitionNumber)
-	}
-	hCtx.hashTableContext.hashTable = &hashTableV2{
-		tables:          make([]*subTable, hCtx.PartitionNumber),
-		partitionNumber: uint64(hCtx.PartitionNumber),
-		isBuilt:         false,
-	}
+	memoryUsage := hCtx.hashTableContext.getAllSegmentsMemoryUsageInRowTable()
+	hCtx.hashTableContext.clearAllSegmentsInRowTable()
+	hCtx.memTracker.Consume(-memoryUsage)
+
+	memoryUsage = hCtx.hashTableContext.getAllMemoryUsageInHashTable()
+	hCtx.hashTableContext.clearHashTable()
+	hCtx.memTracker.Consume(-memoryUsage)
 }
 
 // ProbeSideTupleFetcherV2 reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -324,11 +354,6 @@ func (e *HashJoinV2Exec) needUsedFlag() bool {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinV2Exec) Open(ctx context.Context) error {
-	if e.PartitionNumber > len(e.BuildWorkers) {
-		// Result will be incorrect if partition number is greater than concurrency when spill is triggered
-		return errors.NewNoStackError("Partition number shouldn't be greater than concurrency")
-	}
-
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		e.closeCh = nil
 		e.prepared = false

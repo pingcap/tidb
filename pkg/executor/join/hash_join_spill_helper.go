@@ -74,8 +74,7 @@ type hashJoinSpillHelper struct {
 	spilledPartitions []bool
 	spillTriggered    bool
 
-	triggeredInBuildStageForTest bool
-	spillRoundForTest            int
+	spillRoundForTest int
 }
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
@@ -388,31 +387,7 @@ func (h *hashJoinSpillHelper) init() {
 	}
 }
 
-func (h *hashJoinSpillHelper) spillWhenHashTableIsNotBuilt(workerID int, partitionsNeedSpill []int, errChannel chan error) {
-	for _, partID := range partitionsNeedSpill {
-		// finalize current segment of every partition in the worker
-		worker := h.hashJoinExec.BuildWorkers[workerID]
-		builder := worker.builder
-
-		startPosInRawData := builder.startPosInRawData[partID]
-		if len(startPosInRawData) > 0 {
-			worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
-		}
-		spilledSegments := worker.getSegments(partID)
-		worker.clearSegments(partID)
-
-		err := h.spillSegmentsToDisk(workerID, partID, spilledSegments)
-		if err != nil {
-			errChannel <- util.GetRecoverError(err)
-		}
-	}
-}
-
-func (h *hashJoinSpillHelper) spillWhenHashTableIsBuilt() {
-
-}
-
-func (h *hashJoinSpillHelper) spillBuildRows() error {
+func (h *hashJoinSpillHelper) spillRowTable() error {
 	h.setInSpilling()
 	defer h.cond.Broadcast()
 	defer h.setNotSpilled()
@@ -422,18 +397,11 @@ func (h *hashJoinSpillHelper) spillBuildRows() error {
 		return err
 	}
 
-	h.triggeredInBuildStageForTest = true
-
 	h.init()
 
 	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill()
 
-	var workerNum int
-	if h.hashJoinExec.hashTableContext.hashTable.isBuilt {
-		workerNum = len(partitionsNeedSpill)
-	} else {
-		workerNum = len(h.hashJoinExec.BuildWorkers)
-	}
+	workerNum := len(h.hashJoinExec.BuildWorkers)
 	errChannel := make(chan error, workerNum)
 
 	waiter := &sync.WaitGroup{}
@@ -451,13 +419,23 @@ func (h *hashJoinSpillHelper) spillBuildRows() error {
 				defer waiter.Done()
 			}()
 
-			if h.hashJoinExec.hashTableContext.hashTable.isBuilt {
-				h.spillWhenHashTableIsBuilt()
-			} else {
-				h.spillWhenHashTableIsNotBuilt()
+			for _, partID := range partitionsNeedSpill {
+				// finalize current segment of every partition in the worker
+				worker := h.hashJoinExec.BuildWorkers[workerID]
+				builder := worker.builder
+
+				startPosInRawData := builder.startPosInRawData[partID]
+				if len(startPosInRawData) > 0 {
+					worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
+				}
+				spilledSegments := worker.getSegmentsInRowTable(partID)
+				worker.clearSegmentsInRowTable(partID)
+
+				err := h.spillSegmentsToDisk(workerID, partID, spilledSegments)
+				if err != nil {
+					errChannel <- util.GetRecoverError(err)
+				}
 			}
-
-
 		}(i)
 	}
 
@@ -493,6 +471,8 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 		return errors.NewNoStackError("Exceed max spill round")
 	}
 
+	h.hashJoinExec.HashJoinCtxV2.resetHashTableContextForRestore()
+
 	if h.buildRowsInDisk == nil {
 		return nil
 	}
@@ -522,8 +502,6 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 		h.stack.push(rd)
 	}
 
-	h.hashJoinExec.HashJoinCtxV2.resetHashTableContextForRestore()
-
 	// Reset something as spill may still be triggered during restoring
 	h.reset()
 	return nil
@@ -535,10 +513,6 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}
-}
-
-func (h *hashJoinSpillHelper) isSpillTriggeredInBuildStageForTest() bool {
-	return h.triggeredInBuildStageForTest
 }
 
 func (h *hashJoinSpillHelper) isRespillTriggeredForTest() bool {

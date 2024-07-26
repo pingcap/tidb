@@ -116,7 +116,6 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 type hashTableV2 struct {
 	tables          []*subTable
 	partitionNumber uint64
-	isBuilt         bool
 }
 
 func (ht *hashTableV2) getPartitionSegments(partID int) []*rowTableSegment {

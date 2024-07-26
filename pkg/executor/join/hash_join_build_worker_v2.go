@@ -56,12 +56,12 @@ func NewJoinBuildWorkerV2(ctx *HashJoinCtxV2, workID uint, buildSideExec exec.Ex
 	return worker
 }
 
-func (b *BuildWorkerV2) getSegments(partID int) []*rowTableSegment {
-	return b.HashJoinCtx.hashTableContext.getSegments(int(b.WorkerID), partID)
+func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
+	return b.HashJoinCtx.hashTableContext.getSegmentsInRowTable(int(b.WorkerID), partID)
 }
 
-func (b *BuildWorkerV2) clearSegments(partID int) {
-	b.HashJoinCtx.hashTableContext.clearSegments(int(b.WorkerID), partID)
+func (b *BuildWorkerV2) clearSegmentsInRowTable(partID int) {
+	b.HashJoinCtx.hashTableContext.clearSegmentsInRowTable(int(b.WorkerID), partID)
 }
 
 // buildHashTableForList builds hash table from `list`.
@@ -138,7 +138,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 
 func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
 	defer fetcherAndWorkerSyncer.Done()
-	
+
 	start := time.Now()
 	err := w.builder.processOneRestoredChunk(chk, w.HashJoinCtx, int(w.WorkerID), w.HashJoinCtx.PartitionNumber)
 	if err != nil {
