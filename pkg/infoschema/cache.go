@@ -38,8 +38,9 @@ type InfoCache struct {
 	r    autoid.Requirement
 	Data *Data
 
-	// upserted is true if Upsert() is called on InfoCache
-	upserted bool
+	// first known schema version records the first known schema version, all schemas between [firstKnownSchemaVersion, latest)
+	// are known as long as we keep the DDL history correctly.
+	firstKnownSchemaVersion int64
 }
 
 type schemaAndTimestamp struct {
@@ -100,7 +101,7 @@ func (h *InfoCache) Upsert(is InfoSchema, schemaTS uint64) func() {
 		infoschema: is,
 		timestamp:  int64(schemaTS),
 	})
-	h.upserted = true
+	h.firstKnownSchemaVersion = is.SchemaMetaVersion()
 
 	return func() {
 		// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
@@ -243,11 +244,14 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 	//              infoschema 56
 	// Now, request for schema version 55, return infoschem 51 would be wrong!
 	//
-	if i < len(h.cache) {
-		if (i != 0 && !h.upserted) || h.cache[i].infoschema.SchemaMetaVersion() == version {
-			infoschema_metrics.HitVersionCounter.Inc()
-			return h.cache[i].infoschema
-		}
+	if i == len(h.cache) {
+		return nil
+	}
+
+	if h.cache[i].infoschema.SchemaMetaVersion() == version ||
+		(i != 0 && h.cache[i].infoschema.SchemaMetaVersion() >= h.firstKnownSchemaVersion) {
+		infoschema_metrics.HitVersionCounter.Inc()
+		return h.cache[i].infoschema
 	}
 	return nil
 }
@@ -309,6 +313,9 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 		h.cache[i] = schemaAndTimestamp{
 			infoschema: is,
 			timestamp:  int64(schemaTS),
+		}
+		if len(h.cache) == 1 {
+			h.firstKnownSchemaVersion = is.SchemaMetaVersion()
 		}
 	} else if i < len(h.cache) {
 		// drop older schema
