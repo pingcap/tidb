@@ -1048,7 +1048,7 @@ var checkSubstringsInOrder = [7]string{
 	`"ttl_info":null`,
 }
 
-// IsTableInfoMustLoad checks the above substrings in a table info's json represention.
+// IsTableInfoMustLoad checks the above substrings in a table info's json representing.
 // When a table contains one of them, tidb must load the table info during schema full load.
 // hasSpecialAttributes() is a subset of it, the difference is that:
 // If a table need to be resident in-memory, its table info MUST be loaded.
