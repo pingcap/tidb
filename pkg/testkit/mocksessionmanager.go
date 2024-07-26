@@ -128,11 +128,6 @@ func (msm *MockSessionManager) ServerID() uint64 {
 	return msm.SerID
 }
 
-// GetAutoAnalyzeProcID implement SessionManager interface.
-func (msm *MockSessionManager) GetAutoAnalyzeProcID() uint64 {
-	return uint64(1)
-}
-
 // StoreInternalSession is to store internal session.
 func (msm *MockSessionManager) StoreInternalSession(s any) {
 	msm.mu.Lock()
