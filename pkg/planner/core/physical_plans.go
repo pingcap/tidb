@@ -430,8 +430,8 @@ func (p *PushedDownLimit) MemoryUsage() (sum int64) {
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
 
-	indexPlan  base.PhysicalPlan
-	tablePlan  base.PhysicalPlan
+	indexPlan base.PhysicalPlan
+	tablePlan base.PhysicalPlan
 	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []base.PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
