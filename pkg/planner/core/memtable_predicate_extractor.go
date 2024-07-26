@@ -1826,7 +1826,8 @@ func (e *InfoSchemaTablesExtractor) Extract(ctx base.PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	var resultSet, resultSet1 set.StringSet
-	e.colNames = []string{"table_schema", "constraint_schema", "table_name", "constraint_name", "sequence_schema", "sequence_name", "partition_name", "schema_name", "index_name"}
+	e.colNames = []string{"table_schema", "constraint_schema", "table_name", "constraint_name",
+		"sequence_schema", "sequence_name", "partition_name", "schema_name", "index_name", "tidb_table_id"}
 	e.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
 	for _, colName := range e.colNames {
@@ -1905,6 +1906,7 @@ var _ TableSchemaSelector = (*InfoSchemaTablesExtractor)(nil)
 type TableSchemaSelector interface {
 	SelectedTableNames() []model.CIStr
 	SelectedSchemaNames() []model.CIStr
+	SelectedTableIDs() []int64
 }
 
 // SelectedTableNames gets the table names specified in predicate condition.
@@ -1915,6 +1917,21 @@ func (e *InfoSchemaTablesExtractor) SelectedTableNames() []model.CIStr {
 // SelectedSchemaNames gets the schema names specified in predicate condition.
 func (e *InfoSchemaTablesExtractor) SelectedSchemaNames() []model.CIStr {
 	return e.getSchemaObjectNames("table_schema")
+}
+
+// SelectedTableIDs get table IDs specified in predicate condition.
+func (e *InfoSchemaTablesExtractor) SelectedTableIDs() []int64 {
+	strs := e.getSchemaObjectNames("tidb_table_id")
+	tableIDs := make([]int64, 0, len(strs))
+	for _, s := range strs {
+		v, err := strconv.ParseInt(s.L, 10, 64)
+		if err != nil {
+			continue
+		}
+		tableIDs = append(tableIDs, v)
+	}
+	slices.Sort(tableIDs)
+	return tableIDs
 }
 
 // getSchemaObjectNames gets the schema object names specified in predicate condition of given column name.

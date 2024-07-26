@@ -592,8 +592,8 @@ func getMatchSchemas(
 		if schemas := ex.SelectedSchemaNames(); len(schemas) > 0 {
 			tmp := schemas[:0]
 			for _, s := range schemas {
-				if is.SchemaExists(s) {
-					tmp = append(tmp, s)
+				if n, ok := is.SchemaByName(s); ok {
+					tmp = append(tmp, n.Name)
 				}
 			}
 			return tmp
