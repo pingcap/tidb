@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -113,37 +114,42 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		e.is = is
 
-		var dbs []model.CIStr
-		if ex, ok := e.extractor.(plannercore.TableSchemaSelector); ok {
-			dbs = ex.SelectedSchemaNames()
+		var getAllSchemas = func() []model.CIStr {
+			dbs := is.AllSchemaNames()
+			slices.SortFunc(dbs, func(a, b model.CIStr) int {
+				return strings.Compare(a.L, b.L)
+			})
+			return dbs
 		}
-		if len(dbs) == 0 {
-			dbs = is.AllSchemaNames()
-		}
-		slices.SortFunc(dbs, func(a, b model.CIStr) int {
-			return strings.Compare(a.L, b.L)
-		})
+
 		var err error
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
+			dbs := getAllSchemas()
 			e.setDataFromSchemata(sctx, dbs)
 		case infoschema.TableStatistics:
+			dbs := getAllSchemas()
 			err = e.setDataForStatistics(ctx, sctx, dbs)
 		case infoschema.TableTables:
-			err = e.setDataFromTables(ctx, sctx, dbs)
+			err = e.setDataFromTables(ctx, sctx)
 		case infoschema.TableReferConst:
+			dbs := getAllSchemas()
 			err = e.setDataFromReferConst(ctx, sctx, dbs)
 		case infoschema.TableSequences:
+			dbs := getAllSchemas()
 			err = e.setDataFromSequences(ctx, sctx, dbs)
 		case infoschema.TablePartitions:
+			dbs := getAllSchemas()
 			err = e.setDataFromPartitions(ctx, sctx, dbs)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
 			err = e.setDataForAnalyzeStatus(ctx, sctx)
 		case infoschema.TableTiDBIndexes:
+			dbs := getAllSchemas()
 			err = e.setDataFromIndexes(ctx, sctx, dbs)
 		case infoschema.TableViews:
+			dbs := getAllSchemas()
 			err = e.setDataFromViews(ctx, sctx, dbs)
 		case infoschema.TableEngines:
 			e.setDataFromEngines()
@@ -152,6 +158,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableCollations:
 			e.setDataFromCollations()
 		case infoschema.TableKeyColumn:
+			dbs := getAllSchemas()
 			err = e.setDataFromKeyColumnUsage(ctx, sctx, dbs)
 		case infoschema.TableMetricTables:
 			e.setDataForMetricTables()
@@ -170,12 +177,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiDBHotRegions:
 			err = e.setDataForTiDBHotRegions(ctx, sctx)
 		case infoschema.TableConstraints:
+			dbs := getAllSchemas()
 			err = e.setDataFromTableConstraints(ctx, sctx, dbs)
 		case infoschema.TableSessionVar:
 			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
+			dbs := getAllSchemas()
 			err = e.dataForTableTiFlashReplica(ctx, sctx, dbs)
 		case infoschema.TableTiKVStoreStatus:
 			err = e.dataForTiKVStoreStatus(ctx, sctx)
@@ -208,14 +217,18 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableRunawayWatches:
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
+			dbs := getAllSchemas()
 			err = e.setDataFromCheckConstraints(ctx, sctx, dbs)
 		case infoschema.TableTiDBCheckConstraints:
+			dbs := getAllSchemas()
 			err = e.setDataFromTiDBCheckConstraints(ctx, sctx, dbs)
 		case infoschema.TableKeywords:
 			err = e.setDataFromKeywords()
 		case infoschema.TableTiDBIndexUsage:
+			dbs := getAllSchemas()
 			err = e.setDataFromIndexUsage(ctx, sctx, dbs)
 		case infoschema.ClusterTableTiDBIndexUsage:
+			dbs := getAllSchemas()
 			err = e.setDataForClusterIndexUsage(ctx, sctx, dbs)
 		}
 		if err != nil {
@@ -570,47 +583,53 @@ func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	return false
 }
 
-func getAllTableInfos(
+func getMatchSchemas(
+	ctx context.Context,
+	extractor base.MemTablePredicateExtractor,
+	is infoschema.InfoSchema,
+) []model.CIStr {
+	ex := extractor.(plannercore.TableSchemaSelector)
+	if ex != nil {
+		if schemas := ex.SelectedSchemaNames(); len(schemas) > 0 {
+			return schemas
+		}
+	}
+	schemas := is.AllSchemaNames()
+	slices.SortFunc(schemas, func(a, b model.CIStr) int {
+		return strings.Compare(a.L, b.L)
+	})
+	return schemas
+}
+
+func getMatchTableInfos(
 	ctx context.Context,
 	extractor base.MemTablePredicateExtractor,
 	schema model.CIStr,
 	is infoschema.InfoSchema,
 ) ([]*model.TableInfo, error) {
 	ex := extractor.(plannercore.TableSchemaSelector)
-	var tables []*model.TableInfo
 	if ex != nil {
-		// Find all table infos from where condition.
-		selectedNames := ex.SelectedTableNames()
-		tables = make([]*model.TableInfo, 0, len(selectedNames))
-		for _, n := range selectedNames {
-			tbl, err := is.TableByName(ctx, schema, n)
-			if err != nil {
-				return nil, errors.Trace(err)
+		if selectedNames := ex.SelectedTableNames(); len(selectedNames) > 0 {
+			// Find all table infos from where condition.
+			tables := make([]*model.TableInfo, 0, len(selectedNames))
+			for _, n := range selectedNames {
+				tbl, err := is.TableByName(ctx, schema, n)
+				if err != nil {
+					if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+						continue
+					}
+					return nil, errors.Trace(err)
+				}
+				tables = append(tables, tbl.Meta())
 			}
-			tables = append(tables, tbl.Meta())
+			return tables, nil
 		}
 	}
 	// There is no specified table in where condition.
-	if len(tables) == 0 {
-		var err error
-		tables, err = is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if ex != nil {
-			tmp := tables[:0]
-			for _, tbl := range tables {
-				if ex.ContainTableName(tbl.Name.L) {
-					tmp = append(tmp, tbl)
-				}
-			}
-			tables = tmp
-		}
-	}
-	return tables, nil
+	return is.SchemaTableInfos(ctx, schema)
 }
 
-func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 
@@ -624,11 +643,12 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if tableEx != nil && tableEx.SkipRequest {
 		return nil
 	}
+	schemas := getMatchSchemas(ctx, e.extractor, e.is)
 	for _, schema := range schemas {
 		if tableEx != nil && !tableEx.ContainSchemaName(schema.L) {
 			continue
 		}
-		tables, err := getAllTableInfos(ctx, e.extractor, schema, e.is)
+		tables, err := getMatchTableInfos(ctx, e.extractor, schema, e.is)
 		if err != nil {
 			return errors.Trace(err)
 		}
