@@ -37,6 +37,9 @@ type InfoCache struct {
 
 	r    autoid.Requirement
 	Data *Data
+
+	// upserted is true if Upsert() is called on InfoCache
+	upserted bool
 }
 
 type schemaAndTimestamp struct {
@@ -97,6 +100,7 @@ func (h *InfoCache) Upsert(is InfoSchema, schemaTS uint64) func() {
 		infoschema: is,
 		timestamp:  int64(schemaTS),
 	})
+	h.upserted = true
 
 	return func() {
 		// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
@@ -223,10 +227,27 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 	//			return h.cache[i]
 	//		}
 	// ```
-
-	if i < len(h.cache) && (i != 0 || h.cache[i].infoschema.SchemaMetaVersion() == version) {
-		infoschema_metrics.HitVersionCounter.Inc()
-		return h.cache[i].infoschema
+	// upsert is a full reset of InfoCache, after upsert, the DDL history might lost and the assumption does not hold anymore.
+	// For example:
+	//     Before
+	//              infoschema 51
+	//              infoschema 52
+	//              infoschema 53
+	//              infoschema 54
+	//              infoschema 55
+	//              infoschema 56
+	//     After Upsert()
+	//              infoschema 56
+	//     Then load historial snapshot version 51
+	//              infoschema 51
+	//              infoschema 56
+	// Now, request for schema version 55, return infoschem 51 would be wrong!
+	//
+	if i < len(h.cache) {
+		if (i != 0 && !h.upserted) || h.cache[i].infoschema.SchemaMetaVersion() == version {
+			infoschema_metrics.HitVersionCounter.Inc()
+			return h.cache[i].infoschema
+		}
 	}
 	return nil
 }
