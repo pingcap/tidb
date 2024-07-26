@@ -212,7 +212,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = name + "{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *LogicalSequence:
+	case *logicalop.LogicalSequence:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

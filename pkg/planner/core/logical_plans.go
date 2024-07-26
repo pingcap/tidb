@@ -47,7 +47,7 @@ var (
 	_ base.LogicalPlan = &logicalop.LogicalShowDDLJobs{}
 	_ base.LogicalPlan = &LogicalCTE{}
 	_ base.LogicalPlan = &logicalop.LogicalCTETable{}
-	_ base.LogicalPlan = &LogicalSequence{}
+	_ base.LogicalPlan = &logicalop.LogicalSequence{}
 )
 
 // ExtractNotNullFromConds extracts not-null columns from conditions.
