@@ -915,13 +915,18 @@ const (
 	ConcurrencyDivisor = 4
 	// RequestsPerThread is the number of requests handled by a single thread
 	RequestsPerThread = 100000
-
-	// Assuming an average request takes 50ms:
-	// With ideal parallelism and sufficient concurrency,
-	// the maximum duration for a round of deleteRanges is 100,000 * 50ms = 5,000s.
-	// These values are conservatively chosen to minimize GC impact on foreground requests.
 )
 
+// calcDeleteRangeConcurrency calculates the concurrency of deleteRanges.
+//
+// There was only one concurrency for resolveLocks. When parallelizing deleteRanges, its concurrency is controlled by
+// the same variable TiDBGCConcurrency. As requested by PM, the first priority is to ensure the stability of the system,
+// so the concurrency of deleteRanges is reduced to avoid overwhelming the system.
+//
+// Assuming an average request takes 50ms:
+// With ideal parallelism and sufficient concurrency,
+// the maximum duration for a round of deleteRanges is 100,000 * 50ms = 5,000s.
+// These values are conservatively chosen to minimize GC impact on foreground requests
 func (w *GCWorker) calcDeleteRangeConcurrency(concurrency gcConcurrency, n int) int {
 	maxConcurrency := concurrency.v / ConcurrencyDivisor
 	threadsBasedOnRequests := n / RequestsPerThread
