@@ -121,6 +121,8 @@ func doSendBackup(
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
+	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
+	// terminate the backup if it does not receive any new response for a long time.
 	ctx, timerecv := StartTimeoutRecv(pctx, TIMEOUT_ONE_RESPONSE)
 	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
