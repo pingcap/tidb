@@ -378,11 +378,6 @@ func TestExplainAnalyzeJoin(t *testing.T) {
 	require.Equal(t, 7, len(rows))
 	require.Regexp(t, "HashJoin.*", rows[0][0])
 	require.Regexp(t, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch and wait:.*}", rows[0][5])
-	// Test for index merge join.
-	rows = tk.MustQuery("explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
-	require.Len(t, rows, 9)
-	require.Regexp(t, "IndexMergeJoin_.*", rows[0][0])
-	require.Regexp(t, fmt.Sprintf(".*Concurrency:%v.*", tk.Session().GetSessionVars().IndexLookupJoinConcurrency()), rows[0][5])
 
 	// TestExplainAnalyzeIndexHashJoin
 	// Issue 43597

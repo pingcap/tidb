@@ -125,7 +125,10 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 		log.Info("system database not backed up, skipping", zap.String("database", sysDB))
 		return nil
 	}
-	db, ok := rc.getDatabaseByName(sysDB)
+	db, ok, err := rc.getSystemDatabaseByName(ctx, sysDB)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if !ok {
 		// Or should we create the database here?
 		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
@@ -160,22 +163,27 @@ type database struct {
 	TemporaryName  model.CIStr
 }
 
-// getDatabaseByName make a record of a database from info schema by its name.
-func (rc *SnapClient) getDatabaseByName(name string) (*database, bool) {
+// getSystemDatabaseByName make a record of a system database, such as mysql and sys, from info schema by its name.
+func (rc *SnapClient) getSystemDatabaseByName(ctx context.Context, name string) (*database, bool, error) {
 	infoSchema := rc.dom.InfoSchema()
 	schema, ok := infoSchema.SchemaByName(model.NewCIStr(name))
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	db := &database{
 		ExistingTables: map[string]*model.TableInfo{},
 		Name:           model.NewCIStr(name),
 		TemporaryName:  utils.TemporaryDBName(name),
 	}
-	for _, t := range schema.Tables {
-		db.ExistingTables[t.Name.L] = t
+	// It's OK to get all the tables from system tables.
+	tableInfos, err := infoSchema.SchemaTableInfos(ctx, schema.Name)
+	if err != nil {
+		return nil, false, errors.Trace(err)
 	}
-	return db, true
+	for _, tbl := range tableInfos {
+		db.ExistingTables[tbl.Name.L] = tbl
+	}
+	return db, true, nil
 }
 
 // afterSystemTablesReplaced do some extra work for special system tables.

@@ -4086,44 +4086,21 @@ const (
 // QueryWatchOption is used for parsing manual management of watching runaway queries option.
 type QueryWatchOption struct {
 	stmtNode
-	Tp        QueryWatchOptionType
-	StrValue  model.CIStr
-	IntValue  int32
-	ExprValue ExprNode
-	BoolValue bool
+	Tp                  QueryWatchOptionType
+	ResourceGroupOption *QueryWatchResourceGroupOption
+	ActionOption        *ResourceGroupRunawayActionOption
+	TextOption          *QueryWatchTextOption
 }
 
+// Restore implements Node interface.
 func (n *QueryWatchOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case QueryWatchResourceGroup:
-		ctx.WriteKeyWord("RESOURCE GROUP ")
-		if n.ExprValue != nil {
-			if err := n.ExprValue.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
-			}
-		} else {
-			ctx.WriteName(n.StrValue.O)
-		}
+		return n.ResourceGroupOption.restore(ctx)
 	case QueryWatchAction:
-		ctx.WriteKeyWord("ACTION ")
-		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+		return n.ActionOption.Restore(ctx)
 	case QueryWatchType:
-		if n.BoolValue {
-			ctx.WriteKeyWord("SQL TEXT ")
-			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
-			ctx.WriteKeyWord(" TO ")
-		} else {
-			switch n.IntValue {
-			case int32(model.WatchSimilar):
-				ctx.WriteKeyWord("SQL DIGEST ")
-			case int32(model.WatchPlan):
-				ctx.WriteKeyWord("PLAN DIGEST ")
-			}
-		}
-		if err := n.ExprValue.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
-		}
+		return n.TextOption.Restore(ctx)
 	}
 	return nil
 }
@@ -4135,12 +4112,26 @@ func (n *QueryWatchOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchOption)
-	if n.ExprValue != nil {
-		node, ok := n.ExprValue.Accept(v)
+	if n.ResourceGroupOption != nil && n.ResourceGroupOption.GroupNameExpr != nil {
+		node, ok := n.ResourceGroupOption.GroupNameExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ExprValue = node.(ExprNode)
+		n.ResourceGroupOption.GroupNameExpr = node.(ExprNode)
+	}
+	if n.ActionOption != nil {
+		node, ok := n.ActionOption.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ActionOption = node.(*ResourceGroupRunawayActionOption)
+	}
+	if n.TextOption != nil {
+		node, ok := n.TextOption.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.TextOption = node.(*QueryWatchTextOption)
 	}
 	return v.Leave(n)
 }
@@ -4152,4 +4143,67 @@ func CheckQueryWatchAppend(ops []*QueryWatchOption, newOp *QueryWatchOption) boo
 		}
 	}
 	return true
+}
+
+// QueryWatchResourceGroupOption is used for parsing the query watch resource group name.
+type QueryWatchResourceGroupOption struct {
+	GroupNameStr  model.CIStr
+	GroupNameExpr ExprNode
+}
+
+func (n *QueryWatchResourceGroupOption) restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RESOURCE GROUP ")
+	if n.GroupNameExpr != nil {
+		if err := n.GroupNameExpr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.GroupNameExpr)
+		}
+	} else {
+		ctx.WriteName(n.GroupNameStr.String())
+	}
+	return nil
+}
+
+// QueryWatchTextOption is used for parsing the query watch text option.
+type QueryWatchTextOption struct {
+	node
+	Type          model.RunawayWatchType
+	PatternExpr   ExprNode
+	TypeSpecified bool
+}
+
+// Restore implements Node interface.
+func (n *QueryWatchTextOption) Restore(ctx *format.RestoreCtx) error {
+	if n.TypeSpecified {
+		ctx.WriteKeyWord("SQL TEXT ")
+		ctx.WriteKeyWord(n.Type.String())
+		ctx.WriteKeyWord(" TO ")
+	} else {
+		switch n.Type {
+		case model.WatchSimilar:
+			ctx.WriteKeyWord("SQL DIGEST ")
+		case model.WatchPlan:
+			ctx.WriteKeyWord("PLAN DIGEST ")
+		}
+	}
+	if err := n.PatternExpr.Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.PatternExpr)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*QueryWatchTextOption)
+	if n.PatternExpr != nil {
+		node, ok := n.PatternExpr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.PatternExpr = node.(ExprNode)
+	}
+	return v.Leave(n)
 }

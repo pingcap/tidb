@@ -151,8 +151,6 @@ func TestDropNotNullColumn(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		if job.SchemaState == model.StateWriteOnly {
 			switch sqlNum {
 			case 0:
@@ -1508,7 +1506,7 @@ func TestDDLIfExists(t *testing.T) {
 // In a cluster, TiDB "a" executes the DDL.
 // TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
 func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1520,8 +1518,6 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
-
-	intercept := &callback.TestInterceptor{}
 
 	var sessionToStart sync.WaitGroup // sessionToStart is a waitgroup to wait for two session to get the same information schema
 	sessionToStart.Add(2)
@@ -1541,8 +1537,6 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 			<-firstDDLFinished
 		}
 	})
-	d := dom.DDL()
-	d.(ddl.DDLForTest).SetInterceptor(intercept)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
@@ -1559,9 +1553,6 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 	})
 
 	wg.Wait()
-
-	intercept = &callback.TestInterceptor{}
-	d.(ddl.DDLForTest).SetInterceptor(intercept)
 }
 
 func TestParallelAlterSchemaCharsetAndCollate(t *testing.T) {
@@ -1657,8 +1648,6 @@ func TestCreateExpressionIndex(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1839,8 +1828,6 @@ func TestDropExpressionIndex(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {

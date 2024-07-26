@@ -3065,6 +3065,10 @@ func upgradeToVer210(s sessiontypes.Session, ver int64) {
 	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
 	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
 	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
+
+	// Check if tidb_opt_projection_push_down exists in mysql.GLOBAL_VARIABLES.
+	// If not, set tidb_opt_projection_push_down to Off since this is the old behavior before we introduce this variable.
+	initGlobalVariableIfNotExists(s, variable.TiDBOptProjectionPushDown, variable.Off)
 }
 
 func upgradeToVer211(s sessiontypes.Session, ver int64) {

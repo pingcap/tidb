@@ -135,8 +135,7 @@ func (e *executor) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
-	err = e.DoDDLJob(ctx, job)
-	return e.callHookOnChanged(job, err)
+	return e.DoDDLJob(ctx, job)
 }
 
 func containsDistTaskSubJob(subJobs []*model.SubJob) bool {

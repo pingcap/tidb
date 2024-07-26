@@ -39,35 +39,6 @@ func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 	return lp, planChanged, nil
 }
 
-// PruneColumns implement the Expand OP's column pruning logic.
-// logicExpand is built in the logical plan building phase, where all the column prune is not done yet. So the
-// expand projection expressions is meaningless if it built at that time. (we only maintain its schema, while
-// the level projection expressions construction is left to the last logical optimize rule)
-//
-// so when do the rule_column_pruning here, we just prune the schema is enough.
-func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	// Expand need those extra redundant distinct group by columns projected from underlying projection.
-	// distinct GroupByCol must be used by aggregate above, to make sure this, append DistinctGroupByCol again.
-	parentUsedCols = append(parentUsedCols, p.DistinctGroupByCol...)
-	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
-	prunedColumns := make([]*expression.Column, 0)
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.SetOutputNames(append(p.OutputNames()[:i], p.OutputNames()[i+1:]...))
-		}
-	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	// Underlying still need to keep the distinct group by columns and parent used columns.
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)

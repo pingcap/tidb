@@ -57,8 +57,8 @@ func init() {
 		Name:    model.NewCIStr(util.MetricSchemaName.O),
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
-		Tables:  metricTables,
 	}
+	dbInfo.Deprecated.Tables = metricTables
 	RegisterVirtualTable(dbInfo, tableFromMeta)
 }
 

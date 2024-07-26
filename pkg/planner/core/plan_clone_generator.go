@@ -20,6 +20,8 @@ import (
 	"go/format"
 	"reflect"
 	"strings"
+
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
 // genPlanCloneForPlanCacheCode generates CloneForPlanCache for all physical plan nodes in plan_clone_generated.go.
@@ -33,7 +35,8 @@ import (
 func genPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{PhysicalTableScan{}, PhysicalIndexScan{}, PhysicalSelection{}, PhysicalProjection{},
 		PhysicalSort{}, PhysicalTopN{}, PhysicalStreamAgg{}, PhysicalHashAgg{},
-		PhysicalHashJoin{}, PhysicalMergeJoin{}}
+		PhysicalHashJoin{}, PhysicalMergeJoin{}, PhysicalTableReader{}, PhysicalIndexReader{},
+		PhysicalIndexLookUpReader{}, PhysicalIndexMergeReader{}}
 	c := new(codeGen)
 	c.write(codeGenPrefix)
 	for _, s := range structures {
@@ -62,6 +65,24 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write(`if op.%v != nil {return nil, false}`, f.Name)
 			continue
 		}
+
+		fullFieldName := fmt.Sprintf("%v.%v", vType.String(), vType.Field(i).Name)
+		switch fullFieldName { // handle some fields specially
+		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
+			"core.PhysicalIndexMergeReader.TablePlans":
+			c.write("cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)")
+			continue
+		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
+			c.write("cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)")
+			continue
+		case "core.PhysicalIndexMergeReader.PartialPlans":
+			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
+			c.write("for i, plan := range cloned.partialPlans {")
+			c.write("cloned.PartialPlans[i] = flattenPushDownPlan(plan)")
+			c.write("}")
+			continue
+		}
+
 		switch f.Type.String() {
 		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
@@ -69,9 +90,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "core.physicalSchemaProducer", "core.basePhysicalPlan", "core.basePhysicalAgg", "core.basePhysicalJoin":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
 			c.write(`basePlan, baseOK := op.%v.cloneForPlanCacheWithSelf(newCtx, cloned)
-							if !baseOK {
-								return nil, false
-							}
+							if !baseOK {return nil, false}
 							cloned.%v = *basePlan`, fieldName, fieldName)
 		case "[]expression.Expression":
 			c.write("cloned.%v = util.CloneExprs(op.%v)", f.Name, f.Name)
@@ -87,10 +106,18 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = util.CloneSortItem(op.%v)", f.Name, f.Name)
 		case "util.HandleCols":
 			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
-		case "*core.PhysPlanPartInfo":
+		case "*core.PhysPlanPartInfo", "*core.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 		case "*expression.Column":
 			c.write("cloned.%v = op.%v.Clone().(*expression.Column)", f.Name, f.Name)
+		case "base.PhysicalPlan":
+			c.write("%v, ok := op.%v.CloneForPlanCache(newCtx)", f.Name, f.Name)
+			c.write("if !ok {return nil, false}")
+			c.write("cloned.%v = %v.(base.PhysicalPlan)", f.Name, f.Name)
+		case "[]base.PhysicalPlan":
+			c.write("%v, ok := clonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
+			c.write("if !ok {return nil, false}")
+			c.write("cloned.%v = %v", f.Name, f.Name)
 		default:
 			return nil, fmt.Errorf("can't generate Clone method for type %v in %v", f.Type.String(), vType.String())
 		}
@@ -98,6 +125,18 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 	c.write("return cloned, true")
 	c.write("}")
 	return c.format()
+}
+
+func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
+	clonedPlans := make([]base.PhysicalPlan, len(plans))
+	for i, plan := range plans {
+		cloned, ok := plan.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		clonedPlans[i] = cloned.(base.PhysicalPlan)
+	}
+	return clonedPlans, true
 }
 
 func mustNilField(fType reflect.StructField) bool {

@@ -258,3 +258,45 @@ Computer:2	2	1350.0000
 Phone:3	2	10.0000
 TV:1	2	133.3333
 TV:2	2	100.0000
+SET @saved_sql_mode = @@session.sql_mode;
+SET SESSION sql_mode= '';
+
+SELECT UPPER(product) AS prod,
+SUM(profit)/COUNT(*)
+FROM t1 GROUP BY prod WITH ROLLUP HAVING prod='COMPUTER' ;
+prod	SUM(profit)/COUNT(*)
+COMPUTER	1380.0000
+SET SESSION sql_mode= @saved_sql_mode;
+
+# Joins
+SELECT product, country , year, SUM(profit) FROM t1,t2 WHERE
+t1.country_id=t2.country_id GROUP BY product, country, year WITH ROLLUP;
+product	country	year	SUM(profit)
+NULL	NULL	NULL	7785
+Calculator	NULL	NULL	275
+Calculator	India	NULL	150
+Calculator	India	2000	150
+Calculator	USA	NULL	125
+Calculator	USA	1999	50
+Calculator	USA	2000	75
+Computer	NULL	NULL	6900
+Computer	India	NULL	2700
+Computer	India	2000	2700
+Computer	USA	NULL	4200
+Computer	USA	1999	2700
+Computer	USA	2000	1500
+Phone	NULL	NULL	10
+Phone	Finland	NULL	10
+Phone	Finland	2003	10
+TV	NULL	NULL	600
+TV	India	NULL	200
+TV	India	2000	200
+TV	USA	NULL	400
+TV	USA	1999	250
+TV	USA	2000	150
+
+SELECT product, `SUM` FROM (SELECT product, SUM(profit) AS 'sum' FROM t1
+GROUP BY product WITH ROLLUP) AS tmp
+WHERE product is null;
+product	SUM
+NULL	7785
