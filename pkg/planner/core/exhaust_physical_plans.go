@@ -886,7 +886,7 @@ func buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx()))
+			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -1018,13 +1018,15 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
 	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
+	// It is to build the range info which is used in explain. It is necessary to redact the range info.
+	redact := ectx.GetTiDBRedactLog()
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx))
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx, redact))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -2363,104 +2365,6 @@ func preferMppBCJ(p *LogicalJoin) bool {
 	return checkChildFitBC(p.Children()[0]) || checkChildFitBC(p.Children()[1])
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface
-// it can generates hash join, index join and sort merge join.
-// Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
-// If the hint is not matched, it will get other candidates.
-// If the hint is not figured, we will pick all candidates.
-func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			indexJoins, _ := tryToGetIndexJoin(p, prop)
-			failpoint.Return(indexJoins, true, nil)
-		}
-	})
-
-	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
-		if hasMPPJoinHints(p.PreferJoinType) {
-			// If there are MPP hints but has some conflicts join method hints, all the join hints are invalid.
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now")
-			p.PreferJoinType = 0
-		} else {
-			// If there are no MPP hints but has some conflicts join method hints, the MPP mode will be blocked.
-			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
-			if prop.IsFlashProp() {
-				return nil, false, nil
-			}
-		}
-	}
-	if prop.MPPPartitionTp == property.BroadcastType {
-		return nil, false, nil
-	}
-	joins := make([]base.PhysicalPlan, 0, 8)
-	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
-			if shuffleJoins := tryToGetMppHashJoin(p, prop, false); len(shuffleJoins) > 0 {
-				return shuffleJoins, true, nil
-			}
-		}
-		if (p.PreferJoinType & h.PreferBCJoin) > 0 {
-			if bcastJoins := tryToGetMppHashJoin(p, prop, true); len(bcastJoins) > 0 {
-				return bcastJoins, true, nil
-			}
-		}
-		if preferMppBCJ(p) {
-			mppJoins := tryToGetMppHashJoin(p, prop, true)
-			joins = append(joins, mppJoins...)
-		} else {
-			mppJoins := tryToGetMppHashJoin(p, prop, false)
-			joins = append(joins, mppJoins...)
-		}
-	} else {
-		hasMppHints := false
-		var errMsg string
-		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
-			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
-			hasMppHints = true
-		}
-		if (p.PreferJoinType & h.PreferBCJoin) > 0 {
-			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
-			hasMppHints = true
-		}
-		if hasMppHints {
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
-		}
-	}
-	if prop.IsFlashProp() {
-		return joins, true, nil
-	}
-
-	if !p.isNAAJ() {
-		// naaj refuse merge join and index join.
-		mergeJoins := GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
-		if (p.PreferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
-			return mergeJoins, true, nil
-		}
-		joins = append(joins, mergeJoins...)
-
-		indexJoins, forced := tryToGetIndexJoin(p, prop)
-		if forced {
-			return indexJoins, true, nil
-		}
-		joins = append(joins, indexJoins...)
-	}
-
-	hashJoins, forced := getHashJoins(p, prop)
-	if forced && len(hashJoins) > 0 {
-		return hashJoins, true, nil
-	}
-	joins = append(joins, hashJoins...)
-
-	if p.PreferJoinType > 0 {
-		// If we reach here, it means we have a hint that doesn't work.
-		// It might be affected by the required property, so we enforce
-		// this property and try the hint again.
-		return joins, false, nil
-	}
-	return joins, true, nil
-}
-
 func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 	equalExprs := make([]expression.Expression, 0, len(p.EqualConditions))
 	for _, eqCondition := range p.EqualConditions {
@@ -2558,7 +2462,7 @@ func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType.IsSemiJoin() {
-		if !useBCJ && !p.isNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin) {
+		if !useBCJ && !p.IsNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin) {
 			// TiFlash only supports Non-null_aware non-cross semi/anti_semi join to use both sides as build side
 			preferredBuildIndex = 1
 			// MPPOuterJoinFixedBuildSide default value is false
@@ -2577,7 +2481,7 @@ func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
 		// 2. or session variable MPPOuterJoinFixedBuildSide is set to true
 		// 3. or nullAware/cross joins
-		if useBCJ || p.isNAAJ() || len(p.EqualConditions) == 0 || p.SCtx().GetSessionVars().MPPOuterJoinFixedBuildSide {
+		if useBCJ || p.IsNAAJ() || len(p.EqualConditions) == 0 || p.SCtx().GetSessionVars().MPPOuterJoinFixedBuildSide {
 			if !p.SCtx().GetSessionVars().MPPOuterJoinFixedBuildSide {
 				// The hint has higher priority than variable.
 				fixedBuildSide = true
@@ -2685,14 +2589,16 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 	return newKeys
 }
 
-// ExhaustPhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
-func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalExpand(p *LogicalExpand, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
 		// false, meaning we can add a sort enforcer.
 		return nil, false, nil
 	}
-	// RootTaskType is the default one, meaning no option. (we can give them a mpp choice)
+	// when TiDB Expand execution is introduced: we can deal with two kind of physical plans.
+	// RootTaskType means expand should be run at TiDB node.
+	//	(RootTaskType is the default option, we can also generate a mpp candidate for it)
+	// MPPTaskType means expand should be run at TiFlash node.
 	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
 		return nil, true, nil
 	}
@@ -2702,8 +2608,10 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
+	var physicalExpands []base.PhysicalPlan
 	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
+	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
 		mppProp := prop.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		expand := PhysicalExpand{
@@ -2712,10 +2620,29 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 			ExtraGroupingColNames: p.ExtraGroupingColNames,
 		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), mppProp)
 		expand.SetSchema(p.Schema())
-		return []base.PhysicalPlan{expand}, true, nil
+		physicalExpands = append(physicalExpands, expand)
+		// when the MppTaskType is required, we can return the physical plan directly.
+		if prop.TaskTp == property.MppTaskType {
+			return physicalExpands, true, nil
+		}
 	}
-	// if MPP switch is shutdown, nothing can be generated.
-	return nil, true, nil
+	// for property.RootTaskType, we can give a TiDB Expand.
+	{
+		taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.MppTaskType, property.RootTaskType}
+		for _, taskType := range taskTypes {
+			// require cop task type for children.F
+			tidbProp := prop.CloneEssentialFields()
+			tidbProp.TaskTp = taskType
+			expand := PhysicalExpand{
+				GroupingSets:          p.RollupGroupingSets,
+				LevelExprs:            p.LevelExprs,
+				ExtraGroupingColNames: p.ExtraGroupingColNames,
+			}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), tidbProp)
+			expand.SetSchema(p.Schema())
+			physicalExpands = append(physicalExpands, expand)
+		}
+	}
+	return physicalExpands, true, nil
 }
 
 func exhaustPhysicalPlans4Projection(p *LogicalProjection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
@@ -2842,12 +2769,12 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHashJoin {
+func GetHashJoin(la *LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
 	return getHashJoin(&la.LogicalJoin, prop, 1, false)
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// ExhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
+func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
@@ -2858,7 +2785,7 @@ func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.Children()[0])
-	join := la.GetHashJoin(prop)
+	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
 		columns = append(columns, &colColumn.Column)
@@ -3625,7 +3552,8 @@ func getNominalSortSimple(ls *LogicalSort, reqProp *property.PhysicalProperty) *
 	return ps
 }
 
-func exhaustPhysicalPlans4LogicalMaxOneRow(p *LogicalMaxOneRow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalMaxOneRow)
 	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil

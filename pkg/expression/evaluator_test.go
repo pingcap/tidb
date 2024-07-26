@@ -19,8 +19,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -605,4 +607,54 @@ func TestMod(t *testing.T) {
 	r, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(1.5), r)
+}
+
+func TestOptionalProp(t *testing.T) {
+	ctx := createContext(t)
+
+	fc := funcs[ast.Plus]
+	arg1fc := funcs[ast.CurrentUser]
+	arg1f, err := arg1fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	arg1 := &ScalarFunction{
+		FuncName: model.NewCIStr(ast.CurrentUser),
+		Function: arg1f,
+		RetType:  arg1f.getRetTp(),
+	}
+	arg2fc := funcs[ast.TiDBIsDDLOwner]
+	arg2f, err := arg2fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	arg2 := &ScalarFunction{
+		FuncName: model.NewCIStr(ast.TiDBIsDDLOwner),
+		Function: arg2f,
+		RetType:  arg2f.getRetTp(),
+	}
+
+	f, err := fc.getFunction(ctx, []Expression{arg1, arg2})
+	require.NoError(t, err)
+	fe := &ScalarFunction{
+		FuncName: model.NewCIStr(ast.Plus),
+		Function: f,
+		RetType:  f.getRetTp(),
+	}
+
+	fc2 := funcs[ast.GetLock]
+	f2, err := fc2.getFunction(ctx, datumsToConstants(types.MakeDatums("tidb_distsql_scan_concurrency", 10)))
+	require.NoError(t, err)
+	fe2 := &ScalarFunction{
+		FuncName: model.NewCIStr(ast.GetLock),
+		Function: f2,
+		RetType:  f2.getRetTp(),
+	}
+
+	require.Equal(t, context.OptionalEvalPropKeySet(0), f.RequiredOptionalEvalProps())
+	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet(),
+		getOptionalEvalPropsForExpr(fe))
+	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet()|
+		context.OptPropAdvisoryLock.AsPropKeySet(),
+		getOptionalEvalPropsForExpr(fe)|getOptionalEvalPropsForExpr(fe2))
+
+	evalSuit := NewEvaluatorSuite([]Expression{fe, fe2}, false)
+	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet()|
+		context.OptPropAdvisoryLock.AsPropKeySet(), evalSuit.RequiredOptionalEvalProps())
 }
