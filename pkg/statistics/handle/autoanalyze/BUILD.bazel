@@ -44,7 +44,6 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
-        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/util",
         "//pkg/statistics/handle/util/test",
         "//pkg/testkit",
