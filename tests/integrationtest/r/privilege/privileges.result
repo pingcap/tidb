@@ -682,3 +682,17 @@ Error 3892 (HY000): Current password needs to be specified in the REPLACE clause
 SET PASSWORD = 'aac' REPLACE 'wrongpassword';
 Error 3891 (HY000): Incorrect current password. Specify the correct password which has to be replaced.
 SET PASSWORD = 'aac' REPLACE 'aab';
+CREATE USER 'pwreq4'@'%' IDENTIFIED BY 'aaa' PASSWORD REQUIRE CURRENT;
+GRANT CREATE USER ON *.* TO 'pwreq4'@'%';
+CREATE USER 'pwreq5'@'%' IDENTIFIED BY 'aaa' PASSWORD REQUIRE CURRENT;
+ALTER USER
+'pwreq4'@'%' IDENTIFIED BY 'bbb',
+'pwreq5'@'%' IDENTIFIED BY 'bbb';
+Error 3892 (HY000): Current password needs to be specified in the REPLACE clause in order to change it.
+ALTER USER
+'pwreq4'@'%' IDENTIFIED BY 'bbb' REPLACE 'aaa',
+'pwreq5'@'%' IDENTIFIED BY 'bbb' REPLACE 'aaa';
+Error 3893 (HY000): Do not specify the current password while changing it for other users.
+ALTER USER
+'pwreq4'@'%' IDENTIFIED BY 'bbb' REPLACE 'aaa',
+'pwreq5'@'%' IDENTIFIED BY 'bbb';
