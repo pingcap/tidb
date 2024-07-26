@@ -774,8 +774,19 @@ func (c *pdClient) ScanRegions(
 		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
 	})
 
+	brlog.FromContext(ctx).Info(
+		"lance test 1",
+		logutil.Key("key", key),
+		logutil.Key("endKey", endKey),
+		zap.Int("limit", limit),
+		zap.Int("len(options", len(options)))
+
 	//nolint:staticcheck
 	regions, err := c.client.ScanRegions(ctx, key, endKey, limit, options...)
+	brlog.FromContext(ctx).Info(
+		"lance test 2",
+		zap.Error(err),
+		zap.Any("regions", regions))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
