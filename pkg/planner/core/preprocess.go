@@ -1875,7 +1875,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		if tbl.Meta().Revision != tableInfo.Revision && !sctx.GetSessionVars().IsPessimisticReadConsistency() {
 			var copyTableInfo *model.TableInfo
 
-			infoIndices := make(map[string]int64)
+			infoIndices := make(map[string]int64, len(tableInfo.Indices))
 			for _, idx := range tableInfo.Indices {
 				infoIndices[idx.Name.L] = idx.ID
 			}
@@ -1899,7 +1899,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 				}
 			}
 			// Check the column change.
-			infoColumns := make(map[string]int64)
+			infoColumns := make(map[string]int64, len(tableInfo.Columns))
 			for _, col := range tableInfo.Columns {
 				infoColumns[col.Name.L] = col.ID
 			}
