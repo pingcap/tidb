@@ -581,10 +581,12 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
-	var encoded strings.Builder
+	var encoded, preparedInsertStmt strings.Builder
 	var values []any
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
+	preparedInsertStmt.Grow(2 * len(row))
+	preparedInsertStmt.WriteByte('(')
 	cnt := 0
 	for i, field := range row {
 		if enc.columnIdx[i] < 0 {
@@ -592,34 +594,27 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		}
 		if cnt > 0 {
 			encoded.WriteByte(',')
+			preparedInsertStmt.WriteByte(',')
 		}
 		datum := field
-		if cachePrepStmts {
-			encoded.WriteByte('?')
-			values = append(values, datum.GetValue())
-		} else {
-			if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
-				enc.logger.Error("tidb encode failed",
-					zap.Array("original", kv.RowArrayMarshaller(row)),
-					zap.Int("originalCol", i),
-					log.ShortError(err),
-				)
-				return nil, err
-			}
+		if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
+			enc.logger.Error("tidb encode failed",
+				zap.Array("original", kv.RowArrayMarshaller(row)),
+				zap.Int("originalCol", i),
+				log.ShortError(err),
+			)
+			return nil, err
 		}
+		preparedInsertStmt.WriteByte('?')
+		values = append(values, datum.GetValue())
 		cnt++
 	}
 	encoded.WriteByte(')')
-	var insertStmt, preparedInsertStmt string
-	if cachePrepStmts {
-		preparedInsertStmt = encoded.String()
-	} else {
-		insertStmt = encoded.String()
-	}
+	preparedInsertStmt.WriteByte(')')
 
 	return tidbRow{
-		insertStmt:         insertStmt,
-		preparedInsertStmt: preparedInsertStmt,
+		insertStmt:         encoded.String(),
+		preparedInsertStmt: preparedInsertStmt.String(),
 		values:             values,
 		path:               enc.path,
 		offset:             offset,
@@ -721,7 +716,6 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 	// Note: we are not going to do interpolation (prepared statements) to avoid
 	// complication arise from data length overflow of BIT and BINARY columns
 	if cachePrepStmts {
-		insertStmt.WriteByte('(')
 	}
 	var values []any
 	stmtTasks := make([]stmtTask, 1)
@@ -730,14 +724,11 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 			insertStmt.WriteByte(',')
 		}
 		if cachePrepStmts {
-			insertStmt.WriteByte('?')
+			insertStmt.WriteString(row.preparedInsertStmt)
 			values = append(values, row.values...)
 		} else {
 			insertStmt.WriteString(row.insertStmt)
 		}
-	}
-	if cachePrepStmts {
-		insertStmt.WriteByte(')')
 	}
 	stmtTasks[0] = stmtTask{rows, insertStmt.String(), values}
 	return be.execStmts(ctx, stmtTasks, tableName, true)
