@@ -22,7 +22,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
@@ -62,10 +61,6 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	db, err := param.Connect()
-	db.SetMaxIdleConns(16)
-	db.SetMaxOpenConns(32)
-	db.SetConnMaxIdleTime(time.Hour)
-	db.SetConnMaxLifetime(time.Hour)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

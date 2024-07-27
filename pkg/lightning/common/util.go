@@ -157,6 +157,10 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 			log.L().Info("session variable", zap.String("name", name), zap.String("value", value))
 		}
 	}
+	db.SetMaxIdleConns(32)
+	db.SetMaxOpenConns(32)
+	db.SetConnMaxIdleTime(time.Hour)
+	db.SetConnMaxLifetime(time.Hour)
 	return db, nil
 }
 
