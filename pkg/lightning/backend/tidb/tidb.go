@@ -583,9 +583,9 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 
 	var encoded, preparedInsertStmt strings.Builder
 	var values []any
-	encoded.Grow(8 * len(row))
+	//	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
-	preparedInsertStmt.Grow(2 * len(row))
+	//	preparedInsertStmt.Grow(2 * len(row))
 	preparedInsertStmt.WriteByte('(')
 	cnt := 0
 	for i, field := range row {
