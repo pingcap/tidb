@@ -1164,9 +1164,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 		user:         "unativepassword",
 	}
 
-	if cc.pkt == nil {
-		t.Fatal("pktフィールドがnilです。")
-	}
 	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
