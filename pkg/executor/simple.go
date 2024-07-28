@@ -1153,7 +1153,10 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
-		authPlugin := mysql.AuthNativePassword
+		authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+		if err != nil {
+			return err
+		}
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
