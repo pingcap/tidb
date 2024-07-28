@@ -172,8 +172,8 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
 	errs := multierr.Errors(err)
 	lastErr := errs[len(errs)-1]
-	res := bo.errContext.HandleErrorMsg(lastErr.Error(), 0)
-	if res.Strategy == RetryStrategy {
+	res := HandleUnknownBackupError(lastErr.Error(), 0, bo.errContext)
+	if res.Strategy == StrategyRetry {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
@@ -278,5 +278,46 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 }
 
 func (bo *pdReqBackoffer) Attempt() int {
+	return bo.attempt
+}
+
+type DiskCheckBackoffer struct {
+	attempt      int
+	delayTime    time.Duration
+	maxDelayTime time.Duration
+}
+
+func NewDiskCheckBackoffer() Backoffer {
+	return &DiskCheckBackoffer{
+		attempt:      resetTSRetryTime,
+		delayTime:    resetTSWaitInterval,
+		maxDelayTime: resetTSMaxWaitInterval,
+	}
+}
+
+func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
+	e := errors.Cause(err)
+	switch e { // nolint:errorlint
+	case nil, context.Canceled, context.DeadlineExceeded, berrors.ErrKVDiskFull:
+		bo.delayTime = 0
+		bo.attempt = 0
+	case berrors.ErrPDInvalidResponse:
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt--
+	default:
+		bo.delayTime = 2 * bo.delayTime
+		if bo.attempt > 5 {
+			bo.attempt = 5
+		}
+		bo.attempt--
+	}
+
+	if bo.delayTime > bo.maxDelayTime {
+		return bo.maxDelayTime
+	}
+	return bo.delayTime
+}
+
+func (bo *DiskCheckBackoffer) Attempt() int {
 	return bo.attempt
 }

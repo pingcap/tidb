@@ -211,7 +211,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptProjectionPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptProjectionPushDown, Value: BoolToOnOff(DefOptEnableProjectionPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowProjectionPushDown = TiDBOptOn(val)
 		return nil
 	}},
@@ -318,7 +318,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.LowResolutionTSO = TiDBOptOn(val)
+		s.lowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -959,8 +959,11 @@ var defaultSysVars = []*SysVar{
 			}
 			AutoAnalyzePartitionBatchSize.Store(val)
 			return nil
-		}},
-
+		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(TiDBAutoAnalyzePartitionBatchSize))
+			return normalizedValue, nil
+		},
+	},
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
@@ -3155,7 +3158,9 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			if SchemaCacheSize.Load() != bt && ChangeSchemaCacheSize != nil {
-				ChangeSchemaCacheSize(bt)
+				if err := ChangeSchemaCacheSize(ctx, bt); err != nil {
+					return err
+				}
 			}
 			SchemaCacheSize.Store(bt)
 			SchemaCacheSizeOriginText.Store(str)
@@ -3251,6 +3256,10 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLazyCursorFetch, Value: BoolToOnOff(DefTiDBEnableLazyCursorFetch), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLazyCursorFetch = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

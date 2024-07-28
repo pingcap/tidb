@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 var (
@@ -91,6 +93,7 @@ var (
 	mDDLTableVersion     = []byte("DDLTableVersion")
 	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
+	mSchemaCacheSize     = []byte("SchemaCacheSize")
 	mRequestUnitStats    = []byte("RequestUnitStats")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
@@ -263,6 +266,11 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 		ids = append(ids, i)
 	}
 	return ids, nil
+}
+
+// GlobalIDKey returns the key for the global ID.
+func (m *Meta) GlobalIDKey() []byte {
+	return m.txn.EncodeStringDataKey(mNextGlobalIDKey)
 }
 
 // GenPlacementPolicyID generates next placement policy id globally.
@@ -822,6 +830,24 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 	return bytes.Equal(val, []byte("1")), false, nil
 }
 
+// SetSchemaCacheSize sets the schema cache size.
+func (m *Meta) SetSchemaCacheSize(size uint64) error {
+	return errors.Trace(m.txn.Set(mSchemaCacheSize, []byte(strconv.FormatUint(size, 10))))
+}
+
+// GetSchemaCacheSize gets the schema cache size.
+func (m *Meta) GetSchemaCacheSize() (size uint64, isNull bool, err error) {
+	val, err := m.txn.Get(mSchemaCacheSize)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return 0, true, nil
+	}
+	size, err = strconv.ParseUint(string(val), 10, 64)
+	return size, false, errors.Trace(err)
+}
+
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
 func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
@@ -1012,6 +1038,84 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
+var checkSubstringsInOrder = [6]string{
+	`"fk_info":null`,
+	`"partition":null`,
+	`"Lock":null`,
+	`"tiflash_replica":null`,
+	`"policy_ref_info":null`,
+	`"ttl_info":null`,
+}
+
+// CheckSpecialAttributes checks if the special attributes are in the table info.
+// Make it same as hasSpecialAttributes.
+// Exported for testing.
+// It's the regexp version for hasSpecialAttributes(), please keep up-to-date with it.
+func CheckSpecialAttributes(json []byte) bool {
+	idx := 0
+	for _, substr := range checkSubstringsInOrder {
+		idx = bytes.Index(json, hack.Slice(substr))
+		if idx == -1 {
+			return true
+		}
+		json = json[idx:]
+	}
+	return false
+}
+
+// NameExtractRegexp is exported for testing.
+const NameExtractRegexp = `"L":"([^"\\]*(?:\\.[^"\\]*)*)"}`
+
+// Unescape is exported for testing.
+func Unescape(s string) string {
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\\`, `\`)
+	return s
+}
+
+// GetAllNameToIDAndSpecialAttributeInfo gets all the fields and values and table info for special attributes in a hash.
+// It's used to get some infos for information schema cache in a faster way.
+func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	res := make(map[string]int64)
+	idRegex := regexp.MustCompile(`"id":(\d+)`)
+	nameLRegex := regexp.MustCompile(NameExtractRegexp)
+
+	tableInfos := make([]*model.TableInfo, 0)
+
+	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
+			return nil
+		}
+
+		idMatch := idRegex.FindStringSubmatch(string(hack.String(value)))
+		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(value)))
+		id, err := strconv.Atoi(idMatch[1])
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		key := Unescape(nameLMatch[1])
+		res[strings.Clone(key)] = int64(id)
+		if CheckSpecialAttributes(value) {
+			tbInfo := &model.TableInfo{}
+			err = json.Unmarshal(value, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbInfo.DBID = dbID
+			tableInfos = append(tableInfos, tbInfo)
+		}
+		return nil
+	})
+
+	return res, tableInfos, errors.Trace(err)
+}
+
 // ListTables shows all tables in database.
 func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	res, err := m.GetMetasByDBID(dbID)
@@ -1184,7 +1288,7 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		// the default group is not persistanted to tikv by default.
+		// the default group is not persistent to tikv by default.
 		if groupID == defaultGroupID {
 			return defaultRGroupMeta, nil
 		}

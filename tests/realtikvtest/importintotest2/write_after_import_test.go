@@ -15,6 +15,7 @@
 package importintotest
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -223,7 +224,7 @@ func (s *mockGCSSuite) testWriteAfterImport(importSQL string, sourceType importe
 			is := s.tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
 			dbInfo, ok := is.SchemaByName(model.NewCIStr("write_after_import"))
 			s.True(ok)
-			tableObj, err := is.TableByName(model.NewCIStr("write_after_import"), model.NewCIStr("t"))
+			tableObj, err := is.TableByName(context.Background(), model.NewCIStr("write_after_import"), model.NewCIStr("t"))
 			s.NoError(err)
 			if common.TableHasAutoID(tableObj.Meta()) {
 				allocators, err := common.GetGlobalAutoIDAlloc(domain.GetDomain(s.tk.Session()), dbInfo.ID, tableObj.Meta())

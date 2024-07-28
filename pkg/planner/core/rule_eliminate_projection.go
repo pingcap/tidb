@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -253,47 +254,6 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, sc
 	return expr
 }
 
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, equalExpr := range p.EqualConditions {
-		ResolveExprAndReplace(equalExpr, replace)
-	}
-	for _, leftExpr := range p.LeftConditions {
-		ResolveExprAndReplace(leftExpr, replace)
-	}
-	for _, rightExpr := range p.RightConditions {
-		ResolveExprAndReplace(rightExpr, replace)
-	}
-	for _, otherExpr := range p.OtherConditions {
-		ResolveExprAndReplace(otherExpr, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Exprs {
-		ResolveExprAndReplace(expr, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Conditions {
-		ResolveExprAndReplace(expr, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column) {
-	la.LogicalJoin.ReplaceExprColumns(replace)
-	for _, coCol := range la.CorCols {
-		dst := replace[string(coCol.Column.HashCode())]
-		if dst != nil {
-			coCol.Column = *dst
-		}
-	}
-}
-
 func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }
@@ -307,7 +267,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *opti
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(expr.StringWithCtx(ectx))
+			buffer.WriteString(expr.StringWithCtx(ectx, perrors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()

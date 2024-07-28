@@ -77,7 +77,7 @@ func TestBasic(t *testing.T) {
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
 	require.Equal(t, "t", tb.Meta().Name.L)
@@ -92,7 +92,8 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, autoID, int64(0))
 
-	handle, err := tables.AllocHandle(context.Background(), nil, tb)
+	var handle kv.Handle
+	handle, err = tables.AllocHandle(context.Background(), nil, tb)
 	require.NoError(t, err)
 	require.Greater(t, handle.IntValue(), int64(0))
 
@@ -176,7 +177,7 @@ func TestTypes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	require.NoError(t, err)
-	_, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(ctx, "insert test.t values (1, 2, 3, 4, '5', '6', '7', '10:10:10', null, 1.4)")
 	require.NoError(t, err)
@@ -230,7 +231,7 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(ctx, "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
 	require.Equal(t, "t", tb.Meta().Name.L)
@@ -310,7 +311,7 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tPK"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1, "abc"))
@@ -336,7 +337,7 @@ func TestIterRecords(t *testing.T) {
 	_, err = tk.Session().Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tIter"))
 	require.NoError(t, err)
 	totalCount := 0
 	err = tables.IterRecords(tb, tk.Session(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
@@ -359,7 +360,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("meta"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta().Clone()
 
@@ -381,7 +382,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Error(t, err)
 
 	tk.MustExec(`create table t_mock (id int) partition by range (id) (partition p0 values less than maxvalue)`)
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_mock"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_mock"))
 	require.NoError(t, err)
 	tt := table.MockTableFromMeta(tb.Meta())
 	_, ok := tt.(table.PartitionedTable)
@@ -390,7 +391,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Equal(t, table.NormalTable, tt.Type())
 
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
-	tb, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
+	tb, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	require.NoError(t, err)
 	_, err = tables.AllocHandle(context.Background(), tk.Session().GetTableCtx(), tb)
 	require.NoError(t, err)
@@ -411,7 +412,7 @@ func TestHiddenColumn(t *testing.T) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE t (a int primary key, b int as (a+1), c int, d int as (c+1) stored, e int, f tinyint as (a+1));")
 	tk.MustExec("insert into t values (1, default, 3, default, 5, default);")
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test_hidden"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	colInfo := tb.Meta().Columns
 	// Set column b, d, f to hidden
@@ -419,7 +420,7 @@ func TestHiddenColumn(t *testing.T) {
 	colInfo[3].Hidden = true
 	colInfo[5].Hidden = true
 	tc := tb.(*tables.TableCommon)
-	tc.ClearColumnsCache()
+	tc.ResetColumnsCache()
 	// Basic test
 	cols := tb.VisibleCols()
 	require.NotNil(t, table.FindCol(cols, "a"))
@@ -433,8 +434,11 @@ func TestHiddenColumn(t *testing.T) {
 	require.Nil(t, table.FindCol(hiddenCols, "c"))
 	require.NotNil(t, table.FindCol(hiddenCols, "d"))
 	require.Nil(t, table.FindCol(hiddenCols, "e"))
+
 	colInfo[1].State = model.StateDeleteOnly
 	colInfo[2].State = model.StateDeleteOnly
+	tc.ResetColumnsCache()
+
 	fullHiddenColsAndVisibleColumns := tb.FullHiddenColsAndVisibleCols()
 	require.NotNil(t, table.FindCol(fullHiddenColsAndVisibleColumns, "a"))
 	require.NotNil(t, table.FindCol(fullHiddenColsAndVisibleColumns, "b"))
@@ -444,6 +448,7 @@ func TestHiddenColumn(t *testing.T) {
 	// Reset schema states.
 	colInfo[1].State = model.StatePublic
 	colInfo[2].State = model.StatePublic
+	tc.ResetColumnsCache()
 
 	// Test show create table
 	tk.MustQuery("show create table t;").Check(testkit.Rows(
@@ -572,7 +577,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tRecord"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tRecord"))
 	require.NoError(t, err)
 	defer func() {
 		_, err := tk.Session().Execute(context.Background(), "DROP TABLE test.tRecord")
@@ -685,11 +690,15 @@ func TestViewColumns(t *testing.T) {
 	for _, testCase := range testCases {
 		tk.MustQuery(testCase.query).Check(testkit.RowsWithSep("|", testCase.expected...))
 	}
+	tk.MustExec("create view v1 as select (select a from t) as col from dual")
+	tk.MustQuery("select column_name, table_name from information_schema.columns where table_name='v1'").Check(
+		testkit.RowsWithSep("|", "col|v1"))
 	tk.MustExec("drop table if exists t")
 	for _, testCase := range testCases {
 		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
 		tk.MustQuery("show warnings").Sort().Check(testkit.RowsWithSep("|",
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
+			"Warning|1356|View 'test.v1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
 

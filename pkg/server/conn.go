@@ -253,6 +253,13 @@ func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]b
 		clientPlugin += "_client"
 	} else if plugin == mysql.AuthLDAPSimple {
 		clientPlugin = mysql.AuthMySQLClearPassword
+	} else if authPluginImpl, ok := cc.extensions.GetAuthPlugin(plugin); ok {
+		if authPluginImpl.RequiredClientSidePlugin != "" {
+			clientPlugin = authPluginImpl.RequiredClientSidePlugin
+		} else {
+			// If RequiredClientSidePlugin is empty, use the plugin name as the client plugin.
+			clientPlugin = authPluginImpl.Name
+		}
 	}
 	failpoint.Inject("FakeAuthSwitch", func() {
 		failpoint.Return([]byte(clientPlugin), nil)
@@ -390,6 +397,7 @@ func closeConn(cc *clientConn) error {
 				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 			}
 		}
+
 		// Close statements and session
 		// At first, it'll decrese the count of connections in the resource group, update the corresponding gauge.
 		// Then it'll close the statements and session, which release advisory locks, row locks, etc.
@@ -398,6 +406,8 @@ func closeConn(cc *clientConn) error {
 			metrics.ConnGauge.WithLabelValues(resourceGroupName).Dec()
 
 			err = ctx.Close()
+		} else {
+			metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Dec()
 		}
 	})
 	return err
@@ -621,7 +631,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthLDAPSASL:
 	case mysql.AuthLDAPSimple:
 	default:
-		return errors.New("Unknown auth plugin")
+		if _, ok := cc.extensions.GetAuthPlugin(resp.AuthPlugin); !ok {
+			return errors.New("Unknown auth plugin")
+		}
 	}
 
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
@@ -642,6 +654,10 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshake.Resp
 			resp.Auth = newAuth
 		}
 
+		if _, ok := cc.extensions.GetAuthPlugin(resp.AuthPlugin); ok {
+			// The auth plugin has been registered, skip other checks.
+			return nil
+		}
 		switch resp.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
 		case mysql.AuthTiDBSM3Password:
@@ -2422,10 +2438,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start = time.Now()
 	}
 
-	iter := rs.GetRowContainerReader()
+	iter := rs.GetRowIterator()
 	// send the rows to the client according to fetchSize.
-	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
-		row := iter.Current()
+	for i := 0; i < fetchSize && iter.Current(ctx) != iter.End(); i++ {
+		row := iter.Current(ctx)
 
 		data = data[0:4]
 		data, err = column.DumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
@@ -2436,7 +2452,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 			return err
 		}
 
-		iter.Next()
+		iter.Next(ctx)
 	}
 	if iter.Error() != nil {
 		return iter.Error()
@@ -2444,7 +2460,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
-	if iter.Current() == iter.End() {
+	if iter.Current(ctx) == iter.End() {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
 	}

@@ -82,7 +82,7 @@ func TestInfo(t *testing.T) {
 	dom.etcdClient = client
 	// Mock new DDL and init the schema syncer with etcd client.
 	goCtx := context.Background()
-	dom.ddl = ddl.NewDDL(
+	dom.ddl, dom.ddlExecutor = ddl.NewDDL(
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
@@ -149,7 +149,7 @@ func TestInfo(t *testing.T) {
 		},
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, stmt))
+	require.NoError(t, dom.ddlExecutor.CreateSchema(ctx, stmt))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
@@ -467,4 +467,21 @@ func TestIsAnalyzeTableSQL(t *testing.T) {
 	for _, tt := range tests {
 		require.True(t, isAnalyzeTableSQL(tt.sql))
 	}
+}
+
+func TestDeferFn(t *testing.T) {
+	var df deferFn
+	var a, b, c, d bool
+	df.add(func() { a = true }, time.Now().Add(50*time.Millisecond))
+	df.add(func() { b = true }, time.Now().Add(100*time.Millisecond))
+	df.add(func() { c = true }, time.Now().Add(10*time.Minute))
+	df.add(func() { d = true }, time.Now().Add(150*time.Millisecond))
+	time.Sleep(300 * time.Millisecond)
+	df.check()
+
+	require.True(t, a)
+	require.True(t, b)
+	require.False(t, c)
+	require.True(t, d)
+	require.Len(t, df.data, 1)
 }

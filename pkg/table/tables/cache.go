@@ -248,12 +248,8 @@ func (c *cachedTable) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 }
 
 func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTable) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.CachedTables == nil {
-		txnCtx.CachedTables = make(map[int64]any)
-	}
-	if _, ok := txnCtx.CachedTables[tid]; !ok {
-		txnCtx.CachedTables[tid] = handle
+	if s, ok := sctx.GetCachedTableSupport(); ok {
+		s.AddCachedTableHandleToTxn(tid, handle)
 	}
 }
 

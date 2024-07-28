@@ -7,9 +7,11 @@ set tidb_analyze_version=2;
 analyze table t;
 Level	Code	Message
 Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"
+Warning	1105	No predicate column has been collected yet for table planner__core__indexmerge_path.t, so only indexes and the columns composing the indexes will be analyzed
 analyze table t index idx;
 Level	Code	Message
 Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"
+Warning	1105	No predicate column has been collected yet for table planner__core__indexmerge_path.t, so only indexes and the columns composing the indexes will be analyzed
 Warning	1105	The version 2 would collect all statistics not only the selected indexes
 set tidb_analyze_version=1;
 analyze table t;
@@ -670,7 +672,7 @@ create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signe
 insert into t value(1,1,1, '{"b":[1,2,3,4]}');
 insert into t value(2,2,2, '{"b":[3,4,5,6]}');
 set tidb_analyze_version=2;
-analyze table t;
+analyze table t all columns;
 explain select * from t use index (iad) where a = 1;
 id	estRows	task	access object	operator info
 TableReader_7	1.00	root		data:Selection_6
@@ -705,7 +707,7 @@ j
 drop table if exists t;
 create table t(a int, b json);
 insert into t value (1, '{"a":[1,2,3], "b": [2,3,4]}');
-analyze table t;
+analyze table t all columns;
 alter table t add index ibb( (cast(b->'$.b' as signed array)) );
 explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 id	estRows	task	access object	operator info
@@ -956,11 +958,11 @@ INSERT INTO `t` VALUES('[12474495489656359869, 14407883655486982855, 42211846364
 EXPLAIN SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 id	estRows	task	access object	operator info
 Projection_8	6.66	root		planner__core__indexmerge_path.t.col_37->Column#7
-└─IndexMerge_13	6.66	root		type: union
-  ├─TableFullScan_9(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  ├─IndexRangeScan_10(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
-  └─Selection_12(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
-    └─TableRowIDScan_11	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexMerge_14	6.66	root		type: union
+  ├─TableFullScan_10(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
+  └─Selection_13(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
+    └─TableRowIDScan_12	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 MIN(col_37)
 drop table if exists t1;
@@ -1079,3 +1081,127 @@ IndexMerge	0.05	root		type: union
 └─Selection(Probe)	0.05	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1)
   └─TableRowIDScan	49.94	cop[tikv]	table:t	keep order:false, stats:pseudo
 SET @@tidb_opt_fix_control = default;
+drop table if exists t, t1;
+create table t (a int, b varchar(30), c float, j json, pk int primary key,
+key mvi1(c, (cast(j->'$.a' as unsigned array)), b),
+key mvi2(a, (cast(j->'$.c' as unsigned array))),
+key mvi3((cast(j->'$.d' as unsigned array)), c),
+key idx(b, c)
+);
+insert into t values (1, 'test', 1, '{"a":[3,4,5], "c":[7,8,9], "d":[10,11,12]}', 1);
+insert into t values (2, 'text', 1, '{"a":[4,5,6], "c":[10,11,12], "d":[13,14,15]}', 2);
+insert into t values (1, 'abcd', 1, '{"a":[7,8,9], "c":[13,14,15], "d":[16,17,18]}', 3);
+SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+c = 1 and
+json_overlaps(j->'$.a', '[4,5,6]') and
+b not like '%test%';
+a	b	c	j	pk
+2	text	1	{"a": [4, 5, 6], "c": [10, 11, 12], "d": [13, 14, 15]}	2
+EXPLAIN format = brief SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+c = 1 and
+json_overlaps(j->'$.a', '[4,5,6]') and
+b not like '%test%';
+id	estRows	task	access object	operator info
+Selection	0.24	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
+└─IndexMerge	0.30	root		type: union
+  ├─Selection(Build)	0.00	cop[tikv]		not(like(planner__core__indexmerge_path.t.b, "%test%", 92))
+  │ └─IndexRangeScan	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 4,1 4], keep order:false, stats:pseudo
+  ├─Selection(Build)	0.00	cop[tikv]		not(like(planner__core__indexmerge_path.t.b, "%test%", 92))
+  │ └─IndexRangeScan	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 5,1 5], keep order:false, stats:pseudo
+  ├─Selection(Build)	0.00	cop[tikv]		not(like(planner__core__indexmerge_path.t.b, "%test%", 92))
+  │ └─IndexRangeScan	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 6,1 6], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	0.30	cop[tikv]	table:t	keep order:false, stats:pseudo
+SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+c = 1 and
+json_contains(j->'$.a', '[4,5]') and
+b not like '%test%';
+a	b	c	j	pk
+2	text	1	{"a": [4, 5, 6], "c": [10, 11, 12], "d": [13, 14, 15]}	2
+EXPLAIN format = brief SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+c = 1 and
+json_contains(j->'$.a', '[4,5]') and
+b not like '%test%';
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: intersection
+├─Selection(Build)	0.00	cop[tikv]		not(like(planner__core__indexmerge_path.t.b, "%test%", 92))
+│ └─IndexRangeScan	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 4,1 4], keep order:false, stats:pseudo
+├─Selection(Build)	0.00	cop[tikv]		not(like(planner__core__indexmerge_path.t.b, "%test%", 92))
+│ └─IndexRangeScan	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 5,1 5], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+SELECT /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+a = 1 and
+b > 'abc' and
+b not like '%test%' and
+c = 10 and
+3 member of (j->'$.a') and
+3 member of (j->'$.c');
+a	b	c	j	pk
+EXPLAIN format=brief SELECT /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+a = 1 and
+b > 'abc' and
+b not like '%test%' and
+c = 10 and
+3 member of (j->'$.a') and
+3 member of (j->'$.c');
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: intersection
+├─Selection(Build)	2.67	cop[tikv]		eq(planner__core__indexmerge_path.t.c, 10), not(like(planner__core__indexmerge_path.t.b, "%test%", 92)), not(like(planner__core__indexmerge_path.t.b, "%test%", 92))
+│ └─IndexRangeScan	3333.33	cop[tikv]	table:t, index:idx(b, c)	range:("abc",+inf], keep order:false, stats:pseudo
+├─Selection(Build)	0.00	cop[tikv]		not(like(planner__core__indexmerge_path.t.b, "%test%", 92))
+│ └─IndexRangeScan	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 3,10 3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi2(a, cast(json_extract(`j`, _utf8mb4'$.c') as unsigned array))	range:[1 3,1 3], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create table t1 (
+a int,
+b varchar(30),
+c float,
+d tinytext,
+j json,
+key mvi1(b(3), (cast(j as unsigned array))),
+key mvi2((cast(j as unsigned array)), b),
+key mvi3((cast(j as unsigned array)), d(30)),
+key mvi4((cast(j as unsigned array)), d(255))
+);
+EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi1) */ * from t1 where
+c = 1 and
+json_contains(j, '[4,5]') and
+b = 'abcdefg';
+id	estRows	task	access object	operator info
+TableReader	0.00	root		data:Selection
+└─Selection	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t1.b, "abcdefg"), eq(planner__core__indexmerge_path.t1.c, 1), json_contains(planner__core__indexmerge_path.t1.j, cast("[4,5]", json BINARY))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi2) */ * from t1 where
+c = 1 and
+json_contains(j, '[4,5]') and
+b = 'abcdefg' and
+b like '%test%';
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: intersection
+├─Selection(Build)	0.00	cop[tikv]		like(planner__core__indexmerge_path.t1.b, "%test%", 92)
+│ └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:mvi2(cast(`j` as unsigned array), b)	range:[4 "abcdefg",4 "abcdefg"], keep order:false, stats:pseudo
+├─Selection(Build)	0.00	cop[tikv]		like(planner__core__indexmerge_path.t1.b, "%test%", 92)
+│ └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:mvi2(cast(`j` as unsigned array), b)	range:[5 "abcdefg",5 "abcdefg"], keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t1.c, 1)
+  └─TableRowIDScan	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi3) */ * from t1 where
+c = 1 and
+json_contains(j, '[4,5]') and
+d not like '%test%';
+id	estRows	task	access object	operator info
+IndexMerge	0.01	root		type: intersection
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:mvi3(cast(`j` as unsigned array), d)	range:[4,4], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:mvi3(cast(`j` as unsigned array), d)	range:[5,5], keep order:false, stats:pseudo
+└─Selection(Probe)	0.01	cop[tikv]		eq(planner__core__indexmerge_path.t1.c, 1), not(like(planner__core__indexmerge_path.t1.d, "%test%", 92))
+  └─TableRowIDScan	0.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi4) */ * from t1 where
+c = 1 and
+json_contains(j, '[4,5]') and
+d not like '%test%';
+id	estRows	task	access object	operator info
+IndexMerge	0.01	root		type: intersection
+├─Selection(Build)	0.00	cop[tikv]		not(like(planner__core__indexmerge_path.t1.d, "%test%", 92))
+│ └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:mvi4(cast(`j` as unsigned array), d)	range:[4,4], keep order:false, stats:pseudo
+├─Selection(Build)	0.00	cop[tikv]		not(like(planner__core__indexmerge_path.t1.d, "%test%", 92))
+│ └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:mvi4(cast(`j` as unsigned array), d)	range:[5,5], keep order:false, stats:pseudo
+└─Selection(Probe)	0.01	cop[tikv]		eq(planner__core__indexmerge_path.t1.c, 1)
+  └─TableRowIDScan	0.01	cop[tikv]	table:t1	keep order:false, stats:pseudo

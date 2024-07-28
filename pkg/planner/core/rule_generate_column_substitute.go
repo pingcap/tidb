@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -104,10 +105,10 @@ func appendSubstituteColumnStep(lp base.LogicalPlan, candidateExpr expression.Ex
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString("expression:")
-		buffer.WriteString(candidateExpr.StringWithCtx(ectx))
+		buffer.WriteString(candidateExpr.StringWithCtx(ectx, errors.RedactLogDisable))
 		buffer.WriteString(" substituted by")
 		buffer.WriteString(" column:")
-		buffer.WriteString(col.StringWithCtx(ectx))
+		buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
 		return buffer.String()
 	}
 	opt.AppendStepToCurrent(lp.ID(), lp.TP(), reason, action)

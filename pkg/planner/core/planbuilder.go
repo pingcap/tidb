@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -1108,12 +1109,25 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 
 	// consider hypo-indexes
-	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes // session level hypo-indexes
 	if ctx.GetSessionVars().StmtCtx.InExplainStmt && hypoIndexes != nil {
 		originalTableName := tblInfo.Name.L
 		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][originalTableName] != nil {
 			for _, index := range hypoIndexes[dbName.L][originalTableName] {
 				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			}
+		}
+	}
+	if len(ctx.GetSessionVars().StmtCtx.HintedHypoIndexes) > 0 { // statement-level hypo-indexes from hints
+		if !ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("can only use HYPO_INDEX hint in explain-statements"))
+		} else {
+			hintedHypoIndexes := ctx.GetSessionVars().StmtCtx.HintedHypoIndexes
+			originalTableName := tblInfo.Name.L
+			if hintedHypoIndexes[dbName.L] != nil && hintedHypoIndexes[dbName.L][originalTableName] != nil {
+				for _, index := range hintedHypoIndexes[dbName.L][originalTableName] {
+					publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+				}
 			}
 		}
 	}
@@ -3156,8 +3170,8 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
-	p := LogicalShow{
-		ShowContents: ShowContents{
+	p := logicalop.LogicalShow{
+		ShowContents: logicalop.ShowContents{
 			Tp:                    show.Tp,
 			CountWarningsOrErrors: show.CountWarningsOrErrors,
 			DBName:                show.DBName,
@@ -3193,7 +3207,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
-		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}
@@ -3253,7 +3267,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	case ast.ShowRegions:
-		tableInfo, err := b.is.TableByName(show.Table.Schema, show.Table.Name)
+		tableInfo, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -4293,7 +4307,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, err2
 		}
 	} else {
-		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
+		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes, []uint{})
 		p.setSchemaAndNames(outputSchema, outputFields)
 	}
 	return p, nil
@@ -5144,6 +5158,8 @@ func buildShowWarningsSchema() (*expression.Schema, types.NameSlice) {
 func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *expression.Schema, outputNames []*types.FieldName) {
 	var names []string
 	var ftypes []byte
+	var flags []uint
+
 	switch s.Tp {
 	case ast.ShowBinlogStatus:
 		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
@@ -5202,9 +5218,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowVariables, ast.ShowStatus:
 		names = []string{"Variable_name", "Value"}
 	case ast.ShowCollation:
-		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
+		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen", "Pad_attribute"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
+		flags = []uint{0, 0, mysql.UnsignedFlag | mysql.NotNullFlag, 0, 0, 0, 0}
 	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		if isSequence {
 			names = []string{"Sequence", "Create Sequence"}
@@ -5326,10 +5343,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = importIntoSchemaNames
 		ftypes = importIntoSchemaFTypes
 	}
-	return convert2OutputSchemasAndNames(names, ftypes)
+	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }
 
-func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expression.Schema, outputNames []*types.FieldName) {
+func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) (schema *expression.Schema, outputNames []*types.FieldName) {
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	outputNames = make([]*types.FieldName, 0, len(names))
 	for i := range names {
@@ -5347,6 +5364,9 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expre
 		charset, collate := types.DefaultCharsetForType(tp)
 		fieldType.SetCharset(charset)
 		fieldType.SetCollate(collate)
+		if len(flags) > 0 {
+			fieldType.SetFlag(flags[i])
+		}
 		col.RetType = fieldType
 		schema.Append(col)
 	}

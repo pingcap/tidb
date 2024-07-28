@@ -182,6 +182,16 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 				return i
 			}
 		}
+	case ast.IsNull:
+		c, ok := f.GetArgs()[0].(*expression.Column)
+		if !ok {
+			return -1
+		}
+		for i, col := range cols {
+			if col.EqualColumn(c) {
+				return i
+			}
+		}
 	}
 	return -1
 }
@@ -236,6 +246,53 @@ func compareCNFItemRangeResult(curResult, bestResult *cnfItemRangeResult) (curIs
 	return curResult.sameLenPointRanges
 }
 
+// mergeTwoCNFRanges merges two ranges results rangeResult and otherRangeResult.
+// The main objective of this function is to apply intersection between these two
+// ranges when possible. The overall logic is:
+// - if rangeResult is empty then result is otherRangeResult
+// - Skip intersection logic if it is turned off (Fix54337)
+// - If either range is a subset then set result to the subset.
+// - Result = intersection of the two ranges
+// - Try heuristic to pick which range is better if intersections fails or if feature is off.
+func mergeTwoCNFRanges(sctx *rangerctx.RangerContext, cond expression.Expression,
+	rangeResult, otherRangeResult *cnfItemRangeResult) *cnfItemRangeResult {
+	if rangeResult == nil {
+		return otherRangeResult
+	}
+	tryHeuristic := false
+	mergedResult := rangeResult
+	if otherRangeResult != nil && mergedResult.rangeResult != nil {
+		if fixcontrol.GetBoolWithDefault(sctx.OptimizerFixControl, fixcontrol.Fix54337, false) {
+			mergedResultIsSubset := mergedResult.rangeResult.Ranges.Subset(sctx.TypeCtx, otherRangeResult.rangeResult.Ranges)
+			// if mergedResult is a subset then do nothing
+			if !mergedResultIsSubset {
+				otherRangeResultIsSubset := otherRangeResult.rangeResult.Ranges.Subset(sctx.TypeCtx, mergedResult.rangeResult.Ranges)
+				// if otherRangeResult is subset (more selective) then make it mergedResult.
+				if otherRangeResultIsSubset {
+					mergedResult = otherRangeResult
+				} else {
+					// Try intersecting result of different conjuncts.
+					intersection := otherRangeResult.rangeResult.Ranges.IntersectRanges(sctx.TypeCtx, mergedResult.rangeResult.Ranges)
+					// Skip intersection if an error occurred during the intersection computation.
+					if intersection == nil {
+						tryHeuristic = true
+					} else {
+						mergedResult.rangeResult.Ranges = intersection
+						mergedResult.rangeResult.AccessConds =
+							AppendConditionsIfNotExist(sctx.ExprCtx.GetEvalCtx(), mergedResult.rangeResult.AccessConds, []expression.Expression{cond})
+					}
+				}
+			}
+		} else {
+			tryHeuristic = true
+		}
+	}
+	if tryHeuristic && compareCNFItemRangeResult(otherRangeResult, mergedResult) {
+		mergedResult = otherRangeResult
+	}
+	return mergedResult
+}
+
 // extractBestCNFItemRanges builds ranges for each CNF item from the input CNF expressions and returns the best CNF
 // item ranges.
 // e.g, for input CNF expressions ((a,b) in ((1,1),(2,2))) and a > 1 and ((a,b,c) in (1,1,1),(2,2,2))
@@ -273,9 +330,7 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 			continue
 		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
-		if bestRes == nil || compareCNFItemRangeResult(curRes, bestRes) {
-			bestRes = curRes
-		}
+		bestRes = mergeTwoCNFRanges(sctx, cond, bestRes, curRes)
 	}
 
 	if bestRes != nil && bestRes.rangeResult != nil {
@@ -590,27 +645,34 @@ func allEqOrIn(expr expression.Expression) bool {
 			}
 		}
 		return true
-	case ast.EQ, ast.NullEQ, ast.In:
+	case ast.EQ, ast.NullEQ, ast.In, ast.IsNull:
 		return true
 	}
 	return false
 }
 
 func extractValueInfo(expr expression.Expression) *valueInfo {
-	if f, ok := expr.(*expression.ScalarFunction); ok && (f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ) {
-		getValueInfo := func(c *expression.Constant) *valueInfo {
-			mutable := c.ParamMarker != nil || c.DeferredExpr != nil
-			var value *types.Datum
-			if !mutable {
-				value = &c.Value
+	if f, ok := expr.(*expression.ScalarFunction); ok {
+		if f.FuncName.L == ast.IsNull {
+			val := &types.Datum{}
+			val.SetNull()
+			return &valueInfo{value: val, mutable: false}
+		}
+		if f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ {
+			getValueInfo := func(c *expression.Constant) *valueInfo {
+				mutable := c.ParamMarker != nil || c.DeferredExpr != nil
+				var value *types.Datum
+				if !mutable {
+					value = &c.Value
+				}
+				return &valueInfo{value, mutable}
 			}
-			return &valueInfo{value, mutable}
-		}
-		if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
-			return getValueInfo(c)
-		}
-		if c, ok := f.GetArgs()[1].(*expression.Constant); ok {
-			return getValueInfo(c)
+			if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				return getValueInfo(c)
+			}
+			if c, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				return getValueInfo(c)
+			}
 		}
 	}
 	return nil
@@ -669,8 +731,12 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		if ma == nil {
 			if accesses[i] != nil {
 				if allEqOrIn(accesses[i]) {
-					newConditions = append(newConditions, accesses[i])
 					columnValues[i] = extractValueInfo(accesses[i])
+					if columnValues[i] != nil && columnValues[i].value != nil && columnValues[i].value.IsNull() {
+						accesses[i] = nil
+					} else {
+						newConditions = append(newConditions, accesses[i])
+					}
 				} else {
 					accesses[i] = nil
 				}

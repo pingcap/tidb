@@ -48,8 +48,10 @@ go_test(
     shard_count = 26,
     deps = [
         "//pkg/domain",
+        "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/session",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/testkit",

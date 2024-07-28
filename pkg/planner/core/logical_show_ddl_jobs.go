@@ -23,46 +23,35 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
-// LogicalMaxOneRow checks if a query returns no more than one row.
-type LogicalMaxOneRow struct {
-	logicalop.BaseLogicalPlan
+// LogicalShowDDLJobs is for showing DDL job list.
+type LogicalShowDDLJobs struct {
+	logicalop.LogicalSchemaProducer
+
+	JobNumber int64
 }
 
-// Init initializes LogicalMaxOneRow.
-func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneRow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
+// Init initializes LogicalShowDDLJobs.
+func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
+	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
 	return &p
 }
 
-// *************************** start implementation of Plan interface ***************************
-
-// Schema implements the Plan.Schema interface.
-func (p *LogicalMaxOneRow) Schema() *expression.Schema {
-	s := p.Children()[0].Schema().Clone()
-	resetNotNullFlag(s, 0, s.Len())
-	return s
-}
-
-// *************************** end implementation of Plan interface ***************************
-
 // *************************** start implementation of logicalPlan interface ***************************
 
-// HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
+// HashCode inherits the BaseLogicalPlan.<0th> interface.
 
-// PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	// MaxOneRow forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p
+// PredicatePushDown inherits the BaseLogicalPlan.<1st> interface.
+
+// PruneColumns inherits the BaseLogicalPlan.<2nd> interface.
+
+// FindBestTask implements the base.LogicalPlan.<3rd> interface.
+func (p *LogicalShowDDLJobs) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+	return findBestTask4LogicalShowDDLJobs(p, prop, planCounter, nil)
 }
 
-// PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.
+// BuildKeyInfo inherits the BaseLogicalPlan.<4th> interface.
 
-// FindBestTask inherits BaseLogicalPlan.LogicalPlan.<3rd> implementation.
-
-// BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
-
-// PushDownTopN inherits BaseLogicalPlan.LogicalPlan.<5th> implementation.
+// PushDownTopN inherits the BaseLogicalPlan.<5th> interface.
 
 // DeriveTopN inherits BaseLogicalPlan.LogicalPlan.<6th> implementation.
 
@@ -74,12 +63,13 @@ func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression,
 
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
-// DeriveStats implements base.LogicalPlan.<11th> interface.
-func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+// DeriveStats implements the base.LogicalPlan.<11th> interface.
+func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	p.SetStats(getSingletonStats(selfSchema))
+	// A fake count, just to avoid panic now.
+	p.SetStats(getFakeStats(selfSchema))
 	return p.StatsInfo(), nil
 }
 
@@ -87,10 +77,7 @@ func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
 
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPhysicalPlans4LogicalMaxOneRow(p, prop)
-}
+// ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 

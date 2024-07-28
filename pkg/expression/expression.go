@@ -866,7 +866,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx())))
+		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -1234,7 +1234,7 @@ func StringifyExpressionsWithCtx(ctx EvalContext, exprs []Expression) string {
 	var sb strings.Builder
 	sb.WriteString("[")
 	for i, expr := range exprs {
-		sb.WriteString(expr.StringWithCtx(ctx))
+		sb.WriteString(expr.StringWithCtx(ctx, errors.RedactLogDisable))
 
 		if i != len(exprs)-1 {
 			sb.WriteString(" ")

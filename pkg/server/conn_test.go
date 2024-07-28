@@ -1011,7 +1011,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	dml := "insert into t values"

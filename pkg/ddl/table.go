@@ -24,10 +24,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -511,13 +511,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
 		}
 
-		// Clear all placement when recover
-		err = clearTablePlacementAndBundles(tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -575,6 +568,11 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	err = clearTablePlacementAndBundles(w.ctx, recoverInfo.TableInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tableInfo := recoverInfo.TableInfo.Clone()
 	tableInfo.State = model.StatePublic
 	tableInfo.UpdateTS = t.StartTS
@@ -601,7 +599,10 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	return ver, nil
 }
 
-func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
+func clearTablePlacementAndBundles(ctx context.Context, tblInfo *model.TableInfo) error {
+	failpoint.Inject("mockClearTablePlacementAndBundlesErr", func() {
+		failpoint.Return(errors.New("mock error for clearTablePlacementAndBundles"))
+	})
 	var bundles []*placement.Bundle
 	if tblInfo.PlacementPolicyRef != nil {
 		tblInfo.PlacementPolicyRef = nil
@@ -622,7 +623,7 @@ func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
 		return nil
 	}
 
-	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+	return infosync.PutRuleBundlesWithDefaultRetry(ctx, bundles)
 }
 
 // mockRecoverTableCommitErrOnce uses to make sure
@@ -918,7 +919,7 @@ func onRebaseAutoID(d *ddlCtx, _ kv.Storage, t *meta.Meta, job *model.Job, tp au
 		return ver, errors.Trace(err)
 	}
 
-	tbl, err := getTable((*asAutoIDRequirement)(d), schemaID, tblInfo)
+	tbl, err := getTable(d.getAutoIDRequirement(), schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1000,7 +1001,7 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	if shardRowIDBits < tblInfo.ShardRowIDBits {
 		tblInfo.ShardRowIDBits = shardRowIDBits
 	} else {
-		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), job.SchemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1609,7 +1610,7 @@ func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableNa
 	if !ok {
 		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	tbl, err := is.TableByName(schema.Name, model.NewCIStr(tableName))
+	tbl, err := is.TableByName(context.Background(), schema.Name, model.NewCIStr(tableName))
 	if err != nil {
 		return 0, err
 	}
