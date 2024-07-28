@@ -2848,9 +2848,6 @@ const (
 	retrieveServerIDSessionTimeout = 10 * time.Second
 
 	acquire32BitsServerIDRetryCnt = 3
-
-	// reservedConnXXX must be within [0, globalconn.ReservedCount)
-	reservedConnAnalyze = 0
 )
 
 var (
