@@ -243,6 +243,8 @@ func TestMutateBuffersGetter(t *testing.T) {
 
 	colSize := buffers.GetColSizeDeltaBufferWithCap(6)
 	require.Equal(t, 6, cap(colSize.delta))
+
+	require.Same(t, stmtBufs, buffers.GetWriteStmtBufs())
 }
 
 func TestEnsureCapacityAndReset(t *testing.T) {

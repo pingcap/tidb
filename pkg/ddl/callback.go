@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -23,56 +22,22 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/zap"
 )
 
-// Interceptor is used for DDL.
-type Interceptor interface {
-	// OnGetInfoSchema is an intercept which is called in the function ddl.GetInfoSchema(). It is used in the tests.
-	OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
-}
-
-// BaseInterceptor implements Interceptor.
-type BaseInterceptor struct{}
-
-// OnGetInfoSchema implements Interceptor.OnGetInfoSchema interface.
-func (*BaseInterceptor) OnGetInfoSchema(_ sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
-	return is
-}
-
 // Callback is used for DDL.
 type Callback interface {
-	ReorgCallback
-	// OnChanged is called after a ddl statement is finished.
-	OnChanged(err error) error
-	// OnSchemaStateChanged is called after a schema state is changed.
-	// only called inside tests.
-	OnSchemaStateChanged(schemaVer int64)
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)
 	// OnJobRunAfter is called after running job.
 	OnJobRunAfter(job *model.Job)
 	// OnJobUpdated is called after the running job is updated.
 	OnJobUpdated(job *model.Job)
-	// OnWatched is called after watching owner is completed.
-	OnWatched(ctx context.Context)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
 type BaseCallback struct {
-}
-
-// OnChanged implements Callback interface.
-func (*BaseCallback) OnChanged(err error) error {
-	return err
-}
-
-// OnSchemaStateChanged implements Callback interface.
-func (*BaseCallback) OnSchemaStateChanged(_ int64) {
-	// Nothing to do.
 }
 
 // OnJobRunBefore implements Callback.OnJobRunBefore interface.
@@ -90,24 +55,9 @@ func (*BaseCallback) OnJobUpdated(_ *model.Job) {
 	// Nothing to do.
 }
 
-// OnWatched implements Callback.OnWatched interface.
-func (*BaseCallback) OnWatched(_ context.Context) {
-	// Nothing to do.
-}
-
-// OnUpdateReorgInfo implements ReorgCallback interface.
-func (*BaseCallback) OnUpdateReorgInfo(_ *model.Job, _ int64) {
-}
-
 // SchemaLoader is used to avoid import loop, the only impl is domain currently.
 type SchemaLoader interface {
 	Reload() error
-}
-
-// ReorgCallback is the callback for DDL reorganization.
-type ReorgCallback interface {
-	// OnUpdateReorgInfo is called after updating reorg info for partitions.
-	OnUpdateReorgInfo(job *model.Job, pid int64)
 }
 
 // ****************************** Start of Customized DDL Callback Instance ****************************************

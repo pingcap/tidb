@@ -1038,16 +1038,29 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
+var checkSubstringsInOrder = [6]string{
+	`"fk_info":null`,
+	`"partition":null`,
+	`"Lock":null`,
+	`"tiflash_replica":null`,
+	`"policy_ref_info":null`,
+	`"ttl_info":null`,
+}
+
 // CheckSpecialAttributes checks if the special attributes are in the table info.
 // Make it same as hasSpecialAttributes.
 // Exported for testing.
 // It's the regexp version for hasSpecialAttributes(), please keep up-to-date with it.
-func CheckSpecialAttributes(str string) bool {
-	if strings.Contains(str, "\"tiflash_replica\":null") && strings.Contains(str, "\"policy_ref_info\":null") &&
-		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") {
-		return false
+func CheckSpecialAttributes(json []byte) bool {
+	idx := 0
+	for _, substr := range checkSubstringsInOrder {
+		idx = bytes.Index(json, hack.Slice(substr))
+		if idx == -1 {
+			return true
+		}
+		json = json[idx:]
 	}
-	return true
+	return false
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1088,7 +1101,7 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if CheckSpecialAttributes(string(hack.String(value))) {
+		if CheckSpecialAttributes(value) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1275,7 +1288,7 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		// the default group is not persistanted to tikv by default.
+		// the default group is not persistent to tikv by default.
 		if groupID == defaultGroupID {
 			return defaultRGroupMeta, nil
 		}

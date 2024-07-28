@@ -50,6 +50,7 @@ import (
 type DDLExec struct {
 	exec.BaseExecutor
 
+	ddlExecutor  ddl.Executor
 	stmt         ast.StmtNode
 	is           infoschema.InfoSchema
 	tempTableDDL temptable.TemporaryTableDDL
@@ -241,7 +242,7 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
-	err := domain.GetDomain(e.Ctx()).DDL().TruncateTable(e.Ctx(), ident)
+	err := e.ddlExecutor.TruncateTable(e.Ctx(), ident)
 	return err
 }
 
@@ -251,21 +252,21 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
 		}
 	}
-	return domain.GetDomain(e.Ctx()).DDL().RenameTable(e.Ctx(), s)
+	return e.ddlExecutor.RenameTable(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
-	err := domain.GetDomain(e.Ctx()).DDL().CreateSchema(e.Ctx(), s)
+	err := e.ddlExecutor.CreateSchema(e.Ctx(), s)
 	return err
 }
 
 func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
-	err := domain.GetDomain(e.Ctx()).DDL().AlterSchema(e.Ctx(), s)
+	err := e.ddlExecutor.AlterSchema(e.Ctx(), s)
 	return err
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
-	err := domain.GetDomain(e.Ctx()).DDL().CreateTable(e.Ctx(), s)
+	err := e.ddlExecutor.CreateTable(e.Ctx(), s)
 	return err
 }
 
@@ -310,7 +311,7 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 	}
 
 	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
-	return domain.GetDomain(e.Ctx()).DDL().CreateView(e.Ctx(), s)
+	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
@@ -318,7 +319,7 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
 	}
 
-	return domain.GetDomain(e.Ctx()).DDL().CreateIndex(e.Ctx(), s)
+	return e.ddlExecutor.CreateIndex(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
@@ -330,7 +331,7 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		return errors.New("Drop 'mysql' database is forbidden")
 	}
 
-	err := domain.GetDomain(e.Ctx()).DDL().DropSchema(e.Ctx(), s)
+	err := e.ddlExecutor.DropSchema(e.Ctx(), s)
 	sessionVars := e.Ctx().GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
@@ -347,15 +348,15 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().DropTable(e.Ctx(), s)
+	return e.ddlExecutor.DropTable(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropView(s *ast.DropTableStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().DropView(e.Ctx(), s)
+	return e.ddlExecutor.DropView(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().DropSequence(e.Ctx(), s)
+	return e.ddlExecutor.DropSequence(e.Ctx(), s)
 }
 
 func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) error {
@@ -378,7 +379,7 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
 	}
 
-	return domain.GetDomain(e.Ctx()).DDL().DropIndex(e.Ctx(), s)
+	return e.ddlExecutor.DropIndex(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
@@ -386,7 +387,7 @@ func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) 
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
 	}
 
-	return domain.GetDomain(e.Ctx()).DDL().AlterTable(ctx, e.Ctx(), s)
+	return e.ddlExecutor.AlterTable(ctx, e.Ctx(), s)
 }
 
 // executeRecoverTable represents a recover table executor.
@@ -428,7 +429,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		OldTableName:  tblInfo.Name.L,
 	}
 	// Call DDL RecoverTable.
-	err = domain.GetDomain(e.Ctx()).DDL().RecoverTable(e.Ctx(), recoverInfo)
+	err = e.ddlExecutor.RecoverTable(e.Ctx(), recoverInfo)
 	return err
 }
 
@@ -540,7 +541,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
 	// Check `TO TSO` clause
 	if s.FlashbackTSO > 0 {
-		return domain.GetDomain(e.Ctx()).DDL().FlashbackCluster(e.Ctx(), s.FlashbackTSO)
+		return e.ddlExecutor.FlashbackCluster(e.Ctx(), s.FlashbackTSO)
 	}
 
 	// Check `TO TIMESTAMP` clause
@@ -549,7 +550,7 @@ func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error
 		return err
 	}
 
-	return domain.GetDomain(e.Ctx()).DDL().FlashbackCluster(e.Ctx(), flashbackTS)
+	return e.ddlExecutor.FlashbackCluster(e.Ctx(), flashbackTS)
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
@@ -583,7 +584,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		OldTableName:  s.Table.Name.L,
 	}
 	// Call DDL RecoverTable.
-	err = domain.GetDomain(e.Ctx()).DDL().RecoverTable(e.Ctx(), recoverInfo)
+	err = e.ddlExecutor.RecoverTable(e.Ctx(), recoverInfo)
 	return err
 }
 
@@ -610,7 +611,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	}
 	recoverSchemaInfo.Name = dbName
 	// Call DDL RecoverSchema.
-	err = domain.GetDomain(e.Ctx()).DDL().RecoverSchema(e.Ctx(), recoverSchemaInfo)
+	err = e.ddlExecutor.RecoverSchema(e.Ctx(), recoverSchemaInfo)
 	return err
 }
 
@@ -684,7 +685,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 		}
 	}
 
-	return domain.GetDomain(e.Ctx()).DDL().LockTables(e.Ctx(), s)
+	return e.ddlExecutor.LockTables(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
@@ -693,7 +694,7 @@ func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 		return nil
 	}
 	lockedTables := e.Ctx().GetAllTableLocks()
-	return domain.GetDomain(e.Ctx()).DDL().UnlockTables(e.Ctx(), lockedTables)
+	return e.ddlExecutor.UnlockTables(e.Ctx(), lockedTables)
 }
 
 func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
@@ -702,50 +703,50 @@ func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN CLEANUP TABLE LOCK")
 		}
 	}
-	return domain.GetDomain(e.Ctx()).DDL().CleanupTableLock(e.Ctx(), s.Tables)
+	return e.ddlExecutor.CleanupTableLock(e.Ctx(), s.Tables)
 }
 
 func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().RepairTable(e.Ctx(), s.CreateStmt)
+	return e.ddlExecutor.RepairTable(e.Ctx(), s.CreateStmt)
 }
 
 func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().CreateSequence(e.Ctx(), s)
+	return e.ddlExecutor.CreateSequence(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().AlterSequence(e.Ctx(), s)
+	return e.ddlExecutor.AlterSequence(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeCreatePlacementPolicy(s *ast.CreatePlacementPolicyStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().CreatePlacementPolicy(e.Ctx(), s)
+	return e.ddlExecutor.CreatePlacementPolicy(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropPlacementPolicy(s *ast.DropPlacementPolicyStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().DropPlacementPolicy(e.Ctx(), s)
+	return e.ddlExecutor.DropPlacementPolicy(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) error {
-	return domain.GetDomain(e.Ctx()).DDL().AlterPlacementPolicy(e.Ctx(), s)
+	return e.ddlExecutor.AlterPlacementPolicy(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeCreateResourceGroup(s *ast.CreateResourceGroupStmt) error {
 	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
-	return domain.GetDomain(e.Ctx()).DDL().AddResourceGroup(e.Ctx(), s)
+	return e.ddlExecutor.AddResourceGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterResourceGroup(s *ast.AlterResourceGroupStmt) error {
 	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
-	return domain.GetDomain(e.Ctx()).DDL().AlterResourceGroup(e.Ctx(), s)
+	return e.ddlExecutor.AlterResourceGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropResourceGroup(s *ast.DropResourceGroupStmt) error {
 	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
-	return domain.GetDomain(e.Ctx()).DDL().DropResourceGroup(e.Ctx(), s)
+	return e.ddlExecutor.DropResourceGroup(e.Ctx(), s)
 }

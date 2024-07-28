@@ -17,6 +17,7 @@ package expression
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -48,7 +49,9 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	require.NoError(t, err)
 
 	res := EvaluateExprWithNull(ctx, schema, outerIfNull)
-	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx))
+	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx, errors.RedactLogDisable))
+	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(ctx, errors.RedactLogEnable))
+	require.Equal(t, "ifnull(Column#1, ‹1›)", res.StringWithCtx(ctx, errors.RedactLogMarker))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(ctx, schema, outerIfNull)
@@ -147,7 +150,7 @@ func TestConstLevel(t *testing.T) {
 		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
 		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
 	} {
-		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.StringWithCtx(ctx))
+		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 }
 

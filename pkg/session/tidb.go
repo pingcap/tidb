@@ -25,12 +25,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -85,7 +87,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
 
-		var ddlInjector func(ddl.DDL) *schematracker.Checker
+		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}
@@ -224,6 +226,9 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	failpoint.Inject("finishStmtError", func() {
+		failpoint.Return(errors.New("occur an error after finishStmt"))
+	})
 	sessVars := se.sessionVars
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.

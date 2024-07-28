@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//br/pkg/config",
         "//br/pkg/glue",
+        "//br/pkg/utils",
         "//pkg/util",
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",

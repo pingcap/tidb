@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
@@ -124,7 +125,7 @@ func (*ImplMemTableScan) OnImplement(
 	expr *memo.GroupExpr,
 	reqProp *property.PhysicalProperty,
 ) ([]memo.Implementation, error) {
-	logic := expr.ExprNode.(*plannercore.LogicalMemTable)
+	logic := expr.ExprNode.(*logicalop.LogicalMemTable)
 	logicProp := expr.Group.Prop
 	physical := plannercore.PhysicalMemTable{
 		DBName:    logic.DBName,
@@ -243,7 +244,7 @@ func (*ImplShow) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (matc
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplShow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	show := expr.ExprNode.(*plannercore.LogicalShow)
+	show := expr.ExprNode.(*logicalop.LogicalShow)
 	// TODO(zz-jason): unifying LogicalShow and PhysicalShow to a single
 	// struct. So that we don't need to create a new PhysicalShow object, which
 	// can help us to reduce the gc pressure of golang runtime and improve the
@@ -556,7 +557,7 @@ func (*ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (
 // OnImplement implements ImplementationRule OnImplement interface
 func (*ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*plannercore.LogicalApply)
-	join := la.GetHashJoin(reqProp)
+	join := plannercore.GetHashJoin(la, reqProp)
 	physicalApply := plannercore.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
@@ -581,7 +582,7 @@ func (*ImplMaxOneRow) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) 
 
 // OnImplement implements ImplementationRule OnImplement interface
 func (*ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
-	mor := expr.ExprNode.(*plannercore.LogicalMaxOneRow)
+	mor := expr.ExprNode.(*logicalop.LogicalMaxOneRow)
 	physicalMaxOneRow := plannercore.PhysicalMaxOneRow{}.Init(
 		mor.SCtx(),
 		expr.Group.Prop.Stats,

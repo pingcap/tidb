@@ -121,5 +121,5 @@ func (ctx *assertionEvalContext) GetOptionalPropProvider(key OptionalEvalPropKey
 type StringerWithCtx interface {
 	// StringWithCtx returns the string representation of the expression with context.
 	// NOTE: any implementation of `StringWithCtx` should not panic if the context is nil.
-	StringWithCtx(ctx ParamValues) string
+	StringWithCtx(ctx ParamValues, redact string) string
 }

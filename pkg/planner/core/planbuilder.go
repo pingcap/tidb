@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -3169,8 +3170,8 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
-	p := LogicalShow{
-		ShowContents: ShowContents{
+	p := logicalop.LogicalShow{
+		ShowContents: logicalop.ShowContents{
 			Tp:                    show.Tp,
 			CountWarningsOrErrors: show.CountWarningsOrErrors,
 			DBName:                show.DBName,
