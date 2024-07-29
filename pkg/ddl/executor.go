@@ -199,7 +199,6 @@ type executor struct {
 	schemaLoader    SchemaLoader
 	lease           time.Duration // lease is schema lease, default 45s, see config.Lease.
 	ownerManager    owner.Manager
-	limitJobChV2    chan *JobWrapper
 	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
 	ddlJobNotifyCh  chan struct{}
 	mu              *hookStruct // TODO remove it.
@@ -10067,6 +10066,7 @@ func (d *ddl) limitDDLJobs(ch chan *JobWrapper, handler func([]*JobWrapper)) {
 		// the channel is never closed
 		case jobW := <-ch:
 			jobWs = jobWs[:0]
+			failpoint.InjectCall("afterGetJobFromLimitCh", ch)
 			jobLen := len(ch)
 			jobWs = append(jobWs, jobW)
 			for i := 0; i < jobLen; i++ {

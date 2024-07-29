@@ -231,6 +231,7 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	}
 }
 
+// NotifyResult notifies the job submit result.
 func (t *JobWrapper) NotifyResult(err error) {
 	merged := len(t.ResultCh) > 1
 	for _, resultCh := range t.ResultCh {
@@ -247,8 +248,6 @@ type ddl struct {
 	m          sync.RWMutex
 	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 	limitJobCh chan *JobWrapper
-	// limitJobChV2 is used to limit the number of jobs being executed in local worker.
-	limitJobChV2 chan *JobWrapper
 
 	*ddlCtx
 	sessPool          *sess.Pool
@@ -667,7 +666,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *JobWrapper, batchAddingJobs),
-		limitJobChV2:      make(chan *JobWrapper, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobNotifyCh:    make(chan struct{}, 100),
 		localJobCh:        make(chan *JobWrapper, 1),
@@ -700,7 +698,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		schemaLoader:    d.schemaLoader,
 		lease:           d.lease,
 		ownerManager:    d.ownerManager,
-		limitJobChV2:    d.limitJobChV2,
 		ddlJobDoneChMap: &d.ddlJobDoneChMap,
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
 		mu:              &d.mu,
@@ -771,9 +768,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
 	d.wg.Run(func() {
 		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobsV1)
-	})
-	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
 	})
 	d.wg.Run(func() {
 		d.minJobIDRefresher.Start(d.ctx)
