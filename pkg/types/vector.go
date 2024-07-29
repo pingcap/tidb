@@ -21,7 +21,7 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
 func init() {

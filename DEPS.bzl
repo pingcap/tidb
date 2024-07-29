@@ -6020,19 +6020,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_pingcap_tidb_parser",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/pingcap/tidb/parser",
-        sha256 = "a2dc8323315eced3ddb70d52de00400764ef5d508f55020dacb4a9bece727e87",
-        strip_prefix = "github.com/pingcap/tidb/parser@v0.0.0-20231013125129-93a834a6bf8d",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tidb/parser/com_github_pingcap_tidb_parser-v0.0.0-20231013125129-93a834a6bf8d.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tidb/parser/com_github_pingcap_tidb_parser-v0.0.0-20231013125129-93a834a6bf8d.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tidb/parser/com_github_pingcap_tidb_parser-v0.0.0-20231013125129-93a834a6bf8d.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tidb/parser/com_github_pingcap_tidb_parser-v0.0.0-20231013125129-93a834a6bf8d.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
