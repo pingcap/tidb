@@ -324,7 +324,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		allIndexIDs := make([]int64, 1)
 		ifExists := make([]bool, 1)
-		isGlobal := make([]bool, 1)
+		isGlobal := make([]bool, 0, 1)
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&allIndexIDs[0], &ifExists[0], &partitionIDs); err != nil {
 			if err = job.DecodeArgs(&allIndexIDs, &ifExists, &partitionIDs, &isGlobal); err != nil {

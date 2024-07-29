@@ -109,7 +109,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		indexID := make([]int64, 1)
 		ifExists := make([]bool, 1)
-		isGlobal := make([]bool, 1)
+		isGlobal := make([]bool, 0, 1)
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexID[0], &ifExists[0], &partitionIDs); err != nil {
 			if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs, &isGlobal); err != nil {
