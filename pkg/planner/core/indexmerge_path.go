@@ -1014,9 +1014,6 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			remainedCNFs = append(remainedCNFs, CNFItem)
 		}
 	}
-<<<<<<< HEAD
-	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, remainedCNFs, ds.tableStats.HistColl)
-=======
 
 	condInIdxFilter := make(map[string]struct{}, len(remainedCNFs))
 	// try to derive index filters for each path
@@ -1039,8 +1036,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		}
 	}
 
-	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, tableFilters, ds.TableStats.HistColl)
->>>>>>> 56710aeaef7 (planner: derive index filters for mv index paths (#54877))
+	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, tableFilters, ds.tableStats.HistColl)
 
 	ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvp)
 	return nil
@@ -1105,13 +1101,6 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue
 		}
 
-<<<<<<< HEAD
-		ds.possibleAccessPaths = append(ds.possibleAccessPaths, ds.buildPartialPathUp4MVIndex(
-			partialPaths,
-			isIntersection,
-			remainingFilters,
-			ds.tableStats.HistColl,
-=======
 		// Here, all partial paths are built from the same MV index, so we can directly use the first one to get the
 		// metadata.
 		// And according to buildPartialPaths4MVIndex, there must be at least one partial path if it returns ok.
@@ -1129,12 +1118,11 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			path.IndexFilters = append(path.IndexFilters, clonedIdxFilters...)
 		}
 
-		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, ds.buildPartialPathUp4MVIndex(
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, ds.buildPartialPathUp4MVIndex(
 			partialPaths,
 			isIntersection,
 			tableFilters,
-			ds.TableStats.HistColl,
->>>>>>> 56710aeaef7 (planner: derive index filters for mv index paths (#54877))
+			ds.tableStats.HistColl,
 		),
 		)
 	}
