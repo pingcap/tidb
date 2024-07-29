@@ -9883,8 +9883,8 @@ func (e *executor) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 // DoDDLJobWrapper submit DDL job and wait it finishes.
-// When fast create is enabled, we might merge multiple jobs into one, so be careful
-// when using job.
+// When fast create is enabled, we might merge multiple jobs into one, so do not
+// depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	job := jobW.Job
 	job.TraceInfo = &model.TraceInfo{
@@ -10111,6 +10111,7 @@ func (e *executor) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType stri
 }
 
 func (e *executor) deliverJobTask(task *JobWrapper) {
+	// TODO this might block forever, as the consumer part considers context cancel.
 	e.limitJobCh <- task
 }
 
@@ -10123,11 +10124,12 @@ func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
 	)
 	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
 	toTable := !variable.DDLForce2Queue.Load()
+	fastCreate := variable.EnableFastCreateTable.Load()
 	if toTable {
-		if variable.EnableFastCreateTable.Load() {
+		if fastCreate {
 			newWs, err = mergeCreateTableJobs(jobWs)
 			if err != nil {
-				logutil.DDLLogger().Warn("failed to combine batch create table jobs", zap.Error(err))
+				logutil.DDLLogger().Warn("failed to merge create table jobs", zap.Error(err))
 			} else {
 				jobWs = newWs
 			}
@@ -10152,7 +10154,8 @@ func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
 		logutil.DDLLogger().Info("add DDL jobs",
 			zap.Int("batch count", len(jobWs)),
 			zap.String("jobs", jobs),
-			zap.Bool("table", toTable))
+			zap.Bool("table", toTable),
+			zap.Bool("fast_create", fastCreate))
 	}
 }
 
@@ -10532,28 +10535,30 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 	}
 
 	for schema, jobs := range mergeableJobWs {
-		if len(jobs) <= 1 {
+		total := len(jobs)
+		if total <= 1 {
 			resJobWs = append(resJobWs, jobs...)
 			continue
 		}
 		const maxBatchSize = 8
-		batchCount := (len(jobs) + maxBatchSize - 1) / maxBatchSize
+		batchCount := (total + maxBatchSize - 1) / maxBatchSize
 		start := 0
-		for _, batchSize := range mathutil.Divide2Batches(len(jobs), batchCount) {
-			job, err := mergeCreateTableJobsOfSameSchema(jobs[start : start+batchSize])
+		for _, batchSize := range mathutil.Divide2Batches(total, batchCount) {
+			batch := jobs[start : start+batchSize]
+			job, err := mergeCreateTableJobsOfSameSchema(batch)
 			if err != nil {
 				return nil, err
 			}
 			start += batchSize
 			logutil.DDLLogger().Info("merge create table jobs", zap.String("schema", schema),
-				zap.Int("total", len(jobs)), zap.Int("batch_size", batchSize))
+				zap.Int("total", total), zap.Int("batch_size", batchSize))
 
 			newJobW := &JobWrapper{
 				Job:      job,
-				ResultCh: []chan jobSubmitResult{},
+				ResultCh: make([]chan jobSubmitResult, 0, batchSize),
 			}
 			// merge the result channels.
-			for _, j := range jobWs {
+			for _, j := range batch {
 				newJobW.ResultCh = append(newJobW.ResultCh, j.ResultCh...)
 			}
 			resJobWs = append(resJobWs, newJobW)

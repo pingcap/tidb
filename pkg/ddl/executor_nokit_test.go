@@ -67,20 +67,20 @@ func TestBuildQueryStringFromJobs(t *testing.T) {
 }
 
 func TestMergeCreateTableJobsOfSameSchema(t *testing.T) {
-	job1 := &JobWrapper{Job: &model.Job{
+	job1 := NewJobWrapper(&model.Job{
 		SchemaID:   1,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t1", L: "t1"}}, false},
 		Query:      "create table db1.t1 (c1 int, c2 int)",
-	}}
-	job2 := &JobWrapper{Job: &model.Job{
+	}, false)
+	job2 := NewJobWrapper(&model.Job{
 		SchemaID:   1,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t2", L: "t2"}}, &model.TableInfo{}},
 		Query:      "create table db1.t2 (c1 int, c2 int);",
-	}}
+	}, false)
 	job, err := mergeCreateTableJobsOfSameSchema([]*JobWrapper{job1, job2})
 	require.NoError(t, err)
 	require.Equal(t, "create table db1.t1 (c1 int, c2 int); create table db1.t2 (c1 int, c2 int);", job.Query)
@@ -157,15 +157,15 @@ func TestMergeCreateTableJobs(t *testing.T) {
 		} {
 			for i := 0; i < cnt; i++ {
 				tblName := fmt.Sprintf("t%d", i)
-				jobWs = append(jobWs, &JobWrapper{Job: &model.Job{SchemaName: db, Type: model.ActionCreateTable,
-					Args: []any{&model.TableInfo{Name: model.NewCIStr(tblName)}, false}}})
+				jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: db, Type: model.ActionCreateTable,
+					Args: []any{&model.TableInfo{Name: model.NewCIStr(tblName)}, false}}, false))
 			}
 		}
-		jobWs = append(jobWs, &JobWrapper{Job: &model.Job{SchemaName: "dbx", Type: model.ActionAddColumn}})
-		jobWs = append(jobWs, &JobWrapper{Job: &model.Job{SchemaName: "dbxx", Type: model.ActionCreateTable,
-			Args: []any{&model.TableInfo{Name: model.NewCIStr("t1")}, false}}, IDAllocated: true})
-		jobWs = append(jobWs, &JobWrapper{Job: &model.Job{SchemaName: "dbxxx", Type: model.ActionCreateTable,
-			Args: []any{&model.TableInfo{ForeignKeys: []*model.FKInfo{{}}}, false}}})
+		jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: "dbx", Type: model.ActionAddColumn}, false))
+		jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: "dbxx", Type: model.ActionCreateTable,
+			Args: []any{&model.TableInfo{Name: model.NewCIStr("t1")}, false}}, true))
+		jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: "dbxxx", Type: model.ActionCreateTable,
+			Args: []any{&model.TableInfo{ForeignKeys: []*model.FKInfo{{}}}, false}}, false))
 		newWs, err := mergeCreateTableJobs(jobWs)
 		require.NoError(t, err)
 		// 3 non-mergeable + 2 + 1 + 3
@@ -181,6 +181,7 @@ func TestMergeCreateTableJobs(t *testing.T) {
 			require.Equal(t, model.ActionCreateTables, newWs[i].Type)
 			infos := newWs[i].Args[0].([]*model.TableInfo)
 			schemaCnts[newWs[i].SchemaName] = append(schemaCnts[newWs[i].SchemaName], len(infos))
+			require.Equal(t, len(infos), len(newWs[i].ResultCh))
 		}
 		for k := range schemaCnts {
 			slices.Sort(schemaCnts[k])
