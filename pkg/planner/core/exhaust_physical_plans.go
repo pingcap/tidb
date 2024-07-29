@@ -3018,7 +3018,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
 		case *LogicalLimit, *LogicalTopN:
 			return false
-		case *LogicalSequence:
+		case *logicalop.LogicalSequence:
 			return storeTp == kv.TiFlash
 		case *LogicalCTE:
 			if storeTp != kv.TiFlash {
@@ -3574,7 +3574,8 @@ func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalPrope
 	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalSequence(p *LogicalSequence, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalSequence(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalSequence)
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
 	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.TaskTp == property.MppTaskType {

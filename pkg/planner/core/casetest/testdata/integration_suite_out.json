@@ -1370,17 +1370,16 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t1 ta, t1 tb where ta.c1 * ta.c1 > ta.c2 + 10;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#9)->Column#7",
+          "HashAgg 1.00 root  funcs:count(Column#8)->Column#7",
           "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#9",
-          "      └─Projection 80000000.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#8",
+          "      └─Projection 80000000.00 mpp[tiflash]  test.t1.c1",
           "        └─HashJoin 80000000.00 mpp[tiflash]  CARTESIAN inner join",
           "          ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "          │   └─Projection 8000.00 mpp[tiflash]  1->Column#8",
-          "          │     └─Selection 8000.00 mpp[tiflash]  gt(mul(test.t1.c1, test.t1.c1), plus(test.t1.c2, 10))",
-          "          │       └─TableFullScan 10000.00 mpp[tiflash] table:ta pushed down filter:empty, keep order:false, stats:pseudo",
+          "          │   └─Selection 8000.00 mpp[tiflash]  gt(mul(test.t1.c1, test.t1.c1), plus(test.t1.c2, 10))",
+          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:ta pushed down filter:empty, keep order:false, stats:pseudo",
           "          └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:tb keep order:false, stats:pseudo"
         ]
       }

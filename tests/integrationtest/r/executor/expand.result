@@ -300,3 +300,27 @@ GROUP BY product WITH ROLLUP) AS tmp
 WHERE product is null;
 product	SUM
 NULL	7785
+
+SELECT product FROM t1 WHERE EXISTS
+(SELECT product, country_id , SUM(profit) FROM t1 AS t2
+WHERE t1.product=t2.product GROUP BY product, country_id WITH ROLLUP
+HAVING SUM(profit) > 6000);
+product
+Computer
+Computer
+Computer
+Computer
+Computer
+
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year HAVING country_id is NULL;
+product	country_id	year	SUM(profit)
+
+SELECT CONCAT(':',product,':'), SUM(profit), AVG(profit) FROM t1
+GROUP BY product WITH ROLLUP;
+CONCAT(':',product,':')	SUM(profit)	AVG(profit)
+NULL	7785	519.0000
+:Calculator:	275	68.7500
+:Computer:	6900	1380.0000
+:Phone:	10	10.0000
+:TV:	600	120.0000

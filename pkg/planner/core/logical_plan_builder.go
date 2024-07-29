@@ -4058,7 +4058,7 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p base.LogicalPlan) ba
 		lctes = append(lctes, lcte)
 	}
 	b.optFlag |= flagPushDownSequence
-	seq := LogicalSequence{}.Init(b.ctx, b.getSelectOffset())
+	seq := logicalop.LogicalSequence{}.Init(b.ctx, b.getSelectOffset())
 	seq.SetChildren(append(lctes, p)...)
 	seq.SetOutputNames(p.OutputNames().Shallow())
 	return seq
