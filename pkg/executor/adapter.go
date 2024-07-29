@@ -983,7 +983,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	}()
 
 	// Check if "tidb_snapshot" is set for the write executors.
-	// In history read mode, we can not do write operations.
+	// In history read mode, we can not do write operations./
+	// TODO: it's better to use a.ReadOnly to check if the statement is a write statement
+	// instead of listing executor types here.
 	switch e.(type) {
 	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadDataExec, *DDLExec, *ImportIntoExec:
 		snapshotTS := sctx.GetSessionVars().SnapshotTS

@@ -1942,6 +1942,17 @@ func TestLowResolutionTSORead(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLowResolutionTSOReadScope(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	require.False(t, tk1.Session().GetSessionVars().UseLowResolutionTSO())
+
+	tk1.MustExec("set global tidb_low_resolution_tso = 'on'")
+	tk2 := testkit.NewTestKit(t, store)
+	require.True(t, tk2.Session().GetSessionVars().UseLowResolutionTSO())
+}
+
 func TestAdapterStatement(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
