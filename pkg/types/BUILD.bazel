@@ -67,6 +67,7 @@ go_library(
         "@com_github_json_iterator_go//:go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
+        "@com_github_pingcap_tidb_parser//types",
         "@org_uber_go_zap//:zap",
     ],
 )
