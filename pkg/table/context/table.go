@@ -18,6 +18,7 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -48,6 +49,61 @@ type StatisticsSupport interface {
 	UpdatePhysicalTableDelta(physicalTableID int64, delta int64, count int64, cols variable.DeltaCols)
 }
 
+// CachedTableSupport is used for cached table operations
+type CachedTableSupport interface {
+	// AddCachedTableHandleToTxn adds a cached handle to the current transaction
+	// to handle cached table when committing txn.
+	// The handle argument should implement `table.CachedTable` interface, but here is `any` to avoid import cycle.
+	AddCachedTableHandleToTxn(tableID int64, handle any)
+}
+
+// TemporaryTableHandler is used by `table.Table` to handle temporary table.
+type TemporaryTableHandler struct {
+	tblInTxn tableutil.TempTable
+	data     variable.TemporaryTableData
+}
+
+// NewTemporaryTableHandler creates a new TemporaryTableHandler
+func NewTemporaryTableHandler(tbl tableutil.TempTable, data variable.TemporaryTableData) TemporaryTableHandler {
+	return TemporaryTableHandler{
+		tblInTxn: tbl,
+		data:     data,
+	}
+}
+
+// Meta returns the meta
+func (h *TemporaryTableHandler) Meta() *model.TableInfo {
+	return h.tblInTxn.GetMeta()
+}
+
+// GetDirtySize returns the size of dirty data in txn of the temporary table
+func (h *TemporaryTableHandler) GetDirtySize() int64 {
+	return h.tblInTxn.GetSize()
+}
+
+// GetCommittedSize returns the committed data size of the temporary table
+func (h *TemporaryTableHandler) GetCommittedSize() int64 {
+	if h.data == nil {
+		return 0
+	}
+	return h.data.GetTableSize(h.tblInTxn.GetMeta().ID)
+}
+
+// UpdateTxnDeltaSize updates the size of dirty data statistics in txn of the temporary table
+func (h *TemporaryTableHandler) UpdateTxnDeltaSize(delta int) {
+	h.tblInTxn.SetSize(h.tblInTxn.GetSize() + int64(delta))
+}
+
+// TemporaryTableSupport is used for temporary table operations
+type TemporaryTableSupport interface {
+	// GetTemporaryTableSizeLimit returns the size limit of a temporary table.
+	GetTemporaryTableSizeLimit() int64
+	// AddTemporaryTableToTxn adds a temporary table to txn to mark it is modified
+	// and txn will handle it when committing.
+	// It returns a `TemporaryTableHandler` object which provides some extra info for the temporary table.
+	AddTemporaryTableToTxn(tblInfo *model.TableInfo) (TemporaryTableHandler, bool)
+}
+
 // MutateContext is used to when mutating a table.
 type MutateContext interface {
 	AllocatorContext
@@ -62,9 +118,6 @@ type MutateContext interface {
 	Txn(active bool) (kv.Transaction, error)
 	// GetDomainInfoSchema returns the latest information schema in domain
 	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
-	// TxnRecordTempTable record the temporary table to the current transaction.
-	// This method will be called when the temporary table is modified or should allocate id in the transaction.
-	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
 	// ConnectionID returns the id of the current connection.
 	// If the current environment is not in a query from the client, the return value is 0.
 	ConnectionID() uint64
@@ -90,11 +143,18 @@ type MutateContext interface {
 	// GetStatisticsSupport returns a `StatisticsSupport` if the context supports it.
 	// If the context does not support statistics update, the second return value will be false.
 	GetStatisticsSupport() (StatisticsSupport, bool)
+	// GetCachedTableSupport returns a `CachedTableSupport` if the context supports it.
+	// If the context does not support cached table, the second return value will be false.
+	GetCachedTableSupport() (CachedTableSupport, bool)
+	// GetTemporaryTableSupport returns a `TemporaryTableSupport` if the context supports it.
+	// If the context does not support temporary table, the second return value will be false.
+	GetTemporaryTableSupport() (TemporaryTableSupport, bool)
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.
 type AllocatorContext interface {
-	// TxnRecordTempTable record the temporary table to the current transaction.
-	// This method will be called when the temporary table is modified or should allocate id in the transaction.
-	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
+	// AlternativeAllocators returns an alternative `autoid.Allocators` for the table.
+	// If the second return value is nil, it means there are no alternative allocators in the context.
+	// Currently, it provides alternative allocators for temporary tables to alloc IDs in session.
+	AlternativeAllocators(tbl *model.TableInfo) (autoid.Allocators, bool)
 }

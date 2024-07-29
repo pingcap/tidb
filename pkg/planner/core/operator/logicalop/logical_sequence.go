@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -34,12 +34,12 @@ import (
 //
 // We use this property to do complex optimizations for CTEs.
 type LogicalSequence struct {
-	logicalop.BaseLogicalPlan
+	BaseLogicalPlan
 }
 
 // Init initializes LogicalSequence
 func (p LogicalSequence) Init(ctx base.PlanContext, offset int) *LogicalSequence {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSequence, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeSequence, &p, offset)
 	return &p
 }
 
@@ -103,7 +103,7 @@ func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expre
 
 // ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
 func (p *LogicalSequence) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPhysicalPlans4LogicalSequence(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalSequence(p, prop)
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.

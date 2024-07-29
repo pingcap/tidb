@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -73,7 +74,7 @@ func (p *LogicalProjection) ExplainInfo() string {
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Exprs {
-		ResolveExprAndReplace(expr, replace)
+		ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 
@@ -250,7 +251,7 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 			continue
 		}
 		clonePredicate := predicate.Clone()
-		ResolveExprAndReplace(clonePredicate, replace)
+		ruleutil.ResolveExprAndReplace(clonePredicate, replace)
 		result = append(result, clonePredicate)
 	}
 	return result

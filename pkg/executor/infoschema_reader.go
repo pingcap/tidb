@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -1881,21 +1880,6 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 	return rows
 }
 
-func ensureSchemaTables(ctx context.Context, is infoschema.InfoSchema, schemaNames []model.CIStr) []*model.DBInfo {
-	// For infoschema v2, Tables of DBInfo could be missing.
-	res := make([]*model.DBInfo, 0, len(schemaNames))
-	for _, dbName := range schemaNames {
-		dbInfoRaw, _ := is.SchemaByName(dbName)
-		dbInfo := dbInfoRaw.Clone()
-		dbInfo.Tables = dbInfo.Tables[:0]
-		var err error
-		dbInfo.Tables, err = is.SchemaTableInfos(ctx, dbName)
-		terror.Log(err)
-		res = append(res, dbInfo)
-	}
-	return res
-}
-
 func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var extractorTableIDs []int64
@@ -1937,9 +1921,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			return err
 		}
 	}
-	schemaNames := is.AllSchemaNames()
-	schemas := ensureSchemaTables(ctx, is, schemaNames)
-	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, schemas)
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is, nil)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(regionTableList) == 0 {
@@ -2066,13 +2048,13 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx context.Context, sctx s
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	schemas := tikvHelper.FilterMemDBs(sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas())
-	metrics, err := tikvHelper.ScrapeHotInfo(ctx, helper.HotRead, schemas)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	metrics, err := tikvHelper.ScrapeHotInfo(ctx, helper.HotRead, is, tikvHelper.FilterMemDBs)
 	if err != nil {
 		return err
 	}
 	e.setDataForHotRegionByMetrics(metrics, "read")
-	metrics, err = tikvHelper.ScrapeHotInfo(ctx, helper.HotWrite, schemas)
+	metrics, err = tikvHelper.ScrapeHotInfo(ctx, helper.HotWrite, is, nil)
 	if err != nil {
 		return err
 	}
@@ -3637,7 +3619,8 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		burstable := burstdisableStr
 		priority := model.PriorityValueToName(uint64(group.Priority))
 		fillrate := unlimitedFillRate
-		isDefaultInReservedSetting := group.Name == resourcegroup.DefaultResourceGroupName && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
+		// RU_PER_SEC = unlimited like the default group settings.
+		isDefaultInReservedSetting := group.RUSettings.RU.Settings.FillRate == math.MaxInt32
 		if !isDefaultInReservedSetting {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
