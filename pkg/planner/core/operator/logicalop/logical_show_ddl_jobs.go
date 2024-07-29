@@ -100,14 +100,3 @@ func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *ex
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
-
-func getFakeStats(schema *expression.Schema) *property.StatsInfo {
-	profile := &property.StatsInfo{
-		RowCount: 1,
-		ColNDVs:  make(map[int64]float64, schema.Len()),
-	}
-	for _, col := range schema.Columns {
-		profile.ColNDVs[col.UniqueID] = 1
-	}
-	return profile
-}
