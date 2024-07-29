@@ -413,7 +413,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
-	b.ctor = from.ctor
+	b.ctor = from.ctor.Clone()
 }
 
 func (*baseBuiltinFunc) Clone() builtinFunc {

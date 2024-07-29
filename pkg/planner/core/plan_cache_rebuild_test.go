@@ -93,7 +93,9 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 	checked := false
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
-		//require.NoError(t, checkUnclearPlanCacheClone(plan, cloned, ".ctx"))
+		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned,
+			".ctx",
+			"*collate"))
 	})
 	tk2.MustQueryWithContext(ctx, exec2)
 	require.True(t, checked)
@@ -176,7 +178,7 @@ func checkUnclearPlanCacheClone(plan, cloned any, whiteLists ...string) error {
 
 func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[visit]bool, whiteLists ...string) error {
 	for _, l := range whiteLists {
-		if strings.HasSuffix(path, l) {
+		if strings.Contains(path, l) {
 			return nil
 		}
 	}
