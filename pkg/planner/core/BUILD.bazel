@@ -36,7 +36,6 @@ go_library(
         "logical_plans.go",
         "logical_projection.go",
         "logical_selection.go",
-        "logical_sequence.go",
         "logical_sort.go",
         "logical_table_dual.go",
         "logical_table_scan.go",

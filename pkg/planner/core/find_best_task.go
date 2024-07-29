@@ -182,7 +182,7 @@ func enumeratePhysicalPlans4Task(
 	childCnts := make([]int64, p.ChildLen())
 	cntPlan = 0
 	iteration := iteratePhysicalPlan4BaseLogical
-	if _, ok := p.Self().(*LogicalSequence); ok {
+	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
 
