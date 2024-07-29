@@ -71,6 +71,24 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where a<? and b+?=10'`,
 		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 
+	// IndexLookUp
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b>?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b>?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// Sort
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? order by a'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a>=? order by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(primary) where a<? and b<? order by a+b'`,
+		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=? order by a+4'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
 	// TODO: PointGet doesn't support Clone
 	// PointPlan
 	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=?'`,
