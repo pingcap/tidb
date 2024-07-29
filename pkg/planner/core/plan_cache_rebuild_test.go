@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -92,7 +93,7 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 	checked := false
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
-		// TODO: check cloned is deeply cloned from plan.
+		//require.NoError(t, checkUnclearPlanCacheClone(plan, cloned, ".ctx"))
 	})
 	tk2.MustQueryWithContext(ctx, exec2)
 	require.True(t, checked)
@@ -169,11 +170,16 @@ func TestCheckPlanClone(t *testing.T) {
 
 // checkUnclearPlanCacheClone checks whether this cloned plan is safe for instance plan cache.
 // All fields in the plan should be deeply cloned except the fields with tag "plan-cache-shallow-clone:'true'".
-func checkUnclearPlanCacheClone(plan, cloned any) error {
-	return planCacheUnclearCloneCheck(reflect.ValueOf(plan), reflect.ValueOf(cloned), reflect.TypeOf(plan).String(), nil)
+func checkUnclearPlanCacheClone(plan, cloned any, whiteLists ...string) error {
+	return planCacheUnclearCloneCheck(reflect.ValueOf(plan), reflect.ValueOf(cloned), reflect.TypeOf(plan).String(), nil, whiteLists...)
 }
 
-func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[visit]bool) error {
+func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[visit]bool, whiteLists ...string) error {
+	for _, l := range whiteLists {
+		if strings.HasSuffix(path, l) {
+			return nil
+		}
+	}
 	if !v1.IsValid() || !v2.IsValid() {
 		if v1.IsValid() != v2.IsValid() {
 			return errors.Errorf("invalid")
@@ -212,7 +218,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 	switch v1.Kind() {
 	case reflect.Array:
 		for i := 0; i < v1.Len(); i++ {
-			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited); err != nil {
+			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited, whiteLists...); err != nil {
 				return err
 			}
 		}
@@ -233,7 +239,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 			return errors.Errorf("same slice pointers, path %v", path)
 		}
 		for i := 0; i < v1.Len(); i++ {
-			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited); err != nil {
+			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited, whiteLists...); err != nil {
 				return err
 			}
 		}
@@ -244,7 +250,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 		if v1.IsNil() != v2.IsNil() {
 			return errors.Errorf("invalid interfaces, path %v", path)
 		}
-		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), fmt.Sprintf("%v(%v)", path, v1.Elem().Type().String()), visited)
+		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), fmt.Sprintf("%v(%v)", path, v1.Elem().Type().String()), visited, whiteLists...)
 	case reflect.Ptr:
 		if v1.IsNil() && v2.IsNil() {
 			return nil
@@ -252,7 +258,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 		if v1.Pointer() == v2.Pointer() {
 			return errors.Errorf("same pointer, path %v", path)
 		}
-		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), path, visited)
+		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), path, visited, whiteLists...)
 	case reflect.Struct:
 		for i, n := 0, v1.NumField(); i < n; i++ {
 			tag := v1.Type().Field(i).Tag.Get("plan-cache-clone")
@@ -260,7 +266,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 				continue
 			}
 			fieldName := v1.Type().Field(i).Name
-			if err := planCacheUnclearCloneCheck(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, fieldName), visited); err != nil {
+			if err := planCacheUnclearCloneCheck(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, fieldName), visited, whiteLists...); err != nil {
 				return err
 			}
 		}
@@ -283,7 +289,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 			if !val1.IsValid() || !val2.IsValid() {
 				return errors.Errorf("invalid map value at %v", fmt.Sprintf("%v[%v]", path, k.Type().Name()))
 			}
-			if err := planCacheUnclearCloneCheck(val1, val2, fmt.Sprintf("%v[%v]", path, k.Type().Name()), visited); err != nil {
+			if err := planCacheUnclearCloneCheck(val1, val2, fmt.Sprintf("%v[%v]", path, k.Type().Name()), visited, whiteLists...); err != nil {
 				return err
 			}
 		}

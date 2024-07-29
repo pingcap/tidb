@@ -34,6 +34,7 @@ func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
 	}
 	cloned := make([]*types.FieldName, len(names))
 	for i, name := range names {
+		cloned[i] = new(types.FieldName)
 		*cloned[i] = *name
 	}
 	return cloned

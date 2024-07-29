@@ -336,9 +336,16 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
+		RetType:  sf.RetType.Clone(),
 		Function: sf.Function.Clone(),
-		hashcode: sf.hashcode,
+	}
+	if sf.hashcode != nil {
+		c.hashcode = make([]byte, len(sf.hashcode))
+		copy(c.hashcode, sf.hashcode)
+	}
+	if sf.canonicalhashcode != nil {
+		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
+		copy(c.canonicalhashcode, sf.canonicalhashcode)
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
