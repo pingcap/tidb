@@ -161,7 +161,6 @@ func TestVector(t *testing.T) {
 	tk.MustQuery("SELECT VEC_DIMS(NULL);").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("SELECT VEC_DIMS('[]');").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT VEC_DIMS('[5, 3, 2]');").Check(testkit.Rows("3"))
-
 	tk.MustQuery("SELECT VEC_FROM_TEXT('[]');").Check(testkit.Rows("[]"))
 
 	// Basic sort

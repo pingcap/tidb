@@ -1463,6 +1463,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 				return err
 			}
 		}
+		if tp.GetFlen() != types.UnspecifiedLength {
+			if err := types.CheckVectorDimValid(tp.GetFlen()); err != nil {
+				return err
+			}
+		}
 	default:
 		// TODO: Add more types.
 	}
