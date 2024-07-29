@@ -156,7 +156,7 @@ func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*
 			return r.Err
 		}
 		i := r.Item
-		rewriteRules, ok := rules[i.Meta.TableID]
+		rewriteRules, ok := rules[i.Meta.TableId]
 		if !ok {
 			return errors.New("not found table id")
 		}
@@ -166,7 +166,7 @@ func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*
 			return errors.Trace(err)
 		}
 		restoreFiles := sstfiles.SstFilesInfo{
-			TableID:      i.Meta.TableID,
+			TableID:      i.Meta.TableId,
 			Files:        i.SstOutputs,
 			RewriteRules: rewriteRules,
 		}

@@ -1427,6 +1427,10 @@ func restoreStream(
 	err = withProgress(pd, func(p glue.Progress) error {
 		// TODO consider checkpoint
 		compactionIter := client.LogFileManager.OpenCompactionIter(ctx)
+		err = client.RestoreCompactedSsts(ctx, rewriteRules, compactionIter)
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		if cfg.UseCheckpoint {
 			updateStatsWithCheckpoint := func(kvCount, size uint64) {
