@@ -71,6 +71,7 @@ type ProbeV2 interface {
 	NeedScanRowTable() bool
 	// InitForScanRowTable do some pre-work before ScanRowTable, it must be called before ScanRowTable
 	InitForScanRowTable(inSpillMode bool)
+	GetSpilledRowNum() map[int]int
 }
 
 type offsetAndLength struct {
@@ -141,6 +142,8 @@ type baseJoinProbe struct {
 	// This marks which columns are probe columns, and it is used only in spill
 	usedColIdx  []int
 	spillTmpChk []*chunk.Chunk
+
+	spilledRowNum map[int]int // TODO remove it
 }
 
 func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
@@ -153,6 +156,10 @@ func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
 	}
 	j.finishLookupCurrentProbeRow()
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
+}
+
+func (j *baseJoinProbe) GetSpilledRowNum() map[int]int {
+	return j.spilledRowNum
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
@@ -256,6 +263,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
 
 			if j.spillTmpChk[partIndex].IsFull() {
+				rowNum := j.spillTmpChk[partIndex].NumRows()
+				_, ok := j.spilledRowNum[int(partIndex)]
+				if !ok {
+					j.spilledRowNum[int(partIndex)] = 0
+				}
+				j.spilledRowNum[int(partIndex)] += rowNum
 				err := j.ctx.spillHelper.spillProbeChk(int(j.workID), int(partIndex), j.spillTmpChk[partIndex])
 				if err != nil {
 					return err
@@ -316,10 +329,18 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.matchedRowsHeaders = make([]uintptr, logicalRows)
 	}
 
+	for i := 0; i < j.ctx.PartitionNumber; i++ {
+		j.hashValues[i] = j.hashValues[i][:0]
+	}
+
 	if cap(j.serializedKeys) >= logicalRows {
 		j.serializedKeys = j.serializedKeys[:logicalRows]
 	} else {
 		j.serializedKeys = make([][]byte, logicalRows)
+	}
+
+	for i := 0; i < logicalRows; i++ {
+		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
 
 	hash := fnv.New64()
@@ -340,7 +361,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		partIndex := newHashVal % uint64(j.ctx.PartitionNumber)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(newHashVal))
-			j.spillTmpChk[partIndex].AppendBytes(1, j.serializedKeys[logicalRowIndex])
+			j.spillTmpChk[partIndex].AppendBytes(1, serializedKeysCol.GetBytes(physicalRowIndex))
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
 
 			if j.spillTmpChk[partIndex].IsFull() {
@@ -360,9 +381,10 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	j.currentProbeRow = 0
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		for index := range j.hashValues[i] {
+			logicalPos := j.hashValues[i][index].pos
 			physicalPos := j.usedRows[j.hashValues[i][index].pos]
-			j.serializedKeys[i] = append(j.serializedKeys[i], serializedKeysCol.GetBytes(physicalPos)...)
-			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
+			j.serializedKeys[logicalPos] = append(j.serializedKeys[logicalPos], serializedKeysCol.GetBytes(physicalPos)...)
+			j.matchedRowsHeaders[logicalPos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
 		}
 	}
 	return nil
@@ -375,6 +397,14 @@ func (j *baseJoinProbe) SpillRemainingProbeChunks() error {
 
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		if j.spillTmpChk[i].NumRows() > 0 {
+			rowNum := j.spillTmpChk[i].NumRows()
+
+			_, ok := j.spilledRowNum[i]
+			if !ok {
+				j.spilledRowNum[i] = 0
+			}
+			j.spilledRowNum[i] += rowNum
+
 			err := j.ctx.spillHelper.spillProbeChk(int(j.workID), i, j.spillTmpChk[i])
 			if err != nil {
 				return err
@@ -642,6 +672,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		lUsedInOtherCondition: ctx.LUsedInOtherCondition,
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      rightAsBuildSide,
+		spilledRowNum:         make(map[int]int), // TODO remove it
 	}
 	probeSpillChkFieldTypes := make([]*types.FieldType, 0, len(probeChkFieldTypes)+2)
 	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong))

@@ -214,10 +214,18 @@ func (e *HashJoinV1Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.workerWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize(), func() bool {
-			return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
-		}, e.ProbeSideTupleFetcher.JoinType == plannercore.InnerJoin || e.ProbeSideTupleFetcher.JoinType == plannercore.SemiJoin,
-			false, e.ProbeSideTupleFetcher.IsOuterJoin, &e.ProbeSideTupleFetcher.hashJoinCtxBase)
+		e.ProbeSideTupleFetcher.fetchProbeSideChunks(
+			ctx,
+			e.MaxChunkSize(),
+			func() bool {
+				return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
+			},
+			func() bool { return false },
+			e.ProbeSideTupleFetcher.JoinType == plannercore.InnerJoin || e.ProbeSideTupleFetcher.JoinType == plannercore.SemiJoin,
+			false,
+			e.ProbeSideTupleFetcher.IsOuterJoin,
+			&e.ProbeSideTupleFetcher.hashJoinCtxBase,
+		)
 	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -1035,7 +1043,7 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			e.BuildWorker.
-			fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
+				fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r any) {
 			if r != nil {

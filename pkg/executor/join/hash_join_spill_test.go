@@ -17,6 +17,7 @@ package join
 import (
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // TODO delete it
@@ -65,11 +67,12 @@ func getExpectedResults(t *testing.T, info *hashJoinInfo, resultTypes []*types.F
 	// Execute no spill hash join to get expected result
 	hashJoinExec := buildHashJoinV2Exec(info)
 	results := executeHashJoinExec(t, hashJoinExec)
+	require.False(t, hashJoinExec.spillHelper.isSpillTriggeredForTest())
 	return sortRows(results, resultTypes)
 }
 
-func spillOnlyTriggeredInBuildStageCase(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 6000000)
+func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 4000000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -77,9 +80,33 @@ func spillOnlyTriggeredInBuildStageCase(t *testing.T, ctx *mock.Context, expecte
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, retTypes)
+	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
+	require.False(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
+	require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
 	checkResults(t, retTypes, result, expectedResult)
 }
 
+func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1000000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	hashJoinExec := buildHashJoinV2Exec(info)
+	result := getSortedResults(t, hashJoinExec, retTypes)
+	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
+	require.True(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
+	// require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
+	checkResults(t, retTypes, result, expectedResult)
+}
+
+// Case 1: Trigger spill during the building of row table and spill partial partitions
+// Case 2: Trigger spill during the building of row table and spill all partitions
+// Case 3: Trigger spill before creating hash table when row table has been built and spill partial partitions
+// Case 4: Trigger re-spill and spill partial partitions in re-spill
+// Case 5: Trigger re-spill and spill all partitions in re-spill
+// Case 6: Trigger re-spill and exceed max spill round
 func TestInnerJoinSpillCorrectness(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -121,16 +148,15 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 
 	expectedResult := getExpectedResults(t, info, retTypes, leftDataSource, rightDataSource)
 
-	// log.Info("xzxdebug -----------------------") // TODO remove it
+	log.Info("xzxdebug ^^^^^^^^^^") // TODO remove it
 
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	spillOnlyTriggeredInBuildStageCase(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 
-	// TODO trigger spill only in build stage
-	// TODO trigger spill only when hash table is built
-	// TODO trigger spill in build stage and retrigger in restore stage
+	// TODO re-execute the same hash join executor and trigger spill
 }
 
 func TestLeftOuterJoinSpillCorrectness(t *testing.T) {

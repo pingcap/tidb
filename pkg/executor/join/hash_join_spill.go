@@ -15,9 +15,6 @@
 package join
 
 import (
-	"fmt"
-
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -68,7 +65,7 @@ func (h *hashJoinSpillAction) actionImpl(t *memory.Tracker) bool {
 	}
 
 	if t.CheckExceed() && h.spillHelper.isNotSpilledNoLock() && hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) {
-		log.Info("xzxdebug set need spill")
+		// log.Info("xzxdebug set need spill")
 		h.spillHelper.setNeedSpillNoLock()
 
 		// Because all executors could keep running before spill flag is set to `inSpilling`, memory
@@ -77,7 +74,7 @@ func (h *hashJoinSpillAction) actionImpl(t *memory.Tracker) bool {
 		h.spillHelper.bytesConsumed.Store(t.BytesConsumed())
 		h.spillHelper.bytesLimit.Store(t.GetBytesLimit())
 
-		log.Info(fmt.Sprintf("xzxdebug spill info %d %d", h.spillHelper.bytesConsumed.Load(), h.spillHelper.bytesLimit.Load()))
+		// log.Info(fmt.Sprintf("xzxdebug spill info %d %d", h.spillHelper.bytesConsumed.Load(), h.spillHelper.bytesLimit.Load()))
 		return true
 	}
 

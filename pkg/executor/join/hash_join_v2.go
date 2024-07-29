@@ -17,6 +17,7 @@ package join
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -98,7 +99,9 @@ func (htc *hashTableContext) getAllSegmentsMemoryUsageInRowTable() int64 {
 	totalMemoryUsage := int64(0)
 	for _, tables := range htc.rowTables {
 		for _, table := range tables {
-			totalMemoryUsage += table.getTotalMemoryUsage()
+			if table != nil {
+				totalMemoryUsage += table.getTotalMemoryUsage()
+			}
 		}
 	}
 	return totalMemoryUsage
@@ -107,7 +110,9 @@ func (htc *hashTableContext) getAllSegmentsMemoryUsageInRowTable() int64 {
 func (htc *hashTableContext) clearAllSegmentsInRowTable() {
 	for _, tables := range htc.rowTables {
 		for _, table := range tables {
-			table.clearSegments()
+			if table != nil {
+				table.clearSegments()
+			}
 		}
 	}
 }
@@ -167,13 +172,46 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	}
 }
 
-func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) int64 {
+func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (int64, []int64) {
 	totalMemoryUsage := int64(0)
+	partitionsMemoryUsage := make([]int64, 0)
 	for _, table := range rowTables {
 		hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
-		totalMemoryUsage += int64(hashTableLength) * serialization.UnsafePointerLen
+		memoryUsage := int64(hashTableLength) * serialization.UnsafePointerLen
+		partitionsMemoryUsage = append(partitionsMemoryUsage, memoryUsage)
+		totalMemoryUsage += memoryUsage
 	}
-	return totalMemoryUsage
+	return totalMemoryUsage, partitionsMemoryUsage
+}
+
+// In order to avoid the allocation of hash table, we pre-calculate the memory usage in advance
+// to know which hash tables need to be created.
+func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hashJoinSpillHelper) ([]*rowTable, error) {
+	totalMemoryUsage, partitionsMemoryUsage := htc.calculateHashTableMemoryUsage(rowTables)
+
+	// Pre-consume the memory usage
+	htc.memoryTracker.Consume(totalMemoryUsage)
+
+	if spillHelper != nil && spillHelper.isSpillNeeded() {
+		err := spillHelper.spillRowTable()
+		if err != nil {
+			return nil, err
+		}
+
+		spilledPartition := spillHelper.getSpilledPartitions()
+		for _, partID := range spilledPartition {
+			// Clear spilled row tables
+			rowTables[partID].clearSegments()
+		}
+
+		// Some partitions have been spilled, we need to release their pre-consumed memory
+		totalReleasedMemoryUsage := int64(0)
+		for _, partID := range spilledPartition {
+			totalReleasedMemoryUsage += partitionsMemoryUsage[partID]
+		}
+		htc.memoryTracker.Consume(-totalReleasedMemoryUsage)
+	}
+	return rowTables, nil
 }
 
 func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spillHelper *hashJoinSpillHelper) (int, error) {
@@ -191,20 +229,10 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 		}
 	}
 
-	memoryUsage := htc.calculateHashTableMemoryUsage(rowTables)
-	htc.memoryTracker.Consume(memoryUsage)
-
-	if spillHelper != nil && spillHelper.isSpillNeeded() {
-		err := spillHelper.spillRowTable()
-		if err != nil {
-			return 0, err
-		}
-
-		spilledPartition := spillHelper.getSpilledPartitions()
-		for _, partID := range spilledPartition {
-			// Clear spilled row tables
-			rowTables[partID].clearSegments()
-		}
+	var err error
+	rowTables, err = htc.tryToSpill(rowTables, spillHelper)
+	if err != nil {
+		return 0, err
 	}
 
 	for i := 0; i < partitionNumber; i++ {
@@ -217,6 +245,12 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 	totalSegmentCnt := 0
 	for _, table := range htc.hashTable.tables {
 		totalSegmentCnt += table.getSegmentNum()
+	}
+
+	if totalSegmentCnt != 0 {
+		log.Info(fmt.Sprintf("xzxdebug totalSegmentCnt: %d", totalSegmentCnt))
+	} else {
+		log.Info(fmt.Sprintf("xzxdebug totalSegmentCnt: %d", totalSegmentCnt))
 	}
 
 	return totalSegmentCnt, nil
@@ -486,12 +520,13 @@ func (e *HashJoinV2Exec) startFinalWorker(syncer chan struct{}) {
 }
 
 func (e *HashJoinV2Exec) startProbeWorkersForRestore(wg *sync.WaitGroup) {
-	wg.Add(int(e.Concurrency))
-	for i := uint(0); i < e.Concurrency; i++ {
+	workerNum := len(e.restoredProbeInDisk)
+	wg.Add(int(workerNum))
+	for i := 0; i < workerNum; i++ {
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				err := e.ProbeWorkers[workerID].restoreAndProbe()
+				err := e.ProbeWorkers[workerID].restoreAndProbe(e.restoredProbeInDisk[workerID])
 				if err != nil {
 					handleError(e.joinResultCh, &e.finished, err)
 				}
@@ -533,6 +568,7 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 		ctx,
 		e.MaxChunkSize(),
 		func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
+		func() bool { return e.spillHelper.isSpillTriggeredNoLock() },
 		e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
 		e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
 		e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
@@ -629,9 +665,13 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 			return
 		}
 
-		err := checkSpillAndExecute(fetcherAndWorkerSyncer, e.spillHelper)
-		if err != nil {
-			handleError(e.joinResultCh, &e.finished, err)
+		// Spill remaining rows
+		if e.spillHelper.isSpillTriggeredNoLock() {
+			fetcherAndWorkerSyncer.Wait()
+			err := e.spillHelper.spillRemainingRows()
+			if err != nil {
+				handleError(e.joinResultCh, &e.finished, err)
+			}
 		}
 	}()
 
@@ -870,10 +910,16 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 		return
 	}
 
+	if e.spillHelper.spillTriggered {
+		e.spillHelper.spillTriggedInBuildingStageForTest = true
+	}
+
 	// Wake up build task dispatcher
 	buildFetcherAndDispatcherSyncChan <- struct{}{}
 
 	lastRound := 0
+
+	log.Info("xzxdebug round 0 finished ##############")
 
 	for {
 		select {
@@ -885,6 +931,7 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 			return
 		}
 
+		e.spillHelper.spillRoundForTest = int(math.Max(float64(e.spillHelper.spillRoundForTest), float64(lastRound)))
 		err := e.spillHelper.prepareForRestoring(lastRound)
 		if err != nil {
 			handleError(e.joinResultCh, &e.finished, err)

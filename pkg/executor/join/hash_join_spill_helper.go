@@ -72,9 +72,14 @@ type hashJoinSpillHelper struct {
 	probeSpilledRowIdx []int
 
 	spilledPartitions []bool
-	spillTriggered    bool
 
-	spillRoundForTest int
+	// This variable will be set to false before restoring
+	spillTriggered bool
+
+	spillTriggeredForTest              bool
+	spillRoundForTest                  int
+	spillTriggedInBuildingStageForTest bool
+	allPartitionsSpilledForTest        bool
 }
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
@@ -175,7 +180,7 @@ func (h *hashJoinSpillHelper) setPartitionSpilled(partIDs []int) {
 func (h *hashJoinSpillHelper) setNotSpilled() {
 	h.cond.L.Lock()
 	defer h.cond.L.Unlock()
-	log.Info("xzxdebug set notSpilled")
+	// log.Info("xzxdebug set notSpilled")
 	h.spillStatus = notSpilled
 }
 
@@ -387,19 +392,7 @@ func (h *hashJoinSpillHelper) init() {
 	}
 }
 
-func (h *hashJoinSpillHelper) spillRowTable() error {
-	h.setInSpilling()
-	defer h.cond.Broadcast()
-	defer h.setNotSpilled()
-
-	err := checkSQLKiller(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuildSpill")
-	if err != nil {
-		return err
-	}
-
-	h.init()
-
-	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill()
+func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, totalReleasedMemory int64) error {
 
 	workerNum := len(h.hashJoinExec.BuildWorkers)
 	errChannel := make(chan error, workerNum)
@@ -408,6 +401,12 @@ func (h *hashJoinSpillHelper) spillRowTable() error {
 	waiter.Add(workerNum)
 
 	h.setPartitionSpilled(partitionsNeedSpill)
+
+	if len(partitionsNeedSpill) == h.hashJoinExec.PartitionNumber {
+		h.allPartitionsSpilledForTest = true
+	}
+
+	h.spillTriggeredForTest = true
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
 	for i := 0; i < workerNum; i++ {
@@ -445,12 +444,52 @@ func (h *hashJoinSpillHelper) spillRowTable() error {
 		return err
 	}
 	h.hashJoinExec.hashTableContext.memoryTracker.Consume(-totalReleasedMemory)
+
+	// debug ---------------
 	spilledPartition := ""
 	for _, partID := range partitionsNeedSpill {
 		spilledPartition = fmt.Sprintf("%s %d", spilledPartition, partID)
 	}
 	log.Info(fmt.Sprintf("xzxdebug release mem: %d, mem consumption: %d, spilled partition: %s", totalReleasedMemory, h.hashJoinExec.hashTableContext.memoryTracker.BytesConsumed(), spilledPartition))
+	// ---------------
+
 	return nil
+}
+
+func (h *hashJoinSpillHelper) spillRemainingRows() error {
+	h.setInSpilling()
+	defer h.cond.Broadcast()
+	defer h.setNotSpilled()
+
+	err := checkSQLKiller(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuildSpill")
+	if err != nil {
+		return err
+	}
+
+	h.init()
+	spilledPartitions := h.getSpilledPartitions()
+	totalReleasedMemoryUsage := int64(0)
+	for _, partID := range spilledPartitions {
+		totalReleasedMemoryUsage += h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(partID)
+	}
+
+	return h.spillRowTableImpl(spilledPartitions, totalReleasedMemoryUsage)
+}
+
+func (h *hashJoinSpillHelper) spillRowTable() error {
+	h.setInSpilling()
+	defer h.cond.Broadcast()
+	defer h.setNotSpilled()
+
+	err := checkSQLKiller(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuildSpill")
+	if err != nil {
+		return err
+	}
+
+	h.init()
+
+	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill()
+	return h.spillRowTableImpl(partitionsNeedSpill, totalReleasedMemory)
 }
 
 func (h *hashJoinSpillHelper) reset() {
@@ -517,6 +556,18 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 
 func (h *hashJoinSpillHelper) isRespillTriggeredForTest() bool {
 	return h.spillRoundForTest > 1
+}
+
+func (h *hashJoinSpillHelper) isSpillTriggeredForTest() bool {
+	return h.spillTriggeredForTest
+}
+
+func (h *hashJoinSpillHelper) isSpillTriggedInBuildingStageForTest() bool {
+	return h.spillTriggedInBuildingStageForTest
+}
+
+func (h *hashJoinSpillHelper) areAllPartitionsSpilledForTest() bool {
+	return h.allPartitionsSpilledForTest
 }
 
 // Data in this structure are in same partition

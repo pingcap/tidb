@@ -109,8 +109,9 @@ func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
 }
 
 type isBuildSideEmpty func() bool
+type isSpillTriggered func() bool
 
-func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool) {
+func wait4BuildSide(isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, canSkipIfBuildEmpty, needScanAfterProbeDone bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool) {
 	var err error
 	skipProbe = false
 	buildFinishes := false
@@ -129,7 +130,7 @@ func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScan
 		}
 	}
 	// only check build empty if build finishes
-	if buildFinishes && isBuildEmpty() && canSkipIfBuildEmpty {
+	if buildFinishes && isBuildEmpty() && !checkSpill() && canSkipIfBuildEmpty {
 		// if build side is empty, can skip probe if canSkipIfBuildEmpty is true(e.g. inner join)
 		skipProbe = true
 	}
@@ -169,13 +170,13 @@ func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeF
 	return probeSideResource
 }
 
-func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
-	fetcher.fetchProbeSideChunksImpl(ctx, maxChunkSize, isBuildEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize, hashJoinCtx)
+func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
+	fetcher.fetchProbeSideChunksImpl(ctx, maxChunkSize, isBuildEmpty, checkSpill, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize, hashJoinCtx)
 }
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
-func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunksImpl(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
+func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunksImpl(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
 	hasWaitedForBuild := false
 
 	for {
@@ -200,7 +201,7 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunksImpl(ctx context.C
 					probeSideResult.Reset()
 				}
 			})
-			skipProbe := wait4BuildSide(isBuildEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
+			skipProbe := wait4BuildSide(isBuildEmpty, checkSpill, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
 			if skipProbe {
 				// there is no need to probe, so just return
 				return
@@ -285,10 +286,13 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 		}
 
 		if fetcherAndWorkerSyncer != nil {
-			// Try to spill remaining rows if spill is triggered
-			err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
-			if err != nil {
-				errCh <- errors.Trace(err)
+			if spillHelper.isSpillTriggeredNoLock() {
+				// Spill remaining rows
+				fetcherAndWorkerSyncer.Wait()
+				err := spillHelper.spillRemainingRows()
+				if err != nil {
+					errCh <- errors.Trace(err)
+				}
 			}
 		}
 	}()
