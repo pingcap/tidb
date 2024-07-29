@@ -117,7 +117,6 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.children[0])
 	return nil
 }
 
@@ -198,16 +197,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	err := child.PruneColumns(selfUsedCols, opt)
 	if err != nil {
 		return err
-	}
-	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
-	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
-	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
-	// the last rule. So we specially handle this case here.
-	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
-		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
-			childOfChild := childProjection.children[0]
-			la.SetChildren(childOfChild)
-		}
 	}
 	return nil
 }
@@ -472,13 +461,11 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.children[0])
 
 	err = p.children[1].PruneColumns(rightCols, opt)
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.children[1])
 
 	p.mergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -497,7 +484,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(la.children[1])
 
 	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
@@ -508,7 +494,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(la.children[0])
 
 	la.mergeSchema()
 	return nil
@@ -596,26 +581,6 @@ func (*columnPruner) name() string {
 
 // By add const one, we can avoid empty Projection is eliminated.
 // Because in some cases, Projectoin cannot be eliminated even its output is empty.
-func addConstOneForEmptyProjection(p LogicalPlan) {
-	proj, ok := p.(*LogicalProjection)
-	if !ok {
-		return
-	}
-	if proj.Schema().Len() != 0 {
-		return
-	}
-
-	constOne := expression.NewOne()
-	proj.schema.Append(&expression.Column{
-		UniqueID: proj.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  constOne.GetType(),
-	})
-	proj.Exprs = append(proj.Exprs, &expression.Constant{
-		Value:   constOne.Value,
-		RetType: constOne.GetType(),
-	})
-}
-
 func appendColumnPruneTraceStep(p LogicalPlan, prunedColumns []*expression.Column, opt *logicalOptimizeOp) {
 	if len(prunedColumns) < 1 {
 		return
