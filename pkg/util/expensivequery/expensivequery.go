@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -97,7 +98,7 @@ func (eqh *Handle) Run() {
 						zap.Duration("maxExecutionTime", time.Duration(info.MaxExecutionTime)*time.Millisecond), zap.String("processInfo", info.String()))
 					sm.Kill(info.ID, true, true)
 				}
-				if info.ID == sm.GetAutoAnalyzeProcID() {
+				if statsutil.GlobalAutoAnalyzeProcessList.Contains(info.ID) {
 					maxAutoAnalyzeTime := variable.MaxAutoAnalyzeTime.Load()
 					if maxAutoAnalyzeTime > 0 && costTime > time.Duration(maxAutoAnalyzeTime)*time.Second {
 						logutil.BgLogger().Warn("auto analyze timeout, kill it", zap.Duration("costTime", costTime),
