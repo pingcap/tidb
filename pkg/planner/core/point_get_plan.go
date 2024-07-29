@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -34,7 +35,6 @@ import (
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -944,6 +944,29 @@ func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
 	return nil
 }
 
+// isSelectForUpdateLockType checks if the select lock type is the supported for update type.
+func isSelectForUpdateLockType(lockType ast.SelectLockType) bool {
+	if lockType == ast.SelectLockForUpdate ||
+		lockType == ast.SelectLockForUpdateNoWait ||
+		lockType == ast.SelectLockForUpdateWaitN {
+		return true
+	}
+	return false
+}
+
+// isSelectForShareLockType checks if the select lock type is supported for  type.
+func isSelectForShareLockType(lockType ast.SelectLockType) bool {
+	if lockType == ast.SelectLockForShare ||
+		lockType == ast.SelectLockForShareNoWait {
+		return true
+	}
+	return false
+}
+
+func IsSupportedSelectLockType(lockType ast.SelectLockType) bool {
+	return isSelectForUpdateLockType(lockType) || isSelectForShareLockType(lockType)
+}
+
 func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
 	if lockInfo != nil {
 		if logicalop.IsSelectForUpdateLockType(lockInfo.LockType) {
@@ -957,7 +980,7 @@ func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock b
 				waitTime = sessVars.LockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
 					waitTime = int64(lockInfo.WaitSec * 1000)
-				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait {
+				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait || lockInfo.LockType == ast.SelectLockForShareNoWait {
 					waitTime = tikvstore.LockNoWait
 				}
 			}

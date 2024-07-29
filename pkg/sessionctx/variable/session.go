@@ -1657,6 +1657,10 @@ type SessionVars struct {
 
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
+
+	// SharedLockUpgrade indicates whether the `select for lock` statements would be executed as the
+	// `select for update` statements which do acquire pessimsitic locks.
+	SharedLockUpgrade bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -3920,6 +3924,9 @@ func (s *SessionVars) UseLowResolutionTSO() bool {
 // statement execution. There are cases the `for update` clause should not take effect, like autocommit
 // statements with “pessimistic-auto-commit disabled.
 func (s *SessionVars) PessimisticLockEligible() bool {
+	if s.StmtCtx.ForShareLockEnabledByNoop {
+		return false
+	}
 	if !s.IsAutocommit() || s.InTxn() || (config.GetGlobalConfig().
 		PessimisticTxn.PessimisticAutoCommit.Load() && !s.BulkDMLEnabled) {
 		return true

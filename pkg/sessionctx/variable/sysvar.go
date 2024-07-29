@@ -3289,6 +3289,13 @@ var defaultSysVars = []*SysVar{
 		s.EnableLazyCursorFetch = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableSharedLockUpgrade, Value: BoolToOnOff(DefTiDBEnableSharedLockUpgrade), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		if s.NoopFuncsMode != OffInt && TiDBOptOn(val) {
+			return errors.Errorf("%v could not be set when %v is enabled", TiDBEnableSharedLockUpgrade, TiDBEnableNoopFuncs)
+		}
+		s.SharedLockUpgrade = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

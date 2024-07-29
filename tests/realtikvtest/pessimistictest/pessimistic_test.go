@@ -3602,3 +3602,61 @@ func TestEndTxnOnLockExpire(t *testing.T) {
 		})
 	}
 }
+
+func TestForShareWithUpgrade(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int key, b int)")
+	tk.MustExec("insert into t values(1, 10)")
+	tk.MustExec("set innodb_lock_wait_timeout = 1")
+
+	for _, tt := range []struct {
+		ForShareNoopEnable     bool
+		ForShareUpgradeEnabled bool
+	}{
+		{false, false},
+		{false, true},
+		{true, false},
+		{true, true},
+	} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_noop_functions = %v", tt.ForShareNoopEnable))
+		_, err := tk.Exec(fmt.Sprintf("set @@tidb_enable_shared_lock_upgrade = %v", tt.ForShareUpgradeEnabled))
+		if tt.ForShareNoopEnable && tt.ForShareUpgradeEnabled {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+
+		tk1.MustExec("begin")
+		tk1.MustQuery("select * from t for update").Check(testkit.Rows("1 10"))
+
+		tk.MustExec("begin")
+		if tt.ForShareNoopEnable {
+			tk.MustQuery("select * from t where a = 1 for share nowait").Check(testkit.Rows("1 10"))
+			tk.MustQuery("select * from t where a = 1 for share").Check(testkit.Rows("1 10"))
+			tk.MustQuery("select * from t for share").Check(testkit.Rows("1 10"))
+			tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+		} else if tt.ForShareUpgradeEnabled {
+			_, err := tk.Exec("select * from t where a = 1 for share nowait")
+			require.True(t, strings.Contains(err.Error(), "could not be acquired immediately and NOWAIT is set"))
+			_, err = tk.Exec("select * from t for share nowait")
+			require.True(t, strings.Contains(err.Error(), "could not be acquired immediately and NOWAIT is set"))
+			_, err = tk.Exec("select * from t where a = 1 for share")
+			require.True(t, strings.Contains(err.Error(), "Lock wait timeout exceeded; try restarting transaction"))
+			_, err = tk.Exec("select * from t for share")
+			require.True(t, strings.Contains(err.Error(), "Lock wait timeout exceeded; try restarting transaction"))
+		} else {
+			_, err := tk.Exec("select * from t where a = 1 for share nowait")
+			require.True(t, strings.Contains(err.Error(), "use tidb_enable_noop_functions to enable"))
+			_, err = tk.Exec("select * from t for share")
+			require.True(t, strings.Contains(err.Error(), "use tidb_enable_noop_functions to enable"))
+			_, err = tk.Exec("select * from t for share nowait")
+			require.True(t, strings.Contains(err.Error(), "use tidb_enable_noop_functions to enable"))
+		}
+		tk.MustExec("rollback")
+		tk1.MustExec("rollback")
+	}
+}

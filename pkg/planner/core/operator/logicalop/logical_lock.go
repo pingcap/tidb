@@ -53,7 +53,7 @@ func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	var err error
-	if !IsSelectForUpdateLockType(p.Lock.LockType) {
+	if !IsSupportedSelectLockType(p.Lock.LockType) {
 		// when use .baseLogicalPlan to call the PruneColumns, it means current plan itself has
 		// nothing to pruning or plan change, so they resort to its children's column pruning logic.
 		// so for the returned logical plan here, p is definitely determined, we just need to collect
