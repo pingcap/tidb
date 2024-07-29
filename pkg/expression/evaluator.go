@@ -17,6 +17,7 @@ package expression
 import (
 	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/disjointset"
 )
 
 type columnEvaluator struct {
@@ -84,8 +85,11 @@ func (e *columnEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) error
 // be like: <0, [0,1,3,4]>.
 func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputIdxToOutputIdxes map[int][]int) {
 	// step1: we should detect the self column-ref inside input chunk.
-	selfRef := make(map[int][]int)
+	// we use the generic set rather than single int set to leverage the value mapping.
+	// the original column ref inside may not be too much, give size 4 here rather input.NumCols().
+	originalDJSet := disjointset.NewSet[int](4)
 	flag := make([]bool, input.NumCols())
+	// we can only detect the self column-ref inside input chunk by address equal.
 	for i := 0; i < input.NumCols(); i++ {
 		if flag[i] {
 			continue
@@ -94,42 +98,30 @@ func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputId
 			if input.Column(i) == input.Column(j) {
 				// mark referred column to avoid successive detection.
 				flag[j] = true
-				selfRef[i] = append(selfRef[i], j)
+				// make j union ref i.
+				originalDJSet.Union(i, j)
 			}
 		}
 	}
-	// step2: leverage this self column-refs to merge inputIdxToOutputIdxes if possible.
-	rootIdxToOutputIdxes := make(map[int][]int)
-	var (
-		find bool
-		root int
-	)
-	for inputIdx, outputIdxes := range inputIdxToOutputIdxes {
-		find = false
-		root = inputIdx
-		for k, v := range selfRef {
-			for _, one := range v {
-				// if current inputIdx is in the value set of one selfRef. output the Root.
-				if inputIdx == one {
-					find = true
-					root = k
-					break
-				}
-			}
-			if find {
-				break
-			}
+	// step2: convert inputIdxToOutputIdxes into disJoint set.
+	// since originDJSet covers offset 0 to input.NumCols(), it may overlap with the output indexes.
+	newInputIdxToOutputIdxes := make(map[int][]int, len(inputIdxToOutputIdxes))
+	for inputIdx := range inputIdxToOutputIdxes {
+		// if originIdx is in originalDJSet, find the root.
+		originalRootIdx := originalDJSet.FindRootForV(inputIdx)
+		// initialize the map item if not exist.
+		if _, ok := newInputIdxToOutputIdxes[originalRootIdx]; !ok {
+			newInputIdxToOutputIdxes[originalRootIdx] = []int{}
 		}
-		// if we found, root should be redirected to real root of inputIdx (link the real root)
-		// if we didn't, root should be the original inputIdx as it was. (inputIdx itself is a root)
-		if _, ok := rootIdxToOutputIdxes[root]; ok {
-			rootIdxToOutputIdxes[root] = append(rootIdxToOutputIdxes[root], outputIdxes...)
-		} else {
-			// if not find in any value set, it means input idx itself is a root.
-			rootIdxToOutputIdxes[root] = append(rootIdxToOutputIdxes[root], outputIdxes...)
+		for _, outputIdx := range inputIdxToOutputIdxes[inputIdx] {
+			// eg: assuming A and B are in the same set of originalDJSet, and root is A.
+			// if inputIdxToOutputIdxes[A]=[0,1], A is in the same set of B
+			// and inputIdxToOutputIdxes[B]=[2,3], and we will get
+			// newInputIdxToOutputIdxes[A] = [0,1,2,3]
+			newInputIdxToOutputIdxes[originalRootIdx] = append(newInputIdxToOutputIdxes[originalRootIdx], outputIdx)
 		}
 	}
-	e.mergedInputIdxToOutputIdxes = rootIdxToOutputIdxes
+	e.mergedInputIdxToOutputIdxes = newInputIdxToOutputIdxes
 }
 
 type defaultEvaluator struct {

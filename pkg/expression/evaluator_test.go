@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -673,6 +674,15 @@ func TestMergeInputIdxToOutputIdxes(t *testing.T) {
 	// input chunk's 0th and 1st are column referred itself.
 	input.MakeRef(0, 1)
 
+	// chunk:     col1 <---(ref) col2
+	// ____________/ \___________/  \___
+	// proj:  col1   col2     col3   col4
+	//
+	// original case after inputIdxToOutputIdxes[0], the original col2 will be nil pointer
+	// cause consecutive col3,col4 ref projection are invalid.
+	//
+	// after fix, the new inputIdxToOutputIdxes should be: inputIdxToOutputIdxes[0]: {0, 1, 2, 3}
+
 	output := chunk.NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)})
 
@@ -682,5 +692,9 @@ func TestMergeInputIdxToOutputIdxes(t *testing.T) {
 	require.Equal(t, output.Column(0), output.Column(1))
 	require.Equal(t, output.Column(1), output.Column(2))
 	require.Equal(t, output.Column(2), output.Column(3))
-	require.Equal(t, output.GetRow(0).GetInt64(0), 99)
+	require.Equal(t, output.GetRow(0).GetInt64(0), int64(99))
+
+	require.Equal(t, len(columnEval.mergedInputIdxToOutputIdxes), 1)
+	slices.Sort(columnEval.mergedInputIdxToOutputIdxes[0])
+	require.Equal(t, columnEval.mergedInputIdxToOutputIdxes[0], []int{0, 1, 2, 3})
 }

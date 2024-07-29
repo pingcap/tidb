@@ -40,6 +40,7 @@ func (m *SimpleIntSet) FindRoot(a int) int {
 	if a == m.parent[a] {
 		return a
 	}
+	// path short compression
 	m.parent[a] = m.FindRoot(m.parent[a])
 	return m.parent[a]
 }

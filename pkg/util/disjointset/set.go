@@ -33,6 +33,7 @@ func NewSet[T comparable](size int) *Set[T] {
 		tailIdx: 0,
 	}
 }
+
 func (s *Set[T]) findRootOriginalVal(a T) int {
 	idx, ok := s.val2Idx[a]
 	if !ok {
@@ -47,6 +48,7 @@ func (s *Set[T]) findRootOriginalVal(a T) int {
 // findRoot is an internal implementation. Call it inside findRootOriginalVal.
 func (s *Set[T]) findRoot(a int) int {
 	if s.parent[a] != a {
+		// path short compression
 		s.parent[a] = s.findRoot(s.parent[a])
 	}
 	return s.parent[a]
@@ -61,7 +63,14 @@ func (s *Set[T]) InSameGroup(a, b T) bool {
 func (s *Set[T]) Union(a, b T) {
 	rootA := s.findRootOriginalVal(a)
 	rootB := s.findRootOriginalVal(b)
+	// take b as successor, respect the rootA as the root of the new set.
 	if rootA != rootB {
-		s.parent[rootA] = rootB
+		s.parent[rootB] = rootA
 	}
+}
+
+// FindRootForV finds the root of the set that contains a.
+func (s *Set[T]) FindRootForV(a T) int {
+	// if a is not in the set, assign a new index to it.
+	return s.findRootOriginalVal(a)
 }
