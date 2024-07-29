@@ -517,7 +517,9 @@ func (col *Column) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
-	newCol.RetType = col.RetType.Clone()
+	if col.RetType != nil {
+		newCol.RetType = col.RetType.Clone()
+	}
 	if col.hashcode != nil {
 		newCol.hashcode = make([]byte, len(col.hashcode))
 		copy(newCol.hashcode, col.hashcode)
