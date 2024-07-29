@@ -266,6 +266,71 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 	return do.etcdClient
 }
 
+func (do *Domain) FullReload(startTS uint64) error {
+	beginTime := time.Now()
+	defer func() {
+		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
+	}()
+	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+
+	currentSchemaVersion := int64(0)
+	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
+		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
+	}
+
+	m := meta.NewSnapshotMeta(snapshot)
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
+	if err != nil {
+		return err
+	}
+	// fetch the commit timestamp of the schema diff
+	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
+		schemaTs = 0
+	}
+
+	schemas, err := do.fetchAllSchemasWithTables(m)
+	if err != nil {
+		return err
+	}
+	save := variable.SchemaCacheSize.Load()
+	variable.SchemaCacheSize.Store(0)
+	fullSchemas, err := do.fetchAllSchemasWithTables(m)
+	if err != nil {
+		return err
+	}
+	variable.SchemaCacheSize.Store(save)
+
+	policies, err := do.fetchPolicies(m)
+	if err != nil {
+		return err
+	}
+
+	resourceGroups, err := do.fetchResourceGroups(m)
+	if err != nil {
+		return err
+	}
+	// clear data
+	do.infoCache.Data = infoschema.NewData()
+	newISBuilder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(fullSchemas, schemas, policies, resourceGroups, neededSchemaVersion)
+	if err != nil {
+		return err
+	}
+	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(beginTime).Seconds())
+	logutil.BgLogger().Info("full load InfoSchema success",
+		zap.Int64("currentSchemaVersion", currentSchemaVersion),
+		zap.Int64("neededSchemaVersion", neededSchemaVersion),
+		zap.Duration("start time", time.Since(beginTime)))
+
+	is := newISBuilder.Build(startTS)
+	do.infoCache.Insert(is, schemaTs)
+	return nil
+}
+
 // loadInfoSchema loads infoschema at startTS.
 // It returns:
 // 1. the needed infoschema
@@ -287,6 +352,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
+	if neededSchemaVersion == 0 {
+		neededSchemaVersion = 0
+	}
 	// fetch the commit timestamp of the schema diff
 	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
 	if err != nil {
@@ -305,11 +373,20 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 			// So we keep updating the ts of the infoschema v2.
 			is = raw.CloneAndUpdateTS(startTS)
 		}
+		isV3, raw2 := infoschema.IsV3(is)
+		if isV3 {
+			is = raw2.CloneAndUpdateTS(startTS)
+		}
 
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
+		//return is, true, 0, nil, nil
+		if isV3 {
+			return is, true, 0, nil, nil
+		}
+		enableV2 := variable.SchemaCacheSize.Load() > 0
 		if enableV2 == isV2 {
 			return is, true, 0, nil, nil
 		}
@@ -356,6 +433,13 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	save := variable.SchemaCacheSize.Load()
+	variable.SchemaCacheSize.Store(0)
+	fullSchemas, err := do.fetchAllSchemasWithTables(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
+	variable.SchemaCacheSize.Store(save)
 
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
@@ -366,9 +450,10 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+
+	newISBuilder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(fullSchemas, schemas, policies, resourceGroups, neededSchemaVersion)
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
-	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -568,11 +653,12 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 	})
 
-	builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
+
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	builder.WithStore(do.store).SetDeltaUpdateBundles()
+	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))

@@ -805,6 +805,12 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
 		b.infoschemaV2.ts = schemaV2.ts
+		//b.Data.byName = schemaV2.Data.byName
+		//b.Data.byID = schemaV2.Data.byID
+		//b.Data.schemaMap = schemaV2.Data.schemaMap
+		//b.Data.mu.versionTimestamps = schemaV2.Data.mu.versionTimestamps
+		//b.Data.specials = schemaV2.Data.specials
+		//b.Data.pid2tid = schemaV2.Data.pid2tid
 	}
 	oldIS := oldSchema.base()
 	b.initBundleInfoBuilder()
