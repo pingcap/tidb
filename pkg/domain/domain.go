@@ -1196,7 +1196,7 @@ func (do *Domain) Close() {
 	close(do.mdlCheckCh)
 
 	// close MockGlobalServerInfoManagerEntry in order to refresh mock server info.
-	if intest.InTest {
+	if intest.InTest && !intest.InIntegrationTest  {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	if handle := do.statsHandle.Load(); handle != nil {
@@ -1637,7 +1637,7 @@ func (do *Domain) InitDistTaskLoop() error {
 
 	taskManager := storage.NewTaskManager(do.sysSessionPool)
 	var serverID string
-	if intest.InTest {
+	if intest.InTest && !intest.InIntegrationTest {
 		do.InitInfo4Test()
 		serverID = disttaskutil.GenerateSubtaskExecID4Test(do.ddl.GetID())
 	} else {

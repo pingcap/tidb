@@ -12,27 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !intest
+//go:build intest && !integrationtest
 
 package intest
 
 // InTest checks if the code is running in test.
-const InTest = false
+const InTest = true
 // InIntegrationTest checks if the code is running in integration test.
 const InIntegrationTest = false
-
-// Assert is a stub function in release build.
-// See the same function in `util/intest/assert.go` for the real implement in test.
-func Assert(_ bool, _ ...any) {}
-
-// AssertNotNil is a stub function in release build.
-// See the same function in `util/intest/assert.go` for the real implement in test.
-func AssertNotNil(_ any, _ ...any) {}
-
-// AssertNoError is a stub function in release build.
-// See the same function in `util/intest/assert.go` for the real implement in test.
-func AssertNoError(_ error, _ ...any) {}
-
-// AssertFunc is a stub function in release build.
-// See the same function `util/intest/assert.go` for the real implement in test.
-func AssertFunc(_ func() bool, _ ...any) {}

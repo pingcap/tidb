@@ -147,7 +147,7 @@ func newClientConn(s *Server) *clientConn {
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 
-	if intest.InTest {
+	if intest.InTest && !intest.InIntegrationTest {
 		ConnectionInMemCounterForTest.Add(1)
 		runtime.SetFinalizer(cc, func(*clientConn) {
 			ConnectionInMemCounterForTest.Add(-1)
@@ -873,7 +873,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		}
 		uname := user.Username
 
-		if intest.InTest {
+		if intest.InTest && !intest.InIntegrationTest {
 			if p := mockOSUserForAuthSocketTest.Load(); p != nil {
 				uname = *p
 			}
