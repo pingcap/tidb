@@ -15,7 +15,6 @@
 package cascades
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
