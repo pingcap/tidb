@@ -3178,12 +3178,12 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	return nil
 }
 
-// BuildQueryStringFromJobs takes a slice of Jobs and concatenates their
+// buildQueryStringFromJobs takes a slice of Jobs and concatenates their
 // queries into a single query string.
 // Each query is separated by a semicolon and a space.
 // Trailing spaces are removed from each query, and a semicolon is appended
 // if it's not already present.
-func BuildQueryStringFromJobs(jobs []*model.Job) string {
+func buildQueryStringFromJobs(jobs []*JobWrapper) string {
 	var queryBuilder strings.Builder
 	for i, job := range jobs {
 		q := strings.TrimSpace(job.Query)
@@ -3199,21 +3199,21 @@ func BuildQueryStringFromJobs(jobs []*model.Job) string {
 	return queryBuilder.String()
 }
 
-// BatchCreateTableWithJobs combine CreateTableJobs to BatchCreateTableJob.
-func BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
-	if len(jobs) == 0 {
+// mergeCreateTableJobsOfSameSchema combine CreateTableJobs to BatchCreateTableJob.
+func mergeCreateTableJobsOfSameSchema(jobWs []*JobWrapper) (*model.Job, error) {
+	if len(jobWs) == 0 {
 		return nil, errors.Trace(fmt.Errorf("expect non-empty jobs"))
 	}
 
 	var combinedJob *model.Job
 
-	args := make([]*model.TableInfo, 0, len(jobs))
-	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(jobs))
+	args := make([]*model.TableInfo, 0, len(jobWs))
+	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(jobWs))
 	var foreignKeyChecks bool
 
 	// if there is any duplicated table name
 	duplication := make(map[string]struct{})
-	for _, job := range jobs {
+	for _, job := range jobWs {
 		if combinedJob == nil {
 			combinedJob = job.Clone()
 			combinedJob.Type = model.ActionCreateTables
@@ -3244,7 +3244,7 @@ func BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	combinedJob.Args = append(combinedJob.Args, args)
 	combinedJob.Args = append(combinedJob.Args, foreignKeyChecks)
 	combinedJob.InvolvingSchemaInfo = involvingSchemaInfo
-	combinedJob.Query = BuildQueryStringFromJobs(jobs)
+	combinedJob.Query = buildQueryStringFromJobs(jobWs)
 
 	return combinedJob, nil
 }
@@ -9882,6 +9882,9 @@ func (e *executor) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return e.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
 }
 
+// DoDDLJobWrapper submit DDL job and wait it finishes.
+// When fast create is enabled, we might merge multiple jobs into one, so be careful
+// when using job.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
 	job := jobW.Job
 	job.TraceInfo = &model.TraceInfo{
@@ -9927,9 +9930,9 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	// Notice worker that we push a new job and wait the job done.
 	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, jobID, ddlAction.String())
 	if result.merged {
-		logutil.DDLLogger().Info("start DDL job", zap.Int64("job_id", jobID), zap.String("query", job.Query), zap.String("merged", "true"))
+		logutil.DDLLogger().Info("DDL job submitted", zap.Int64("job_id", jobID), zap.String("query", job.Query), zap.String("merged", "true"))
 	} else {
-		logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
+		logutil.DDLLogger().Info("DDL job submitted", zap.Stringer("job", job), zap.String("query", job.Query))
 	}
 
 	var historyJob *model.Job
@@ -9956,7 +9959,13 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	for {
 		failpoint.InjectCall("storeCloseInLoop")
 		select {
-		case <-notifyCh:
+		case _, ok := <-notifyCh:
+			if !ok {
+				// when fast create enabled, jobs might be merged, and we broadcast
+				// the result by closing the channel, to avoid this loop keeps running
+				// without sleeping on retryable error, we set it to nil.
+				notifyCh = nil
+			}
 		case <-ticker.C:
 			i++
 			ticker = updateTickerInterval(ticker, 10*e.lease, ddlAction, i)
@@ -10115,11 +10124,13 @@ func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
 	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
 	toTable := !variable.DDLForce2Queue.Load()
 	if toTable {
-		newWs, err = combineBatchCreateTableJobs(jobWs)
-		if err != nil {
-			logutil.DDLLogger().Warn("failed to combine batch create table jobs", zap.Error(err))
-		} else {
-			jobWs = newWs
+		if variable.EnableFastCreateTable.Load() {
+			newWs, err = mergeCreateTableJobs(jobWs)
+			if err != nil {
+				logutil.DDLLogger().Warn("failed to combine batch create table jobs", zap.Error(err))
+			} else {
+				jobWs = newWs
+			}
 		}
 		err = d.addBatchDDLJobs(jobWs)
 	} else {
@@ -10147,7 +10158,7 @@ func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
 
 // addBatchLocalDDLJobs gets global job IDs and delivery the DDL jobs to local TiDB
 func (d *ddl) addBatchLocalDDLJobs(jobWs []*JobWrapper) {
-	if newJobWs, err := combineBatchCreateTableJobs(jobWs); err == nil {
+	if newJobWs, err := mergeCreateTableJobs(jobWs); err == nil {
 		jobWs = newJobWs
 	}
 	err := d.addBatchDDLJobs(jobWs)
@@ -10291,7 +10302,7 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 		setJobStateToQueueing(job)
 
 		// currently doesn't support pause job in local mode.
-		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) && !job.LocalMode {
+		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
 			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 				jobW.cacheErr = err
@@ -10303,20 +10314,6 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ddlSe := sess.NewSession(se)
-	localMode := jobWs[0].Job.LocalMode
-	if localMode {
-		if err = fillJobRelatedGIDs(ctx, ddlSe, jobWs); err != nil {
-			return err
-		}
-		for _, jobW := range jobWs {
-			if _, err := jobW.Encode(true); err != nil {
-				return err
-			}
-			d.localJobCh <- jobW
-		}
-		return nil
-	}
-
 	if err = GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
 		return errors.Trace(err)
 	}
@@ -10344,21 +10341,6 @@ func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobW
 		injectModifyJobArgFailPoint(jobWs)
 		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
 	})
-}
-
-// fillJobRelatedGIDs similar to GenGIDAndInsertJobsWithRetry, but only fill job related global IDs.
-func fillJobRelatedGIDs(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
-	var allocatedIDs []int64
-	count := getRequiredGIDCount(jobWs)
-	if err := genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
-		allocatedIDs = ids
-		return nil
-	}); err != nil {
-		return errors.Trace(err)
-	}
-
-	assignGIDsForJobs(jobWs, allocatedIDs)
-	return nil
 }
 
 // getRequiredGIDCount returns the count of required global IDs for the jobs. it's calculated
@@ -10526,42 +10508,58 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 	return forUpdateTs, err
 }
 
-// combineBatchCreateTableJobs combine batch jobs to another batch jobs.
-// currently it only support combine CreateTable to CreateTables.
-func combineBatchCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
+// mergeCreateTableJobs merges CreateTable jobs to CreateTables.
+func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 	if len(jobWs) <= 1 {
 		return jobWs, nil
 	}
-	var schemaName string
-	jobs := make([]*model.Job, 0, len(jobWs))
-	for i, jobW := range jobWs {
+	resJobWs := make([]*JobWrapper, 0, len(jobWs))
+	mergeableJobWs := make(map[string][]*JobWrapper, len(jobWs))
+	for _, jobW := range jobWs {
 		// we don't merge jobs with ID pre-allocated.
-		if jobW.Job.Type != model.ActionCreateTable || jobW.IDAllocated {
-			return jobWs, nil
+		if jobW.Type != model.ActionCreateTable || jobW.IDAllocated {
+			resJobWs = append(resJobWs, jobW)
+			continue
 		}
-		if i == 0 {
-			schemaName = jobW.Job.SchemaName
-		} else if jobW.Job.SchemaName != schemaName {
-			return jobWs, nil
+		// ActionCreateTables doesn't support foreign key now.
+		tbInfo, ok := jobW.Args[0].(*model.TableInfo)
+		if !ok || len(tbInfo.ForeignKeys) > 0 {
+			resJobWs = append(resJobWs, jobW)
+			continue
 		}
-		jobs = append(jobs, jobW.Job)
+		// CreateTables only support tables of same schema now.
+		mergeableJobWs[jobW.Job.SchemaName] = append(mergeableJobWs[jobW.Job.SchemaName], jobW)
 	}
 
-	job, err := BatchCreateTableWithJobs(jobs)
-	if err != nil {
-		return jobWs, err
-	}
-	logutil.DDLLogger().Info("combine jobs to batch create table job", zap.Int("len", len(jobWs)))
+	for schema, jobs := range mergeableJobWs {
+		if len(jobs) <= 1 {
+			resJobWs = append(resJobWs, jobs...)
+			continue
+		}
+		const maxBatchSize = 8
+		batchCount := (len(jobs) + maxBatchSize - 1) / maxBatchSize
+		start := 0
+		for _, batchSize := range mathutil.Divide2Batches(len(jobs), batchCount) {
+			job, err := mergeCreateTableJobsOfSameSchema(jobs[start : start+batchSize])
+			if err != nil {
+				return nil, err
+			}
+			start += batchSize
+			logutil.DDLLogger().Info("merge create table jobs", zap.String("schema", schema),
+				zap.Int("total", len(jobs)), zap.Int("batch_size", batchSize))
 
-	newJobW := &JobWrapper{
-		Job:      job,
-		ResultCh: []chan jobSubmitResult{},
+			newJobW := &JobWrapper{
+				Job:      job,
+				ResultCh: []chan jobSubmitResult{},
+			}
+			// merge the result channels.
+			for _, j := range jobWs {
+				newJobW.ResultCh = append(newJobW.ResultCh, j.ResultCh...)
+			}
+			resJobWs = append(resJobWs, newJobW)
+		}
 	}
-	// combine the error chans.
-	for _, j := range jobWs {
-		newJobW.ResultCh = append(newJobW.ResultCh, j.ResultCh...)
-	}
-	return []*JobWrapper{newJobW}, nil
+	return resJobWs, nil
 }
 
 func updateTickerInterval(ticker *time.Ticker, lease time.Duration, action model.ActionType, i int) *time.Ticker {
@@ -10589,28 +10587,6 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 	default:
 		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	}
-}
-
-func setDDLJobMode(job *model.Job) {
-	if !variable.EnableFastCreateTable.Load() {
-		job.LocalMode = false
-		return
-	}
-
-	switch job.Type {
-	// currently, v2 only support CreateTable without foreign keys.
-	case model.ActionCreateTable:
-		tbInfo, ok := job.Args[0].(*model.TableInfo)
-		if ok && len(tbInfo.ForeignKeys) == 0 {
-			job.LocalMode = true
-			return
-		}
-	case model.ActionCreateSchema:
-		job.LocalMode = true
-		return
-	default:
-	}
-	job.LocalMode = false
 }
 
 var (

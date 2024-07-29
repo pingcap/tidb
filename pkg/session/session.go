@@ -3221,12 +3221,7 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 		targetTables = BackfillTables
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		var t *meta.Meta
-		if variable.EnableFastCreateTable.Load() {
-			t = meta.NewMeta(txn, meta.WithUpdateTableName())
-		} else {
-			t = meta.NewMeta(txn)
-		}
+		t := meta.NewMeta(txn)
 		tableVer, err := t.CheckDDLTableVersion()
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
@@ -3272,12 +3267,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		var t *meta.Meta
-		if variable.EnableFastCreateTable.Load() {
-			t = meta.NewMeta(txn, meta.WithUpdateTableName())
-		} else {
-			t = meta.NewMeta(txn)
-		}
+		t := meta.NewMeta(txn)
 		ver, err := t.CheckDDLTableVersion()
 		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)

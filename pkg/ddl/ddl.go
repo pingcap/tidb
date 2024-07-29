@@ -66,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -83,7 +82,7 @@ const (
 
 	shardRowIDBitsMax = 15
 
-	batchAddingJobs = 10
+	batchAddingJobs = 100
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 10
@@ -200,8 +199,11 @@ type DDL interface {
 }
 
 type jobSubmitResult struct {
-	err    error
-	jobID  int64
+	err   error
+	jobID int64
+	// merged indicates whether the job is merged into another job together with
+	// other jobs. we only merge multiple create table jobs into one job when fast
+	// create table is enabled.
 	merged bool
 }
 
@@ -371,13 +373,6 @@ type hookStruct struct {
 	hook Callback
 }
 
-// the schema synchronization mechanism now requires strict incremental schema versions.
-// Therefore, we require a distributed lock to ensure the sequential commit of schema diffs from different TiDB nodes.
-type etcdLockInfo struct {
-	se *concurrency.Session
-	mu *concurrency.Mutex
-}
-
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
 // we use another transaction to update the schema version, so that we need to lock the schema version and unlock it until the job is committed.
 // for version2, we use etcd lock to lock the schema version between TiDB nodes now.
@@ -385,18 +380,10 @@ type schemaVersionManager struct {
 	schemaVersionMu sync.Mutex
 	// lockOwner stores the job ID that is holding the lock.
 	lockOwner atomicutil.Int64
-
-	ctx          context.Context
-	etcdClient   *clientv3.Client
-	lockInfoMaps map[int64]*etcdLockInfo
 }
 
-func newSchemaVersionManager(ctx context.Context, etcdClient *clientv3.Client) *schemaVersionManager {
-	return &schemaVersionManager{
-		ctx:          ctx,
-		etcdClient:   etcdClient,
-		lockInfoMaps: make(map[int64]*etcdLockInfo),
-	}
+func newSchemaVersionManager() *schemaVersionManager {
+	return &schemaVersionManager{}
 }
 
 func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storage) (schemaVersion int64, err error) {
@@ -421,17 +408,6 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 	if ownerID != jobID {
 		sv.schemaVersionMu.Lock()
 		sv.lockOwner.Store(jobID)
-		if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
-			se, err := concurrency.NewSession(sv.etcdClient)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
-			if err := mu.Lock(sv.ctx); err != nil {
-				return errors.Trace(err)
-			}
-			sv.lockInfoMaps[jobID] = &etcdLockInfo{se: se, mu: mu}
-		}
 	}
 	return nil
 }
@@ -440,24 +416,6 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
-		if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
-			delete(sv.lockInfoMaps, jobID)
-			err := lockInfo.mu.Unlock(sv.ctx)
-		outer:
-			for err != nil {
-				logutil.DDLLogger().Error("unlock schema version", zap.Error(err))
-				select {
-				case <-sv.ctx.Done():
-					break outer
-				case <-time.After(time.Second):
-				}
-				// retry unlock
-				err = lockInfo.mu.Unlock(sv.ctx)
-			}
-			if err := lockInfo.se.Close(); err != nil {
-				logutil.DDLLogger().Error("close etcd session", zap.Error(err))
-			}
-		}
 		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
 	}
@@ -704,7 +662,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	ddlCtx.mu.hook = opt.Hook
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
-	ddlCtx.schemaVersionManager = newSchemaVersionManager(ddlCtx.ctx, opt.EtcdCli)
+	ddlCtx.schemaVersionManager = newSchemaVersionManager()
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -730,7 +688,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchMDL = d.SwitchMDL
-	variable.SwitchFastCreateTable = d.SwitchFastCreateTable
 
 	e := &executor{
 		ctx:             d.ctx,
@@ -1072,114 +1029,6 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 	logutil.DDLLogger().Info("switch metadata lock feature", zap.Bool("enable", enable))
 	return nil
-}
-
-// SwitchFastCreateTable switch fast create table
-func (d *ddl) SwitchFastCreateTable(val bool) error {
-	old := variable.EnableFastCreateTable.Load()
-	if old == val {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
-
-	// Check if there is any DDL running.
-	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
-	sessCtx, err := d.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer d.sessPool.Put(sessCtx)
-	se := sess.NewSession(sessCtx)
-	rows, err := se.Execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) != 0 {
-		return errors.New("please wait for all jobs done")
-	}
-
-	if err := d.switchFastCreateTable(val); err != nil {
-		return errors.Trace(err)
-	}
-
-	variable.EnableFastCreateTable.Store(val)
-	logutil.DDLLogger().Info("switch fast create table", zap.Bool("val", val))
-	return nil
-}
-
-// disableFastCreateTable disable fast create table feature.
-func (*ddl) disableFastCreateTable(m *meta.Meta) error {
-	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !fastCreateTableInitialized {
-		return nil
-	}
-	if err := m.ClearAllDatabaseNames(); err != nil {
-		return errors.Trace(err)
-	}
-	if err := m.ClearAllTableNames(); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(m.SetFastCreateTableInitialized(false))
-}
-
-// enableFastCreateTable enable fast create table feature.
-func (*ddl) enableFastCreateTable(m *meta.Meta) error {
-	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if fastCreateTableInitialized {
-		return nil
-	}
-
-	if err := m.ClearAllDatabaseNames(); err != nil {
-		return errors.Trace(err)
-	}
-	if err := m.ClearAllTableNames(); err != nil {
-		return errors.Trace(err)
-	}
-
-	dbs, err := m.ListDatabases()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, dbInfo := range dbs {
-		if err := m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	for _, dbInfo := range dbs {
-		tables, err := m.ListTables(dbInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tableInfo := range tables {
-			if err := m.CreateTableName(dbInfo.Name.L, tableInfo.Name.L, tableInfo.ID); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	return errors.Trace(m.SetFastCreateTableInitialized(true))
-}
-
-func (d *ddl) switchFastCreateTable(val bool) (err error) {
-	return kv.RunInNewTxn(kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-
-		if val {
-			err = d.enableFastCreateTable(m)
-		} else {
-			err = d.disableFastCreateTable(m)
-		}
-		return errors.Trace(err)
-	})
 }
 
 // RecoverInfo contains information needed by DDL.RecoverTable.
