@@ -334,12 +334,7 @@ func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pbMigs := make([]*backuppb.Migration, 0)
-	pbMigs = append(pbMigs, migs.Base)
-	for _, m := range migs.Layers {
-		pbMigs = append(pbMigs, &m.Content)
-	}
-	return pbMigs, nil
+	return migs.AllPbMigrations(), nil
 }
 
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint) error {

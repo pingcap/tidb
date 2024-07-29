@@ -43,10 +43,6 @@ func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
 }
 
-func GetStreamBackupCompactionsPrefix(subDir string) string {
-	return streamBackupMetaPrefix + "/compactions/" + subDir
-}
-
 func GetStreamBackupGlobalCheckpointPrefix() string {
 	return streamBackupGlobalCheckpointPrefix
 }

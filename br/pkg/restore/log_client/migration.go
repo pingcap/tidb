@@ -225,5 +225,3 @@ func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 func (m WithMigrations) WrapLogIter(l LogIter) LogIter {
 	return nil
 }
-
-type SubCompactionIter iter.TryNextor[*backuppb.LogFileSubcompaction]

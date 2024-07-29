@@ -27,8 +27,7 @@ import (
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*pb.Metadata]
 
-// SubcompactionIter is the type that yields subcompaction.
-type SubcompactionIter = iter.TryNextor[*pb.LogFileSubcompactionMeta]
+type SubCompactionIter iter.TryNextor[*backuppb.LogFileSubcompaction]
 
 type MetaName struct {
 	meta Meta
@@ -352,26 +351,11 @@ func (rc *LogFileManager) OpenCompactionIter(ctx context.Context, migs []*backup
 			compactionDirs = append(compactionDirs, c.GeneratedFiles)
 		}
 	}
+
 	compactionDirIter := iter.FromSlice(compactionDirs)
 	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
-		opt := &storage.WalkOption{SubDir: stream.GetStreamBackupCompactionsPrefix(name)}
-		allSubCompactions := make([]*backuppb.LogFileSubcompaction, 0, 8)
-		err := rc.storage.WalkDir(ctx, opt, func(path string, size int64) error {
-			f, err := rc.storage.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Annotatef(err, "failed during reading file %s", name)
-			}
-			oneCompaction, err := rc.helper.ParseToOneCompaction(f)
-			if err != nil {
-				return errors.Annotatef(err, "failed during parse one compaction %s", name)
-			}
-			allSubCompactions = append(allSubCompactions, oneCompaction)
-			return nil
-		})
-		if err != nil {
-			return iter.Fail[*backuppb.LogFileSubcompaction](errors.Annotatef(err, "failed during reading compactions dir %s", name))
-		}
-		return iter.FromSlice(allSubCompactions)
+		// name is the absolute path in external storage.
+		return Subcompactions(ctx, name, rc.storage)
 	})
 }
 
@@ -460,12 +444,12 @@ func (rc *LogFileManager) ReadAllEntries(
 
 type WithMigrate struct {
 	metas        MetaIter
-	compactions  SubcompactionIter
+	compactions  SubCompactionIter
 	deletedFiles map[string]*pb.SpansOfFile
 }
 
-func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubcompactionIter {
-	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: prefix}, s, func(t *pb.LogFileSubcompactionMeta, name string, b []byte) error { return t.Unmarshal(b) })
+func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubCompactionIter {
+	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: prefix}, s, func(t *pb.LogFileSubcompaction, name string, b []byte) error { return t.Unmarshal(b) })
 }
 
 func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*pb.Migration] {

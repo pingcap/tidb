@@ -623,6 +623,15 @@ func (m MigrationExt) EstimateEffectFor(ctx context.Context, mig *pb.Migration) 
 	return res, batchSelf.s.(*storage.Batched).ReadOnlyEffects()
 }
 
+func (migs Migrations) AllPbMigrations() []*pb.Migration {
+	pbMigs := make([]*pb.Migration, 0, len(migs.Layers)+1)
+	pbMigs = append(pbMigs, migs.Base)
+	for _, m := range migs.Layers {
+		pbMigs = append(pbMigs, &m.Content)
+	}
+	return pbMigs
+}
+
 // MergeTo merges migrations from the BASE in the live migrations until the specified sequence number.
 func (migs Migrations) MergeTo(seq int) *pb.Migration {
 	newBase := migs.Base
