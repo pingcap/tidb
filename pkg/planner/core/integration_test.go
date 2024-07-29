@@ -2685,6 +2685,108 @@ func TestIssue41458(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func TestIssue48257(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	tk.MustExec("use test")
+
+	// 1. test sync load
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("analyze table t all columns")
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("insert into t value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableFullScan",
+		"└─TableFullScan 2.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("set tidb_opt_objective='determinate'")
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("set tidb_opt_objective='moderate'")
+
+	// 2. test async load
+	tk.MustExec("set tidb_stats_load_sync_wait = 0")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	tk.MustExec("insert into t1 value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableFullScan",
+		"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	tk.MustExec("set tidb_opt_objective='determinate'")
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	require.NoError(t, h.LoadNeededHistograms())
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
+	))
+}
+
+func TestIssue54213(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE tb (
+  object_id bigint(20),
+  a bigint(20) ,
+  b bigint(20) ,
+  c bigint(20) ,
+  PRIMARY KEY (object_id),
+  KEY ab (a,b))`)
+	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
+			"└─Limit_12 0.10 root  offset:0, count:100",
+			"  └─IndexReader_16 0.10 root  index:Limit_15",
+			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
+			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+}
+
+func TestIssue54870(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id int,
+deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
+is_deleted tinyint(1) GENERATED ALWAYS AS ((deleted_at > _utf8mb4'1970-01-01 01:00:01.000')) VIRTUAL NOT NULL,
+key k(id, is_deleted))`)
+	tk.MustExec(`begin`)
+	tk.MustExec(`insert into t (id, deleted_at) values (1, now())`)
+	tk.MustHavePlan(`select 1 from t where id=1 and is_deleted=true`, "IndexRangeScan")
+}
+
+>>>>>>> f2abe99f30c (planner: push necessary predicates without virtual column down through UnionScan (#54985))
 func TestIssue52472(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
