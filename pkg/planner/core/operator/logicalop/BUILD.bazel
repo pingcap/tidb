@@ -9,6 +9,7 @@ go_library(
         "logical_mem_table.go",
         "logical_schema_producer.go",
         "logical_show.go",
+        "logical_show_ddl_jobs.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
     visibility = ["//visibility:public"],

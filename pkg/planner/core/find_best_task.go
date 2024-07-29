@@ -122,7 +122,8 @@ func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProper
 	return rt, 1, nil
 }
 
-func findBestTask4LogicalShowDDLJobs(p *LogicalShowDDLJobs, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+func findBestTask4LogicalShowDDLJobs(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+	p := lp.(*logicalop.LogicalShowDDLJobs)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}

@@ -105,3 +105,7 @@ var FindBestTask4LogicalMemTable func(lp base.LogicalPlan, prop *property.Physic
 // FindBestTask4LogicalShow will be called by LogicalShow in logicalOp pkg.
 var FindBestTask4LogicalShow func(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
 	_ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
+
+// FindBestTask4LogicalShowDDLJobs will be called by LogicalShowDDLJobs in logicalOp pkg.
+var FindBestTask4LogicalShowDDLJobs func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
