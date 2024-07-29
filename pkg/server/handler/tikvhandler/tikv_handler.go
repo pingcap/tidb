@@ -1484,12 +1484,12 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			ctx := context.Background()
-			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema.AllSchemas())
+			hotRead, err := h.ScrapeHotInfo(ctx, helper.HotRead, schema, nil)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
 			}
-			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema.AllSchemas())
+			hotWrite, err := h.ScrapeHotInfo(ctx, helper.HotWrite, schema, nil)
 			if err != nil {
 				handler.WriteError(w, err)
 				return

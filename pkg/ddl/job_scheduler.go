@@ -617,7 +617,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) 
 		}
 	})
 
-	failpoint.InjectCall("beforeWaitSchemaChanged", job)
+	failpoint.InjectCall("beforeWaitSchemaChanged", job, schemaVer)
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
@@ -627,17 +627,42 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) 
 	s.cleanMDLInfo(job, ownerID)
 	s.synced(job)
 
-	if RunInGoTest {
-		// s.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
-		s.mu.RLock()
-		s.mu.hook.OnSchemaStateChanged(schemaVer)
-		s.mu.RUnlock()
-	}
-
 	s.mu.RLock()
 	s.mu.hook.OnJobUpdated(job)
 	s.mu.RUnlock()
 	return nil
+}
+
+// cleanMDLInfo cleans metadata lock info.
+func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
+	if !variable.EnableMDL.Load() {
+		return
+	}
+	var sql string
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
+	} else {
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", job.ID, ownerID)
+	}
+	sctx, _ := s.sessPool.Get()
+	defer s.sessPool.Put(sctx)
+	se := sess.NewSession(sctx)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := se.Execute(s.schCtx, sql, "delete-mdl-info")
+	if err != nil {
+		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
+		return
+	}
+	// TODO we need clean it when version of JobStateRollbackDone is synced also.
+	if job.State == model.JobStateSynced && s.etcdCli != nil {
+		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
+		_, err = s.etcdCli.Delete(s.schCtx, path, clientv3.WithPrefix())
+		if err != nil {
+			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
+		}
+	}
 }
 
 func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
@@ -732,12 +757,6 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		return strconv.FormatInt(job.SchemaID, 10)
 	}
 	return strconv.FormatInt(job.TableID, 10)
-}
-
-func (w *worker) deleteDDLJob(job *model.Job) error {
-	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
-	_, err := w.sess.Execute(context.Background(), sql, "delete_job")
-	return errors.Trace(err)
 }
 
 func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {

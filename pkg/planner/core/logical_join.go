@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -177,16 +178,16 @@ func (p *LogicalJoin) ExplainInfo() string {
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, equalExpr := range p.EqualConditions {
-		ResolveExprAndReplace(equalExpr, replace)
+		ruleutil.ResolveExprAndReplace(equalExpr, replace)
 	}
 	for _, leftExpr := range p.LeftConditions {
-		ResolveExprAndReplace(leftExpr, replace)
+		ruleutil.ResolveExprAndReplace(leftExpr, replace)
 	}
 	for _, rightExpr := range p.RightConditions {
-		ResolveExprAndReplace(rightExpr, replace)
+		ruleutil.ResolveExprAndReplace(rightExpr, replace)
 	}
 	for _, otherExpr := range p.OtherConditions {
-		ResolveExprAndReplace(otherExpr, replace)
+		ruleutil.ResolveExprAndReplace(otherExpr, replace)
 	}
 }
 

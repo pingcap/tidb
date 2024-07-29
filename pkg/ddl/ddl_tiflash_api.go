@@ -441,7 +441,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	pollTiFlashContext.PollCounter++
 
 	// Start to process every table.
-	schema := d.GetInfoSchemaWithInterceptor(ctx)
+	schema := d.infoCache.GetLatest()
 	if schema == nil {
 		return errors.New("Schema is nil")
 	}

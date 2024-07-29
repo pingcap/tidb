@@ -89,7 +89,6 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/testkit/testdata",

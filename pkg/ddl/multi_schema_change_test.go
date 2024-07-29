@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -735,7 +736,7 @@ func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
 }
 
 func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t(a int, b int, c int, d int)")
@@ -743,22 +744,18 @@ func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
 
 	schemaVerMap := map[int64]struct{}{}
 
-	originHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobSchemaStateChanged = func(schemaVer int64) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(_ *model.Job, schemaVer int64) {
 		if schemaVer != 0 {
 			// No same return schemaVer during multi-schema change
 			_, ok := schemaVerMap[schemaVer]
 			assert.False(t, ok)
 			schemaVerMap[schemaVer] = struct{}{}
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t drop column b, drop column c")
 	tk.MustExec("alter table t add column b int, add column c int")
 	tk.MustExec("alter table t add index k(b), add column e int")
 	tk.MustExec("alter table t alter index k invisible, drop column e")
-	dom.DDL().SetHook(originHook)
 }
 
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
