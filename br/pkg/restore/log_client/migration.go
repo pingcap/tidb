@@ -99,6 +99,10 @@ type WithMigrationsBuilder struct {
 	restoredTS   uint64
 }
 
+func (builder *WithMigrationsBuilder) SetShiftStartTS(ts uint64) {
+	builder.shiftStartTS = ts
+}
+
 func (builder *WithMigrationsBuilder) updateSkipMap(skipmap metaSkipMap, metas []*backuppb.MetaEdit) {
 	for _, meta := range metas {
 		if meta.DestructSelf {
@@ -136,7 +140,6 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 // Create the wrapper by migrations.
 func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigrations {
 	skipmap := make(metaSkipMap)
-	intersectMigs := make([]*backuppb.Migration, 0, len(migs))
 
 	for _, mig := range migs {
 		// TODO: deal with TruncatedTo and DestructPrefix
@@ -144,11 +147,9 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 			continue
 		}
 		builder.updateSkipMap(skipmap, mig.EditMeta)
-		intersectMigs = append(intersectMigs, mig)
 	}
 	withMigrations := WithMigrations{
 		skipmap: skipmap,
-		migs:    intersectMigs,
 	}
 	return withMigrations
 }
@@ -199,7 +200,6 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 
 type WithMigrations struct {
 	skipmap metaSkipMap
-	migs    []*backuppb.Migration
 }
 
 func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
@@ -224,11 +224,6 @@ func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 // Filter out logs that deleted by migrations.
 func (m WithMigrations) WrapLogIter(l LogIter) LogIter {
 	return nil
-}
-
-// Filter out logs that deleted by migrations.
-func (m WithMigrations) GetMigs() []*backuppb.Migration {
-	return m.migs
 }
 
 type SubCompactionIter iter.TryNextor[*backuppb.LogFileSubcompaction]

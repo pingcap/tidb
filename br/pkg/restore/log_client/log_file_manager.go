@@ -100,7 +100,8 @@ type LogFileManager struct {
 	storage storage.ExternalStorage
 	helper  streamMetadataHelper
 
-	withmigrations *WithMigrations
+	migrationBuilder *WithMigrationsBuilder
+	withMigrations   *WithMigrations
 
 	metadataDownloadBatchSize uint
 }
@@ -111,7 +112,7 @@ type LogFileManagerInit struct {
 	RestoreTS uint64
 	Storage   storage.ExternalStorage
 
-	Migrations                *WithMigrations
+	MigrationsBuilder         *WithMigrationsBuilder
 	MetadataDownloadBatchSize uint
 }
 
@@ -124,11 +125,11 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:        init.StartTS,
-		restoreTS:      init.RestoreTS,
-		storage:        init.Storage,
-		helper:         stream.NewMetadataHelper(),
-		withmigrations: init.Migrations,
+		startTS:          init.StartTS,
+		restoreTS:        init.RestoreTS,
+		storage:          init.Storage,
+		helper:           stream.NewMetadataHelper(),
+		migrationBuilder: init.MigrationsBuilder,
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
@@ -137,6 +138,11 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 		return nil, err
 	}
 	return fm, nil
+}
+
+func (rc *LogFileManager) BuildMigrations(migs []*backuppb.Migration) {
+	w := rc.migrationBuilder.Build(migs)
+	rc.withMigrations = &w
 }
 
 func (rc *LogFileManager) ShiftTS() uint64 {
@@ -172,9 +178,11 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	}
 	if !shiftTS.exists {
 		rc.shiftStartTS = rc.startTS
+		rc.migrationBuilder.SetShiftStartTS(rc.shiftStartTS)
 		return nil
 	}
 	rc.shiftStartTS = shiftTS.value
+	rc.migrationBuilder.SetShiftStartTS(rc.shiftStartTS)
 	return nil
 }
 
@@ -226,7 +234,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 }
 
 func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
-	ms := rc.withmigrations.Metas(m)
+	ms := rc.withMigrations.Metas(m)
 	return iter.FlatMap(ms, func(m *MetaWithMigrations) LogIter {
 		gs := m.Physicals(iter.Enumerate(iter.FromSlice(m.meta.FileGroups)))
 		return iter.FlatMap(gs, func(gim *PhysicalWithMigrations) LogIter {
@@ -337,9 +345,9 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 }
 
 // Fetch compactions that may contain file less than the TS.
-func (rc *LogFileManager) OpenCompactionIter(ctx context.Context) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+func (rc *LogFileManager) OpenCompactionIter(ctx context.Context, migs []*backuppb.Migration) iter.TryNextor[*backuppb.LogFileSubcompaction] {
 	compactionDirs := make([]string, 0, 8)
-	for _, mig := range rc.withmigrations.migs {
+	for _, mig := range migs {
 		for _, c := range mig.Compactions {
 			compactionDirs = append(compactionDirs, c.GeneratedFiles)
 		}

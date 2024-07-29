@@ -328,12 +328,30 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, ta
 	return gcRatio, nil
 }
 
+func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
+	ext := stream.MigerationExtension(rc.storage)
+	migs, err := ext.Load(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	pbMigs := make([]*backuppb.Migration, 0)
+	pbMigs = append(pbMigs, migs.Base)
+	for _, m := range migs.Layers {
+		pbMigs = append(pbMigs, &m.Content)
+	}
+	return pbMigs, nil
+}
+
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint) error {
 	init := LogFileManagerInit{
 		StartTS:   startTS,
 		RestoreTS: restoreTS,
 		Storage:   rc.storage,
 
+		MigrationsBuilder: &WithMigrationsBuilder{
+			startTS:    startTS,
+			restoredTS: restoreTS,
+		},
 		MetadataDownloadBatchSize: metadataDownloadBatchSize,
 	}
 	var err error
