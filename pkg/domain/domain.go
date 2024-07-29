@@ -489,7 +489,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		var tables []*model.TableInfo
 		var err error
 		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
-			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndSpecialAttributeInfo(m, di.ID)
+			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndTheMustLoadedTableInfo(m, di.ID)
 			if err != nil {
 				done <- err
 				return
