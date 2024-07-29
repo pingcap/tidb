@@ -33,11 +33,16 @@ type MetaOnlyInfoSchema interface {
 	FindTableInfoByPartitionID(partitionID int64) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
-	AllSchemas() []*model.DBInfo
+	SchemaAndTable
 	AllSchemaNames() []model.CIStr
-	SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error)
 	SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableNameInfo, error)
 	Misc
+}
+
+// SchemaAndTable is define for iterating all the schemas and tables in the infoschema.
+type SchemaAndTable interface {
+	AllSchemas() []*model.DBInfo
+	SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error)
 }
 
 // Misc contains the methods that are not closely related to InfoSchema.
@@ -60,4 +65,22 @@ type Misc interface {
 	HasTemporaryTable() bool
 	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
 	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
+}
+
+// DBInfoAsInfoSchema is used mainly in test.
+type DBInfoAsInfoSchema []*model.DBInfo
+
+// AllSchemas implement infoschema.SchemaAndTable interface.
+func (d DBInfoAsInfoSchema) AllSchemas() []*model.DBInfo {
+	return []*model.DBInfo(d)
+}
+
+// SchemaTableInfos implement infoschema.SchemaAndTable interface.
+func (d DBInfoAsInfoSchema) SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error) {
+	for _, db := range d {
+		if db.Name == schema {
+			return db.Deprecated.Tables, nil
+		}
+	}
+	return nil, nil
 }

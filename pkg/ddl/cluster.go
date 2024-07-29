@@ -353,7 +353,8 @@ func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 // It contains all non system table key ranges and meta data key ranges.
 // The time complexity is O(nlogn).
 func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
-	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
+	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemas := is.AllSchemas()
 
 	// The semantic of keyRanges(output).
 	keyRanges := make([]kv.KeyRange, 0)
@@ -395,7 +396,11 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 
 	var nonFlashbackTableIDs []int64
 	for _, db := range schemas {
-		for _, table := range db.Tables {
+		tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, table := range tblInfos {
 			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
 				continue
 			}
