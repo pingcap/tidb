@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -52,7 +53,7 @@ func (ls *LogicalSort) ExplainInfo() string {
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range ls.ByItems {
-		ResolveExprAndReplace(byItem.Expr, replace)
+		ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
