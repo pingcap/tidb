@@ -15,10 +15,6 @@
 package ddl
 
 import (
-	"fmt"
-
-	"github.com/pingcap/errors"
-	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -26,127 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"go.uber.org/zap"
 )
-
-func (e *executor) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
-	subJobs := info.SubJobs
-	if len(subJobs) == 0 {
-		return nil
-	}
-	schema, t, err := e.getSchemaAndTableByIdent(ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	logFn := ddllogutil.DDLLogger().Warn
-	if intest.InTest {
-		logFn = ddllogutil.DDLLogger().Fatal
-	}
-
-	var involvingSchemaInfo []model.InvolvingSchemaInfo
-	for _, j := range subJobs {
-		switch j.Type {
-		case model.ActionAlterTablePlacement:
-			ref, ok := j.Args[0].(*model.PolicyRefInfo)
-			if !ok {
-				logFn("unexpected type of policy reference info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
-			if ref == nil {
-				continue
-			}
-			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Policy: ref.Name.L,
-				Mode:   model.SharedInvolving,
-			})
-		case model.ActionAddForeignKey:
-			ref, ok := j.Args[0].(*model.FKInfo)
-			if !ok {
-				logFn("unexpected type of foreign key info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
-			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Database: ref.RefSchema.L,
-				Table:    ref.RefTable.L,
-				Mode:     model.SharedInvolving,
-			})
-		case model.ActionAlterTablePartitionPlacement:
-			if len(j.Args) < 2 {
-				logFn("unexpected number of arguments for partition placement",
-					zap.Int("len(args)", len(j.Args)),
-					zap.Any("args", j.Args))
-				continue
-			}
-			ref, ok := j.Args[1].(*model.PolicyRefInfo)
-			if !ok {
-				logFn("unexpected type of policy reference info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
-			if ref == nil {
-				continue
-			}
-			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Policy: ref.Name.L,
-				Mode:   model.SharedInvolving,
-			})
-		}
-	}
-
-	if len(involvingSchemaInfo) > 0 {
-		involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-			Database: schema.Name.L,
-			Table:    t.Meta().Name.L,
-		})
-	}
-
-	job := &model.Job{
-		SchemaID:            schema.ID,
-		TableID:             t.Meta().ID,
-		SchemaName:          schema.Name.L,
-		TableName:           t.Meta().Name.L,
-		Type:                model.ActionMultiSchemaChange,
-		BinlogInfo:          &model.HistoryInfo{},
-		Args:                nil,
-		MultiSchemaInfo:     info,
-		ReorgMeta:           nil,
-		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
-		InvolvingSchemaInfo: involvingSchemaInfo,
-		SQLMode:             ctx.GetSessionVars().SQLMode,
-	}
-	if containsDistTaskSubJob(subJobs) {
-		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
-		if err != nil {
-			return err
-		}
-	} else {
-		job.ReorgMeta = NewDDLReorgMeta(ctx)
-	}
-
-	err = checkMultiSchemaInfo(info, t)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	mergeAddIndex(info)
-	return e.DoDDLJob(ctx, job)
-}
-
-func containsDistTaskSubJob(subJobs []*model.SubJob) bool {
-	for _, sub := range subJobs {
-		if sub.Type == model.ActionAddIndex ||
-			sub.Type == model.ActionAddPrimaryKey {
-			return true
-		}
-	}
-	return false
-}
 
 func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
