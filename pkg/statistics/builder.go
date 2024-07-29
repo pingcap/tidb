@@ -346,14 +346,15 @@ func BuildHistAndTopN(
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
-	// if the NDV is less than 256, use histogram buckets rather than TopN to store values. This can reduce instances where
-	// we assume all values are contained in the TopN & buckets and estimate zero rows if a query searches for a new value
-	if variable.EnableAnalyzeAutoCount.Load() && ndv <= 256 {
-		numTopN = 0
-	}
 	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
-	if numTopN != 100 {
+	if numTopN == 100 {
+		if variable.EnableAnalyzeAutoCount.Load() && ndv <= int64(numTopN) {
+			// Do not collect more than ndv-1. This can reduce instances where we assume all values are
+			// contained in the TopN & buckets and estimate zero rows if a query searches for a new value
+			numTopN = int(ndv - 1)
+		}
+	} else {
 		allowPruning = false
 	}
 
