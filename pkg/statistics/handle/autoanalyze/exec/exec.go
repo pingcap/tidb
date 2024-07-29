@@ -30,6 +30,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -91,6 +92,9 @@ func execAnalyzeStmt(
 		sqlexec.ExecOptionWithSysProcTrack(autoAnalyzeProcID, autoAnalyzeTracker.Track, autoAnalyzeTracker.UnTrack),
 	}
 	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in execAnalyzeStmt", zap.Any("error", r), zap.Stack("stack"))
+		}
 		statsHandle.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
 	}()
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
