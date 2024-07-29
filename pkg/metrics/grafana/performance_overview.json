@@ -1810,10 +1810,10 @@
         },
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", scope=~\"general\"}[30s]))",
+          "expr": "sum(rate(tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])) by (scope)",
           "hide": false,
           "interval": "",
-          "legendFormat": "TiDB -> TiKV",
+          "legendFormat": "TiDB -> TiKV: {{scope}}",
           "refId": "D"
         },
         {
