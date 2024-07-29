@@ -2398,6 +2398,10 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	defer b.ReleaseSysSession(ctx, sysCtx)
+
+	if err = loadSnapshotInfoSchemaIfNeeded(sysCtx, sctx.GetSessionVars().SnapshotTS); err != nil {
+		return err
+	}
 	// `fn` may use KV transaction, so initialize the txn here
 	if err = sessiontxn.NewTxn(ctx, sysCtx); err != nil {
 		return err
