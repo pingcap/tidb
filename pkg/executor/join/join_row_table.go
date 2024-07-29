@@ -285,7 +285,9 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 func (rt *rowTable) getTotalUsedBytesInSegments() int64 {
 	totalUsedBytes := int64(0)
 	for _, seg := range rt.segments {
-		totalUsedBytes += seg.totalUsedBytes()
+		if seg.finalized {
+			totalUsedBytes += seg.totalUsedBytes()
+		}
 	}
 	return totalUsedBytes
 }

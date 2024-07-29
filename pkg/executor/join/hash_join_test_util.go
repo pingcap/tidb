@@ -51,7 +51,7 @@ type hashJoinInfo struct {
 }
 
 func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
-	concurrency := 1
+	concurrency := 3
 	e := &HashJoinV2Exec{
 		BaseExecutor:          exec.NewBaseExecutor(info.ctx, info.schema, 0, info.leftExec, info.rightExec),
 		ProbeSideTupleFetcher: &ProbeSideTupleFetcherV2{},
@@ -59,7 +59,7 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 		BuildWorkers:          make([]*BuildWorkerV2, concurrency),
 		HashJoinCtxV2: &HashJoinCtxV2{
 			OtherCondition:  info.otherCondition,
-			PartitionNumber: 2,
+			PartitionNumber: 4,
 		},
 	}
 	e.HashJoinCtxV2.SessCtx = info.ctx

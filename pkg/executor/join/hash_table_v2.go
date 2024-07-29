@@ -118,13 +118,6 @@ type hashTableV2 struct {
 	partitionNumber uint64
 }
 
-func (ht *hashTableV2) getPartitionSegments(partID int) []*rowTableSegment {
-	if ht.tables[partID] != nil {
-		return ht.tables[partID].rowData.getSegments()
-	}
-	return nil
-}
-
 func (ht *hashTableV2) getPartitionMemoryUsage(partID int) int64 {
 	if ht.tables[partID] != nil {
 		return ht.tables[partID].getTotalMemoryUsage()

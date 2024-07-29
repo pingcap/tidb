@@ -73,8 +73,6 @@ func (h *hashJoinSpillAction) actionImpl(t *memory.Tracker) bool {
 		// memory consumption when spill is triggered.
 		h.spillHelper.bytesConsumed.Store(t.BytesConsumed())
 		h.spillHelper.bytesLimit.Store(t.GetBytesLimit())
-
-		// log.Info(fmt.Sprintf("xzxdebug spill info %d %d", h.spillHelper.bytesConsumed.Load(), h.spillHelper.bytesLimit.Load()))
 		return true
 	}
 

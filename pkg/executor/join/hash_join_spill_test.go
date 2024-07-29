@@ -87,7 +87,7 @@ func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []c
 }
 
 func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1000000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1500000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -97,7 +97,7 @@ func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []c
 	result := getSortedResults(t, hashJoinExec, retTypes)
 	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 	require.True(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
-	// require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
+	require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
 	checkResults(t, retTypes, result, expectedResult)
 }
 

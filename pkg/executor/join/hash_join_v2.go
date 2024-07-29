@@ -17,7 +17,6 @@ package join
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -81,8 +80,6 @@ func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
 			totalMemoryUsage += tables[partID].getTotalUsedBytesInSegments()
 		}
 	}
-
-	totalMemoryUsage += htc.hashTable.getPartitionMemoryUsage(partID)
 
 	return totalMemoryUsage
 }
@@ -245,12 +242,6 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 	totalSegmentCnt := 0
 	for _, table := range htc.hashTable.tables {
 		totalSegmentCnt += table.getSegmentNum()
-	}
-
-	if totalSegmentCnt != 0 {
-		log.Info(fmt.Sprintf("xzxdebug totalSegmentCnt: %d", totalSegmentCnt))
-	} else {
-		log.Info(fmt.Sprintf("xzxdebug totalSegmentCnt: %d", totalSegmentCnt))
 	}
 
 	return totalSegmentCnt, nil
