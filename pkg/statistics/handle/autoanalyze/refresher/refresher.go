@@ -456,6 +456,40 @@ func CheckIndexesNeedAnalyze(
 	return indexes
 }
 
+func checkSpecialGlobalIndex(
+	tblInfo *model.TableInfo,
+	partitionStats map[PartitionIDAndName]*statistics.Table,
+	autoAnalyzeRatio float64,
+) []string {
+	specialGlobalIndexes := make([]string, 0)
+	needAnalyzeGlobalIndex := false
+	modifyCount, tblCnt := 0.0, 0.0
+	for _, pStats := range partitionStats {
+		if pStats == nil || pStats.Pseudo || !pStats.IsAnalyzed() {
+			continue
+		}
+		partitionCnt := float64(pStats.RealtimeCount)
+		if histCnt := pStats.GetAnalyzeRowCount(); histCnt > 0 {
+			partitionCnt = histCnt
+		}
+		modifyCount += float64(pStats.ModifyCount)
+		tblCnt += partitionCnt
+	}
+	if modifyCount/tblCnt > autoAnalyzeRatio && tblCnt >= float64(exec.AutoAnalyzeMinCnt) {
+		needAnalyzeGlobalIndex = true
+	}
+	for _, idx := range tblInfo.Indices {
+		if !statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
+			continue
+		}
+		if needAnalyzeGlobalIndex {
+			specialGlobalIndexes = append(specialGlobalIndexes, idx.Name.O)
+			continue
+		}
+	}
+	return specialGlobalIndexes
+}
+
 func createTableAnalysisJobForPartitions(
 	sctx sessionctx.Context,
 	tableSchema string,
@@ -481,12 +515,19 @@ func createTableAnalysisJobForPartitions(
 	)
 	partitionIndexes := CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		tblInfo,
+		tblStats,
 		partitionStats,
 	)
+	specialGlobalIndexes := checkSpecialGlobalIndex(
+		tblInfo,
+		partitionStats,
+		autoAnalyzeRatio,
+	)
+
 	// No need to analyze.
 	// We perform a separate check because users may set the auto analyze ratio to 0,
 	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
-	if len(partitionNames) == 0 && len(partitionIndexes) == 0 {
+	if len(partitionNames) == 0 && len(partitionIndexes) == 0 && len(specialGlobalIndexes) == 0 {
 		return nil
 	}
 
@@ -496,6 +537,7 @@ func createTableAnalysisJobForPartitions(
 		tblInfo.ID,
 		partitionNames,
 		partitionIndexes,
+		specialGlobalIndexes,
 		tableStatsVer,
 		averageChangePercentage,
 		avgSize,
@@ -560,6 +602,7 @@ func CalculateIndicatorsForPartitions(
 // NOTE: This is only for newly added indexes.
 func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 	tblInfo *model.TableInfo,
+	tblStats *statistics.Table,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 ) map[string][]string {
 	partitionIndexes := make(map[string][]string, len(tblInfo.Indices))
@@ -572,9 +615,15 @@ func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 
 		// Find all the partitions that need to analyze this index.
 		names := make([]string, 0, len(partitionStats))
-		for pIDAndName, tblStats := range partitionStats {
+		if !statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
+			for pIDAndName, tblStats := range partitionStats {
+				if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
+					names = append(names, pIDAndName.Name)
+				}
+			}
+		} else {
 			if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
-				names = append(names, pIDAndName.Name)
+				names = append(names, priorityqueue.SpecialIndexTableName)
 			}
 		}
 
