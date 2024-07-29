@@ -103,7 +103,7 @@ func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputId
 			}
 		}
 	}
-	// step2: convert inputIdxToOutputIdxes into disJoint set.
+	// step2: link items inside inputIdxToOutputIdxes with originalDisJoint set.
 	// since originDJSet covers offset 0 to input.NumCols(), it may overlap with the output indexes.
 	newInputIdxToOutputIdxes := make(map[int][]int, len(inputIdxToOutputIdxes))
 	for inputIdx := range inputIdxToOutputIdxes {
@@ -113,13 +113,11 @@ func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputId
 		if _, ok := newInputIdxToOutputIdxes[originalRootIdx]; !ok {
 			newInputIdxToOutputIdxes[originalRootIdx] = []int{}
 		}
-		for _, outputIdx := range inputIdxToOutputIdxes[inputIdx] {
-			// eg: assuming A and B are in the same set of originalDJSet, and root is A.
-			// if inputIdxToOutputIdxes[A]=[0,1], A is in the same set of B
-			// and inputIdxToOutputIdxes[B]=[2,3], and we will get
-			// newInputIdxToOutputIdxes[A] = [0,1,2,3]
-			newInputIdxToOutputIdxes[originalRootIdx] = append(newInputIdxToOutputIdxes[originalRootIdx], outputIdx)
-		}
+		// eg: assuming A and B are in the same set of originalDJSet, and root is A.
+		// if inputIdxToOutputIdxes[A]=[0,1], A is in the same set of B
+		// and inputIdxToOutputIdxes[B]=[2,3], and we will get
+		// newInputIdxToOutputIdxes[A] = [0,1,2,3]
+		newInputIdxToOutputIdxes[originalRootIdx] = append(newInputIdxToOutputIdxes[originalRootIdx], inputIdxToOutputIdxes[inputIdx]...)
 	}
 	e.mergedInputIdxToOutputIdxes = newInputIdxToOutputIdxes
 }
