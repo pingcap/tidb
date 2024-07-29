@@ -136,15 +136,19 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 // Create the wrapper by migrations.
 func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigrations {
 	skipmap := make(metaSkipMap)
+	intersectMigs := make([]*backuppb.Migration, 0, len(migs))
+
 	for _, mig := range migs {
 		// TODO: deal with TruncatedTo and DestructPrefix
 		if builder.coarseGrainedFilter(mig) {
 			continue
 		}
 		builder.updateSkipMap(skipmap, mig.EditMeta)
+		intersectMigs = append(intersectMigs, mig)
 	}
 	withMigrations := WithMigrations{
 		skipmap: skipmap,
+		migs:    intersectMigs,
 	}
 	return withMigrations
 }
@@ -195,6 +199,7 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 
 type WithMigrations struct {
 	skipmap metaSkipMap
+	migs    []*backuppb.Migration
 }
 
 func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
@@ -221,10 +226,9 @@ func (m WithMigrations) WrapLogIter(l LogIter) LogIter {
 	return nil
 }
 
-type CompactionIter *int
-
-// Fetch compactions that may contain file less than the TS.
-func (m WithMigrations) OpenCompactionIter(forTS uint64) CompactionIter {
-
-	return nil
+// Filter out logs that deleted by migrations.
+func (m WithMigrations) GetMigs() []*backuppb.Migration {
+	return m.migs
 }
+
+type SubCompactionIter iter.TryNextor[*backuppb.LogFileSubcompaction]

@@ -43,6 +43,10 @@ func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
 }
 
+func GetStreamBackupCompactionsPrefix(subDir string) string {
+	return streamBackupMetaPrefix + "/compactions/" + subDir
+}
+
 func GetStreamBackupGlobalCheckpointPrefix() string {
 	return streamBackupGlobalCheckpointPrefix
 }
@@ -256,6 +260,12 @@ func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, 
 		meta.FileGroups = []*backuppb.DataFileGroup{group}
 	}
 	return meta, errors.Trace(err)
+}
+
+func (*MetadataHelper) ParseToOneCompaction(rawData []byte) (*backuppb.LogFileSubcompaction, error) {
+	c := &backuppb.LogFileSubcompaction{}
+	err := c.Unmarshal(rawData)
+	return c, errors.Trace(err)
 }
 
 // Only for deleting, after MetadataV1 is deprecated, we can remove it.
