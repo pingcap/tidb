@@ -166,7 +166,12 @@ type Domain struct {
 	// TODO: use Run for each process in future pr
 	wg            *util.WaitGroupEnhancedWrapper
 	statsUpdating atomicutil.Int32
-	cancelFns     struct {
+	// this is the parent context of DDL, and also used by other loops such as closestReplicaReadCheckLoop.
+	// there are other top level contexts in the domain, such as the ones used in
+	// InitDistTaskLoop and loadStatsWorker, domain only stores the cancelFns of them.
+	// TODO unify top level context.
+	ctx       context.Context
+	cancelFns struct {
 		mu  sync.Mutex
 		fns []context.CancelFunc
 	}
@@ -1261,12 +1266,19 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	return cli, err
 }
 
-// Init initializes a domain.
+// Init initializes a domain. after return, session can be used to do DMLs but not
+// DDLs which can be used after domain Start.
 func (do *Domain) Init(
 	ddlLease time.Duration,
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
 	ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker,
 ) error {
+	// TODO there are many place set ddlLease to 0, remove them completely, we want
+	//  UT and even local uni-store to run similar code path as normal.
+	if ddlLease == 0 {
+		ddlLease = time.Second
+	}
+
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
@@ -1295,18 +1307,8 @@ func (do *Domain) Init(
 		}
 	}
 
-	// TODO: Here we create new sessions with sysFac in DDL,
-	// which will use `do` as Domain instead of call `domap.Get`.
-	// That's because `domap.Get` requires a lock, but before
-	// we initialize Domain finish, we can't require that again.
-	// After we remove the lazy logic of creating Domain, we
-	// can simplify code here.
-	sysFac := func() (pools.Resource, error) {
-		return sysExecutorFactory(do)
-	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
-
 	ctx, cancelFunc := context.WithCancel(context.Background())
+	do.ctx = ctx
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
@@ -1372,9 +1374,6 @@ func (do *Domain) Init(
 				}
 				do.isLostConnectionToPD.Store(0)
 			}
-
-			do.wg.Add(1)
-			go do.serverIDKeeper()
 		} else {
 			// set serverID for standalone deployment to enable 'KILL'.
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
@@ -1396,19 +1395,6 @@ func (do *Domain) Init(
 		return err
 	}
 
-	// step 4: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
-	err = do.ddl.Start(sysCtxPool)
-	if err != nil {
-		return err
-	}
-	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
-
-	// TODO there are many place set ddlLease to 0, remove them completely, we want
-	//  UT and even local uni-store to run similar code path as normal.
-	if ddlLease == 0 {
-		ddlLease = time.Second
-	}
-
 	sub := time.Since(startReloadTime)
 	// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
 	// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
@@ -1419,10 +1405,39 @@ func (do *Domain) Init(
 			return err
 		}
 	}
+	return nil
+}
+
+// Start starts the domain. After start, DDLs can be executed using session, see
+// Init also.
+func (do *Domain) Start() error {
+	gCfg := config.GetGlobalConfig()
+	if gCfg.EnableGlobalKill && do.etcdClient != nil {
+		do.wg.Add(1)
+		go do.serverIDKeeper()
+	}
+
+	// TODO: Here we create new sessions with sysFac in DDL,
+	// which will use `do` as Domain instead of call `domap.Get`.
+	// That's because `domap.Get` requires a lock, but before
+	// we initialize Domain finish, we can't require that again.
+	// After we remove the lazy logic of creating Domain, we
+	// can simplify code here.
+	sysFac := func() (pools.Resource, error) {
+		return do.sysExecutorFactory(do)
+	}
+	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
+
+	// start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
+	err := do.ddl.Start(sysCtxPool)
+	if err != nil {
+		return err
+	}
+	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
-		do.loadSchemaInLoop(ctx, ddlLease)
+		do.loadSchemaInLoop(do.ctx, do.ddl.GetLease())
 	}, "loadSchemaInLoop")
 	do.wg.Run(do.mdlCheckLoop, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
@@ -1430,16 +1445,18 @@ func (do *Domain) Init(
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
+	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
+	pdCli := do.GetPDClient()
 	if pdCli != nil {
 		do.wg.Run(func() {
-			do.closestReplicaReadCheckLoop(ctx, pdCli)
+			do.closestReplicaReadCheckLoop(do.ctx, pdCli)
 		}, "closestReplicaReadCheckLoop")
 	}
 
-	err = do.initLogBackup(ctx, pdCli)
+	err = do.initLogBackup(do.ctx, pdCli)
 	if err != nil {
 		return err
 	}

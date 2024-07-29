@@ -257,8 +257,8 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
-	dom.Close()
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -322,7 +322,6 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.SupportUpgradeHTTPOpVer, ver)
-	dom.Close()
 
 	// Start the upgrade test.
 	// Current cluster state is normal.
@@ -331,6 +330,8 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 	require.Equal(t, false, isUpgrading)
 	upgradeHandler := handler.NewClusterUpgradeHandler(store)
 	upgradeHandler.StartUpgrade()
+
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -434,9 +435,9 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -525,9 +526,9 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -587,9 +588,9 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -765,8 +766,8 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
-	dom.Close()
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
