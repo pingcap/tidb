@@ -744,6 +744,24 @@ func TestAddGlobalIndex(t *testing.T) {
 	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
 
 	require.NoError(t, txn.Commit(context.Background()))
+
+	// `sanity_check.go` will check the del_range numbers are correct or not.
+	// normal index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
+	tk.MustExec("alter table t add unique index idx(a)")
+
+	// meets duplicate
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
+	tk.MustExec("insert into t values (1, 2), (1, 3)")
+	// Duplicate
+	tk.MustExecToErr("alter table t add unique index idx(a)")
+
+	// with multi schema change
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
+	tk.MustExec("alter table t add unique index idx(a), add index idx1(b)")
 }
 
 // checkGlobalIndexRow reads one record from global index and check. Only support int handle.
@@ -806,27 +824,6 @@ func checkGlobalIndexRow(
 	for i, val := range rowVals {
 		require.Equal(t, val, rowValueDatums[tblInfo.Columns[i].ID])
 	}
-}
-
-func TestAddGlobalIndexDropTempIndex(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
-
-	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
-	tk.MustExec("alter table t add unique index idx(a)")
-	tk.MustQuery("select count(*) from mysql.gc_delete_range_done group by job_id order by job_id desc limit 1").Check(testkit.Rows("1"))
-
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
-	tk.MustExec("insert into t values (1, 2), (1, 3)")
-	// Duplicate
-	tk.MustExecToErr("alter table t add unique index idx(a)")
-	tk.MustQuery("select count(*) from mysql.gc_delete_range_done group by job_id order by job_id desc limit 1").Check(testkit.Rows("2"))
 }
 
 func TestDropIndexes(t *testing.T) {
