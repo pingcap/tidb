@@ -1407,7 +1407,8 @@ func (do *Domain) Init(
 	return nil
 }
 
-// Start starts the domain.
+// Start starts the domain. After start, DDLs can be executed using session, see
+// Init also.
 func (do *Domain) Start() error {
 	gCfg := config.GetGlobalConfig()
 	if gCfg.EnableGlobalKill && do.etcdClient != nil {
