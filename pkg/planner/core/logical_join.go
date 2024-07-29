@@ -301,13 +301,11 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	if err != nil {
 		return nil, err
 	}
-	addConstOneForEmptyProjection(p.Children()[0])
 
 	p.Children()[1], err = p.Children()[1].PruneColumns(rightCols, opt)
 	if err != nil {
 		return nil, err
 	}
-	addConstOneForEmptyProjection(p.Children()[1])
 
 	p.mergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {

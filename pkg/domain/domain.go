@@ -2287,7 +2287,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
 	if err != nil {
 		return err
 	}
@@ -2364,7 +2364,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
 	if err != nil {
 		return err
 	}
@@ -2857,12 +2857,6 @@ func (do *Domain) ReleaseConnID(connID uint64) {
 	do.connIDAllocator.Release(connID)
 }
 
-// GetAutoAnalyzeProcID returns processID for auto analyze
-// TODO: support IDs for concurrent auto-analyze
-func (do *Domain) GetAutoAnalyzeProcID() uint64 {
-	return do.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
-}
-
 const (
 	serverIDEtcdPath               = "/tidb/server_id"
 	refreshServerIDRetryCnt        = 3
@@ -2871,9 +2865,6 @@ const (
 	retrieveServerIDSessionTimeout = 10 * time.Second
 
 	acquire32BitsServerIDRetryCnt = 3
-
-	// reservedConnXXX must be within [0, globalconn.ReservedCount)
-	reservedConnAnalyze = 0
 )
 
 var (

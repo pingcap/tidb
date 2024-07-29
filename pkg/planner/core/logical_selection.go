@@ -126,7 +126,6 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 	if err != nil {
 		return nil, err
 	}
-	addConstOneForEmptyProjection(p.Children()[0])
 	return p, nil
 }
 
