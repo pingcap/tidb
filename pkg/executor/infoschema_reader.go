@@ -255,8 +255,13 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getAutoIncrementID(ctx context.Context, sctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) (int64, error) {
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+func getAutoIncrementID(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	schema model.CIStr,
+	tblInfo *model.TableInfo,
+) (int64, error) {
 	tbl, err := is.TableByName(ctx, schema, tblInfo.Name)
 	if err != nil {
 		return 0, err
@@ -590,13 +595,13 @@ func getMatchSchemas(
 	ex := extractor.(plannercore.TableSchemaSelector)
 	if ex != nil {
 		if schemas := ex.SelectedSchemaNames(); len(schemas) > 0 {
-			tmp := schemas[:0]
+			ret := schemas[:0]
 			for _, s := range schemas {
 				if n, ok := is.SchemaByName(s); ok {
-					tmp = append(tmp, n.Name)
+					ret = append(ret, n.Name)
 				}
 			}
-			return tmp
+			return ret
 		}
 	}
 	schemas := is.AllSchemaNames()
@@ -614,19 +619,42 @@ func getMatchTableInfos(
 ) ([]*model.TableInfo, error) {
 	ex := extractor.(plannercore.TableSchemaSelector)
 	if ex != nil {
-		if selectedNames := ex.SelectedTableNames(); len(selectedNames) > 0 {
-			// Find all table infos from where condition.
-			tables := make([]*model.TableInfo, 0, len(selectedNames))
-			for _, n := range selectedNames {
-				tbl, err := is.TableByName(ctx, schema, n)
-				if err != nil {
-					if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-						continue
-					}
-					return nil, errors.Trace(err)
+		tables := make([]*model.TableInfo, 0, 8)
+		// Find all table infos from where condition.
+		fetchAllTables := true
+		for _, n := range ex.SelectedTableNames() {
+			fetchAllTables = false
+			tbl, err := is.TableByName(ctx, schema, n)
+			if err != nil {
+				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+					continue
 				}
-				tables = append(tables, tbl.Meta())
+				return nil, errors.Trace(err)
 			}
+			tables = append(tables, tbl.Meta())
+		}
+		for _, id := range ex.SelectedTableIDs() {
+			fetchAllTables = false
+			tbl, ok := is.TableByID(id)
+			if !ok {
+				continue
+			}
+			_, err := is.TableByName(ctx, schema, tbl.Meta().Name)
+			if err != nil {
+				continue
+			}
+			found := false
+			for _, t := range tables {
+				if t.ID == tbl.Meta().ID {
+					found = true // deduplicate
+				}
+			}
+			if found {
+				continue
+			}
+			tables = append(tables, tbl.Meta())
+		}
+		if !fetchAllTables {
 			return tables, nil
 		}
 	}
@@ -634,20 +662,153 @@ func getMatchTableInfos(
 	return is.SchemaTableInfos(ctx, schema)
 }
 
+func (e *memtableRetriever) setDataFromOneTable(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	loc *time.Location,
+	checker privilege.Manager,
+	schema model.CIStr,
+	table *model.TableInfo,
+	rows [][]types.Datum,
+	useStatsCache bool,
+) ([][]types.Datum, error) {
+	collation := table.Collate
+	if collation == "" {
+		collation = mysql.DefaultCollationName
+	}
+	createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+
+	createOptions := ""
+
+	if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+		return rows, nil
+	}
+	pkType := "NONCLUSTERED"
+	if !table.IsView() {
+		if table.GetPartitionInfo() != nil {
+			createOptions = "partitioned"
+		} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
+			createOptions = "cached=on"
+		}
+		var err error
+		var autoIncID any
+		hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
+		if hasAutoIncID {
+			autoIncID, err = getAutoIncrementID(ctx, e.is, sctx, schema, table)
+			if err != nil {
+				return rows, err
+			}
+		}
+		tableType := "BASE TABLE"
+		if util.IsSystemView(schema.L) {
+			tableType = "SYSTEM VIEW"
+		}
+		if table.IsSequence() {
+			tableType = "SEQUENCE"
+		}
+		if table.HasClusteredIndex() {
+			pkType = "CLUSTERED"
+		}
+		shardingInfo := infoschema.GetShardingInfo(schema, table)
+		var policyName any
+		if table.PlacementPolicyRef != nil {
+			policyName = table.PlacementPolicyRef.Name.O
+		}
+
+		var rowCount, avgRowLength, dataLength, indexLength uint64
+		if useStatsCache {
+			if table.GetPartitionInfo() == nil {
+				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+				if err != nil {
+					return rows, err
+				}
+			} else {
+				// needs to update all partitions for partition table.
+				for _, pi := range table.GetPartitionInfo().Definitions {
+					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+					if err != nil {
+						return rows, err
+					}
+				}
+			}
+			rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
+		}
+
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.O,              // TABLE_SCHEMA
+			table.Name.O,          // TABLE_NAME
+			tableType,             // TABLE_TYPE
+			"InnoDB",              // ENGINE
+			uint64(10),            // VERSION
+			"Compact",             // ROW_FORMAT
+			rowCount,              // TABLE_ROWS
+			avgRowLength,          // AVG_ROW_LENGTH
+			dataLength,            // DATA_LENGTH
+			uint64(0),             // MAX_DATA_LENGTH
+			indexLength,           // INDEX_LENGTH
+			uint64(0),             // DATA_FREE
+			autoIncID,             // AUTO_INCREMENT
+			createTime,            // CREATE_TIME
+			nil,                   // UPDATE_TIME
+			nil,                   // CHECK_TIME
+			collation,             // TABLE_COLLATION
+			nil,                   // CHECKSUM
+			createOptions,         // CREATE_OPTIONS
+			table.Comment,         // TABLE_COMMENT
+			table.ID,              // TIDB_TABLE_ID
+			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
+			pkType,                // TIDB_PK_TYPE
+			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+		)
+		rows = append(rows, record)
+	} else {
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.O,              // TABLE_SCHEMA
+			table.Name.O,          // TABLE_NAME
+			"VIEW",                // TABLE_TYPE
+			nil,                   // ENGINE
+			nil,                   // VERSION
+			nil,                   // ROW_FORMAT
+			nil,                   // TABLE_ROWS
+			nil,                   // AVG_ROW_LENGTH
+			nil,                   // DATA_LENGTH
+			nil,                   // MAX_DATA_LENGTH
+			nil,                   // INDEX_LENGTH
+			nil,                   // DATA_FREE
+			nil,                   // AUTO_INCREMENT
+			createTime,            // CREATE_TIME
+			nil,                   // UPDATE_TIME
+			nil,                   // CHECK_TIME
+			nil,                   // TABLE_COLLATION
+			nil,                   // CHECKSUM
+			nil,                   // CREATE_OPTIONS
+			"VIEW",                // TABLE_COMMENT
+			table.ID,              // TIDB_TABLE_ID
+			nil,                   // TIDB_ROW_ID_SHARDING_INFO
+			pkType,                // TIDB_PK_TYPE
+			nil,                   // TIDB_PLACEMENT_POLICY_NAME
+		)
+		rows = append(rows, record)
+	}
+	return rows, nil
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 
 	var rows [][]types.Datum
-	createTimeTp := mysql.TypeDatetime
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
 	}
-	tableEx := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
-	if tableEx != nil && tableEx.SkipRequest {
+	ex := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ex != nil && ex.SkipRequest {
 		return nil
 	}
+
 	schemas := getMatchSchemas(e.extractor, e.is)
 	for _, schema := range schemas {
 		tables, err := getMatchTableInfos(ctx, e.extractor, schema, e.is)
@@ -655,125 +816,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
-			collation := table.Collate
-			if collation == "" {
-				collation = mysql.DefaultCollationName
-			}
-			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime().In(loc)), createTimeTp, types.DefaultFsp)
-
-			createOptions := ""
-
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			pkType := "NONCLUSTERED"
-			if !table.IsView() {
-				if table.GetPartitionInfo() != nil {
-					createOptions = "partitioned"
-				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
-					createOptions = "cached=on"
-				}
-				var err error
-				var autoIncID any
-				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
-				if hasAutoIncID {
-					autoIncID, err = getAutoIncrementID(ctx, sctx, schema, table)
-					if err != nil {
-						return err
-					}
-				}
-				tableType := "BASE TABLE"
-				if util.IsSystemView(schema.L) {
-					tableType = "SYSTEM VIEW"
-				}
-				if table.IsSequence() {
-					tableType = "SEQUENCE"
-				}
-				if table.HasClusteredIndex() {
-					pkType = "CLUSTERED"
-				}
-				shardingInfo := infoschema.GetShardingInfo(schema, table)
-				var policyName any
-				if table.PlacementPolicyRef != nil {
-					policyName = table.PlacementPolicyRef.Name.O
-				}
-
-				var rowCount, avgRowLength, dataLength, indexLength uint64
-				if useStatsCache {
-					if table.GetPartitionInfo() == nil {
-						err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-						if err != nil {
-							return err
-						}
-					} else {
-						// needs to update all partitions for partition table.
-						for _, pi := range table.GetPartitionInfo().Definitions {
-							err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
-							if err != nil {
-								return err
-							}
-						}
-					}
-					rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
-				}
-
-				record := types.MakeDatums(
-					infoschema.CatalogVal, // TABLE_CATALOG
-					schema.O,              // TABLE_SCHEMA
-					table.Name.O,          // TABLE_NAME
-					tableType,             // TABLE_TYPE
-					"InnoDB",              // ENGINE
-					uint64(10),            // VERSION
-					"Compact",             // ROW_FORMAT
-					rowCount,              // TABLE_ROWS
-					avgRowLength,          // AVG_ROW_LENGTH
-					dataLength,            // DATA_LENGTH
-					uint64(0),             // MAX_DATA_LENGTH
-					indexLength,           // INDEX_LENGTH
-					uint64(0),             // DATA_FREE
-					autoIncID,             // AUTO_INCREMENT
-					createTime,            // CREATE_TIME
-					nil,                   // UPDATE_TIME
-					nil,                   // CHECK_TIME
-					collation,             // TABLE_COLLATION
-					nil,                   // CHECKSUM
-					createOptions,         // CREATE_OPTIONS
-					table.Comment,         // TABLE_COMMENT
-					table.ID,              // TIDB_TABLE_ID
-					shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
-					pkType,                // TIDB_PK_TYPE
-					policyName,            // TIDB_PLACEMENT_POLICY_NAME
-				)
-				rows = append(rows, record)
-			} else {
-				record := types.MakeDatums(
-					infoschema.CatalogVal, // TABLE_CATALOG
-					schema.O,              // TABLE_SCHEMA
-					table.Name.O,          // TABLE_NAME
-					"VIEW",                // TABLE_TYPE
-					nil,                   // ENGINE
-					nil,                   // VERSION
-					nil,                   // ROW_FORMAT
-					nil,                   // TABLE_ROWS
-					nil,                   // AVG_ROW_LENGTH
-					nil,                   // DATA_LENGTH
-					nil,                   // MAX_DATA_LENGTH
-					nil,                   // INDEX_LENGTH
-					nil,                   // DATA_FREE
-					nil,                   // AUTO_INCREMENT
-					createTime,            // CREATE_TIME
-					nil,                   // UPDATE_TIME
-					nil,                   // CHECK_TIME
-					nil,                   // TABLE_COLLATION
-					nil,                   // CHECKSUM
-					nil,                   // CREATE_OPTIONS
-					"VIEW",                // TABLE_COMMENT
-					table.ID,              // TIDB_TABLE_ID
-					nil,                   // TIDB_ROW_ID_SHARDING_INFO
-					pkType,                // TIDB_PK_TYPE
-					nil,                   // TIDB_PLACEMENT_POLICY_NAME
-				)
-				rows = append(rows, record)
+			rows, err = e.setDataFromOneTable(ctx, sctx, loc, checker, schema, table, rows, useStatsCache)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}
