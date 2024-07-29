@@ -214,8 +214,8 @@ type JobWrapper struct {
 	// exported for test.
 	IDAllocated bool
 	// job submission is run in async, we use this channel to notify the caller.
-	// for local job we might combine multiple jobs into one, append the ErrChs to
-	// this slice.
+	// when fast create table enabled, we might combine multiple jobs into one, and
+	// append the channel to this slice.
 	ResultCh []chan jobSubmitResult
 	cacheErr error
 }
@@ -595,6 +595,8 @@ func (e *executor) delJobDoneCh(jobID int64) {
 
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
 	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
+		// broadcast done event as we might merge multiple jobs into one when fast
+		// create table is enabled.
 		close(ch)
 	}
 }
@@ -1033,8 +1035,8 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 	return policy[plen-1], false
 }
 
-func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
-	switch job.Type {
+func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
+	switch action {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn,
 		model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
@@ -1060,8 +1062,8 @@ func (e *executor) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobI
 	}
 }
 
-func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.Job, i int) *time.Ticker {
-	interval, changed := getJobCheckInterval(job, i)
+func updateTickerInterval(ticker *time.Ticker, lease time.Duration, action model.ActionType, i int) *time.Ticker {
+	interval, changed := getJobCheckInterval(action, i)
 	if !changed {
 		return ticker
 	}
@@ -1085,28 +1087,6 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 	default:
 		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	}
-}
-
-func setDDLJobMode(job *model.Job) {
-	if !variable.EnableFastCreateTable.Load() {
-		job.LocalMode = false
-		return
-	}
-
-	switch job.Type {
-	// currently, v2 only support CreateTable without foreign keys.
-	case model.ActionCreateTable:
-		tbInfo, ok := job.Args[0].(*model.TableInfo)
-		if ok && len(tbInfo.ForeignKeys) == 0 {
-			job.LocalMode = true
-			return
-		}
-	case model.ActionCreateSchema:
-		job.LocalMode = true
-		return
-	default:
-	}
-	job.LocalMode = false
 }
 
 func (e *executor) deliverJobTask(task *JobWrapper) {
@@ -1134,7 +1114,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	//setDDLJobMode(job)
 	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -1163,19 +1142,13 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	sessVars := ctx.GetSessionVars()
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
+	ddlAction := job.Type
 	// Notice worker that we push a new job and wait the job done.
-	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, jobID, job.Type.String())
+	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, jobID, ddlAction.String())
 	if result.merged {
 		logutil.DDLLogger().Info("start DDL job", zap.Int64("job_id", jobID), zap.String("query", job.Query), zap.String("merged", "true"))
 	} else {
 		logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
-	}
-
-	// for local mode job, we add the history job directly now, so no need to check it.
-	// fast-create doesn't wait schema version synced, we must reload info-schema
-	// here to make sure later statements can see the created table/database.
-	if job.LocalMode {
-		return e.schemaLoader.Reload()
 	}
 
 	var historyJob *model.Job
@@ -1187,14 +1160,14 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
-	initInterval, _ := getJobCheckInterval(job, 0)
+	initInterval, _ := getJobCheckInterval(ddlAction, 0)
 	ticker := time.NewTicker(chooseLeaseTime(10*e.lease, initInterval))
 	startTime := time.Now()
-	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
+	metrics.JobsGauge.WithLabelValues(ddlAction.String()).Inc()
 	defer func() {
 		ticker.Stop()
-		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
-		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		metrics.JobsGauge.WithLabelValues(ddlAction.String()).Dec()
+		metrics.HandleJobHistogram.WithLabelValues(ddlAction.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
@@ -1205,7 +1178,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 		case <-notifyCh:
 		case <-ticker.C:
 			i++
-			ticker = updateTickerInterval(ticker, 10*e.lease, job, i)
+			ticker = updateTickerInterval(ticker, 10*e.lease, ddlAction, i)
 		case <-e.ctx.Done():
 			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
 			return context.Canceled

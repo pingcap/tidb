@@ -584,6 +584,7 @@ type Job struct {
 	// LocalMode = true means the job is running on the local TiDB that the client
 	// connects to, else it's run on the DDL owner.
 	// Only happens when tidb_enable_fast_create_table = on
+	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
 
 	// SQLMode for executing DDL query.
