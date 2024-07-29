@@ -3,8 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sstfiles",
     srcs = [
-        "complete_restorer.go",
         "import.go",
+        "multi_tables_restorer.go",
         "restorer.go",
         "simple_restorer.go",
     ],
