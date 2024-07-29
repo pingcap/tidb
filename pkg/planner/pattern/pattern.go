@@ -89,7 +89,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandSelection
 	case *logicalop.LogicalMaxOneRow:
 		return OperandMaxOneRow
-	case *plannercore.LogicalTableDual:
+	case *logicalop.LogicalTableDual:
 		return OperandTableDual
 	case *plannercore.DataSource:
 		return OperandDataSource

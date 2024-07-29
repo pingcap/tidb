@@ -185,7 +185,7 @@ func (lt *LogicalTopN) isLimit() bool {
 // AttachChild will tracer the children change while SetChild doesn't.
 func (lt *LogicalTopN) AttachChild(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// Remove this TopN if its child is a TableDual.
-	dual, isDual := p.(*LogicalTableDual)
+	dual, isDual := p.(*logicalop.LogicalTableDual)
 	if isDual {
 		numDualRows := uint64(dual.RowCount)
 		if numDualRows < lt.Offset {
