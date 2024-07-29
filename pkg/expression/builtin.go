@@ -212,7 +212,6 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	}
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
-
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
@@ -274,7 +273,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	}
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
-
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
