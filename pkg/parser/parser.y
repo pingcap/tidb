@@ -1270,6 +1270,7 @@ import (
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
+	ReplaceStringOpt					   "Replace current password option"
 	OnDelete                               "ON DELETE clause"
 	OnUpdate                               "ON UPDATE clause"
 	OnDeleteUpdateOpt                      "optional ON DELETE and UPDATE clause"
@@ -10570,27 +10571,19 @@ SetStmt:
 	{
 		$$ = &ast.SetStmt{Variables: $2.([]*ast.VariableAssignment)}
 	}
-|	"SET" "PASSWORD" EqOrAssignmentEq PasswordOpt
-	{
-		$$ = &ast.SetPwdStmt{Password: $4}
-	}
-|	"SET" "PASSWORD" EqOrAssignmentEq PasswordOpt "REPLACE" stringLit
+|	"SET" "PASSWORD" EqOrAssignmentEq PasswordOpt ReplaceStringOpt
 	{
 		$$ = &ast.SetPwdStmt{
-			Password: $4,
-			ReplaceString: $6,
+			Password:      $4,
+			ReplaceString: $5.(string),
 		}
 	}
-|	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt
-	{
-		$$ = &ast.SetPwdStmt{User: $4.(*auth.UserIdentity), Password: $6}
-	}
-|	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt "REPLACE" stringLit
+|	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt ReplaceStringOpt
 	{
 		$$ = &ast.SetPwdStmt{
-			User: $4.(*auth.UserIdentity),
-			Password: $6,
-			ReplaceString: $8,
+			User:          $4.(*auth.UserIdentity),
+			Password:      $6,
+			ReplaceString: $7.(string),
 		}
 	}
 |	"SET" "GLOBAL" "TRANSACTION" TransactionChars
@@ -13463,6 +13456,15 @@ CreateRoleStmt:
 		}
 	}
 
+ReplaceStringOpt:
+    {
+        $$ = ""
+    }
+|	"REPLACE" AuthString
+    {
+        $$ = $2
+    }
+
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
 	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
@@ -13482,22 +13484,11 @@ AlterUserStmt:
 		}
 		$$ = ret
 	}
-|	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString
-	{
-		auth := &ast.AuthOption{
-			AuthString:   $9,
-			ByAuthString: true,
-		}
-		$$ = &ast.AlterUserStmt{
-			IfExists:    $3.(bool),
-			CurrentAuth: auth,
-		}
-	}
-|	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString "REPLACE" AuthString
+|	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString ReplaceStringOpt
 	{
 		auth := &ast.AuthOption{
 			AuthString:    $9,
-			ReplaceString: $11,
+			ReplaceString: $10.(string),
 			ByAuthString:  true,
 		}
 		$$ = &ast.AlterUserStmt{
@@ -13849,18 +13840,11 @@ AuthOption:
 	{
 		$$ = nil
 	}
-|	"IDENTIFIED" "BY" AuthString
-	{
-		$$ = &ast.AuthOption{
-			AuthString:   $3,
-			ByAuthString: true,
-		}
-	}
-|	"IDENTIFIED" "BY" AuthString "REPLACE" AuthString
+|	"IDENTIFIED" "BY" AuthString ReplaceStringOpt
 	{
 		$$ = &ast.AuthOption{
 			AuthString:    $3,
-			ReplaceString: $5,
+			ReplaceString: $4.(string),
 			ByAuthString:  true,
 		}
 	}
@@ -13870,20 +13854,12 @@ AuthOption:
 			AuthPlugin: $3,
 		}
 	}
-|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString
-	{
-		$$ = &ast.AuthOption{
-			AuthPlugin:   $3,
-			AuthString:   $5,
-			ByAuthString: true,
-		}
-	}
-|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString "REPLACE" AuthString
+|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString ReplaceStringOpt
 	{
 		$$ = &ast.AuthOption{
 			AuthPlugin:    $3,
 			AuthString:    $5,
-			ReplaceString: $7,
+			ReplaceString: $6.(string),
 			ByAuthString:  true,
 		}
 	}
