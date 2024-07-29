@@ -15,6 +15,7 @@
 package clustertablestest
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -763,6 +764,7 @@ func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.
 	}()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
+		conf.AdvertiseAddress = "127.0.0.1"
 	})
 	return srv, addr
 }
@@ -937,6 +939,7 @@ func TestQuickBinding(t *testing.T) {
 	tk := s.newTestKitWithRoot(t)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
+	tk.MustExec("set tidb_opt_projection_push_down = 0")
 	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (pk int, a int, b int, c int, primary key(pk), key k_a(a), key k_bc(b, c))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, key k_a(a), key k_bc(b, c))`) // no primary key
@@ -1730,7 +1733,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
@@ -1741,7 +1744,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
 
-		tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(bigTableName))
+		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(bigTableName))
 		require.NoError(t, err)
 
 		require.LessOrEqual(t, tbl.Meta().ID, bigID)
@@ -1776,14 +1779,14 @@ func TestMDLViewIDConflict(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		ddlTK1.MustExec("ALTER TABLE t ADD COLUMN b INT;")
+		ddlTK1.MustExec("ALTER TABLE t ADD index(a);")
 		wg.Done()
 	}()
 	ddlTK2 := s.newTestKitWithRoot(t)
 	ddlTK2.MustExec("use test")
 	wg.Add(1)
 	go func() {
-		ddlTK2.MustExec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN b INT;", bigTableName))
+		ddlTK2.MustExec(fmt.Sprintf("ALTER TABLE %s ADD index(a);", bigTableName))
 		wg.Done()
 	}()
 

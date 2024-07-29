@@ -164,7 +164,7 @@ func (*PointGetPlan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executo
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *PointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
@@ -339,6 +339,17 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		// reading for the Global Index / table id
 		return false
 	}
+	// _tidb_rowid + specify a partition
+	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
+		for i, def := range pi.Definitions {
+			if def.Name.L == p.PartitionNames[0].L {
+				idx := i
+				p.PartitionIdx = &idx
+				break
+			}
+		}
+		return false
+	}
 	// If tryPointGetPlan did generate the plan,
 	// then PartitionIdx is not set and needs to be set here!
 	// There are two ways to get here from static mode partition pruning:
@@ -481,7 +492,7 @@ func (p *BatchPointGetPlan) SetCost(cost float64) {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *BatchPointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
@@ -1709,7 +1720,11 @@ func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model
 			return nil, false
 		}
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
-		if col == nil { // Handling the case when the column is _tidb_rowid.
+		if col == nil {
+			// Partition table can't use `_tidb_rowid` to generate PointGet Plan.
+			if tbl.GetPartitionInfo() != nil && colName.Name.Name.L == model.ExtraHandleName.L {
+				return nil, false
+			}
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
 		}
 

@@ -55,24 +55,52 @@ drop placement policy if exists x;
 create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
 drop placement policy if exists x;
 drop user placement_user;
+CREATE USER resource_group_admin;
 CREATE USER resource_group_user;
 set @@global.tidb_enable_resource_control = 1;
 CREATE RESOURCE GROUP test RU_PER_SEC = 666;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation
-GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_user;
+CREATE DATABASE IF NOT EXISTS test_rc;
+CREATE TABLE test_rc.t(id int);
+INSERT INTO test_rc.t VALUES (1);
+GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_admin;
+SHOW GRANTS FOR resource_group_admin;
+Grants for resource_group_admin@%
+GRANT USAGE ON *.* TO 'resource_group_admin'@'%'
+GRANT RESOURCE_GROUP_ADMIN ON *.* TO 'resource_group_admin'@'%'
+GRANT RESOURCE_GROUP_USER ON *.* TO resource_group_user;
 SHOW GRANTS FOR resource_group_user;
 Grants for resource_group_user@%
 GRANT USAGE ON *.* TO 'resource_group_user'@'%'
-GRANT RESOURCE_GROUP_ADMIN ON *.* TO 'resource_group_user'@'%'
+GRANT RESOURCE_GROUP_USER ON *.* TO 'resource_group_user'@'%'
+GRANT SELECT on test_rc.* TO resource_group_admin;
+GRANT SELECT on test_rc.* TO resource_group_user;
 CREATE RESOURCE GROUP test RU_PER_SEC = 666;
 CREATE RESOURCE GROUP test2 RU_PER_SEC = 999;
 ALTER RESOURCE GROUP test2 RU_PER_SEC = 1000;
 DROP RESOURCE GROUP test2;
-REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_user;
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+id
+1
+SET RESOURCE GROUP test;
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+id
+1
+SET RESOURCE GROUP test;
+REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_admin;
+REVOKE RESOURCE_GROUP_USER ON *.* FROM resource_group_user;
 ALTER RESOURCE GROUP test RU_PER_SEC = 667;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation
 DROP RESOURCE GROUP test;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation
+SET RESOURCE GROUP test;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER privilege(s) for this operation
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+id
+1
+REVOKE SELECT on test_rc.* FROM resource_group_admin;
+REVOKE SELECT on test_rc.* FROM resource_group_user;
+DROP DATABASE test_rc;
 CREATE SCHEMA IF NOT EXISTS privilege__privileges;
 USE privilege__privileges;
 CREATE TABLE reftest (a int);
@@ -481,7 +509,7 @@ GRANT ALL ON *.* TO 'superuser';
 SET PASSWORD for 'nobodyuser' = 'newpassword';
 SET PASSWORD for 'nobodyuser' = '';
 SET PASSWORD for 'superuser' = 'newpassword';
-Error 1044 (42000): Access denied for user 'superuser'@'%' to database 'mysql'
+Error 1044 (42000): Access denied for user 'nobodyuser'@'127.0.0.1' to database 'mysql'
 CREATE ROLE tsg_r1;
 CREATE USER tsg_u1, tsg_u2;
 GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1;

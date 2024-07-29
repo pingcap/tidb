@@ -159,7 +159,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	}
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t with 1 samplerate, 20 topn")
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 	// Add 100 modify count
 	sql := "insert into t values "
 	topNValue := fmt.Sprintf("(%d,%d) ,", 5000, 5000)
@@ -167,7 +167,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	sql = sql[0 : len(sql)-1]
 	tk.MustExec(sql)
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 
 	var (
 		in  []string
@@ -188,7 +188,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
 	statsTbl := statsHandle.GetTableStats(tblInfo)
@@ -214,7 +214,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)
-		tblInfos = append(tblInfos, ds.TableInfo())
+		tblInfos = append(tblInfos, ds.TableInfo)
 	}
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
@@ -239,7 +239,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 20 topn")
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 	statsTbl = statsHandle.GetTableStats(tblInfo)
 
 	// Test using ver1 stats.

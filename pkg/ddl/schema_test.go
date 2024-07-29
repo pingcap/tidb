@@ -41,13 +41,15 @@ import (
 func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{tblInfo},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -138,9 +140,13 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *m
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{dbInfo},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
 	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
@@ -155,13 +161,17 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{true},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 }
 
 func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	ver := getSchemaVer(t, ctx)
 	return job, ver
@@ -261,12 +271,13 @@ func TestSchema(t *testing.T) {
 	// Drop a non-existent database.
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: "test_schema",
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
@@ -290,6 +301,7 @@ func TestSchemaWaitJob(t *testing.T) {
 		ddl.WithStore(store),
 		ddl.WithInfoCache(domain.InfoCache()),
 		ddl.WithLease(testLease),
+		ddl.WithSchemaLoader(domain),
 	)
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
@@ -319,20 +331,31 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []any{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
+	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema, []any{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
 }
 
-func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []any, ctx sessionctx.Context, d ddl.DDL, store kv.Storage) *model.Job {
+func doDDLJobErr(
+	t *testing.T,
+	schemaID, tableID int64,
+	schemaName, tableName string,
+	tp model.ActionType,
+	args []any,
+	ctx sessionctx.Context,
+	d ddl.DDL,
+	store kv.Storage,
+) *model.Job {
 	job := &model.Job{
 		SchemaID:   schemaID,
+		SchemaName: schemaName,
 		TableID:    tableID,
+		TableName:  tableName,
 		Type:       tp,
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	// TODO: check error detail
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.Error(t, d.DoDDLJob(ctx, job))
+	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 	testCheckJobCancelled(t, store, job, nil)
 
 	return job
@@ -349,7 +372,7 @@ func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state
 }
 
 func TestRenameTableAutoIDs(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
@@ -373,6 +396,7 @@ func TestRenameTableAutoIDs(t *testing.T) {
 			if len(res) == 1 && res[0][col] == s {
 				break
 			}
+
 			logutil.DDLLogger().Info("Could not find match", zap.String("tableName", tableName), zap.String("s", s), zap.Int("colNum", col))
 
 			for i := range res {
@@ -389,19 +413,32 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	tk2.MustExec(`set @@session.innodb_lock_wait_timeout = 0`)
 	tk2.MustExec(`BEGIN`)
 	tk2.MustExec(`insert into t values (null, 4)`)
+
+	v1 := dom.InfoSchema().SchemaMetaVersion()
+
 	go func() {
 		alterChan <- tk1.ExecToErr(`rename table t to ` + dbName + `2.t2`)
 	}()
 	waitFor(11, "t", "running")
 	waitFor(4, "t", "public")
+
+	// ddl finish does not mean the infoschema loaded.
+	// when infoschema v1->v2 switch, it take more time, so we must wait to ensure
+	// the new infoschema is used.
+	require.Eventually(t, func() bool { return dom.InfoSchema().SchemaMetaVersion() > v1 }, time.Minute, 2*time.Millisecond)
+
 	tk3.MustExec(`BEGIN`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (50, 5)`)
-
+	// TODO: still unstable here.
+	// This is caused by a known rename table and autoid compatibility issue.
+	// In the past we try to fix it by the same auto id allocator before and after table renames.
+	//     https://github.com/pingcap/tidb/pull/47892
+	// But during infoschema v1->v2 switch, infoschema full load happen, then both the old and new
+	// autoid instance exists. tk2 here use the old autoid allocator, cause txn conflict on index key
+	// b=20, conflicting with the next line insert values (20, 5)
 	tk2.MustExec(`insert into t values (null, 6)`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (20, 5)`)
-
 	// Done: Fix https://github.com/pingcap/tidb/issues/46904
-	//tk2.MustContainErrMsg(`insert into t values (null, 6)`, "[tikv:1205]Lock wait timeout exceeded; try restarting transaction")
 	tk2.MustExec(`insert into t values (null, 6)`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (null, 7)`)
 	tk2.MustExec(`COMMIT`)

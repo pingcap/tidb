@@ -57,7 +57,7 @@ func TestAtomicBoolUnmarshal(t *testing.T) {
 	require.Equal(t, "ab = \"false\"\n", firstBuffer.String())
 
 	_, err = toml.Decode("ab = 1", &d)
-	require.EqualError(t, err, "Invalid value for bool type: 1")
+	require.EqualError(t, err, "toml: line 1 (last key \"ab\"): Invalid value for bool type: 1")
 }
 
 func TestNullableBoolUnmarshal(t *testing.T) {
@@ -93,7 +93,7 @@ func TestNullableBoolUnmarshal(t *testing.T) {
 	require.Equal(t, nbUnset, log.EnableErrorStack)
 
 	_, err = toml.Decode("enable-error-stack = 1", &log)
-	require.EqualError(t, err, "Invalid value for bool type: 1")
+	require.EqualError(t, err, "toml: line 1 (last key \"enable-error-stack\"): Invalid value for bool type: 1")
 	require.Equal(t, nbUnset, log.EnableErrorStack)
 
 	// Test for UnmarshalJSON

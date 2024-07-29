@@ -29,12 +29,32 @@ type MetaIter = iter.TryNextor[*pb.Metadata]
 // SubcompactionIter is the type that yields subcompaction.
 type SubcompactionIter = iter.TryNextor[*pb.LogFileSubcompactionMeta]
 
+type MetaName struct {
+	meta Meta
+	name string
+}
+
+// MetaNameIter is the type of iterator of metadata files' content with name.
+type MetaNameIter = iter.TryNextor[*MetaName]
+
 type LogDataFileInfo struct {
 	*pb.DataFileInfo
 	MetaDataGroupName   string
 	OffsetInMetaGroup   int
 	OffsetInMergedGroup int
 }
+
+// GroupIndex is the type of physical data file with index from metadata.
+type GroupIndex = iter.Indexed[*pb.DataFileGroup]
+
+// GroupIndexIter is the type of iterator of physical data file with index from metadata.
+type GroupIndexIter = iter.TryNextor[GroupIndex]
+
+// FileIndex is the type of logical data file with index from physical data file.
+type FileIndex = iter.Indexed[*pb.DataFileInfo]
+
+// FileIndexIter is the type of iterator of logical data file with index from physical data file.
+type FileIndexIter = iter.TryNextor[FileIndex]
 
 // LogIter is the type of iterator of each log files' meta information.
 type LogIter = iter.TryNextor[*LogDataFileInfo]
@@ -47,6 +67,19 @@ type Meta = *pb.Metadata
 
 // Log is the metadata of one file recording KV sequences.
 type Log = *pb.DataFileInfo
+
+type streamMetadataHelper interface {
+	InitCacheEntry(path string, ref int)
+	ReadFile(
+		ctx context.Context,
+		path string,
+		offset uint64,
+		length uint64,
+		compressionType pb.CompressionType,
+		storage storage.ExternalStorage,
+	) ([]byte, error)
+	ParseToMetadata(rawMetaData []byte) (*pb.Metadata, error)
+}
 
 // LogFileManager is the manager for log files of a certain restoration,
 // which supports read / filter from the log backup archive with static start TS / restore TS.
@@ -63,7 +96,9 @@ type LogFileManager struct {
 	shiftStartTS uint64
 
 	storage storage.ExternalStorage
-	helper  *stream.MetadataHelper
+	helper  streamMetadataHelper
+
+	withmigrations *WithMigrations
 
 	metadataDownloadBatchSize uint
 }
@@ -74,6 +109,7 @@ type LogFileManagerInit struct {
 	RestoreTS uint64
 	Storage   storage.ExternalStorage
 
+	Migrations                *WithMigrations
 	MetadataDownloadBatchSize uint
 }
 
@@ -139,22 +175,22 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	return nil
 }
 
-func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaIter, error) {
+func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
 	return rc.streamingMetaByTS(ctx, rc.restoreTS)
 }
 
-func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaIter, error) {
+func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaNameIter, error) {
 	it, err := rc.createMetaIterOver(ctx, rc.storage)
 	if err != nil {
 		return nil, err
 	}
-	filtered := iter.FilterOut(it, func(metadata *pb.Metadata) bool {
-		return restoreTS < metadata.MinTs || metadata.MaxTs < rc.shiftStartTS
+	filtered := iter.FilterOut(it, func(metaname *MetaName) bool {
+		return restoreTS < metaname.meta.MinTs || metaname.meta.MaxTs < rc.shiftStartTS
 	})
 	return filtered, nil
 }
 
-func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaIter, error) {
+func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaNameIter, error) {
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
@@ -168,7 +204,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		return nil, err
 	}
 	namesIter := iter.FromSlice(names)
-	readMeta := func(ctx context.Context, name string) (*pb.Metadata, error) {
+	readMeta := func(ctx context.Context, name string) (*MetaName, error) {
 		f, err := s.ReadFile(ctx, name)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed during reading file %s", name)
@@ -177,7 +213,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to parse metadata of file %s", name)
 		}
-		return meta, nil
+		return &MetaName{meta: meta, name: name}, nil
 	}
 	// TODO: maybe we need to be able to adjust the concurrency to download files,
 	// which currently is the same as the chunk size
@@ -186,29 +222,32 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 	return reader, nil
 }
 
-func (rc *LogFileManager) FilterDataFiles(ms MetaIter) LogIter {
-	return iter.FlatMap(ms, func(m *pb.Metadata) LogIter {
-		return iter.FlatMap(iter.Enumerate(iter.FromSlice(m.FileGroups)), func(gi iter.Indexed[*pb.DataFileGroup]) LogIter {
-			return iter.Map(
-				iter.FilterOut(iter.Enumerate(iter.FromSlice(gi.Item.DataFilesInfo)), func(di iter.Indexed[*pb.DataFileInfo]) bool {
+func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
+	ms := rc.withmigrations.Metas(m)
+	return iter.FlatMap(ms, func(m *MetaWithMigrations) LogIter {
+		gs := m.Physicals(iter.Enumerate(iter.FromSlice(m.meta.FileGroups)))
+		return iter.FlatMap(gs, func(gim *PhysicalWithMigrations) LogIter {
+			fs := iter.FilterOut(
+				gim.Logicals(iter.Enumerate(iter.FromSlice(gim.physical.Item.DataFilesInfo))),
+				func(di FileIndex) bool {
 					// Modify the data internally, a little hacky.
-					if m.MetaVersion > pb.MetaVersion_V1 {
-						di.Item.Path = gi.Item.Path
+					if m.meta.MetaVersion > pb.MetaVersion_V1 {
+						di.Item.Path = gim.physical.Item.Path
 					}
 					return di.Item.IsMeta || rc.ShouldFilterOut(di.Item)
-				}),
-				func(di iter.Indexed[*pb.DataFileInfo]) *LogDataFileInfo {
-					return &LogDataFileInfo{
-						DataFileInfo: di.Item,
+				})
+			return iter.Map(fs, func(di FileIndex) *LogDataFileInfo {
+				return &LogDataFileInfo{
+					DataFileInfo: di.Item,
 
-						// Since there is a `datafileinfo`, the length of `m.FileGroups`
-						// must be larger than 0. So we use the first group's name as
-						// metadata's unique key.
-						MetaDataGroupName:   m.FileGroups[0].Path,
-						OffsetInMetaGroup:   gi.Index,
-						OffsetInMergedGroup: di.Index,
-					}
-				},
+					// Since there is a `datafileinfo`, the length of `m.FileGroups`
+					// must be larger than 0. So we use the first group's name as
+					// metadata's unique key.
+					MetaDataGroupName:   m.meta.FileGroups[0].Path,
+					OffsetInMetaGroup:   gim.physical.Index,
+					OffsetInMergedGroup: di.Index,
+				}
+			},
 			)
 		})
 	})
@@ -248,8 +287,8 @@ func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, coun
 		return nil, err
 	}
 	if counter != nil {
-		m = iter.Tap(m, func(m Meta) {
-			for _, fg := range m.FileGroups {
+		m = iter.Tap(m, func(m *MetaName) {
+			for _, fg := range m.meta.FileGroups {
 				for _, f := range fg.DataFilesInfo {
 					if !f.IsMeta && !rc.ShouldFilterOut(f) {
 						*counter += 1
@@ -271,16 +310,16 @@ func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
 		return nil, err
 	}
 
-	mg := rc.FilterDataFiles(m)
-	return mg, nil
+	l := rc.FilterDataFiles(m)
+	return l, nil
 }
 
-func (rc *LogFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
-	return iter.FlatMap(ms, func(m Meta) MetaGroupIter {
-		return iter.Map(iter.FromSlice(m.FileGroups), func(g *pb.DataFileGroup) DDLMetaGroup {
+func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
+	return iter.FlatMap(ms, func(m *MetaName) MetaGroupIter {
+		return iter.Map(iter.FromSlice(m.meta.FileGroups), func(g *pb.DataFileGroup) DDLMetaGroup {
 			metas := iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d Log) bool {
 				// Modify the data internally, a little hacky.
-				if m.MetaVersion > pb.MetaVersion_V1 {
+				if m.meta.MetaVersion > pb.MetaVersion_V1 {
 					d.Path = g.Path
 				}
 				return !d.IsMeta || rc.ShouldFilterOut(d)

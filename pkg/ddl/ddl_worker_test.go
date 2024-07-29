@@ -21,10 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -47,16 +45,17 @@ func TestInvalidDDLJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	job := &model.Job{
-		SchemaID:   0,
-		TableID:    0,
-		Type:       model.ActionNone,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{},
+		SchemaID:            0,
+		TableID:             0,
+		Type:                model.ActionNone,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                []any{},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{}},
 	}
 	ctx := testNewContext(store)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := dom.DDL().DoDDLJob(ctx, job)
-	require.Equal(t, err.Error(), "[ddl:8204]invalid ddl job type: none")
+	err := dom.DDL().DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job type: none")
 }
 
 func TestAddBatchJobError(t *testing.T) {
@@ -67,14 +66,14 @@ func TestAddBatchJobError(t *testing.T) {
 	// Test the job runner should not hang forever.
 	job := &model.Job{SchemaID: 1, TableID: 1}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := dom.DDL().DoDDLJob(ctx, job)
+	err := dom.DDL().DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "mockAddBatchDDLJobsErr")
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockAddBatchDDLJobsErr"))
 }
 
 func TestParallelDDL(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -99,12 +98,10 @@ func TestParallelDDL(t *testing.T) {
 
 	// set hook to execute jobs after all jobs are in queue.
 	jobCnt := 11
-	tc := &callback.TestDDLCallback{Do: dom}
-	once := sync.Once{}
-	var checkErr error
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
-		// TODO: extract a unified function for other tests.
-		once.Do(func() {
+
+	once1 := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		once1.Do(func() {
 			for {
 				tk1 := testkit.NewTestKit(t, store)
 				tk1.MustExec("begin")
@@ -119,37 +116,16 @@ func TestParallelDDL(t *testing.T) {
 						qLen2++
 					}
 				}
-				if checkErr != nil {
-					break
-				}
 				if qLen1+qLen2 == jobCnt {
 					if qLen2 != 5 {
-						checkErr = errors.Errorf("add index jobs cnt %v != 6", qLen2)
+						require.FailNow(t, "add index jobs cnt %v != 6", qLen2)
 					}
 					break
 				}
 				time.Sleep(5 * time.Millisecond)
 			}
 		})
-	}
-
-	once1 := sync.Once{}
-	tc.OnGetJobBeforeExported = func(string) {
-		once1.Do(func() {
-			for {
-				tk := testkit.NewTestKit(t, store)
-				tk.MustExec("begin")
-				jobs, err := ddl.GetAllDDLJobs(tk.Session())
-				require.NoError(t, err)
-				tk.MustExec("rollback")
-				if len(jobs) == jobCnt {
-					break
-				}
-				time.Sleep(time.Millisecond * 20)
-			}
-		})
-	}
-	dom.DDL().SetHook(tc)
+	})
 
 	/*
 		prepare jobs:

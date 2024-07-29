@@ -200,7 +200,7 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		err      error
 	)
 	if s.ReferTable != nil {
-		referTbl, err = d.TableByName(s.ReferTable.Schema, s.ReferTable.Name)
+		referTbl, err = d.TableByName(context.Background(), s.ReferTable.Schema, s.ReferTable.Name)
 		if err != nil {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(s.ReferTable.Schema, s.ReferTable.Name)
 		}
@@ -230,7 +230,7 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		onExist = ddl.OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
 // CreateTableWithInfo implements the DDL interface.
@@ -238,16 +238,17 @@ func (d SchemaTracker) CreateTableWithInfo(
 	_ sessionctx.Context,
 	dbName model.CIStr,
 	info *model.TableInfo,
-	cs ...ddl.CreateTableWithInfoConfigurier,
+	_ []model.InvolvingSchemaInfo,
+	cs ...ddl.CreateTableOption,
 ) error {
-	c := ddl.GetCreateTableWithInfoConfig(cs)
+	c := ddl.GetCreateTableConfig(cs)
 
 	schema := d.SchemaByName(dbName)
 	if schema == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
-	oldTable, _ := d.TableByName(dbName, info.Name)
+	oldTable, _ := d.TableByName(context.Background(), dbName, info.Name)
 	if oldTable != nil {
 		switch c.OnExist {
 		case ddl.OnExistIgnore:
@@ -264,7 +265,7 @@ func (d SchemaTracker) CreateTableWithInfo(
 
 // CreateView implements the DDL interface.
 func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) error {
-	viewInfo, err := ddl.BuildViewInfo(ctx, s)
+	viewInfo, err := ddl.BuildViewInfo(s)
 	if err != nil {
 		return err
 	}
@@ -290,14 +291,14 @@ func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt)
 		onExist = ddl.OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
 // DropTable implements the DDL interface.
 func (d SchemaTracker) DropTable(_ sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
 	for _, name := range stmt.Tables {
-		tb, err := d.TableByName(name.Schema, name.Name)
+		tb, err := d.TableByName(context.Background(), name.Schema, name.Name)
 		if err != nil || !tb.IsBaseTable() {
 			if stmt.IfExists {
 				continue
@@ -340,7 +341,7 @@ func (SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInf
 func (d SchemaTracker) DropView(_ sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
 	for _, name := range stmt.Tables {
-		tb, err := d.TableByName(name.Schema, name.Name)
+		tb, err := d.TableByName(context.Background(), name.Schema, name.Name)
 		if err != nil {
 			if stmt.IfExists {
 				continue
@@ -907,7 +908,7 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 	// https://github.com/mysql/mysql-server/blob/8d8c986e5716e38cb776b627a8eee9e92241b4ce/sql/sql_table.cc#L16698-L16714
 
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	tblInfo, err := d.TableByName(context.Background(), ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1101,7 +1102,7 @@ func (d SchemaTracker) renameTable(_ sessionctx.Context, oldIdents, newIdents []
 	}
 
 	for i := range oldIdents {
-		tableInfo, err := d.TableByName(oldIdents[i].Schema, oldIdents[i].Name)
+		tableInfo, err := d.TableByName(context.Background(), oldIdents[i].Schema, oldIdents[i].Name)
 		if err != nil {
 			return err
 		}
@@ -1187,9 +1188,9 @@ func (SchemaTracker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResour
 }
 
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
-func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	for _, tableInfo := range info {
-		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, cs...); err != nil {
+		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, nil, cs...); err != nil {
 			return err
 		}
 	}
@@ -1272,5 +1273,10 @@ func (SchemaTracker) GetInfoSchemaWithInterceptor(_ sessionctx.Context) infosche
 
 // DoDDLJob implements the DDL interface, it's no-op in DM's case.
 func (SchemaTracker) DoDDLJob(_ sessionctx.Context, _ *model.Job) error {
+	return nil
+}
+
+// DoDDLJobWrapper implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) DoDDLJobWrapper(_ sessionctx.Context, _ *ddl.JobWrapper) error {
 	return nil
 }

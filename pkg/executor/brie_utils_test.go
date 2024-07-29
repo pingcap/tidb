@@ -59,9 +59,7 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 
 	// keep/reused table id verification
 	sctx.SetValue(sessionctx.QueryString, "skip")
-	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos1, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
-		return false
-	}))
+	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos1, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
@@ -90,9 +88,7 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	})
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos2, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
-		return true
-	}))
+	err = executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos2)
 	require.NoError(t, err)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
@@ -108,9 +104,7 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	infos3 := []*model.TableInfo{}
 
 	originQueryString := sctx.Value(sessionctx.QueryString)
-	err = executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos3, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
-		return false
-	}))
+	err = executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos3, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
 	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
 }
@@ -146,9 +140,7 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	// keep/reused table id verification
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(1)"))
-	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
-		return false
-	}))
+	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
@@ -214,9 +206,7 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(0)"))
-	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
-		return true
-	}))
+	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 	require.True(t, kv.ErrEntryTooLarge.Equal(err))
 

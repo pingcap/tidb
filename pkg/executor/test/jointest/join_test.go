@@ -78,7 +78,7 @@ func TestJoin2(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
-	result = tk.MustQuery("select t.c1, t1.c1 from t left outer join t1 on t.c1 = t1.c1 and t.c2 + t1.c2 <= 5")
+	result = tk.MustQuery("select t.c1, t1.c1 from t left outer join t1 on t.c1 = t1.c1 and t.c2 + t1.c2 <= 5 order by t.c1")
 	result.Check(testkit.Rows("1 <nil>", "2 2"))
 
 	tk.MustExec("drop table if exists t1")

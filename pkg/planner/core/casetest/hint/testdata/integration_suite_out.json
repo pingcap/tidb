@@ -799,16 +799,13 @@
           "HashAgg 16000.00 root  group by:Column#41, funcs:firstrow(Column#41)->Column#41",
           "└─Union 1000000010000.00 root  ",
           "  ├─HashJoin 1000000000000.00 root  CARTESIAN inner join",
-          "  │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  │ └─Projection(Probe) 100000000.00 root  1->Column#55",
-          "  │   └─HashJoin 100000000.00 root  CARTESIAN inner join",
-          "  │     ├─Projection(Build) 10000.00 root  1->Column#54",
-          "  │     │ └─IndexReader 10000.00 root  index:IndexFullScan",
-          "  │     │   └─IndexFullScan 10000.00 cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
-          "  │     └─Projection(Probe) 10000.00 root  1->Column#53",
-          "  │       └─IndexReader 10000.00 root  index:IndexFullScan",
-          "  │         └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
+          "  │ ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "  │ │ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
+          "  │ └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
+          "  │   ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "  │   │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
+          "  │   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─TableReader 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -845,8 +842,8 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#4",
           "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.a",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#7, funcs:sum(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.a",
-          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#5, test.t.a->Column#6, test.t.a->Column#7",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#6, funcs:sum(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.a",
+          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#5, test.t.a->Column#6",
           "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -1449,10 +1446,7 @@
           "      └─IndexRangeScan_148 19492.21 cop[tikv] table:t1, index:idx_a(a) range: decided by [eq(test.t1.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
-          "[planner:1815]There are no matching table names for (t1) in optimizer hint /*+ INL_JOIN(t1, t1) */ or /*+ TIDB_INLJ(t1, t1) */. Maybe you can use the table alias name",
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
-          "[planner:1815]There are no matching table names for (t1, t1) in optimizer hint /*+ INL_JOIN(t1, t1, t1) */ or /*+ TIDB_INLJ(t1, t1, t1) */. Maybe you can use the table alias name"
+          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
@@ -1484,10 +1478,7 @@
           "                └─TableRowIDScan_69 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
-          "[planner:1815]There are no matching table names for (t2) in optimizer hint /*+ MERGE_JOIN(t2, t2) */ or /*+ TIDB_SMJ(t2, t2) */. Maybe you can use the table alias name",
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
-          "[planner:1815]There are no matching table names for (t2, t2) in optimizer hint /*+ MERGE_JOIN(t2, t2, t2) */ or /*+ TIDB_SMJ(t2, t2, t2) */. Maybe you can use the table alias name"
+          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {

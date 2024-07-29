@@ -105,6 +105,24 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+	// async merge global stats
+	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAsyncMergeGlobalStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
+
+	// concurrency of save stats to storage
+	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzePartitionConcurrency)
+	if err != nil {
+		return err
+	}
+	c, err := strconv.ParseInt(analyzePartitionConcurrency, 10, 64)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
+
 	// analyzer version
 	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
@@ -232,6 +250,7 @@ type JSONTable struct {
 	DatabaseName      string                 `json:"database_name"`
 	TableName         string                 `json:"table_name"`
 	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
+	PredicateColumns  []*JSONPredicateColumn `json:"predicate_columns"`
 	Count             int64                  `json:"count"`
 	ModifyCount       int64                  `json:"modify_count"`
 	Version           uint64                 `json:"version"`
@@ -272,4 +291,11 @@ func (col *JSONColumn) TotalMemoryUsage() (size int64) {
 		size += int64(col.FMSketch.Size())
 	}
 	return size
+}
+
+// JSONPredicateColumn contains the information of the columns used in the predicate.
+type JSONPredicateColumn struct {
+	LastUsedAt     *string `json:"last_used_at"`
+	LastAnalyzedAt *string `json:"last_analyzed_at"`
+	ID             int64   `json:"id"`
 }

@@ -62,7 +62,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 	if variable.EnableFastCreateTable.Load() {
 		err = checkTableNotExistsByName(d, t, schemaID, job.SchemaName, tbInfo.Name.L)
 	} else {
-		err = checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+		err = checkTableNotExists(d, schemaID, tbInfo.Name.L)
 	}
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
@@ -469,7 +469,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	err = checkTableNotExists(d, t, schemaID, tblInfo.Name.L)
+	err = checkTableNotExists(d, schemaID, tblInfo.Name.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -509,13 +509,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagEnableGC
 		} else {
 			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
-		}
-
-		// Clear all placement when recover
-		err = clearTablePlacementAndBundles(tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
 		job.SchemaState = model.StateWriteOnly
@@ -575,6 +568,11 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	err = clearTablePlacementAndBundles(w.ctx, recoverInfo.TableInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tableInfo := recoverInfo.TableInfo.Clone()
 	tableInfo.State = model.StatePublic
 	tableInfo.UpdateTS = t.StartTS
@@ -601,7 +599,10 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	return ver, nil
 }
 
-func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
+func clearTablePlacementAndBundles(ctx context.Context, tblInfo *model.TableInfo) error {
+	failpoint.Inject("mockClearTablePlacementAndBundlesErr", func() {
+		failpoint.Return(errors.New("mock error for clearTablePlacementAndBundles"))
+	})
 	var bundles []*placement.Bundle
 	if tblInfo.PlacementPolicyRef != nil {
 		tblInfo.PlacementPolicyRef = nil
@@ -622,7 +623,7 @@ func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
 		return nil
 	}
 
-	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+	return infosync.PutRuleBundlesWithDefaultRetry(ctx, bundles)
 }
 
 // mockRecoverTableCommitErrOnce uses to make sure
@@ -1056,7 +1057,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return finishJobRenameTable(d, t, job)
 	}
 	newSchemaID := job.SchemaID
-	err := checkTableNotExists(d, t, newSchemaID, tableName.L)
+	err := checkTableNotExists(d, newSchemaID, tableName.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -1511,18 +1512,22 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
-func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
+// checking using cached info schema should be enough, as:
+//   - we will reload schema until success when become the owner
+//   - existing tables are correctly checked in the first place
+//   - we calculate job dependencies before running jobs, so there will not be 2
+//     jobs creating same table running concurrently.
+//
+// if there are 2 owners A and B, we have 2 consecutive jobs J1 and J2 which
+// are creating the same table T. those 2 jobs might be running concurrently when
+// A sees J1 first and B sees J2 first. But for B sees J2 first, J1 must already
+// be done and synced, and been deleted from tidb_ddl_job table, as we are querying
+// jobs in the order of job id. During syncing J1, B should have synced the schema
+// with the latest schema version, so when B runs J2, below check will see the table
+// T already exists, and J2 will fail.
+func checkTableNotExists(d *ddlCtx, schemaID int64, tableName string) error {
 	is := d.infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
-	}
-
-	return checkTableNotExistsFromStore(t, schemaID, tableName)
+	return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 }
 
 func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaName, tableName string) error {
@@ -1586,26 +1591,6 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 	return nil
 }
 
-func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string) error {
-	// Check this table's database.
-	tbls, err := t.ListSimpleTables(schemaID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
-		}
-		return errors.Trace(err)
-	}
-
-	// Check the table.
-	for _, tbl := range tbls {
-		if tbl.Name.L == tableName {
-			return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
-		}
-	}
-
-	return nil
-}
-
 func findTableIDByName(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) (int64, error) {
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
@@ -1625,7 +1610,7 @@ func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableNa
 	if !ok {
 		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	tbl, err := is.TableByName(schema.Name, model.NewCIStr(tableName))
+	tbl, err := is.TableByName(context.Background(), schema.Name, model.NewCIStr(tableName))
 	if err != nil {
 		return 0, err
 	}

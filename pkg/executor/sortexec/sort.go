@@ -169,7 +169,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
-		e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
+		e.Parallel.resultChannel = make(chan rowWithError, 10)
 		e.Parallel.closeSync = make(chan struct{})
 		e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
@@ -340,7 +340,7 @@ func (e *SortExec) generateResultWithMultiWayMerge() error {
 func (e *SortExec) generateResultFromDisk() error {
 	inDiskNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
 	if inDiskNum == 0 {
-		panic("inDiskNum can't be 0 when we generate result with spill triggered")
+		return nil
 	}
 
 	// Spill is triggered only once
@@ -382,7 +382,7 @@ func (e *SortExec) generateResultFromMemory() (bool, error) {
 	}
 
 	maxChunkSize := e.MaxChunkSize()
-	resBuf := make([]rowWithError, 0, maxChunkSize)
+	resBuf := make([]rowWithError, 0, 3)
 	idx := int64(0)
 	var row chunk.Row
 	for {

@@ -268,7 +268,6 @@ import (
 	sqlSmallResult    "SQL_SMALL_RESULT"
 	ssl               "SSL"
 	starting          "STARTING"
-	statsExtended     "STATS_EXTENDED"
 	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
 	tableKwd          "TABLE"
@@ -355,6 +354,7 @@ import (
 	charsetKwd            "CHARSET"
 	checkpoint            "CHECKPOINT"
 	checksum              "CHECKSUM"
+	checksumConcurrency   "CHECKSUM_CONCURRENCY"
 	cipher                "CIPHER"
 	cleanup               "CLEANUP"
 	client                "CLIENT"
@@ -372,6 +372,8 @@ import (
 	compact               "COMPACT"
 	compressed            "COMPRESSED"
 	compression           "COMPRESSION"
+	compressionLevel      "COMPRESSION_LEVEL"
+	compressionType       "COMPRESSION_TYPE"
 	concurrency           "CONCURRENCY"
 	config                "CONFIG"
 	connection            "CONNECTION"
@@ -408,6 +410,8 @@ import (
 	enable                "ENABLE"
 	enabled               "ENABLED"
 	encryption            "ENCRYPTION"
+	encryptionKeyFile     "ENCRYPTION_KEYFILE"
+	encryptionMethod      "ENCRYPTION_METHOD"
 	end                   "END"
 	enforced              "ENFORCED"
 	engine                "ENGINE"
@@ -449,6 +453,7 @@ import (
 	hour                  "HOUR"
 	hypo                  "HYPO"
 	identified            "IDENTIFIED"
+	ignoreStats           "IGNORE_STATS"
 	importKwd             "IMPORT"
 	imports               "IMPORTS"
 	increment             "INCREMENT"
@@ -472,6 +477,7 @@ import (
 	less                  "LESS"
 	level                 "LEVEL"
 	list                  "LIST"
+	loadStats             "LOAD_STATS"
 	local                 "LOCAL"
 	location              "LOCATION"
 	locked                "LOCKED"
@@ -672,25 +678,19 @@ import (
 	validation            "VALIDATION"
 	value                 "VALUE"
 	variables             "VARIABLES"
+	vectorType            "VECTOR"
 	view                  "VIEW"
 	visible               "VISIBLE"
 	wait                  "WAIT"
+	waitTiflashReady      "WAIT_TIFLASH_READY"
 	warnings              "WARNINGS"
 	week                  "WEEK"
 	weightString          "WEIGHT_STRING"
 	without               "WITHOUT"
+	withSysTable          "WITH_SYS_TABLE"
 	workload              "WORKLOAD"
 	x509                  "X509"
 	yearType              "YEAR"
-	withSysTable          "WITH_SYS_TABLE"
-	waitTiflashReady      "WAIT_TIFLASH_READY"
-	ignoreStats           "IGNORE_STATS"
-	loadStats             "LOAD_STATS"
-	checksumConcurrency   "CHECKSUM_CONCURRENCY"
-	compressionLevel      "COMPRESSION_LEVEL"
-	compressionType       "COMPRESSION_TYPE"
-	encryptionMethod      "ENCRYPTION_METHOD"
-	encryptionKeyFile     "ENCRYPTION_KEYFILE"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -872,6 +872,7 @@ import (
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
+	statsExtended              "STATS_EXTENDED"
 	statsHealthy               "STATS_HEALTHY"
 	statsHistograms            "STATS_HISTOGRAMS"
 	statsLocked                "STATS_LOCKED"
@@ -1101,7 +1102,6 @@ import (
 	AnyOrAll                               "Any or All for subquery"
 	Assignment                             "assignment"
 	AssignmentList                         "assignment list"
-	AssignmentListOpt                      "assignment list opt"
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
@@ -1110,7 +1110,6 @@ import (
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
 	ColumnDef                              "table column definition"
-	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
 	ColumnNameOrUserVariable               "column name or user variable"
 	ColumnNameList                         "column name list"
@@ -1346,7 +1345,6 @@ import (
 	TableNameOptWild                       "Table name with optional wildcard"
 	TableNameList                          "Table name list"
 	TableNameListOpt                       "Table name list opt"
-	TableNameListOpt2                      "Optional table name list with a preceding TABLE"
 	TableOption                            "create table option"
 	TableOptionList                        "create table option list"
 	TableRef                               "table reference"
@@ -1448,6 +1446,7 @@ import (
 	OptBinary                              "Optional BINARY"
 	OptBinMod                              "Optional BINARY mode"
 	OptCharsetWithOptBinary                "Optional BINARY or ASCII or UNICODE or BYTE"
+	OptVectorElementType                   "Optional vector element type setting"
 	IgnoreLines                            "Ignore num(int) lines"
 	Int64Num                               "a number that can be safely converted to int64"
 	NUM                                    "A number"
@@ -1547,7 +1546,6 @@ import (
 	OptTable          "Optional table keyword"
 	OptInteger        "Optional Integer keyword"
 	CharsetKw         "charset or charater set"
-	CommaOpt          "optional comma"
 	logAnd            "logical and operator"
 	logOr             "logical or operator"
 	LinearOpt         "linear or empty"
@@ -1596,6 +1594,7 @@ import (
 	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
+%precedence statsExtended
 %precedence as
 %precedence placement
 %precedence lowerThanSelectOpt
@@ -3314,13 +3313,6 @@ AssignmentList:
 		$$ = append($1.([]*ast.Assignment), $3.(*ast.Assignment))
 	}
 
-AssignmentListOpt:
-	/* EMPTY */
-	{
-		$$ = []*ast.Assignment{}
-	}
-|	AssignmentList
-
 BeginTransactionStmt:
 	"BEGIN"
 	{
@@ -3374,16 +3366,6 @@ BinlogStmt:
 	"BINLOG" stringLit
 	{
 		$$ = &ast.BinlogStmt{Str: $2}
-	}
-
-ColumnDefList:
-	ColumnDef
-	{
-		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
-	}
-|	ColumnDefList ',' ColumnDef
-	{
-		$$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
 	}
 
 ColumnDef:
@@ -6961,6 +6943,7 @@ UnReservedKeyword:
 |	"OLTP_READ_WRITE"
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
+|	"VECTOR"
 |	"TPCH_10"
 |	"WITH_SYS_TABLE"
 |	"WAIT_TIFLASH_READY"
@@ -6996,12 +6979,13 @@ TiDBKeyword:
 |	"SESSION_STATES"
 |	"STATISTICS"
 |	"STATS"
-|	"STATS_META"
-|	"STATS_HISTOGRAMS"
-|	"STATS_TOPN"
 |	"STATS_BUCKETS"
+|	"STATS_EXTENDED"
 |	"STATS_HEALTHY"
+|	"STATS_HISTOGRAMS"
 |	"STATS_LOCKED"
+|	"STATS_META"
+|	"STATS_TOPN"
 |	"HISTOGRAMS_IN_FLIGHT"
 |	"TIDB"
 |	"TIFLASH"
@@ -8831,6 +8815,19 @@ CastType:
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
 	}
+|	"VECTOR" OptVectorElementType OptFieldLen
+	{
+		elementType := $2.(*ast.VectorElementType)
+		if elementType.Tp != mysql.TypeFloat {
+			yylex.AppendError(yylex.Errorf("Only VECTOR is supported for now"))
+		}
+		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
+		tp.SetFlen($3.(int))
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
 
 Priority:
 	"LOW_PRIORITY"
@@ -9866,6 +9863,10 @@ JoinTable:
 	{
 		on := &ast.OnCondition{Expr: $5}
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, On: on}
+	}
+|	TableRef "STRAIGHT_JOIN" TableRef "USING" '(' ColumnNameList ')'
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, Using: $6.([]*ast.ColumnName)}
 	}
 
 JoinType:
@@ -12021,16 +12022,6 @@ TableNameListOpt:
 	}
 |	TableNameList
 
-TableNameListOpt2:
-	%prec empty
-	{
-		$$ = []*ast.TableName{}
-	}
-|	"TABLE" TableNameList
-	{
-		$$ = $2
-	}
-
 WithReadLockOpt:
 	{
 		$$ = false
@@ -12989,6 +12980,19 @@ StringType:
 		}
 		$$ = tp
 	}
+|	"VECTOR" OptVectorElementType OptFieldLen
+	{
+		elementType := $2.(*ast.VectorElementType)
+		if elementType.Tp != mysql.TypeFloat {
+			yylex.AppendError(yylex.Errorf("Only VECTOR is supported for now"))
+		}
+		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
+		tp.SetFlen($3.(int))
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
 
 Char:
 	"CHARACTER"
@@ -13206,6 +13210,25 @@ OptBinMod:
 		$$ = true
 	}
 
+OptVectorElementType:
+	{
+		$$ = &ast.VectorElementType{
+			Tp: mysql.TypeFloat,
+		}
+	}
+|	'<' "FLOAT" '>'
+	{
+		$$ = &ast.VectorElementType{
+			Tp: mysql.TypeFloat,
+		}
+	}
+|	'<' "DOUBLE" '>'
+	{
+		$$ = &ast.VectorElementType{
+			Tp: mysql.TypeDouble,
+		}
+	}
+
 OptBinary:
 	{
 		$$ = &ast.OptBinary{
@@ -13370,11 +13393,6 @@ WhereClauseOptional:
 		$$ = nil
 	}
 |	WhereClause
-
-CommaOpt:
-	{}
-|	','
-	{}
 
 /************************************************************************************
  *  Account Management Statements

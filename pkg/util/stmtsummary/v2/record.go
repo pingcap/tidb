@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -151,8 +152,8 @@ type StmtRecord struct {
 	ResourceGroupName string `json:"resource_group_name"`
 	stmtsummary.StmtRUSummary
 
-	PlanCacheUnqualifiedCount int64  `json:"plan_cache_unqualified_count"`
-	LastPlanCacheUnqualified  string `json:"last_plan_cache_unqualified"` // the reason why this query is unqualified for the plan cache
+	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
+	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -201,7 +202,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		NormalizedSQL: info.NormalizedSQL,
 		TableNames:    tableNames,
 		IsInternal:    info.IsInternal,
-		SampleSQL:     formatSQL(info.OriginalSQL),
+		SampleSQL:     formatSQL(info.OriginalSQL.String()),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -373,7 +374,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	}
 	if info.PlanCacheUnqualified != "" {
 		r.PlanCacheUnqualifiedCount++
-		r.LastPlanCacheUnqualified = info.PlanCacheUnqualified
+		r.PlanCacheUnqualifiedLastReason = info.PlanCacheUnqualified
 	}
 	// SPM
 	if info.PlanInBinding {
@@ -550,8 +551,8 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	// Plan cache
 	r.PlanCacheHits += other.PlanCacheHits
 	r.PlanCacheUnqualifiedCount += other.PlanCacheUnqualifiedCount
-	if other.LastPlanCacheUnqualified != "" {
-		r.LastPlanCacheUnqualified = other.LastPlanCacheUnqualified
+	if other.PlanCacheUnqualifiedLastReason != "" {
+		r.PlanCacheUnqualifiedLastReason = other.PlanCacheUnqualifiedLastReason
 	}
 	// Other
 	r.SumAffectedRows += other.SumAffectedRows
@@ -610,7 +611,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql1",
+		OriginalSQL:    stringutil.StringerStr("original_sql1"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         digest,
 		PlanDigest:     "plan_digest",

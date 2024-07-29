@@ -98,7 +98,7 @@ func (en *tableKVEncoder) GetColumnSize() map[int64]int64 {
 	sessionVars := en.SessionCtx.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
-	return sessionVars.TxnCtx.TableDeltaMap[en.Table.Meta().ID].ColSize
+	return sessionVars.TxnCtx.TableDeltaMap[en.TableMeta().ID].ColSize
 }
 
 // todo merge with code in load_data.go
@@ -197,12 +197,12 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 		record = append(record, value)
 	}
 
-	if common.TableHasAutoRowID(en.Table.Meta()) {
+	if common.TableHasAutoRowID(en.TableMeta()) {
 		rowValue := rowID
 		newRowID := en.AutoIDFn(rowID)
 		value = types.NewIntDatum(newRowID)
 		record = append(record, value)
-		alloc := en.Table.Allocators(en.SessionCtx.GetTableCtx()).Get(autoid.RowIDAllocType)
+		alloc := en.TableAllocators().Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}

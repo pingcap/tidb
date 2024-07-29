@@ -42,22 +42,6 @@ func (la *LogicalApply) canPullUpAgg() bool {
 	return len(la.Children()[0].Schema().Keys) > 0
 }
 
-// canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
-func (la *LogicalAggregation) canPullUp() bool {
-	if len(la.GroupByItems) > 0 {
-		return false
-	}
-	for _, f := range la.AggFuncs {
-		for _, arg := range f.Args {
-			expr := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
-			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // deCorColFromEqExpr checks whether it's an equal condition of form `col = correlated col`. If so we will change the decorrelated
 // column to normal column to make a new equal condition.
 func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expression.Expression {
@@ -240,7 +224,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			//	upper OP (depend on column8)   --> lower layer OP
 			//	          |                             ^
 			//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
-			hasFail := apply.columnSubstituteAll(proj.Schema(), proj.Exprs)
+			hasFail := apply.ColumnSubstituteAll(proj.Schema(), proj.Exprs)
 			if hasFail {
 				goto NoOptimize
 			}
@@ -248,7 +232,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
-			apply.decorrelate(outerPlan.Schema())
+			apply.Decorrelate(outerPlan.Schema())
 
 			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
@@ -306,14 +290,14 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
 				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
-				resetNotNullFlag(apply.schema, outerPlan.Schema().Len(), apply.schema.Len())
+				resetNotNullFlag(apply.Schema(), outerPlan.Schema().Len(), apply.Schema().Len())
 				for i, aggFunc := range agg.AggFuncs {
 					aggArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 					for _, arg := range aggFunc.Args {
 						switch expr := arg.(type) {
 						case *expression.Column:
-							if idx := apply.schema.ColumnIndex(expr); idx != -1 {
-								aggArgs = append(aggArgs, apply.schema.Columns[idx])
+							if idx := apply.Schema().ColumnIndex(expr); idx != -1 {
+								aggArgs = append(aggArgs, apply.Schema().Columns[idx])
 							} else {
 								aggArgs = append(aggArgs, expr)
 							}
@@ -372,14 +356,14 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 						for _, eqCond := range eqCondWithCorCol {
 							clonedCol := eqCond.GetArgs()[1].(*expression.Column)
 							// If the join key is not in the aggregation's schema, add first row function.
-							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+							if agg.Schema().ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
 								newFunc, err := aggregation.NewAggFuncDesc(apply.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
 								if err != nil {
 									return nil, planChanged, err
 								}
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
-								agg.schema.Append(clonedCol)
-								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
+								agg.Schema().Append(clonedCol)
+								agg.Schema().Columns[agg.Schema().Len()-1].RetType = newFunc.RetTp
 								appendedAggFuncs = append(appendedAggFuncs, newFunc)
 							}
 							// If group by cols don't contain the join key, add it into this.
@@ -398,11 +382,11 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
 							proj := LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
-							proj.SetSchema(apply.schema)
-							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
+							proj.SetSchema(apply.Schema())
+							proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
 							for i, val := range defaultValueMap {
-								pos := proj.schema.ColumnIndex(agg.schema.Columns[i])
-								ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.schema.Columns[i], val)
+								pos := proj.Schema().ColumnIndex(agg.Schema().Columns[i])
+								ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
 								proj.Exprs[pos] = ifNullFunc
 							}
 							proj.SetChildren(apply)
@@ -541,27 +525,29 @@ func appendAddProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *optim
 func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *LogicalAggregation, sel *LogicalSelection,
 	appendedGroupByCols *expression.Schema, appendedAggFuncs []*aggregation.AggFuncDesc,
 	eqCondWithCorCol []*expression.ScalarFunction, opt *optimizetrace.LogicalOptimizeOp) {
+	evalCtx := outerPlan.SCtx().GetExprCtx().GetEvalCtx()
+
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's groupby items added [", agg.TP(), agg.ID()))
 		for i, col := range appendedGroupByCols.Columns {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(evalCtx))
 		}
 		buffer.WriteString("], and functions added [")
 		for i, f := range appendedAggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(f.String())
+			buffer.WriteString(f.StringWithCtx(evalCtx))
 		}
 		fmt.Fprintf(buffer, "], and %v_%v's conditions added [", p.TP(), p.ID())
 		for i, cond := range eqCondWithCorCol {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(evalCtx))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -572,7 +558,7 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(evalCtx))
 		}
 		fmt.Fprintf(buffer, "] are correlated to %v_%v and pulled up as %v_%v's join key",
 			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())

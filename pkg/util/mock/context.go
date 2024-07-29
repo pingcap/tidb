@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -67,10 +68,11 @@ type Context struct {
 	sm            util.SessionManager
 	is            infoschema.MetaOnlyInfoSchema
 	values        map[fmt.Stringer]any
+	Mutations     map[int64]*binlog.TableMutation
 	sessionVars   *variable.SessionVars
 	tblctx        *tbctximpl.TableContextImpl
 	cancel        context.CancelFunc
-	pcache        sessionctx.PlanCache
+	pcache        sessionctx.SessionPlanCache
 	level         kvrpcpb.DiskFullOpt
 	inSandBoxMode bool
 	isDDLOwner    bool
@@ -384,7 +386,7 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 }
 
 // GetSessionPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetSessionPlanCache() sessionctx.PlanCache {
+func (c *Context) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return c.pcache
 }
 
@@ -479,8 +481,16 @@ func (*Context) StmtCommit(context.Context) {}
 func (*Context) StmtRollback(context.Context, bool) {}
 
 // StmtGetMutation implements the sessionctx.Context interface.
-func (*Context) StmtGetMutation(_ int64) *binlog.TableMutation {
-	return nil
+func (c *Context) StmtGetMutation(tblID int64) *binlog.TableMutation {
+	if c.Mutations == nil {
+		return nil
+	}
+	m, ok := c.Mutations[tblID]
+	if !ok {
+		m = &binlog.TableMutation{}
+		c.Mutations[tblID] = m
+	}
+	return m
 }
 
 // AddTableLock implements the sessionctx.Context interface.
@@ -607,6 +617,11 @@ func (*Context) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
 	return nil
 }
 
+// GetCursorTracker implements the sessionctx.Context interface
+func (*Context) GetCursorTracker() cursor.Tracker {
+	return nil
+}
+
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -618,7 +633,7 @@ func NewContext() *Context {
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
 	sctx.SessionExprContext = exprctximpl.NewSessionExprContext(sctx)
-	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
+	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC
@@ -633,6 +648,7 @@ func NewContext() *Context {
 	vars.MinPagingSize = variable.DefMinPagingSize
 	vars.CostModelVersion = variable.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
+	vars.EnableListTablePartition = true
 	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

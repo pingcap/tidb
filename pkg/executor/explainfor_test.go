@@ -352,6 +352,7 @@ func TestIssue28259(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_opt_projection_push_down=0`)
 
 	// test for indexRange
 	tk.MustExec("use test")

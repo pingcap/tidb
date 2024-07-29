@@ -16,7 +16,7 @@ package exec
 
 import (
 	"context"
-	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -57,6 +57,7 @@ type Executor interface {
 	RegisterSQLAndPlanInExecForTopSQL()
 
 	AllChildren() []Executor
+	SetAllChildren([]Executor)
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.Chunk) error
 
@@ -66,6 +67,12 @@ type Executor interface {
 	RetFieldTypes() []*types.FieldType
 	InitCap() int
 	MaxChunkSize() int
+
+	// Detach detaches the current executor from the session context without considering its children.
+	//
+	// It has to make sure, no matter whether it returns true or false, both the original executor and the returning executor
+	// should be able to be used correctly.
+	Detach() (Executor, bool)
 }
 
 var _ Executor = &BaseExecutor{}
@@ -164,6 +171,11 @@ func (e *executorMeta) AllChildren() []Executor {
 	return e.children
 }
 
+// SetAllChildren sets the children for an executor.
+func (e *executorMeta) SetAllChildren(children []Executor) {
+	e.children = children
+}
+
 // ChildrenLen returns the length of children.
 func (e *executorMeta) ChildrenLen() int {
 	return len(e.children)
@@ -174,7 +186,7 @@ func (e *executorMeta) EmptyChildren() bool {
 	return len(e.children) == 0
 }
 
-// SetChildren sets the children for an executor.
+// SetChildren sets a child for an executor.
 func (e *executorMeta) SetChildren(idx int, ex Executor) {
 	e.children[idx] = ex
 }
@@ -309,6 +321,35 @@ func (*BaseExecutorV2) Next(_ context.Context, _ *chunk.Chunk) error {
 	return nil
 }
 
+// Detach detaches the current executor from the session context.
+func (*BaseExecutorV2) Detach() (Executor, bool) {
+	return nil, false
+}
+
+// BuildNewBaseExecutorV2 builds a new `BaseExecutorV2` based on the configuration of the current base executor.
+// It's used to build a new sub-executor from an existing executor. For example, the `IndexLookUpExecutor` will use
+// this function to build `TableReaderExecutor`
+func (e *BaseExecutorV2) BuildNewBaseExecutorV2(stmtRuntimeStatsColl *execdetails.RuntimeStatsColl, schema *expression.Schema, id int, children ...Executor) BaseExecutorV2 {
+	newExecutorMeta := newExecutorMeta(schema, id, children...)
+
+	newExecutorStats := e.executorStats
+	if stmtRuntimeStatsColl != nil {
+		if id > 0 {
+			newExecutorStats.runtimeStats = stmtRuntimeStatsColl.GetBasicRuntimeStats(id)
+		}
+	}
+
+	newChunkAllocator := e.executorChunkAllocator
+	newChunkAllocator.retFieldTypes = newExecutorMeta.RetFieldTypes()
+	newE := BaseExecutorV2{
+		executorMeta:           newExecutorMeta,
+		executorStats:          newExecutorStats,
+		executorChunkAllocator: newChunkAllocator,
+		executorKillerHandler:  e.executorKillerHandler,
+	}
+	return newE
+}
+
 // BaseExecutor holds common information for executors.
 type BaseExecutor struct {
 	ctx sessionctx.Context
@@ -332,7 +373,7 @@ func (e *BaseExecutor) Ctx() sessionctx.Context {
 // UpdateDeltaForTableID updates the delta info for the table with tableID.
 func (e *BaseExecutor) UpdateDeltaForTableID(id int64) {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+	txnCtx.UpdateDeltaForTable(id, 0, 0, nil)
 }
 
 // GetSysSession gets a system session context from executor.
@@ -403,7 +444,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
+	r, ctx := tracing.StartRegionEx(ctx, reflect.TypeOf(e).String()+".Next")
 	defer r.End()
 
 	e.RegisterSQLAndPlanInExecForTopSQL()

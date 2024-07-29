@@ -87,7 +87,7 @@ const (
 	batchAddingJobs = 10
 
 	reorgWorkerCnt   = 10
-	generalWorkerCnt = 1
+	generalWorkerCnt = 10
 	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
@@ -104,45 +104,44 @@ const (
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
 
-// AllocTableIDIf specifies whether to retain the old table ID.
-// If this returns "false", then we would assume the table ID has been
-// allocated before calling `CreateTableWithInfo` family.
-type AllocTableIDIf func(*model.TableInfo) bool
-
-// CreateTableWithInfoConfig is the configuration of `CreateTableWithInfo`.
-type CreateTableWithInfoConfig struct {
-	OnExist            OnExist
-	ShouldAllocTableID AllocTableIDIf
+// CreateTableConfig is the configuration of `CreateTableWithInfo`.
+type CreateTableConfig struct {
+	OnExist OnExist
+	// IDAllocated indicates whether the job has allocated all IDs for tables affected
+	// in the job, if true, DDL will not allocate IDs for them again, it's only used
+	// by BR now. By reusing IDs BR can save a lot of works such as rewriting table
+	// IDs in backed up KVs.
+	IDAllocated bool
 }
 
-// CreateTableWithInfoConfigurier is the "diff" which can be applied to the
-// CreateTableWithInfoConfig, currently implementations are "OnExist" and "AllocTableIDIf".
-type CreateTableWithInfoConfigurier interface {
-	// Apply the change over the config.
-	Apply(*CreateTableWithInfoConfig)
-}
+// CreateTableOption is the option for creating table.
+type CreateTableOption func(*CreateTableConfig)
 
-// GetCreateTableWithInfoConfig applies the series of configurier from default config
+// GetCreateTableConfig applies the series of config options from default config
 // and returns the final config.
-func GetCreateTableWithInfoConfig(cs []CreateTableWithInfoConfigurier) CreateTableWithInfoConfig {
-	config := CreateTableWithInfoConfig{}
+func GetCreateTableConfig(cs []CreateTableOption) CreateTableConfig {
+	cfg := CreateTableConfig{}
 	for _, c := range cs {
-		c.Apply(&config)
+		c(&cfg)
 	}
-	if config.ShouldAllocTableID == nil {
-		config.ShouldAllocTableID = func(*model.TableInfo) bool { return true }
-	}
-	return config
+	return cfg
 }
 
-// Apply implements Configurier.
-func (o OnExist) Apply(c *CreateTableWithInfoConfig) {
-	c.OnExist = o
+// WithOnExist applies the OnExist option.
+func WithOnExist(o OnExist) CreateTableOption {
+	return func(cfg *CreateTableConfig) {
+		cfg.OnExist = o
+	}
 }
 
-// Apply implements Configurier.
-func (a AllocTableIDIf) Apply(c *CreateTableWithInfoConfig) {
-	c.ShouldAllocTableID = a
+// WithIDAllocated applies the IDAllocated option.
+// WARNING!!!: if idAllocated == true, DDL will NOT allocate IDs by itself. That
+// means if the caller can not promise ID is unique, then we got inconsistency.
+// This option is only exposed to be used by BR.
+func WithIDAllocated(idAllocated bool) CreateTableOption {
+	return func(cfg *CreateTableConfig) {
+		cfg.IDAllocated = idAllocated
+	}
 }
 
 const (
@@ -215,13 +214,14 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
-		cs ...CreateTableWithInfoConfigurier) error
+		involvingRef []model.InvolvingSchemaInfo,
+		cs ...CreateTableOption) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
 	BatchCreateTableWithInfo(ctx sessionctx.Context,
 		schema model.CIStr,
 		info []*model.TableInfo,
-		cs ...CreateTableWithInfoConfigurier) error
+		cs ...CreateTableOption) error
 
 	// CreatePlacementPolicyWithInfo creates a placement policy
 	//
@@ -262,18 +262,39 @@ type DDL interface {
 	GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
+	// DoDDLJobWrapper similar to DoDDLJob, but with JobWrapper as input.
+	// exported for testing.
+	// TODO remove it after decouple components of DDL.
+	DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error
 }
 
-type limitJobTask struct {
-	job *model.Job
-	// when we combine multiple jobs into one task,
-	// append the errChs to this slice.
-	errChs   []chan error
+// JobWrapper is used to wrap a job and some other information.
+// exported for testing.
+type JobWrapper struct {
+	*model.Job
+	// IDAllocated see config of same name in CreateTableConfig.
+	// exported for test.
+	IDAllocated bool
+	// job submission is run in async, we use this channel to notify the caller.
+	// for local job we might combine multiple jobs into one, append the ErrChs to
+	// this slice.
+	ErrChs   []chan error
 	cacheErr error
 }
 
-func (t *limitJobTask) NotifyError(err error) {
-	for _, errCh := range t.errChs {
+// NewJobWrapper creates a new JobWrapper.
+// exported for testing.
+func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
+	return &JobWrapper{
+		Job:         job,
+		IDAllocated: idAllocated,
+		ErrChs:      []chan error{make(chan error)},
+	}
+}
+
+// NotifyError notifies the error to all error channels.
+func (t *JobWrapper) NotifyError(err error) {
+	for _, errCh := range t.ErrChs {
 		errCh <- err
 	}
 }
@@ -282,9 +303,9 @@ func (t *limitJobTask) NotifyError(err error) {
 type ddl struct {
 	m          sync.RWMutex
 	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
-	limitJobCh chan *limitJobTask
+	limitJobCh chan *JobWrapper
 	// limitJobChV2 is used to limit the number of jobs being executed in local worker.
-	limitJobChV2 chan *limitJobTask
+	limitJobChV2 chan *JobWrapper
 
 	*ddlCtx
 	sessPool          *sess.Pool
@@ -296,7 +317,7 @@ type ddl struct {
 	ddlJobNotifyCh chan struct{}
 
 	// localJobCh is used to delivery job in local TiDB nodes.
-	localJobCh chan *limitJobTask
+	localJobCh chan *JobWrapper
 	// globalIDLocal locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
 }
@@ -381,6 +402,7 @@ type ddlCtx struct {
 	tableLockCkr    util.DeadTableLockChecker
 	etcdCli         *clientv3.Client
 	autoidCli       *autoid.ClientDiscover
+	schemaLoader    SchemaLoader
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -741,6 +763,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
 		autoidCli:                  opt.AutoIDClient,
+		schemaLoader:               opt.SchemaLoader,
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
@@ -753,11 +776,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
-		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
-		limitJobChV2:      make(chan *limitJobTask, batchAddingJobs),
+		limitJobCh:        make(chan *JobWrapper, batchAddingJobs),
+		limitJobChV2:      make(chan *JobWrapper, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobNotifyCh:    make(chan struct{}, 100),
-		localJobCh:        make(chan *limitJobTask, 1),
+		localJobCh:        make(chan *JobWrapper, 1),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -838,7 +861,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(func() {
 		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
 	})
-	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
+	d.sessPool = sess.NewSessionPool(ctxPool)
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
@@ -872,16 +895,39 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
-	ingest.InitGlobalLightningEnv(func(jobIDs []int64) ([]int64, error) {
-		se, err := d.sessPool.Get()
-		if err != nil {
-			return nil, err
+	ingestDataDir, err := ingest.GenIngestTempDataDir()
+	if err != nil {
+		logutil.DDLIngestLogger().Warn(ingest.LitWarnEnvInitFail,
+			zap.Error(err))
+	} else {
+		ok := ingest.InitGlobalLightningEnv(ingestDataDir)
+		if ok {
+			d.wg.Run(func() {
+				d.CleanUpTempDirLoop(d.ctx, ingestDataDir)
+			})
 		}
-		defer d.sessPool.Put(se)
-		return filterProcessingJobIDs(sess.NewSession(se), jobIDs)
-	})
+	}
 
 	return nil
+}
+
+func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			se, err := d.sessPool.Get()
+			if err != nil {
+				logutil.DDLLogger().Warn("get session from pool failed", zap.Error(err))
+				return
+			}
+			ingest.CleanUpTempDir(ctx, se, path)
+			d.sessPool.Put(se)
+		case <-d.ctx.Done():
+			return
+		}
+	}
 }
 
 // EnableDDL enable this node to execute ddl.
@@ -977,12 +1023,6 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	d.globalIDLock.Lock()
 	defer d.globalIDLock.Unlock()
 	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
-		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(errors.New("gofail genGlobalIDs error"))
-			}
-		})
-
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
@@ -1119,22 +1159,19 @@ func setDDLJobMode(job *model.Job) {
 			job.LocalMode = true
 			return
 		}
+	case model.ActionCreateSchema:
+		job.LocalMode = true
 	default:
 	}
 	job.LocalMode = false
 }
 
-func (d *ddl) deliverJobTask(task *limitJobTask) {
-	if task.job.LocalMode {
+func (d *ddl) deliverJobTask(task *JobWrapper) {
+	if task.LocalMode {
 		d.limitJobChV2 <- task
 	} else {
 		d.limitJobCh <- task
 	}
-}
-
-func (*ddl) shouldCheckHistoryJob(job *model.Job) bool {
-	// for local mode job, we add the history job directly now, so no need to check it.
-	return !job.LocalMode
 }
 
 // DoDDLJob will return
@@ -1142,6 +1179,11 @@ func (*ddl) shouldCheckHistoryJob(job *model.Job) bool {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	return d.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
+}
+
+func (d *ddl) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
+	job := jobW.Job
 	job.TraceInfo = &model.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
@@ -1154,23 +1196,23 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	setDDLJobMode(job)
-	task := &limitJobTask{job, []chan error{make(chan error)}, nil}
-	d.deliverJobTask(task)
+	d.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
-			<-task.errChs[0]
+			<-jobW.ErrChs[0]
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, []chan error{make(chan error)}, nil}
-			d.deliverJobTask(task1)
+			newJobW := NewJobWrapper(job, jobW.IDAllocated)
+			d.deliverJobTask(newJobW)
 			// The second job result is used for test.
-			task = task1
+			jobW = newJobW
 		}
 	})
 
-	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
-	err := <-task.errChs[0]
+	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
+	err := <-jobW.ErrChs[0]
+	// job.ID must be allocated after previous channel receive returns nil.
 	defer d.delJobDoneCh(job.ID)
 	if err != nil {
 		// The transaction of enqueuing job is failed.
@@ -1184,8 +1226,12 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Notice worker that we push a new job and wait the job done.
 	d.notifyNewJobSubmitted(d.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
 	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
-	if !d.shouldCheckHistoryJob(job) {
-		return nil
+
+	// for local mode job, we add the history job directly now, so no need to check it.
+	// fast-create doesn't wait schema version synced, we must reload info-schema
+	// here to make sure later statements can see the created table/database.
+	if job.LocalMode {
+		return d.schemaLoader.Reload()
 	}
 
 	var historyJob *model.Job
@@ -1448,30 +1494,35 @@ func (d *ddl) SwitchFastCreateTable(val bool) error {
 
 // disableFastCreateTable disable fast create table feature.
 func (*ddl) disableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ddlV2Initialized {
+	if !fastCreateTableInitialized {
 		return nil
 	}
-	// clear all table names when we switch to v1.
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(m.SetDDLV2Initialized(false))
+	return errors.Trace(m.SetFastCreateTableInitialized(false))
 }
 
 // enableFastCreateTable enable fast create table feature.
 func (*ddl) enableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ddlV2Initialized {
+	if fastCreateTableInitialized {
 		return nil
 	}
 
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
@@ -1479,6 +1530,12 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	for _, dbInfo := range dbs {
+		if err := m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for _, dbInfo := range dbs {
@@ -1493,7 +1550,7 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 		}
 	}
 
-	return errors.Trace(m.SetDDLV2Initialized(true))
+	return errors.Trace(m.SetFastCreateTableInitialized(true))
 }
 
 func (d *ddl) switchFastCreateTable(val bool) (err error) {
@@ -1524,9 +1581,13 @@ type RecoverInfo struct {
 type RecoverSchemaInfo struct {
 	*model.DBInfo
 	RecoverTabsInfo []*RecoverInfo
-	DropJobID       int64
-	SnapshotTS      uint64
-	OldSchemaName   model.CIStr
+	// LoadTablesOnExecute is the new logic to avoid a large RecoverTabsInfo can't be
+	// persisted. If it's true, DDL owner will recover RecoverTabsInfo instead of the
+	// job submit node.
+	LoadTablesOnExecute bool
+	DropJobID           int64
+	SnapshotTS          uint64
+	OldSchemaName       model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
@@ -1597,7 +1658,7 @@ type Info struct {
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	se := sess.NewSession(s)
-	err := se.Begin()
+	err := se.Begin(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -1757,7 +1818,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			idsStr = append(idsStr, strconv.FormatInt(id, 10))
 		}
 
-		err = ns.Begin()
+		err = ns.Begin(context.Background())
 		if err != nil {
 			return nil, err
 		}
@@ -1797,7 +1858,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 		})
 
 		// There may be some conflict during the update, try it again
-		if err = ns.Commit(); err != nil {
+		if err = ns.Commit(context.Background()); err != nil {
 			continue
 		}
 
@@ -1848,7 +1909,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 	var jobErrs = make(map[int64]error)
 
 	ns := sess.NewSession(se)
-	err = ns.Begin()
+	err = ns.Begin(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -1894,7 +1955,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		jobID = jobIDMax + 1
 	}
 
-	err = ns.Commit()
+	err = ns.Commit(context.Background())
 	if err != nil {
 		return nil, err
 	}
