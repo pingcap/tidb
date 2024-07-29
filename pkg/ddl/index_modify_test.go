@@ -808,6 +808,27 @@ func checkGlobalIndexRow(
 	}
 }
 
+func TestAddGlobalIndexDropTempIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
+	tk.MustExec("alter table t add unique index idx(a)")
+	tk.MustQuery("select count(*) from mysql.gc_delete_range_done group by job_id order by job_id desc limit 1").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
+	tk.MustExec("insert into t values (1, 2), (1, 3)")
+	// Duplicate
+	tk.MustExecToErr("alter table t add unique index idx(a)")
+	tk.MustQuery("select count(*) from mysql.gc_delete_range_done group by job_id order by job_id desc limit 1").Check(testkit.Rows("2"))
+}
+
 func TestDropIndexes(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
