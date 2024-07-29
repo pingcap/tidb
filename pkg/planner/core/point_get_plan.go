@@ -963,6 +963,7 @@ func isSelectForShareLockType(lockType ast.SelectLockType) bool {
 	return false
 }
 
+// IsSupportedSelectLockType checks if the lockType is supported to acquire pessimsitic locks if necessary.
 func IsSupportedSelectLockType(lockType ast.SelectLockType) bool {
 	return isSelectForUpdateLockType(lockType) || isSelectForShareLockType(lockType)
 }
