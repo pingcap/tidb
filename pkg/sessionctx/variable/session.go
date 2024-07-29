@@ -3923,8 +3923,7 @@ func (s *SessionVars) GetOptObjective() string {
 // Additionally, the BR code also contains some session-related encapsulation and usage.
 //
 // TODO: There needs to be a more comprehensive and unified entry point to ensure that all internal
-//
-//	sessions and global user sessions/variables are isolated and do not affect each other.
+// sessions and global user sessions/variables are isolated and do not affect each other.
 func (s *SessionVars) UseLowResolutionTSO() bool {
 	return !s.InRestrictedSQL && s.lowResolutionTSO && s.ConnectionID > 0
 }
