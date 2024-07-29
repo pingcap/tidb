@@ -1196,7 +1196,7 @@ func (do *Domain) Close() {
 	close(do.mdlCheckCh)
 
 	// close MockGlobalServerInfoManagerEntry in order to refresh mock server info.
-	if intest.InTest && !intest.InIntegrationTest  {
+	if intest.InTest && !intest.InIntegrationTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	if handle := do.statsHandle.Load(); handle != nil {

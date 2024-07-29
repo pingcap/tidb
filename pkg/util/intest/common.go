@@ -18,6 +18,7 @@ package intest
 
 // InTest checks if the code is running in test.
 const InTest = false
+
 // InIntegrationTest checks if the code is running in integration test.
 const InIntegrationTest = false
 
