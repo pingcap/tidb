@@ -233,15 +233,18 @@ func (a *recordSet) OnFetchReturned() {
 	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
 }
 
-// Detach creates a new `RecordSet` which doesn't depend on the current session context.
+// TryDetach creates a new `RecordSet` which doesn't depend on the current session context.
 func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
-	// TODO: also detach the executor. Currently, the executor inside may contain the session context. Once
-	// the executor itself supports detach, we should also detach it here.
-	e, ok := a.executor.(*TableReaderExecutor)
+	e, ok := Detach(a.executor)
 	if !ok {
 		return nil, false, nil
 	}
 	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false)), true, nil
+}
+
+// GetExecutor4Test exports the internal executor for test purpose.
+func (a *recordSet) GetExecutor4Test() any {
+	return a.executor
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -580,9 +583,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
-	// Special handle for "select for update statement" in pessimistic transaction.
-	if isPessimistic && a.isSelectForUpdate {
-		return a.handlePessimisticSelectForUpdate(ctx, e)
+	if a.isSelectForUpdate {
+		if sctx.GetSessionVars().UseLowResolutionTSO() {
+			return nil, errors.New("can not execute select for update statement when 'tidb_low_resolution_tso' is set")
+		}
+		// Special handle for "select for update statement" in pessimistic transaction.
+		if isPessimistic {
+			return a.handlePessimisticSelectForUpdate(ctx, e)
+		}
 	}
 
 	a.prepareFKCascadeContext(e)
@@ -982,8 +990,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
-		lowResolutionTSO := sctx.GetSessionVars().LowResolutionTSO
-		if lowResolutionTSO {
+		if sctx.GetSessionVars().UseLowResolutionTSO() {
 			return nil, errors.New("can not execute write statement when 'tidb_low_resolution_tso' is set")
 		}
 	}

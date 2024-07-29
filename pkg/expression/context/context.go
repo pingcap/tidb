@@ -71,6 +71,8 @@ type EvalContext interface {
 	CurrentTime() (time.Time, error)
 	// GetMaxAllowedPacket returns the value of the 'max_allowed_packet' system variable.
 	GetMaxAllowedPacket() uint64
+	// GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
+	GetTiDBRedactLog() string
 	// GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 	GetDefaultWeekFormatMode() string
 	// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
@@ -229,6 +231,6 @@ func AssertLocationWithSessionVars(ctxLoc *time.Location, vars *variable.Session
 	stmtLocStr := vars.StmtCtx.TimeZone().String()
 	intest.Assert(ctxLocStr == varsLocStr && ctxLocStr == stmtLocStr,
 		"location mismatch, ctxLoc: %s, varsLoc: %s, stmtLoc: %s",
-		ctxLoc.String(), ctxLocStr, stmtLocStr,
+		ctxLocStr, varsLocStr, stmtLocStr,
 	)
 }

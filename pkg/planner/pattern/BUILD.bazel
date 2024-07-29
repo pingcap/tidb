@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
     ],
 )
 
@@ -26,6 +27,7 @@ go_test(
     shard_count = 5,
     deps = [
         "//pkg/planner/core",
+        "//pkg/planner/core/operator/logicalop",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -185,7 +186,7 @@ func TestConstantPropagation(t *testing.T) {
 			newConds := solver.PropagateConstant(ctx, conds)
 			var result []string
 			for _, v := range newConds {
-				result = append(result, v.StringWithCtx(ctx))
+				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
 			}
 			sort.Strings(result)
 			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)
@@ -253,7 +254,7 @@ func TestConstantFolding(t *testing.T) {
 			require.True(t, ctx.IsInNullRejectCheck())
 		}
 		newConds := FoldConstant(ctx, expr)
-		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx()), "different for expr %s", tt.condition)
+		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
 }
 
@@ -315,7 +316,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 	}
 	for _, tt := range tests {
 		newConds := FoldConstant(ctx, tt.condition)
-		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx), "different for expr %s", tt.condition)
+		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx, errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
 }
 

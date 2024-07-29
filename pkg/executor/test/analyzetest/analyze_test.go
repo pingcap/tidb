@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -504,7 +503,7 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	tblInfo := tbl.Meta()
 	tid := tblInfo.ID
 	tk.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 220000 where table_id=%d", tid))
-	require.NoError(t, statsHandle.Update(is))
+	require.NoError(t, statsHandle.Update(context.Background(), is))
 	result := tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
@@ -514,7 +513,7 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	))
 	tk.MustExec("insert into t values(1),(1),(1)")
 	require.NoError(t, statsHandle.DumpStatsDeltaToKV(true))
-	require.NoError(t, statsHandle.Update(is))
+	require.NoError(t, statsHandle.Update(context.Background(), is))
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
@@ -703,11 +702,11 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := exec.AutoAnalyzeMinCnt
+	originalVal3 := statistics.AutoAnalyzeMinCnt
 	defer func() {
-		exec.AutoAnalyzeMinCnt = originalVal3
+		statistics.AutoAnalyzeMinCnt = originalVal3
 	}()
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -746,7 +745,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	// auto-analyze uses the table-level options
 	tk.MustExec("insert into t values (10,10,10)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -1046,11 +1045,11 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := exec.AutoAnalyzeMinCnt
+	originalVal3 := statistics.AutoAnalyzeMinCnt
 	defer func() {
-		exec.AutoAnalyzeMinCnt = originalVal3
+		statistics.AutoAnalyzeMinCnt = originalVal3
 	}()
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	originalVal4 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal4))
@@ -1098,7 +1097,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	tk.MustExec("insert into t values (5,5,5),(6,6,6)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	// auto analyze uses the saved option(predicate columns).
 	h.HandleAutoAnalyze()
 	tblStats = h.GetTableStats(tblInfo)
@@ -1888,9 +1887,9 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -1906,7 +1905,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values (5,6), (7,8), (9, 10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -1972,9 +1971,9 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -2726,19 +2725,19 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	tid := tbl.Meta().ID
 	tk.MustExec("insert into t values(1),(2),(3)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err = h.Update(dom.InfoSchema())
+	err = h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 	tk.MustExec("analyze table t")
 	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
 		"3 0",
 	))
 
-	originalVal1 := exec.AutoAnalyzeMinCnt
+	originalVal1 := statistics.AutoAnalyzeMinCnt
 	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
-		exec.AutoAnalyzeMinCnt = originalVal1
+		statistics.AutoAnalyzeMinCnt = originalVal1
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 
@@ -2750,7 +2749,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 
 	tk.MustExec("insert into t values(4),(5),(6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err = h.Update(dom.InfoSchema())
+	err = h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
 	// Simulate that the analyze would start before and finish after the second insert.

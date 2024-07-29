@@ -37,7 +37,9 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableI
 	} else {
 		db, exists := is.SchemaByName(model.NewCIStr("test"))
 		require.True(t, exists, comment)
-		for _, tbl := range db.Tables {
+		tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+		require.NoError(t, err)
+		for _, tbl := range tblInfos {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil {
 				continue

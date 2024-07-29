@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/assert"
@@ -71,9 +72,9 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	injectSafeTS := oracle.GoTimeToTS(time.Now().Add(10 * time.Second))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS))
 
 	oldValue := map[string]any{
 		"merge-schedule-limit": 1,
@@ -91,6 +92,11 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 			closeValue, err := infosync.GetPDScheduleConfig(context.Background())
 			assert.NoError(t, err)
 			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
+		}
+	}
+	hook.OnJobRunAfterExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
+		if job.SchemaState == model.StateWriteReorganization {
 			// cancel flashback job
 			job.State = model.JobStateCancelled
 			job.Error = dbterror.ErrCancelledDDLJob
@@ -108,9 +114,6 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
 	require.EqualValues(t, finishValue["merge-schedule-limit"], 1)
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 }
 
 func TestAddDDLDuringFlashback(t *testing.T) {

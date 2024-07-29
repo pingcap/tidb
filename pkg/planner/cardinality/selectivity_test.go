@@ -183,7 +183,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	// 2000 rows left.
 	testKit.MustExec("delete from t where a < 500")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	var (
 		input  []string
 		output []struct {
@@ -226,7 +226,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
@@ -850,7 +850,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	testKit.MustExec("analyze table t all columns with 1 samplerate, 0 topn")
 	testKit.MustExec("delete from t where a < 500")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	var (
 		input  []string
 		output []struct {
@@ -868,7 +868,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
 	testKit.MustExec("analyze table t partition p4 all columns with 1 samplerate, 0 topn")
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	for i := range input {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
@@ -1206,7 +1206,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// 1. Insert 11 rows of data without ANALYZE.
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(2,1),(2,2),(2,3),(2,4),(2,5),(3,1)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	// 1-1. use real-time stats.
 	// From the real-time stats, we are able to know the total count is 11.
@@ -1228,7 +1228,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 
 	// 2. After ANALYZE.
 	testKit.MustExec("analyze table t all columns with 1 samplerate")
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	// The execution plans are the same no matter we ignore the real-time stats or not.
 	analyzedPlan := []string{
@@ -1244,7 +1244,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// 3. Insert another 4 rows of data.
 	testKit.MustExec("insert into t values(3,2),(3,3),(3,4),(3,5)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(dom.InfoSchema()))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	// 3-1. use real-time stats.
 	// From the real-time stats, we are able to know the total count is 15.
@@ -1319,7 +1319,7 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
 		"TableReader 0.08 root  data:Selection",
@@ -1328,14 +1328,14 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	))
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(is))
+	require.NoError(t, h.InitStatsLite(context.Background(), is))
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
 		"TableReader 0.08 root  data:Selection",
 		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	h.Clear()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
 		"TableReader 8.00 root  data:Selection",
 		"└─Selection 8.00 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",

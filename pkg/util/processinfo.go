@@ -140,7 +140,13 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 			diskConsumed = pi.DiskTracker.BytesConsumed()
 		}
 	}
-	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias)
+
+	var affectedRows any
+	if pi.StmtCtx != nil {
+		affectedRows = pi.StmtCtx.AffectedRows()
+	}
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
+		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows)
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.
@@ -201,8 +207,6 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// GetAutoAnalyzeProcID returns processID for auto analyze
-	GetAutoAnalyzeProcID() uint64
 	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se any)
 	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.

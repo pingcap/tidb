@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const batchSize = 10000
+const batchSize = 5000
 
 func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
@@ -94,7 +94,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 	// Create the table
 	_, err := tk.Session().Execute(
 		context.Background(),
-		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
+		"CREATE TABLE IF NOT EXISTS test.t (a int primary key clustered, b varchar(255))",
 	)
 	require.NoError(b, err)
 	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -108,31 +108,29 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
+	// Add initial records
+	se := tk.Session()
+	for j := 0; j < batchSize; j++ {
+		tk.MustExec("INSERT INTO test.t VALUES (?, ?)", j, "test")
+	}
+
+	b.StopTimer()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Reset environment for each batch
-		b.StopTimer()
-
-		ctx := tk.Session()
-		vars := ctx.GetSessionVars()
+		vars := se.GetSessionVars()
 		vars.BulkDMLEnabled = true
 		vars.TxnCtx.EnableMDL = true
 		vars.StmtCtx.InUpdateStmt = true
 		require.Nil(b, sessiontxn.NewTxn(context.Background(), tk.Session()))
-		txn, _ := ctx.Txn(true)
+		txn, _ := se.Txn(true)
 		require.True(b, txn.IsPipelined())
-
-		// Add initial records
-		for j := 0; j < batchSize; j++ {
-			_, err := tb.AddRecord(ctx.GetTableCtx(), records[j])
-			require.NoError(b, err)
-		}
 
 		b.StartTimer()
 		for j := 0; j < batchSize; j++ {
 			// Remove record
 			handle := kv.IntHandle(j)
-			err := tb.RemoveRecord(ctx.GetTableCtx(), handle, records[j])
+			err := tb.RemoveRecord(se.GetTableCtx(), handle, records[j])
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -140,7 +138,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		b.StopTimer()
 
 		// Rollback the transaction to avoid interference between batches
-		ctx.RollbackTxn(context.Background())
+		se.RollbackTxn(context.Background())
 		require.NoError(b, err)
 	}
 
@@ -157,7 +155,7 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 	// Create the table
 	_, err := tk.Session().Execute(
 		context.Background(),
-		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
+		"CREATE TABLE IF NOT EXISTS test.t (a int primary key clustered, b varchar(255))",
 	)
 	require.NoError(b, err)
 	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -175,35 +173,32 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		newData[j] = types.MakeDatums(j, "updated")
 	}
 
+	// Add initial records
+	se := tk.Session()
+	for j := 0; j < batchSize; j++ {
+		tk.MustExec("INSERT INTO test.t VALUES (?, ?)", j, "test")
+	}
+
+	touched := make([]bool, len(tb.Meta().Columns))
+	touched[1] = true
+
+	b.StopTimer()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Reset environment for each batch
-		b.StopTimer()
-
-		ctx := tk.Session()
-		vars := ctx.GetSessionVars()
+		vars := se.GetSessionVars()
 		vars.BulkDMLEnabled = true
 		vars.TxnCtx.EnableMDL = true
 		vars.StmtCtx.InUpdateStmt = true
 		require.Nil(b, sessiontxn.NewTxn(context.Background(), tk.Session()))
-
-		txn, _ := ctx.Txn(true)
+		txn, _ := se.Txn(true)
 		require.True(b, txn.IsPipelined())
-
-		// Add initial records
-		for j := 0; j < batchSize; j++ {
-			_, err := tb.AddRecord(ctx.GetTableCtx(), records[j])
-			require.NoError(b, err)
-		}
-
-		touched := make([]bool, len(tb.Meta().Columns))
-		touched[1] = true
 
 		b.StartTimer()
 		for j := 0; j < batchSize; j++ {
 			// Update record
 			handle := kv.IntHandle(j)
-			err := tb.UpdateRecord(context.TODO(), ctx.GetTableCtx(), handle, records[j], newData[j], touched)
+			err := tb.UpdateRecord(context.TODO(), se.GetTableCtx(), handle, records[j], newData[j], touched)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -211,7 +206,7 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		b.StopTimer()
 
 		// Rollback the transaction to avoid interference between batches
-		ctx.RollbackTxn(context.Background())
+		se.RollbackTxn(context.Background())
 		require.NoError(b, err)
 	}
 

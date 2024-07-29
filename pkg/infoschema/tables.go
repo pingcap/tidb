@@ -855,6 +855,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "CURRENT_AFFECTED_ROWS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -2414,6 +2415,11 @@ func (it *infoschemaTable) DeletableIndices() []table.Index {
 	return nil
 }
 
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (it *infoschemaTable) WritableConstraint() []*table.Constraint {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
@@ -2504,6 +2510,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 
 // DeletableIndices implements table.Table DeletableIndices interface.
 func (vt *VirtualTable) DeletableIndices() []table.Index {
+	return nil
+}
+
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (vt *VirtualTable) WritableConstraint() []*table.Constraint {
 	return nil
 }
 

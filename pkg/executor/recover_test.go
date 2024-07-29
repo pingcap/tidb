@@ -24,6 +24,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -575,12 +576,8 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("insert into t_flashback values (1),(2),(3)")
 	tk.MustExec("drop database test_flashback")
 
-	// test PD connection issue causes failure after tidb_ddl_error_count_limit
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `return()`)
-	// TODO(lance6716): fix it later
-	//tk.MustGetErrMsg("flashback database test_flashback", "[ddl:-1]DDL job rollback, error msg: mock error for clearTablePlacementAndBundles")
-	tk.MustExecToErr("flashback database test_flashback")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `1*return()`)
+	// even PD is down, the job can not be canceled for now.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `4*return()`)
 	tk.MustExec("flashback database test_flashback")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
 
@@ -631,6 +628,43 @@ func TestFlashbackSchema(t *testing.T) {
 	newTk.MustExec("flashback schema t_recover")
 
 	tk.MustExec("drop user 'testflashbackschema'@'localhost';")
+}
+
+func TestFlashbackSchemaWithManyTables(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
+
+	backup := kv.TxnEntrySizeLimit.Load()
+	kv.TxnEntrySizeLimit.Store(50000)
+	t.Cleanup(func() {
+		kv.TxnEntrySizeLimit.Store(backup)
+	})
+
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
+	tk.MustExec("set @@global.tidb_enable_fast_create_table=ON")
+	tk.MustExec("drop database if exists many_tables")
+	tk.MustExec("create database if not exists many_tables")
+	tk.MustExec("use many_tables")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	for i := 0; i < 700; i++ {
+		tk.MustExec(fmt.Sprintf("create table t%d (a int)", i))
+	}
+
+	tk.MustExec("drop database many_tables")
+
+	tk.MustExec("flashback database many_tables")
+
+	tk.MustQuery("select count(*) from many_tables.t0").Check(testkit.Rows("0"))
 }
 
 // MockGC is used to make GC work in the test environment.

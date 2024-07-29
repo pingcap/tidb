@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -59,60 +58,6 @@ func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, 
 // LogicalAggregation just works since schema = child + aggregate expressions. No need to map predicates.
 // Also, predicates involving aggregate expressions are not null filtering. IsNullReject always returns
 // false for those cases.
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	innerTable := p.Children()[0]
-	outerTable := p.Children()[1]
-	switchChild := false
-
-	if p.JoinType == LeftOuterJoin {
-		innerTable, outerTable = outerTable, innerTable
-		switchChild = true
-	}
-
-	// First, simplify this join
-	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
-		canBeSimplified := false
-		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
-			if isOk {
-				canBeSimplified = true
-				break
-			}
-		}
-		if canBeSimplified {
-			p.JoinType = InnerJoin
-		}
-	}
-
-	// Next simplify join children
-
-	combinedCond := mergeOnClausePredicates(p, predicates)
-	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	} else if p.JoinType == InnerJoin || p.JoinType == SemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else if p.JoinType == AntiSemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	}
-
-	if switchChild {
-		p.SetChild(0, outerTable)
-		p.SetChild(1, innerTable)
-	} else {
-		p.SetChild(0, innerTable)
-		p.SetChild(1, outerTable)
-	}
-
-	return p
-}
 
 func (*convertOuterToInnerJoin) name() string {
 	return "convert_outer_to_inner_joins"

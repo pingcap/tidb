@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
@@ -97,9 +98,8 @@ type CheckRowBuffer struct {
 }
 
 // GetRowToCheck gets the row data for constraint check.
-// TODO: make sure the inner buffer is not used outside directly.
-func (b *CheckRowBuffer) GetRowToCheck() []types.Datum {
-	return b.rowToCheck
+func (b *CheckRowBuffer) GetRowToCheck() chunk.Row {
+	return chunk.MutRowFromDatums(b.rowToCheck).ToRow()
 }
 
 // AddColVal adds a column value to the buffer for checking.
@@ -148,6 +148,7 @@ func (b *ColSizeDeltaBuffer) UpdateColSizeMap(m map[int64]int64) map[int64]int64
 // Because inner slices are reused, you should not call the get methods again before finishing the previous usage.
 // Otherwise, the previous data will be overwritten.
 type MutateBuffers struct {
+	stmtBufs     *variable.WriteStmtBufs
 	encodeRow    *EncodeRowBuffer
 	checkRow     *CheckRowBuffer
 	colSizeDelta *ColSizeDeltaBuffer
@@ -156,6 +157,7 @@ type MutateBuffers struct {
 // NewMutateBuffers creates a new `MutateBuffers`.
 func NewMutateBuffers(stmtBufs *variable.WriteStmtBufs) *MutateBuffers {
 	return &MutateBuffers{
+		stmtBufs: stmtBufs,
 		encodeRow: &EncodeRowBuffer{
 			writeStmtBufs: stmtBufs,
 		},
@@ -202,6 +204,11 @@ func (b *MutateBuffers) GetColSizeDeltaBufferWithCap(capacity int) *ColSizeDelta
 	buffer := b.colSizeDelta
 	buffer.Reset(capacity)
 	return buffer
+}
+
+// GetWriteStmtBufs returns the `*variable.WriteStmtBufs`
+func (b *MutateBuffers) GetWriteStmtBufs() *variable.WriteStmtBufs {
+	return b.stmtBufs
 }
 
 // ensureCapacityAndReset is similar to the built-in make(),
