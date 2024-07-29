@@ -28,7 +28,7 @@ type gbkBinCollator struct {
 }
 
 // Clone implements Collator interface.
-func (g *gbkBinCollator) Clone() Collator {
+func (*gbkBinCollator) Clone() Collator {
 	return &gbkBinCollator{charset.NewCustomGBKEncoder()}
 }
 
