@@ -1318,6 +1318,10 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 		}
 		return base * uint64(ratio*10) / 10
 	}
+
+	// The preserve rate is a magic number based on experience
+	// The actual usage should less than the preserve space, but it's better to be conservative.
+	// Restore to Tiflash involves a data form transformation, the estimation is not accurate.
 	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
 	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
 	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
