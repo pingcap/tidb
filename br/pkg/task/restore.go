@@ -842,6 +842,9 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
 			return errors.Trace(err)
 		}
+		if err := checkTableExistence(ctx, mgr, tables); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	archiveSize := reader.ArchiveSize(ctx, files)
@@ -1356,6 +1359,21 @@ func Exhaust(ec <-chan error) []error {
 			return out
 		}
 	}
+}
+
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table) error {
+	message := "table already exists: "
+	allUnique := true
+	for _, table := range tables {
+		if _, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name, table.Info.Name); err == nil {
+			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
+			allUnique = false
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
+	}
+	return nil
 }
 
 // EstimateRangeSize estimates the total range count by file.
