@@ -391,7 +391,7 @@ func (e *AnalyzeExec) handleResultsError(
 	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
 	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
 	partitionStatsConcurrency = min(taskNum, partitionStatsConcurrency)
-	// Try to demand extra session from Domain to save Analyze results in concurrency.
+	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	dom := domain.GetDomain(e.Ctx())
 	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
