@@ -42,14 +42,14 @@ func (s *Set[T]) findRootOriginalVal(a T) int {
 		s.tailIdx++
 		return s.tailIdx - 1
 	}
-	return s.findRoot(idx)
+	return s.findRootInternal(idx)
 }
 
 // findRoot is an internal implementation. Call it inside findRootOriginalVal.
-func (s *Set[T]) findRoot(a int) int {
+func (s *Set[T]) findRootInternal(a int) int {
 	if s.parent[a] != a {
 		// Path compression, which leads the time complexity to the inverse Ackermann function.
-		s.parent[a] = s.findRoot(s.parent[a])
+		s.parent[a] = s.findRootInternal(s.parent[a])
 	}
 	return s.parent[a]
 }
@@ -69,8 +69,8 @@ func (s *Set[T]) Union(a, b T) {
 	}
 }
 
-// FindRootForV finds the root of the set that contains a.
-func (s *Set[T]) FindRootForV(a T) int {
+// FindRoot finds the root of the set that contains a.
+func (s *Set[T]) FindRoot(a T) int {
 	// if a is not in the set, assign a new index to it.
 	return s.findRootOriginalVal(a)
 }
