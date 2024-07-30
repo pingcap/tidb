@@ -1803,6 +1803,7 @@ func (d *Datum) convertToVectorFloat32(_ Context, target *FieldType) (ret Datum,
 		if err = v.CheckDimsFitColumn(target.GetFlen()); err != nil {
 			return ret, errors.Trace(err)
 		}
+		ret = *d
 	case KindString, KindBytes:
 		var v VectorFloat32
 		if v, err = ParseVectorFloat32(d.GetString()); err != nil {
