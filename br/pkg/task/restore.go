@@ -1318,7 +1318,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 		}
 		return base * uint64(ratio*10) / 10
 	}
-	
+
 	// The preserve rate is a magic number based on experience
 	// The actual usage should less than the preserve space, but it's better to be conservative.
 	// Restore to Tiflash involves a data form transformation, the estimation is not accurate.
