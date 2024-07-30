@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -194,7 +195,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 				tryToSubstituteExpr(&x.Exprs[i], lp, candidateExpr, tp, x.Children()[0].Schema(), column, opt)
 			}
 		}
-	case *LogicalSort:
+	case *logicalop.LogicalSort:
 		for i := range x.ByItems {
 			tp = x.ByItems[i].Expr.GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {

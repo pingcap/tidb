@@ -195,9 +195,9 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 
 // PushDownTopN implements base.LogicalPlan.<5th> interface.
 func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
+	var topN *logicalop.LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
+		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
 	}
 	for _, expr := range p.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {

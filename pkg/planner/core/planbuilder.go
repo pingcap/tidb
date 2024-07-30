@@ -3329,7 +3329,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
 		b.curClause = orderByClause
 		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
-		sort := LogicalSort{
+		sort := logicalop.LogicalSort{
 			ByItems: []*util.ByItems{{Expr: orderByCol}},
 		}.Init(b.ctx, b.getSelectOffset())
 		sort.SetChildren(np)

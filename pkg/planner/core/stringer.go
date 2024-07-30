@@ -169,7 +169,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Apply{" + strings.Join(children, "->") + "}"
 	case *logicalop.LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
-	case *LogicalLimit, *PhysicalLimit:
+	case *logicalop.LogicalLimit, *PhysicalLimit:
 		str = "Limit"
 	case *PhysicalLock, *LogicalLock:
 		str = "Lock"
@@ -187,7 +187,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *logicalop.LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
-	case *LogicalSort, *PhysicalSort:
+	case *logicalop.LogicalSort, *PhysicalSort:
 		str = "Sort"
 	case *LogicalJoin:
 		last := len(idxs) - 1
@@ -238,7 +238,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *LogicalProjection, *PhysicalProjection:
 		str = "Projection"
-	case *LogicalTopN:
+	case *logicalop.LogicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *PhysicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)

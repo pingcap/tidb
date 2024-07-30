@@ -212,7 +212,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			appendRemoveProjTraceStep(apply, proj, opt)
 			return s.optimize(ctx, p, opt)
-		} else if li, ok := innerPlan.(*LogicalLimit); ok {
+		} else if li, ok := innerPlan.(*logicalop.LogicalLimit); ok {
 			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
 			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
 			// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
@@ -362,7 +362,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 				}
 			}
-		} else if sort, ok := innerPlan.(*LogicalSort); ok {
+		} else if sort, ok := innerPlan.(*logicalop.LogicalSort); ok {
 			// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
 			// the top level Sort has no effect on the subquery's result.
 			innerPlan = sort.Children()[0]
@@ -422,7 +422,7 @@ func appendRemoveMaxOneRowTraceStep(m *logicalop.LogicalMaxOneRow, opt *optimize
 	opt.AppendStepToCurrent(m.ID(), m.TP(), reason, action)
 }
 
-func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveLimitTraceStep(limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", limit.TP(), limit.ID())
 	}
@@ -452,7 +452,7 @@ func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *Logical
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendRemoveSortTraceStep(sort *LogicalSort, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveSortTraceStep(sort *logicalop.LogicalSort, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", sort.TP(), sort.ID())
 	}

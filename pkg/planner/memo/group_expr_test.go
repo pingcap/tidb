@@ -16,11 +16,11 @@ package memo
 
 import (
 	"encoding/binary"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"reflect"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/stretchr/testify/require"
 )
 
