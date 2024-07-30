@@ -56,6 +56,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 	}()
 	for results := range worker.resultsCh {
 		if err := worker.killer.HandleSignal(); err != nil {
+			finishJobWithLog(worker.sctx, results.Job, err)
 			worker.errCh <- err
 			return
 		}
