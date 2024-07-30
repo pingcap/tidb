@@ -336,9 +336,11 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType.Clone(),
 		Function: sf.Function.Clone(),
 	}
+	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
+	// TODO: remove ScalarFunc.RetType
+	c.RetType = c.Function.getRetTp()
 	if sf.hashcode != nil {
 		c.hashcode = make([]byte, len(sf.hashcode))
 		copy(c.hashcode, sf.hashcode)
