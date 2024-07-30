@@ -4,6 +4,7 @@ package gluetidb
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,14 +41,17 @@ func New() Glue {
 		conf.Log.EnableSlowLog.Store(false)
 		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
 	})
-	return Glue{}
+	return Glue{
+		startDomainOnce: &sync.Once{},
+	}
 }
 
 // Glue is an implementation of glue.Glue using a new TiDB session.
 type Glue struct {
 	glue.StdIOGlue
 
-	tikvGlue gluetikv.Glue
+	tikvGlue        gluetikv.Glue
+	startDomainOnce *sync.Once
 }
 
 type tidbSession struct {
@@ -55,13 +59,13 @@ type tidbSession struct {
 }
 
 // GetDomain implements glue.Glue.
-func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
+func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	existDom, _ := session.GetDomain(nil)
-	initStatsSe, err := session.CreateSession(store)
+	initStatsSe, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	se, err := session.CreateSession(store)
+	se, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -84,8 +88,8 @@ func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 }
 
 // CreateSession implements glue.Glue.
-func (Glue) CreateSession(store kv.Storage) (glue.Session, error) {
-	se, err := session.CreateSession(store)
+func (g Glue) CreateSession(store kv.Storage) (glue.Session, error) {
+	se, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -93,6 +97,25 @@ func (Glue) CreateSession(store kv.Storage) (glue.Session, error) {
 		se: se,
 	}
 	return tiSession, nil
+}
+
+func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {
+	var initErr error
+	g.startDomainOnce.Do(func() {
+		existDom, _ := session.GetDomain(nil)
+		if existDom == nil {
+			dom, err := session.GetDomain(store)
+			if err != nil {
+				initErr = err
+				return
+			}
+			initErr = dom.Start()
+		}
+	})
+	if initErr != nil {
+		return nil, initErr
+	}
+	return session.CreateSession(store)
 }
 
 // Open implements glue.Glue.
@@ -122,7 +145,7 @@ func (g Glue) GetVersion() string {
 
 // UseOneShotSession implements glue.Glue.
 func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
-	se, err := session.CreateSession(store)
+	se, err := g.createTypesSession(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -133,7 +156,7 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 		se.Close()
 		log.Info("one shot session closed")
 	}()
-	// dom will be created during session.CreateSession.
+	// dom will be created during create session.
 	dom, err := session.GetDomain(store)
 	if err != nil {
 		return errors.Trace(err)
