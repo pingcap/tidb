@@ -590,11 +590,7 @@ func NewBackend(
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-<<<<<<< HEAD
 	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), false, config.RegionSplitBatchSize, config.RegionSplitConcurrency)
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
-=======
-	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
 	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
@@ -602,7 +598,6 @@ func NewBackend(
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
->>>>>>> 29bf0083a6b (localbackend: fix resource leak when err on new local backend (#53664))
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
 		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
