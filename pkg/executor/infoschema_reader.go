@@ -139,8 +139,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			dbs := getAllSchemas()
 			err = e.setDataFromSequences(ctx, sctx, dbs)
 		case infoschema.TablePartitions:
-			dbs := getAllSchemas()
-			err = e.setDataFromPartitions(ctx, sctx, dbs)
+			err = e.setDataFromPartitions(ctx, sctx)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
@@ -611,6 +610,42 @@ func getMatchSchemas(
 	return schemas
 }
 
+func getMatchTableInfosForPartitions(
+	ctx context.Context,
+	extractor base.MemTablePredicateExtractor,
+	schema model.CIStr,
+	is infoschema.InfoSchema,
+) ([]*model.TableInfo, error) {
+	ex := extractor.(plannercore.TableSchemaSelector)
+	if ex == nil || !ex.HasTables() {
+		// There is no specified table in predicate.
+		return is.SchemaTableInfos(ctx, schema)
+	}
+	tables := make([]*model.TableInfo, 0, 8)
+	// Find all table infos from predicate.
+	for _, n := range ex.SelectedTableNames() {
+		tbl, err := is.TableByName(ctx, schema, n)
+		if err != nil {
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
+		tables = append(tables, tbl.Meta())
+	}
+	for _, pid := range ex.SelectedPartitionIDs() {
+		tbl, db, _ := is.FindTableByPartitionID(pid)
+		if tbl == nil {
+			continue
+		}
+		if db.Name.L != schema.L {
+			continue
+		}
+		tables = append(tables, tbl.Meta())
+	}
+	return deduplicateTableInfos(tables), nil
+}
+
 func getMatchTableInfos(
 	ctx context.Context,
 	extractor base.MemTablePredicateExtractor,
@@ -618,39 +653,37 @@ func getMatchTableInfos(
 	is infoschema.InfoSchema,
 ) ([]*model.TableInfo, error) {
 	ex := extractor.(plannercore.TableSchemaSelector)
-	if ex != nil {
-		tables := make([]*model.TableInfo, 0, 8)
-		// Find all table infos from where condition.
-		fetchAllTables := true
-		for _, n := range ex.SelectedTableNames() {
-			fetchAllTables = false
-			tbl, err := is.TableByName(ctx, schema, n)
-			if err != nil {
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				return nil, errors.Trace(err)
-			}
-			tables = append(tables, tbl.Meta())
-		}
-		for _, id := range ex.SelectedTableIDs() {
-			fetchAllTables = false
-			tbl, ok := is.TableByID(id)
-			if !ok {
-				continue
-			}
-			_, err := is.TableByName(ctx, schema, tbl.Meta().Name)
-			if err != nil {
-				continue
-			}
-			tables = append(tables, tbl.Meta())
-		}
-		if !fetchAllTables {
-			return deduplicateTableInfos(tables), nil
-		}
+	if ex == nil || !ex.HasTables() {
+		// There is no specified table in predicate.
+		return is.SchemaTableInfos(ctx, schema)
 	}
-	// There is no specified table in where condition.
-	return is.SchemaTableInfos(ctx, schema)
+	tables := make([]*model.TableInfo, 0, 8)
+	// Find all table infos from predicate.
+	for _, n := range ex.SelectedTableNames() {
+		tbl, err := is.TableByName(ctx, schema, n)
+		if err != nil {
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
+		tables = append(tables, tbl.Meta())
+	}
+	for _, id := range ex.SelectedTableIDs() {
+		tbl, ok := is.TableByID(id)
+		if !ok {
+			continue
+		}
+		_, err := is.TableByName(ctx, schema, tbl.Meta().Name)
+		if err != nil {
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
+		tables = append(tables, tbl.Meta())
+	}
+	return deduplicateTableInfos(tables), nil
 }
 
 func deduplicateTableInfos(tables []*model.TableInfo) []*model.TableInfo {
@@ -1227,29 +1260,23 @@ func calcCharOctLength(lenInChar int, cs string) int {
 	return lenInBytes
 }
 
-func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context) error {
 	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
 
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && ex.SkipRequest {
 		return nil
 	}
-
+	schemas := getMatchSchemas(e.extractor, e.is)
 	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
-			continue
-		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
+		tables, err := getMatchTableInfosForPartitions(ctx, e.extractor, schema, e.is)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
-			if ok && extractor.Filter("table_name", table.Name.L) {
-				continue
-			}
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
 				continue
 			}
@@ -1265,7 +1292,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				} else {
 					// needs to update needed partitions for partition table.
 					for _, pi := range table.GetPartitionInfo().Definitions {
-						if ok && extractor.Filter("partition_name", pi.Name.L) {
+						if ok && ex.Filter("partition_name", pi.Name.L) {
 							continue
 						}
 						err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
@@ -1314,7 +1341,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				rows = append(rows, record)
 			} else {
 				for i, pi := range table.GetPartitionInfo().Definitions {
-					if ok && extractor.Filter("partition_name", pi.Name.L) {
+					if ok && ex.Filter("partition_name", pi.Name.L) {
 						continue
 					}
 					rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)

@@ -1901,29 +1901,50 @@ func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
 
 var _ TableSchemaSelector = (*InfoSchemaTablesExtractor)(nil)
 
-// TableSchemaSelector is used to help determine if a specified table/schema name contained in predicate condition,
-// and return all specified table/schema names in predicate condition.
+// TableSchemaSelector is used to help determine if a specified table/schema name contained in predicate,
+// and return all specified table/schema names in predicate.
 type TableSchemaSelector interface {
-	SelectedTableNames() []model.CIStr
 	SelectedSchemaNames() []model.CIStr
+
+	HasTables() bool
+	SelectedTableNames() []model.CIStr
 	SelectedTableIDs() []int64
+	SelectedPartitionIDs() []int64
 }
 
-// SelectedTableNames gets the table names specified in predicate condition.
+// HasTables returns true if there is table names or table IDs specified in predicate.
+func (e *InfoSchemaTablesExtractor) HasTables() bool {
+	_, hasTableName := e.ColPredicates["table_name"]
+	_, hasTableID := e.ColPredicates["tidb_table_id"]
+	_, hasPartID := e.ColPredicates["tidb_partition_id"]
+	return hasTableName || hasTableID || hasPartID
+}
+
+// SelectedTableNames gets the table names specified in predicate.
 func (e *InfoSchemaTablesExtractor) SelectedTableNames() []model.CIStr {
 	return e.getSchemaObjectNames("table_name")
 }
 
-// SelectedSchemaNames gets the schema names specified in predicate condition.
+// SelectedSchemaNames gets the schema names specified in predicate.
 func (e *InfoSchemaTablesExtractor) SelectedSchemaNames() []model.CIStr {
 	return e.getSchemaObjectNames("table_schema")
 }
 
-// SelectedTableIDs get table IDs specified in predicate condition.
+// SelectedTableIDs get table IDs specified in predicate.
 func (e *InfoSchemaTablesExtractor) SelectedTableIDs() []int64 {
 	strs := e.getSchemaObjectNames("tidb_table_id")
-	tableIDs := make([]int64, 0, len(strs))
-	for _, s := range strs {
+	return e.parseIDs(strs)
+}
+
+// SelectedPartitionIDs get partitions IDs specified in predicate.
+func (e *InfoSchemaTablesExtractor) SelectedPartitionIDs() []int64 {
+	strs := e.getSchemaObjectNames("tidb_partition_id")
+	return e.parseIDs(strs)
+}
+
+func (e *InfoSchemaTablesExtractor) parseIDs(ids []model.CIStr) []int64 {
+	tableIDs := make([]int64, 0, len(ids))
+	for _, s := range ids {
 		v, err := strconv.ParseInt(s.L, 10, 64)
 		if err != nil {
 			continue
@@ -1934,7 +1955,7 @@ func (e *InfoSchemaTablesExtractor) SelectedTableIDs() []int64 {
 	return tableIDs
 }
 
-// getSchemaObjectNames gets the schema object names specified in predicate condition of given column name.
+// getSchemaObjectNames gets the schema object names specified in predicate of given column name.
 func (e *InfoSchemaTablesExtractor) getSchemaObjectNames(colName string) []model.CIStr {
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
