@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -72,6 +73,30 @@ func (e *defaultEvaluator) run(ctx EvalContext, vecEnabled bool, input, output *
 		}
 	}
 	return nil
+}
+
+// RequiredOptionalEvalProps exposes all optional evaluation properties that this evaluator requires.
+func (e *defaultEvaluator) RequiredOptionalEvalProps() context.OptionalEvalPropKeySet {
+	props := context.OptionalEvalPropKeySet(0)
+	for _, expr := range e.exprs {
+		props = props | getOptionalEvalPropsForExpr(expr)
+	}
+
+	return props
+}
+
+func getOptionalEvalPropsForExpr(expr Expression) context.OptionalEvalPropKeySet {
+	switch e := expr.(type) {
+	case *ScalarFunction:
+		props := e.Function.RequiredOptionalEvalProps()
+		for _, arg := range e.GetArgs() {
+			props = props | getOptionalEvalPropsForExpr(arg)
+		}
+
+		return props
+	default:
+		return 0
+	}
 }
 
 // EvaluatorSuite is responsible for the evaluation of a list of expressions.

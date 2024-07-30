@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -109,46 +108,6 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 	}
 
 	return nil, nil
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
-	selfSchema.Keys = nil
-	var latestIndexes map[int64]*model.IndexInfo
-	var changed bool
-	var err error
-	check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.IsForUpdateRead
-	check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
-	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
-	if check {
-		latestIndexes, changed, err = getLatestIndexInfo(ds.SCtx(), ds.table.Meta().ID, 0)
-		if err != nil {
-			return
-		}
-	}
-	for _, index := range ds.table.Meta().Indices {
-		if ds.IsForUpdateRead && changed {
-			latestIndex, ok := latestIndexes[index.ID]
-			if !ok || latestIndex.State != model.StatePublic {
-				continue
-			}
-		} else if index.State != model.StatePublic {
-			continue
-		}
-		if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		} else if uniqueKey != nil {
-			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
-		}
-	}
-	if ds.TableInfo.PKIsHandle {
-		for i, col := range ds.Columns {
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{selfSchema.Columns[i]})
-				break
-			}
-		}
-	}
 }
 
 func (*buildKeySolver) name() string {

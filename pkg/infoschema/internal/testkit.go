@@ -150,12 +150,13 @@ func GenGlobalID(store kv.Storage) (int64, error) {
 func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 	id, err := GenGlobalID(store)
 	require.NoError(t, err)
-	return &model.DBInfo{
-		ID:     id,
-		Name:   model.NewCIStr(DBName),
-		Tables: []*model.TableInfo{},
-		State:  model.StatePublic,
+	dbInfo := &model.DBInfo{
+		ID:    id,
+		Name:  model.NewCIStr(DBName),
+		State: model.StatePublic,
 	}
+	dbInfo.Deprecated.Tables = []*model.TableInfo{}
+	return dbInfo
 }
 
 // MockTableInfo mock TableInfo for testing.

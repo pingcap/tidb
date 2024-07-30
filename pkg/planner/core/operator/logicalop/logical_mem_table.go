@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -38,7 +38,7 @@ import (
 // requesting all cluster components log search gRPC interface to retrieve
 // log message and filtering them in TiDB node.
 type LogicalMemTable struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	Extractor base.MemTablePredicateExtractor
 	DBName    model.CIStr
@@ -54,7 +54,7 @@ type LogicalMemTable struct {
 
 // Init initializes LogicalMemTable.
 func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
 	return &p
 }
 
@@ -104,7 +104,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
 func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return findBestTask4LogicalMemTable(p, prop, planCounter, opt)
+	return utilfuncp.FindBestTask4LogicalMemTable(p, prop, planCounter, opt)
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.<4th> implementation.

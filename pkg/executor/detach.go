@@ -63,12 +63,55 @@ func (treCtx tableReaderExecutorContext) Detach() tableReaderExecutorContext {
 	return treCtx
 }
 
+func (ireCtx indexReaderExecutorContext) Detach() indexReaderExecutorContext {
+	newCtx := ireCtx
+
+	if ctx, ok := ireCtx.ectx.(*contextsession.SessionExprContext); ok {
+		staticExprCtx := ctx.IntoStatic()
+
+		newCtx.dctx = newCtx.dctx.Detach()
+		newCtx.rctx = newCtx.rctx.Detach(staticExprCtx)
+		newCtx.buildPBCtx = newCtx.buildPBCtx.Detach(staticExprCtx)
+		newCtx.ectx = staticExprCtx
+		return newCtx
+	}
+
+	return ireCtx
+}
+
+func (iluCtx indexLookUpExecutorContext) Detach() indexLookUpExecutorContext {
+	newCtx := iluCtx
+	newCtx.tableReaderExecutorContext = newCtx.tableReaderExecutorContext.Detach()
+
+	return iluCtx
+}
+
 // Detach detaches the current executor from the session context.
 func (e *TableReaderExecutor) Detach() (exec.Executor, bool) {
 	newExec := new(TableReaderExecutor)
 	*newExec = *e
 
 	newExec.tableReaderExecutorContext = newExec.tableReaderExecutorContext.Detach()
+
+	return newExec, true
+}
+
+// Detach detaches the current executor from the session context.
+func (e *IndexReaderExecutor) Detach() (exec.Executor, bool) {
+	newExec := new(IndexReaderExecutor)
+	*newExec = *e
+
+	newExec.indexReaderExecutorContext = newExec.indexReaderExecutorContext.Detach()
+
+	return newExec, true
+}
+
+// Detach detaches the current executor from the session context.
+func (e *IndexLookUpExecutor) Detach() (exec.Executor, bool) {
+	newExec := new(IndexLookUpExecutor)
+	*newExec = *e
+
+	newExec.indexLookUpExecutorContext = newExec.indexLookUpExecutorContext.Detach()
 
 	return newExec, true
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"unsafe"
@@ -22,16 +22,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // LogicalShow represents a show plan.
 type LogicalShow struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 	ShowContents
 
 	Extractor base.ShowPredicateExtractor
@@ -76,7 +76,7 @@ func (s *ShowContents) MemoryUsage() (sum int64) {
 
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
 	return &p
 }
 
@@ -90,7 +90,7 @@ func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
 func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	return findBestTask4LogicalShow(p, prop, planCounter, nil)
+	return utilfuncp.FindBestTask4LogicalShow(p, prop, planCounter, nil)
 }
 
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
@@ -138,3 +138,15 @@ func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expressio
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
+
+// todo: merge getFakeStats with the one in logical_show_ddl_jobs.go
+func getFakeStats(schema *expression.Schema) *property.StatsInfo {
+	profile := &property.StatsInfo{
+		RowCount: 1,
+		ColNDVs:  make(map[int64]float64, schema.Len()),
+	}
+	for _, col := range schema.Columns {
+		profile.ColNDVs[col.UniqueID] = 1
+	}
+	return profile
+}

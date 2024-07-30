@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl/logutil",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/parser/terror",
