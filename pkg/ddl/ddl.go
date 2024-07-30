@@ -549,7 +549,7 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 		return existedRC
 	}
 	rc := &reorgCtx{}
-	rc.doneCh = make(chan error, 1)
+	rc.doneCh = make(chan reorgFnResult, 1)
 	// initial reorgCtx
 	rc.setRowCount(rowCount)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
