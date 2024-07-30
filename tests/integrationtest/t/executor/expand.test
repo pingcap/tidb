@@ -131,3 +131,22 @@ t1.country_id=t2.country_id GROUP BY product, country, year WITH ROLLUP;
 SELECT product, `SUM` FROM (SELECT product, SUM(profit) AS 'sum' FROM t1
                             GROUP BY product WITH ROLLUP) AS tmp
 WHERE product is null;
+
+--echo
+--sorted_result
+SELECT product FROM t1 WHERE EXISTS
+(SELECT product, country_id , SUM(profit) FROM t1 AS t2
+ WHERE t1.product=t2.product GROUP BY product, country_id WITH ROLLUP
+ HAVING SUM(profit) > 6000);
+
+--echo
+--sorted_result
+# The following does not return the expected answer, but this is a limitation
+# in the implementation so we should just document it
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year HAVING country_id is NULL;
+
+--echo
+--sorted_result
+SELECT CONCAT(':',product,':'), SUM(profit), AVG(profit) FROM t1
+GROUP BY product WITH ROLLUP;

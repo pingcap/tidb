@@ -231,6 +231,6 @@ func AssertLocationWithSessionVars(ctxLoc *time.Location, vars *variable.Session
 	stmtLocStr := vars.StmtCtx.TimeZone().String()
 	intest.Assert(ctxLocStr == varsLocStr && ctxLocStr == stmtLocStr,
 		"location mismatch, ctxLoc: %s, varsLoc: %s, stmtLoc: %s",
-		ctxLoc.String(), ctxLocStr, stmtLocStr,
+		ctxLocStr, varsLocStr, stmtLocStr,
 	)
 }

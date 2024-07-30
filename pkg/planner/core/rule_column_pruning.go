@@ -18,6 +18,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type columnPruner struct {
@@ -36,7 +38,27 @@ func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 	if err != nil {
 		return nil, planChanged, err
 	}
+	intest.AssertNoError(noZeroColumnLayOut(lp), "After column pruning, some operator got zero row output. Please fix it.")
 	return lp, planChanged, nil
+}
+
+func noZeroColumnLayOut(p base.LogicalPlan) error {
+	for _, child := range p.Children() {
+		if err := noZeroColumnLayOut(child); err != nil {
+			return err
+		}
+	}
+	if p.Schema().Len() == 0 {
+		// The p don't hold its schema. So we don't need check itself.
+		if len(p.Children()) > 0 && p.Schema() == p.Children()[0].Schema() {
+			return nil
+		}
+		_, ok := p.(*LogicalTableDual)
+		if !ok {
+			return errors.Errorf("Operator %s has zero row output", p.ExplainID().String())
+		}
+	}
+	return nil
 }
 
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
@@ -72,28 +94,6 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 
 func (*columnPruner) name() string {
 	return "column_prune"
-}
-
-// By add const one, we can avoid empty Projection is eliminated.
-// Because in some cases, Projectoin cannot be eliminated even its output is empty.
-func addConstOneForEmptyProjection(p base.LogicalPlan) {
-	proj, ok := p.(*LogicalProjection)
-	if !ok {
-		return
-	}
-	if proj.Schema().Len() != 0 {
-		return
-	}
-
-	constOne := expression.NewOne()
-	proj.Schema().Append(&expression.Column{
-		UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
-		RetType:  constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-	})
-	proj.Exprs = append(proj.Exprs, &expression.Constant{
-		Value:   constOne.Value,
-		RetType: constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-	})
 }
 
 func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,

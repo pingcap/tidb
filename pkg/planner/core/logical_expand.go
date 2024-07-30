@@ -144,6 +144,15 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (p *LogicalExpand) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	// if p.LevelExprs is nil, it means the GenLevelProjections has not been called yet,
+	// which is done in logical optimizing phase. While for building correlated subquery
+	// plan, the ExtractCorrelatedCols will be called once after building, so we should
+	// distinguish the case here.
+	if p.LevelExprs == nil {
+		// since level projections generation don't produce any correlated columns, just
+		// return nil.
+		return nil
+	}
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.LevelExprs[0]))
 	for _, lExpr := range p.LevelExprs {
 		for _, expr := range lExpr {

@@ -3404,6 +3404,18 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(store, createSessions4DistExecution)
 }
 
+// bootstrapSessionImpl bootstraps session and domain.
+// the process works as follows:
+// - if we haven't bootstrapped to the target version
+//   - create/init/start domain
+//   - bootstrap or upgrade, some variables will be initialized and stored to system
+//     table in the process, such as system time-zone
+//   - close domain
+//
+// - create/init another domain
+// - initialization global variables from system table that's required to use sessionCtx,
+// such as system time zone
+// - start domain and other routines.
 func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
@@ -3487,10 +3499,16 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		return nil, err
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
+
+	// only start the domain after we have initialized some global variables.
+	dom := domain.GetDomain(ses[0])
+	err = dom.Start()
+	if err != nil {
+		return nil, err
+	}
+
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ses[0])
-
-	dom := domain.GetDomain(ses[0])
 
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
@@ -3667,6 +3685,13 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	dom := domain.GetDomain(s)
+	err = dom.Start()
+	if err != nil {
+		// Bootstrap fail will cause program exit.
+		logutil.BgLogger().Fatal("start domain error", zap.Error(err))
+	}
+
 	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
@@ -3675,7 +3700,6 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
 
-	dom := domain.GetDomain(s)
 	dom.Close()
 	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()

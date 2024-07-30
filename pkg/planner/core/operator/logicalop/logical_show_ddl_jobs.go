@@ -12,27 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalShowDDLJobs is for showing DDL job list.
 type LogicalShowDDLJobs struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	JobNumber int64
 }
 
 // Init initializes LogicalShowDDLJobs.
 func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
 	return &p
 }
 
@@ -46,7 +46,7 @@ func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
 func (p *LogicalShowDDLJobs) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	return findBestTask4LogicalShowDDLJobs(p, prop, planCounter, nil)
+	return utilfuncp.FindBestTask4LogicalShowDDLJobs(p, prop, planCounter, nil)
 }
 
 // BuildKeyInfo inherits the BaseLogicalPlan.<4th> interface.

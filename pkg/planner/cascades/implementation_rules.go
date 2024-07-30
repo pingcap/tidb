@@ -178,10 +178,10 @@ func (*ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *prop
 	logicProp := expr.Group.Prop
 	sg := expr.ExprNode.(*plannercore.TiKVSingleGather)
 	if sg.IsIndexGather {
-		reader := sg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+		reader := plannercore.GetPhysicalIndexReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
 		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source)}, nil
 	}
-	reader := sg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	reader := plannercore.GetPhysicalTableReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
 	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source)}, nil
 }
 

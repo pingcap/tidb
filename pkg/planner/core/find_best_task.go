@@ -122,7 +122,8 @@ func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProper
 	return rt, 1, nil
 }
 
-func findBestTask4LogicalShowDDLJobs(p *LogicalShowDDLJobs, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+func findBestTask4LogicalShowDDLJobs(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+	p := lp.(*logicalop.LogicalShowDDLJobs)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -181,7 +182,7 @@ func enumeratePhysicalPlans4Task(
 	childCnts := make([]int64, p.ChildLen())
 	cntPlan = 0
 	iteration := iteratePhysicalPlan4BaseLogical
-	if _, ok := p.Self().(*LogicalSequence); ok {
+	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
 

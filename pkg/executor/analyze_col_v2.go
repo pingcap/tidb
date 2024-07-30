@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -854,7 +855,9 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	for {
 		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
 			dom := domain.GetDomain(ctx)
-			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
+			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+				dom.SysProcTracker().KillSysProcess(id)
+			}
 		})
 		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
