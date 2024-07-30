@@ -42,7 +42,7 @@ func New() Glue {
 		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
 	})
 	return Glue{
-		startDomainOnce: &sync.Once{},
+		startDomainMu: &sync.Mutex{},
 	}
 }
 
@@ -50,8 +50,8 @@ func New() Glue {
 type Glue struct {
 	glue.StdIOGlue
 
-	tikvGlue        gluetikv.Glue
-	startDomainOnce *sync.Once
+	tikvGlue      gluetikv.Glue
+	startDomainMu *sync.Mutex
 }
 
 type tidbSession struct {
@@ -99,21 +99,23 @@ func (g Glue) CreateSession(store kv.Storage) (glue.Session, error) {
 	return tiSession, nil
 }
 
+func (g Glue) startDomainAsNeeded(store kv.Storage) error {
+	g.startDomainMu.Lock()
+	defer g.startDomainMu.Unlock()
+	existDom, _ := session.GetDomain(nil)
+	if existDom != nil {
+		return nil
+	}
+	dom, err := session.GetDomain(store)
+	if err != nil {
+		return err
+	}
+	return dom.Start()
+}
+
 func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {
-	var initErr error
-	g.startDomainOnce.Do(func() {
-		existDom, _ := session.GetDomain(nil)
-		if existDom == nil {
-			dom, err := session.GetDomain(store)
-			if err != nil {
-				initErr = err
-				return
-			}
-			initErr = dom.Start()
-		}
-	})
-	if initErr != nil {
-		return nil, initErr
+	if err := g.startDomainAsNeeded(store); err != nil {
+		return nil, errors.Trace(err)
 	}
 	return session.CreateSession(store)
 }
