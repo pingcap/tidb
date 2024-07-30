@@ -140,9 +140,9 @@ func TestExistedTables(t *testing.T) {
 	backupQuery := fmt.Sprintf("BACKUP DATABASE `test` TO 'local://%s'", sqlTmp)
 	tk.MustQuery(backupQuery)
 	restoreQuery := fmt.Sprintf("RESTORE DATABASE `test` FROM 'local://%s'", sqlTmp)
-	res,err := tk.Exec(restoreQuery)
+	res, err := tk.Exec(restoreQuery)
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
-	require.ErrorContains(t,err,"table already exists")
+	require.ErrorContains(t, err, "table already exists")
 	tk.MustExec("drop table `foo`;")
 }
