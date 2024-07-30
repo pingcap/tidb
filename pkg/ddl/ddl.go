@@ -519,6 +519,19 @@ type reorgContexts struct {
 	sync.RWMutex
 	// reorgCtxMap maps job ID to reorg context.
 	reorgCtxMap map[int64]*reorgCtx
+	beOwnerTS   int64
+}
+
+func (r *reorgContexts) getOwnerTS() int64 {
+	r.RLock()
+	defer r.RUnlock()
+	return r.beOwnerTS
+}
+
+func (r *reorgContexts) setOwnerTS(ts int64) {
+	r.Lock()
+	r.beOwnerTS = ts
+	r.Unlock()
 }
 
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
