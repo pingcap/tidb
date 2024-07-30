@@ -674,8 +674,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 	totalAddedCount := job.GetRowCount()
 
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
-
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+		if errors.ErrorEqual(err, dbterror.ErrNotOwner) {
+			// This instance is not DDL owner, we remove reorgctx proactively
+			// to avoid being used later.
+			dc.removeReorgCtx(reorgInfo.ID)
+		}
 		return errors.Trace(err)
 	}
 
