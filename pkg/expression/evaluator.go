@@ -121,10 +121,9 @@ func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputId
 	newInputIdxToOutputIdxes := make(map[int][]int, len(inputIdxToOutputIdxes))
 	for inputIdx := range inputIdxToOutputIdxes {
 		originalRootIdx := originalDJSet.FindRoot(inputIdx)
-		if _, ok := newInputIdxToOutputIdxes[originalRootIdx]; !ok {
-			newInputIdxToOutputIdxes[originalRootIdx] = []int{}
-		}
-		newInputIdxToOutputIdxes[originalRootIdx] = append(newInputIdxToOutputIdxes[originalRootIdx], inputIdxToOutputIdxes[inputIdx]...)
+		mergedOutputIdxes := newInputIdxToOutputIdxes[originalRootIdx]
+		mergedOutputIdxes = append(mergedOutputIdxes, inputIdxToOutputIdxes[inputIdx]...)
+		newInputIdxToOutputIdxes[originalRootIdx] = mergedOutputIdxes
 	}
 	e.mergedInputIdxToOutputIdxes = newInputIdxToOutputIdxes
 }
