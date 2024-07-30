@@ -416,6 +416,11 @@ func (e *AnalyzeExec) handleResultsError(
 		if !ok {
 			break
 		}
+		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			finishJobWithLog(e.Ctx(), results.Job, err)
+			results.DestroyAndPutToPool()
+			continue
+		}
 		if results.Err != nil {
 			err = results.Err
 			if isAnalyzeWorkerPanic(err) {
@@ -436,11 +441,6 @@ func (e *AnalyzeExec) handleResultsError(
 			finishJobWithLog(e.Ctx(), results.Job, err)
 		} else {
 			finishJobWithLog(e.Ctx(), results.Job, nil)
-		}
-		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			finishJobWithLog(e.Ctx(), results.Job, err)
-			results.DestroyAndPutToPool()
-			return err
 		}
 		results.DestroyAndPutToPool()
 	}
@@ -473,10 +473,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
-		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			close(saveResultsCh)
-			return err
-		}
 		results, ok := <-resultsCh
 		if !ok {
 			break
