@@ -40,7 +40,7 @@ type ScalarFunction struct {
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType           *types.FieldType
+	RetType           *types.FieldType `plan-cache-clone:"shallow"`
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
@@ -336,11 +336,10 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
+		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
-	// TODO: remove ScalarFunc.RetType
-	c.RetType = c.Function.getRetTp()
 	if sf.hashcode != nil {
 		c.hashcode = make([]byte, len(sf.hashcode))
 		copy(c.hashcode, sf.hashcode)

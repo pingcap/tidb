@@ -117,7 +117,7 @@ func NewNullWithFieldType(fieldType *types.FieldType) *Constant {
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
-	RetType *types.FieldType
+	RetType *types.FieldType `plan-cache-clone:"shallow"`
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
 	// in PlanCache cached plan, so let them can be evaluated until cached item be used.
@@ -163,7 +163,6 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
 	con := *c
-	con.RetType = c.RetType.Clone()
 	if c.ParamMarker != nil {
 		con.ParamMarker = &ParamMarker{order: c.ParamMarker.order}
 	}
