@@ -823,6 +823,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	reorgInfo *reorgInfo,
 ) error {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
+
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
 		return errors.Trace(err)
 	}
