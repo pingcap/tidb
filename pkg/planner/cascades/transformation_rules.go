@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1180,7 +1181,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
-		plannercore.ResolveExprAndReplace(newExpr, replace)
+		ruleutil.ResolveExprAndReplace(newExpr, replace)
 		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newExpr, child, childGroup.Prop.Schema)
 	}
 

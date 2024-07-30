@@ -132,7 +132,7 @@ func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Cont
 
 // validateWatchRecord follows several designs:
 //  1. If no resource group is set, the default resource group is used
-//  2. If no action is specified, the action of the resource group is used. If no, an error message is displayed.
+//  2. If no action is specified, the action of the resource group is used. If no, an error message displayed.
 func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclient.ResourceGroupsController) error {
 	if len(record.ResourceGroupName) == 0 {
 		record.ResourceGroupName = resourcegroup.DefaultResourceGroupName

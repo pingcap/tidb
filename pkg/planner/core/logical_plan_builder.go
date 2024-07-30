@@ -4058,7 +4058,7 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p base.LogicalPlan) ba
 		lctes = append(lctes, lcte)
 	}
 	b.optFlag |= flagPushDownSequence
-	seq := LogicalSequence{}.Init(b.ctx, b.getSelectOffset())
+	seq := logicalop.LogicalSequence{}.Init(b.ctx, b.getSelectOffset())
 	seq.SetChildren(append(lctes, p)...)
 	seq.SetOutputNames(p.OutputNames().Shallow())
 	return seq
@@ -4851,7 +4851,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	}
 
 	// NOTE: Add a `LogicalUnionScan` if we support update memory table in the future
-	p := LogicalMemTable{
+	p := logicalop.LogicalMemTable{
 		DBName:    dbName,
 		TableInfo: tableInfo,
 		Columns:   make([]*model.ColumnInfo, len(tableInfo.Columns)),

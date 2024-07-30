@@ -436,8 +436,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	defer memBuffer.Cleanup(sh)
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
-		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+		if tmpTable, sizeLimit, ok := addTemporaryTable(sctx, m); ok {
+			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
@@ -711,32 +711,24 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) tableutil.TempTable {
-	tempTable := sctx.TxnRecordTempTable(tblInfo)
-	tempTable.SetModified(true)
-	return tempTable
+func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) (tbctx.TemporaryTableHandler, int64, bool) {
+	if s, ok := sctx.GetTemporaryTableSupport(); ok {
+		if h, ok := s.AddTemporaryTableToTxn(tblInfo); ok {
+			return h, s.GetTemporaryTableSizeLimit(), ok
+		}
+	}
+	return tbctx.TemporaryTableHandler{}, 0, false
 }
 
 // The size of a temporary table is calculated by accumulating the transaction size delta.
-func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transaction) {
-	txnSizeNow := txn.Size()
-	delta := txnSizeNow - txnSizeBefore
-
-	oldSize := t.GetSize()
-	newSize := oldSize + int64(delta)
-	t.SetSize(newSize)
+func handleTempTableSize(t tbctx.TemporaryTableHandler, txnSizeBefore int, txn kv.Transaction) {
+	t.UpdateTxnDeltaSize(txn.Size() - txnSizeBefore)
 }
 
-func checkTempTableSize(ctx table.MutateContext, tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error {
-	tmpTableSize := tmpTable.GetSize()
-	if tempTableData := ctx.GetSessionVars().TemporaryTableData; tempTableData != nil {
-		tmpTableSize += tempTableData.GetTableSize(tblInfo.ID)
+func checkTempTableSize(tmpTable tbctx.TemporaryTableHandler, sizeLimit int64) error {
+	if tmpTable.GetCommittedSize()+tmpTable.GetDirtySize() > sizeLimit {
+		return table.ErrTempTableFull.GenWithStackByArgs(tmpTable.Meta().Name.O)
 	}
-
-	if tmpTableSize > ctx.GetSessionVars().TMPTableSize {
-		return table.ErrTempTableFull.GenWithStackByArgs(tblInfo.Name.O)
-	}
-
 	return nil
 }
 
@@ -754,8 +746,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	}
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
-		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+		if tmpTable, sizeLimit, ok := addTemporaryTable(sctx, m); ok {
+			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return nil, err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
@@ -1210,8 +1202,8 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	}
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
-		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
-			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
+		if tmpTable, sizeLimit, ok := addTemporaryTable(ctx, m); ok {
+			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
@@ -1636,16 +1628,8 @@ func (t *TableCommon) Allocators(ctx table.AllocatorContext) autoid.Allocators {
 	if ctx == nil {
 		return t.allocs
 	}
-
-	// Use an independent allocator for global temporary tables.
-	if t.meta.TempTableType == model.TempTableGlobal {
-		if tbl := ctx.TxnRecordTempTable(t.meta); tbl != nil {
-			if alloc := tbl.GetAutoIDAllocator(); alloc != nil {
-				return autoid.NewAllocators(false, alloc)
-			}
-		}
-		// If the session is not in a txn, for example, in "show create table", use the original allocator.
-		// Otherwise the would be a nil pointer dereference.
+	if alloc, ok := ctx.AlternativeAllocators(t.meta); ok {
+		return alloc
 	}
 	return t.allocs
 }

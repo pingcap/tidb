@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -1032,11 +1033,6 @@ func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
 }
 
-// GetAutoAnalyzeProcID implements SessionManager interface.
-func (s *Server) GetAutoAnalyzeProcID() uint64 {
-	return s.dom.GetAutoAnalyzeProcID()
-}
-
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) StoreInternalSession(se any) {
@@ -1058,10 +1054,9 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
-	analyzeProcID := s.GetAutoAnalyzeProcID()
 	for se := range s.internalSessions {
 		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
-			if processInfoID == analyzeProcID {
+			if statsutil.GlobalAutoAnalyzeProcessList.Contains(processInfoID) {
 				continue
 			}
 			tsList = append(tsList, ts)
