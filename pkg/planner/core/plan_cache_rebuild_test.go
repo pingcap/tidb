@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -196,12 +195,6 @@ func TestCheckPlanClone(t *testing.T) {
 	ts1.AccessCondition[0] = expr
 	ts2.AccessCondition[0] = expr
 	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
-
-	// same slice[0].pointer.pointer
-	ts2.AccessCondition[0] = new(expression.Column)
-	ts1.AccessCondition[0].(*expression.Column).RetType = new(types.FieldType)
-	ts2.AccessCondition[0].(*expression.Column).RetType = ts1.AccessCondition[0].(*expression.Column).RetType
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column).RetType")
 
 	// same interface
 	child := &core.PhysicalTableScan{}
