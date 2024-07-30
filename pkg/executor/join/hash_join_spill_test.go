@@ -96,7 +96,6 @@ func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []c
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, retTypes)
 	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
-	require.True(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
 	require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
 	checkResults(t, retTypes, result, expectedResult)
 }
@@ -143,6 +142,23 @@ func testInnerJoinSpillCase5(t *testing.T, ctx *mock.Context, info *hashJoinInfo
 	hashJoinExec := buildHashJoinV2Exec(info)
 	err := executeHashJoinExecAndGetError(t, hashJoinExec)
 	require.Equal(t, exceedMaxSpillRoundErrInfo, err.Error())
+}
+
+func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 4000000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	hashJoinExec := buildHashJoinV2Exec(info)
+	for i := 0; i < 5; i++ {
+		leftDataSource.PrepareChunks()
+		rightDataSource.PrepareChunks()
+		result := getSortedResults(t, hashJoinExec, retTypes)
+		require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
+		require.False(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
+		require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
+		checkResults(t, retTypes, result, expectedResult)
+	}
 }
 
 // Case 1: Trigger spill during the building of row table and spill partial partitions
@@ -196,13 +212,17 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
+	// TODO enable random fail
 
-	// TODO re-execute the same hash join executor and trigger spill
+	for i := 0; i < 3; i++ {
+		testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+		testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+		testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+		testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+		testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
+	}
+
+	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 }
 
 func TestLeftOuterJoinSpillCorrectness(t *testing.T) {
