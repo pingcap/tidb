@@ -348,13 +348,7 @@ func BuildHistAndTopN(
 	sampleFactor := float64(count) / float64(len(samples))
 	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
-	if numTopN == 100 {
-		if variable.EnableAnalyzeAutoCount.Load() && ndv <= int64(numTopN) {
-			// Do not collect more than ndv-1. This can reduce instances where we assume all values are
-			// contained in the TopN & buckets and estimate zero rows if a query searches for a new value
-			numTopN = int(ndv - 1)
-		}
-	} else {
+	if numTopN != 100 {
 		allowPruning = false
 	}
 
