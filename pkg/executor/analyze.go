@@ -398,12 +398,14 @@ func (e *AnalyzeExec) handleResultsError(
 	if partitionStatsConcurrency > 1 {
 		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
 		if len(subSctxs) > 0 {
+			logutil.BgLogger().Info("use multiple sessions to save analyze results", zap.Int("sessionCount", len(subSctxs)))
 			defer func() {
 				dom.ReleaseAnalyzeExec(subSctxs)
 			}()
 			return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
 		}
 	}
+	logutil.BgLogger().Info("use single session to save analyze results")
 	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
 	subSctxs := []sessionctx.Context{e.Ctx()}
 	return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
