@@ -151,4 +151,9 @@ echo "run snapshot restore#3"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
 
 echo "run incremental restore but failed"
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/inc_fail" || { echo 'pitr failed' ; exit 1; }
+restore_fail=0
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/inc_fail" || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi

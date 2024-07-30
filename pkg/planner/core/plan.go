@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -396,7 +397,7 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
 		*LogicalApply, *LogicalProjection, *LogicalWindow, *LogicalAggregation:
 		return childMaxOneRow[0]
-	case *LogicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow:
 		return true
 	case *LogicalJoin:
 		switch x.JoinType {

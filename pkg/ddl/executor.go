@@ -26,16 +26,19 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	rg "github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -45,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -57,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -68,14 +74,18 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -99,7 +109,107 @@ const (
 
 var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckConstraint + " is off")
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
+// Executor is the interface for executing DDL statements.
+// it's mostly called by SQL executor.
+type Executor interface {
+	CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error
+	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
+	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
+	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
+	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
+	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
+	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error
+	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
+	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
+	DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error
+	AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error
+	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
+	RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error
+	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
+	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
+	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
+	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
+	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
+	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
+	DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error)
+	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
+	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
+	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
+	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
+	AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
+	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
+	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
+	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
+
+	// CreateSchemaWithInfo creates a database (schema) given its database info.
+	//
+	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
+	// in-place. If you want to keep using `info`, please call Clone() first.
+	CreateSchemaWithInfo(
+		ctx sessionctx.Context,
+		info *model.DBInfo,
+		onExist OnExist) error
+
+	// CreateTableWithInfo creates a table, view or sequence given its table info.
+	//
+	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
+	// in-place. If you want to keep using `info`, please call Clone() first.
+	CreateTableWithInfo(
+		ctx sessionctx.Context,
+		schema model.CIStr,
+		info *model.TableInfo,
+		involvingRef []model.InvolvingSchemaInfo,
+		cs ...CreateTableOption) error
+
+	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
+	BatchCreateTableWithInfo(ctx sessionctx.Context,
+		schema model.CIStr,
+		info []*model.TableInfo,
+		cs ...CreateTableOption) error
+
+	// CreatePlacementPolicyWithInfo creates a placement policy
+	//
+	// WARNING: the DDL owns the `policy` after calling this function, and will modify its fields
+	// in-place. If you want to keep using `policy`, please call Clone() first.
+	CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error
+}
+
+// ExecutorForTest is the interface for executing DDL statements in tests.
+// TODO remove it later
+type ExecutorForTest interface {
+	// DoDDLJob does the DDL job, it's exported for test.
+	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
+	// DoDDLJobWrapper similar to DoDDLJob, but with JobWrapper as input.
+	DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error
+}
+
+// all fields are shared with ddl now.
+type executor struct {
+	sessPool    *sess.Pool
+	statsHandle *handle.Handle
+
+	ctx             context.Context
+	uuid            string
+	store           kv.Storage
+	etcdCli         *clientv3.Client
+	autoidCli       *autoid.ClientDiscover
+	infoCache       *infoschema.InfoCache
+	limitJobCh      chan *JobWrapper
+	schemaLoader    SchemaLoader
+	lease           time.Duration // lease is schema lease, default 45s, see config.Lease.
+	ownerManager    owner.Manager
+	limitJobChV2    chan *JobWrapper
+	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
+	ddlJobNotifyCh  chan struct{}
+	mu              *hookStruct // TODO remove it.
+	globalIDLock    *sync.Mutex
+}
+
+var _ Executor = (*executor)(nil)
+var _ ExecutorForTest = (*executor)(nil)
+
+func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
 	var placementPolicyRef *model.PolicyRefInfo
 	sessionVars := ctx.GetSessionVars()
 
@@ -174,15 +284,15 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	if stmt.IfNotExists {
 		onExist = OnExistIgnore
 	}
-	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
+	return e.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
-func (d *ddl) CreateSchemaWithInfo(
+func (e *executor) CreateSchemaWithInfo(
 	ctx sessionctx.Context,
 	dbInfo *model.DBInfo,
 	onExist OnExist,
 ) error {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	_, ok := is.SchemaByName(dbInfo.Name)
 	if ok {
 		// since this error may be seen as error, keep it stack info.
@@ -228,8 +338,7 @@ func (d *ddl) CreateSchemaWithInfo(
 		})
 	}
 
-	err := d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err := e.DoDDLJob(ctx, job)
 
 	if infoschema.ErrDatabaseExists.Equal(err) && onExist == OnExistIgnore {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -239,7 +348,7 @@ func (d *ddl) CreateSchemaWithInfo(
 	return errors.Trace(err)
 }
 
-func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, toCharset, toCollate string) (err error) {
+func (e *executor) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, toCharset, toCollate string) (err error) {
 	if toCollate == "" {
 		if toCollate, err = GetDefaultCollation(ctx.GetSessionVars(), toCharset); err != nil {
 			return errors.Trace(err)
@@ -248,7 +357,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 
 	// Check if need to change charset/collation.
 	dbName := stmt.Name
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
@@ -270,14 +379,13 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, placementPolicyRef *model.PolicyRefInfo) (err error) {
+func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, placementPolicyRef *model.PolicyRefInfo) (err error) {
 	dbName := stmt.Name
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
@@ -312,14 +420,13 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 			Mode:   model.SharedInvolving,
 		})
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
-func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
-	is := d.GetInfoSchemaWithInterceptor(sctx)
+func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount uint32) (int64, uint32) {
+	is := e.infoCache.GetLatest()
 	// If there are no schema change since last time(can be weird).
 	if is.SchemaMetaVersion() == originVersion {
 		return originVersion, pendingCount
@@ -351,7 +458,7 @@ func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	return done, 0
 }
 
-func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
+func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
 	configRetry := tiflashCheckPendingTablesRetry
 	configWaitTime := tiflashCheckPendingTablesWaitTime
 	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
@@ -365,7 +472,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
 			return true, originVersion, pendingCount, false
 		}
-		originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
+		originVersion, pendingCount = e.getPendingTiFlashTableCount(originVersion, pendingCount)
 		delay := time.Duration(0)
 		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
@@ -386,9 +493,9 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 	return false, originVersion, pendingCount, true
 }
 
-func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
+func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := stmt.Name
-	is := d.GetInfoSchemaWithInterceptor(sctx)
+	is := e.infoCache.GetLatest()
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
@@ -398,7 +505,11 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	tbls := is.SchemaTables(dbInfo.Name)
+	tbls, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	total := len(tbls)
 	succ := 0
 	skip := 0
@@ -408,7 +519,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
-	err := checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
+	err = checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -421,7 +532,6 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
 
 	for _, tbl := range tbls {
-		tbl := tbl.Meta()
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
@@ -457,7 +567,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
 			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
 			finished := false
-			finished, originVersion, pendingCount, forceCheck = d.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
+			finished, originVersion, pendingCount, forceCheck = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
 			if finished {
 				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 				return nil
@@ -478,8 +588,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			}},
 			SQLMode: sctx.GetSessionVars().SQLMode,
 		}
-		err := d.DoDDLJob(sctx, job)
-		err = d.callHookOnChanged(job, err)
+		err := e.DoDDLJob(sctx, job)
 		if err != nil {
 			oneFail = tbl.ID
 			fail++
@@ -503,14 +612,14 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	return nil
 }
 
-func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {
-	is := d.infoCache.GetLatest()
+func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo) (err error) {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -556,8 +665,7 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -596,7 +704,7 @@ func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) er
 	return nil
 }
 
-func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
 		toCharset, toCollate     string
@@ -639,25 +747,25 @@ func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) 
 	}
 
 	if isAlterCharsetAndCollate {
-		if err = d.ModifySchemaCharsetAndCollate(sctx, stmt, toCharset, toCollate); err != nil {
+		if err = e.ModifySchemaCharsetAndCollate(sctx, stmt, toCharset, toCollate); err != nil {
 			return err
 		}
 	}
 	if placementPolicyRef != nil {
-		if err = d.ModifySchemaDefaultPlacement(sctx, stmt, placementPolicyRef); err != nil {
+		if err = e.ModifySchemaDefaultPlacement(sctx, stmt, placementPolicyRef); err != nil {
 			return err
 		}
 	}
 	if tiflashReplica != nil {
-		if err = d.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
+		if err = e.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (err error) {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (err error) {
+	is := e.infoCache.GetLatest()
 	old, ok := is.SchemaByName(stmt.Name)
 	if !ok {
 		if stmt.IfExists {
@@ -666,7 +774,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
-	err = checkDatabaseHasForeignKeyReferred(is, old.Name, fkCheck)
+	err = checkDatabaseHasForeignKeyReferred(e.ctx, is, old.Name, fkCheck)
 	if err != nil {
 		return err
 	}
@@ -685,8 +793,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			if stmt.IfExists {
@@ -700,18 +807,22 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		return nil
 	}
 	// Clear table locks hold by the session.
-	tbs := is.SchemaTables(stmt.Name)
+	tbs, err := is.SchemaTableInfos(e.ctx, stmt.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	lockTableIDs := make([]int64, 0)
 	for _, tb := range tbs {
-		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-			lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+		if ok, _ := ctx.CheckTableLocked(tb.ID); ok {
+			lockTableIDs = append(lockTableIDs, tb.ID)
 		}
 	}
 	ctx.ReleaseTableLockByTableIDs(lockTableIDs)
 	return nil
 }
 
-func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
+func (e *executor) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
 	involvedSchemas := []model.InvolvingSchemaInfo{{
 		Database: recoverSchemaInfo.DBInfo.Name.L,
 		Table:    model.InvolvingAll,
@@ -731,8 +842,7 @@ func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSc
 		InvolvingSchemaInfo: involvedSchemas,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	err := d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err := e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -2708,8 +2818,8 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	return tbInfo, nil
 }
 
-func (d *ddl) assignPartitionIDs(defs []model.PartitionDefinition) error {
-	genIDs, err := d.genGlobalIDs(len(defs))
+func (e *executor) assignPartitionIDs(defs []model.PartitionDefinition) error {
+	genIDs, err := e.genGlobalIDs(len(defs))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2719,9 +2829,9 @@ func (d *ddl) assignPartitionIDs(defs []model.PartitionDefinition) error {
 	return nil
 }
 
-func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
@@ -2737,7 +2847,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		if !ok {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
-		referTbl, err = is.TableByName(d.ctx, referIdent.Schema, referIdent.Name)
+		referTbl, err = is.TableByName(e.ctx, referIdent.Schema, referIdent.Name)
 		if err != nil {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
@@ -2771,7 +2881,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
+	return e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
 }
 
 func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
@@ -2792,14 +2902,14 @@ func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.Crea
 
 // createTableWithInfoJob returns the table creation job.
 // WARNING: it may return a nil job, which means you don't need to submit any DDL job.
-func (d *ddl) createTableWithInfoJob(
+func (e *executor) createTableWithInfoJob(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
 	involvingRef []model.InvolvingSchemaInfo,
 	onExist OnExist,
 ) (job *model.Job, err error) {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(dbName)
 	if !ok {
 		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
@@ -2810,7 +2920,7 @@ func (d *ddl) createTableWithInfoJob(
 	}
 
 	var oldViewTblID int64
-	if oldTable, err := is.TableByName(d.ctx, schema.Name, tbInfo.Name); err == nil {
+	if oldTable, err := is.TableByName(e.ctx, schema.Name, tbInfo.Name); err == nil {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
 		switch onExist {
 		case OnExistIgnore:
@@ -2894,7 +3004,7 @@ func getSharedInvolvingSchemaInfo(info *model.TableInfo) []model.InvolvingSchema
 	return ret
 }
 
-func (d *ddl) createTableWithInfoPost(
+func (e *executor) createTableWithInfoPost(
 	ctx sessionctx.Context,
 	tbInfo *model.TableInfo,
 	schemaID int64,
@@ -2904,7 +3014,7 @@ func (d *ddl) createTableWithInfoPost(
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	preSplitAndScatter(ctx, d.store, tbInfo, partitions)
+	preSplitAndScatter(ctx, e.store, tbInfo, partitions)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -2915,13 +3025,13 @@ func (d *ddl) createTableWithInfoPost(
 		} else {
 			allocType = autoid.RowIDAllocType
 		}
-		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
+		if err = e.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	// For issue https://github.com/pingcap/tidb/issues/46093
 	if tbInfo.AutoIncIDExtra != 0 {
-		if err = d.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
+		if err = e.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2929,12 +3039,12 @@ func (d *ddl) createTableWithInfoPost(
 		// Default tableAutoRandID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
 		newEnd := tbInfo.AutoRandID - 1
-		err = d.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.AutoRandomType)
+		err = e.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.AutoRandomType)
 	}
 	return err
 }
 
-func (d *ddl) CreateTableWithInfo(
+func (e *executor) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
@@ -2943,7 +3053,7 @@ func (d *ddl) CreateTableWithInfo(
 ) (err error) {
 	c := GetCreateTableConfig(cs)
 
-	job, err := d.createTableWithInfoJob(
+	job, err := e.createTableWithInfoJob(
 		ctx, dbName, tbInfo, involvingRef, c.OnExist,
 	)
 	if err != nil {
@@ -2955,7 +3065,7 @@ func (d *ddl) CreateTableWithInfo(
 
 	jobW := NewJobWrapper(job, c.IDAllocated)
 
-	err = d.DoDDLJobWrapper(ctx, jobW)
+	err = e.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
@@ -2963,14 +3073,13 @@ func (d *ddl) CreateTableWithInfo(
 			err = nil
 		}
 	} else {
-		err = d.createTableWithInfoPost(ctx, tbInfo, job.SchemaID)
+		err = e.createTableWithInfoPost(ctx, tbInfo, job.SchemaID)
 	}
 
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
+func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName model.CIStr,
 	infos []*model.TableInfo,
 	cs ...CreateTableOption,
@@ -3014,7 +3123,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 
 	for _, info := range infos {
-		job, err := d.createTableWithInfoJob(ctx, dbName, info, nil, c.OnExist)
+		job, err := e.createTableWithInfoJob(ctx, dbName, info, nil, c.OnExist)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3050,23 +3159,23 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	jobW.Args = append(jobW.Args, args)
 	jobW.Args = append(jobW.Args, ctx.GetSessionVars().ForeignKeyChecks)
 
-	err = d.DoDDLJobWrapper(ctx, jobW)
+	err = e.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
-		return errors.Trace(d.callHookOnChanged(jobW.Job, err))
+		return errors.Trace(err)
 	}
 
 	for j := range args {
-		if err = d.createTableWithInfoPost(ctx, args[j], jobW.SchemaID); err != nil {
-			return errors.Trace(d.callHookOnChanged(jobW.Job, err))
+		if err = e.createTableWithInfoPost(ctx, args[j], jobW.SchemaID); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
-	return d.callHookOnChanged(jobW.Job, err)
+	return nil
 }
 
 // BuildQueryStringFromJobs takes a slice of Jobs and concatenates their
@@ -3140,7 +3249,7 @@ func BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	return combinedJob, nil
 }
 
-func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
+func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
 	}
@@ -3151,7 +3260,7 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 	}
 
 	// Check policy existence.
-	_, ok := d.GetInfoSchemaWithInterceptor(ctx).PolicyByName(policyName)
+	_, ok := e.infoCache.GetLatest().PolicyByName(policyName)
 	if ok {
 		err := infoschema.ErrPlacementPolicyExists.GenWithStackByArgs(policyName)
 		switch onExist {
@@ -3167,7 +3276,7 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 		return err
 	}
 
-	policyID, err := d.genPlacementPolicyID()
+	policyID, err := e.genPlacementPolicyID()
 	if err != nil {
 		return err
 	}
@@ -3184,8 +3293,7 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -3221,9 +3329,9 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	}
 }
 
-func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
+func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
 	logutil.DDLLogger().Info("get flashback cluster job", zap.Stringer("flashbackTS", oracle.GetTimeFromTS(flashbackTS)))
-	nowTS, err := ctx.GetStore().GetOracle().GetTimestamp(d.ctx, &oracle.Option{})
+	nowTS, err := ctx.GetStore().GetOracle().GetTimestamp(e.ctx, &oracle.Option{})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3254,13 +3362,12 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+func (e *executor) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
+	is := e.infoCache.GetLatest()
 	schemaID, tbInfo := recoverInfo.SchemaID, recoverInfo.TableInfo
 	// Check schema exist.
 	schema, ok := is.SchemaByID(schemaID)
@@ -3298,12 +3405,11 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
+func (e *executor) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
 	viewInfo, err := BuildViewInfo(s)
 	if err != nil {
 		return err
@@ -3339,7 +3445,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		onExist = OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, WithOnExist(onExist))
+	return e.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, WithOnExist(onExist))
 }
 
 // BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
@@ -3469,37 +3575,61 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
 		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
 		colInfo := findColumnByName(pi.Columns[i].L, tbInfo)
-		succ, err := parseAndEvalBoolExpr(ctx.GetExprCtx(), curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
+		cmp, err := parseAndEvalBoolExpr(ctx.GetExprCtx(), curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
 		if err != nil {
 			return false, err
 		}
 
-		if succ {
+		if cmp > 0 {
 			return true, nil
+		}
+
+		if cmp < 0 {
+			return false, nil
 		}
 	}
 	return false, nil
 }
 
-func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (bool, error) {
+// equal, return 0
+// greater, return 1
+// less, return -1
+func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (int64, error) {
 	lexpr, err := expression.ParseSimpleExpr(ctx, l, expression.WithTableInfo("", tbInfo), expression.WithCastExprTo(&colInfo.FieldType))
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	rexpr, err := expression.ParseSimpleExpr(ctx, r, expression.WithTableInfo("", tbInfo), expression.WithCastExprTo(&colInfo.FieldType))
 	if err != nil {
-		return false, err
+		return 0, err
 	}
-	e, err := expression.NewFunctionBase(ctx, ast.GT, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+
+	e, err := expression.NewFunctionBase(ctx, ast.EQ, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	e.SetCharsetAndCollation(colInfo.GetCharset(), colInfo.GetCollate())
 	res, _, err1 := e.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	if err1 != nil {
-		return false, err1
+		return 0, err1
 	}
-	return res > 0, nil
+	if res == 1 {
+		return 0, nil
+	}
+
+	e, err = expression.NewFunctionBase(ctx, ast.GT, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+	if err != nil {
+		return 0, err
+	}
+	e.SetCharsetAndCollation(colInfo.GetCharset(), colInfo.GetCollate())
+	res, _, err1 = e.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
+	if err1 != nil {
+		return 0, err1
+	}
+	if res > 0 {
+		return 1, nil
+	}
+	return -1, nil
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
@@ -3516,8 +3646,8 @@ func checkCharsetAndCollation(cs string, co string) error {
 
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
-	allocs := autoid.NewAllocatorsFromTblInfo((*asAutoIDRequirement)(d.ddlCtx), schemaID, tbInfo)
+func (e *executor) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
+	allocs := autoid.NewAllocatorsFromTblInfo(e.getAutoIDRequirement(), schemaID, tbInfo)
 	if alloc := allocs.Get(tp); alloc != nil {
 		err := alloc.Rebase(context.Background(), newEnd, false)
 		if err != nil {
@@ -3525,6 +3655,14 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd in
 		}
 	}
 	return nil
+}
+
+// TODO we can unify this part with ddlCtx.
+func (e *executor) getAutoIDRequirement() autoid.Requirement {
+	return &asAutoIDRequirement{
+		store:     e.store,
+		autoidCli: e.autoidCli,
+	}
 }
 
 // SetDirectPlacementOpt tries to make the PlacementSettings assignments generic for Schema/Table/Partition
@@ -3565,7 +3703,7 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	resourceGroupSettings := groupInfo.ResourceGroupSettings
 	switch opt.Tp {
 	case ast.ResourceRURate:
-		resourceGroupSettings.RURate = opt.UintValue
+		return SetDirectResourceGroupRUSecondOption(resourceGroupSettings, opt.UintValue, opt.BoolValue)
 	case ast.ResourcePriority:
 		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:
@@ -3589,7 +3727,7 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 			resourceGroupSettings.Runaway = nil
 		}
 		for _, opt := range opt.RunawayOptionList {
-			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue); err != nil {
+			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt); err != nil {
 				return err
 			}
 		}
@@ -3612,26 +3750,37 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	return nil
 }
 
+// SetDirectResourceGroupRUSecondOption tries to set ru second part of the ResourceGroupSettings.
+func SetDirectResourceGroupRUSecondOption(resourceGroupSettings *model.ResourceGroupSettings, intVal uint64, unlimited bool) error {
+	if unlimited {
+		resourceGroupSettings.RURate = uint64(math.MaxInt32)
+		resourceGroupSettings.BurstLimit = -1
+	} else {
+		resourceGroupSettings.RURate = intVal
+	}
+	return nil
+}
+
 // SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
-func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, typ ast.RunawayOptionType, stringVal string, intVal int32) error {
+func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupRunawayOption) error {
 	if resourceGroupSettings.Runaway == nil {
 		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
 	}
 	settings := resourceGroupSettings.Runaway
-	switch typ {
+	switch opt.Tp {
 	case ast.RunawayRule:
 		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
-		dur, err := time.ParseDuration(stringVal)
+		dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
 		if err != nil {
 			return err
 		}
 		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
 	case ast.RunawayAction:
-		settings.Action = model.RunawayActionType(intVal)
+		settings.Action = opt.ActionOption.Type
 	case ast.RunawayWatch:
-		settings.WatchType = model.RunawayWatchType(intVal)
-		if len(stringVal) > 0 {
-			dur, err := time.ParseDuration(stringVal)
+		settings.WatchType = opt.WatchOption.Type
+		if dur := opt.WatchOption.Duration; len(dur) > 0 {
+			dur, err := time.ParseDuration(dur)
 			if err != nil {
 				return err
 			}
@@ -3925,14 +4074,14 @@ func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
 	return false
 }
 
-func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
+func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	validSpecs, err := ResolveAlterTableSpec(sctx, stmt.Specs)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	is := d.infoCache.GetLatest()
+	is := e.infoCache.GetLatest()
 	tb, err := is.TableByName(ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(err)
@@ -3963,7 +4112,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	if len(validSpecs) > 1 {
 		// after MultiSchemaInfo is set, DoDDLJob will collect all jobs into
 		// MultiSchemaInfo and skip running them. Then we will run them in
-		// d.MultiSchemaChange all at once.
+		// d.multiSchemaChange all at once.
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 	}
 	for _, spec := range validSpecs {
@@ -3971,13 +4120,13 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		var ttlOptionsHandled bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
-			err = d.AddColumn(sctx, ident, spec)
+			err = e.AddColumn(sctx, ident, spec)
 		case ast.AlterTableAddPartitions, ast.AlterTableAddLastPartition:
-			err = d.AddTablePartitions(sctx, ident, spec)
+			err = e.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
-			err = d.CoalescePartitions(sctx, ident, spec)
+			err = e.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
-			err = d.ReorganizePartitions(sctx, ident, spec)
+			err = e.ReorganizePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizeFirstPartition:
 			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("MERGE FIRST PARTITION")
 		case ast.AlterTableReorganizeLastPartition:
@@ -3989,28 +4138,28 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableOptimizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedOptimizePartition)
 		case ast.AlterTableRemovePartitioning:
-			err = d.RemovePartitioning(sctx, ident, spec)
+			err = e.RemovePartitioning(sctx, ident, spec)
 		case ast.AlterTableRepairPartition:
 			err = errors.Trace(dbterror.ErrUnsupportedRepairPartition)
 		case ast.AlterTableDropColumn:
-			err = d.DropColumn(sctx, ident, spec)
+			err = e.DropColumn(sctx, ident, spec)
 		case ast.AlterTableDropIndex:
-			err = d.dropIndex(sctx, ident, model.NewCIStr(spec.Name), spec.IfExists, false)
+			err = e.dropIndex(sctx, ident, model.NewCIStr(spec.Name), spec.IfExists, false)
 		case ast.AlterTableDropPrimaryKey:
-			err = d.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists, false)
+			err = e.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists, false)
 		case ast.AlterTableRenameIndex:
-			err = d.RenameIndex(sctx, ident, spec)
+			err = e.RenameIndex(sctx, ident, spec)
 		case ast.AlterTableDropPartition, ast.AlterTableDropFirstPartition:
-			err = d.DropTablePartition(sctx, ident, spec)
+			err = e.DropTablePartition(sctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
-			err = d.TruncateTablePartition(sctx, ident, spec)
+			err = e.TruncateTablePartition(sctx, ident, spec)
 		case ast.AlterTableWriteable:
 			if !config.TableLockEnabled() {
 				return nil
 			}
 			tName := &ast.TableName{Schema: ident.Schema, Name: ident.Name}
 			if spec.Writeable {
-				err = d.CleanupTableLock(sctx, []*ast.TableName{tName})
+				err = e.CleanupTableLock(sctx, []*ast.TableName{tName})
 			} else {
 				lockStmt := &ast.LockTablesStmt{
 					TableLocks: []ast.TableLock{
@@ -4020,53 +4169,53 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 						},
 					},
 				}
-				err = d.LockTables(sctx, lockStmt)
+				err = e.LockTables(sctx, lockStmt)
 			}
 		case ast.AlterTableExchangePartition:
-			err = d.ExchangeTablePartition(sctx, ident, spec)
+			err = e.ExchangeTablePartition(sctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
-				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, model.NewCIStr(constr.Name),
+				err = e.createIndex(sctx, ident, ast.IndexKeyTypeNone, model.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, model.NewCIStr(constr.Name),
+				err = e.createIndex(sctx, ident, ast.IndexKeyTypeUnique, model.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
-				err = d.CreateForeignKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
+				err = e.CreateForeignKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
-				err = d.CreatePrimaryKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				err = e.CreatePrimaryKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
 				if !variable.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				} else {
-					err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
+					err = e.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
 				}
 			default:
 				// Nothing to do now.
 			}
 		case ast.AlterTableDropForeignKey:
 			// NOTE: we do not check `if not exists` and `if exists` for ForeignKey now.
-			err = d.DropForeignKey(sctx, ident, model.NewCIStr(spec.Name))
+			err = e.DropForeignKey(sctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableModifyColumn:
-			err = d.ModifyColumn(ctx, sctx, ident, spec)
+			err = e.ModifyColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableChangeColumn:
-			err = d.ChangeColumn(ctx, sctx, ident, spec)
+			err = e.ChangeColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableRenameColumn:
-			err = d.RenameColumn(sctx, ident, spec)
+			err = e.RenameColumn(sctx, ident, spec)
 		case ast.AlterTableAlterColumn:
-			err = d.AlterColumn(sctx, ident, spec)
+			err = e.AlterColumn(sctx, ident, spec)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
-			err = d.renameTable(sctx, ident, newIdent, isAlterTable)
+			err = e.renameTable(sctx, ident, newIdent, isAlterTable)
 		case ast.AlterTablePartition:
-			err = d.AlterTablePartitioning(sctx, ident, spec)
+			err = e.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
@@ -4075,20 +4224,20 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 					if opt.UintValue > shardRowIDBitsMax {
 						opt.UintValue = shardRowIDBitsMax
 					}
-					err = d.ShardRowID(sctx, ident, opt.UintValue)
+					err = e.ShardRowID(sctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
-					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.AutoIncrementType, opt.BoolValue)
+					err = e.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.AutoIncrementType, opt.BoolValue)
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
 						// TODO: Refine this error.
 						return errors.New("table option auto_id_cache overflows int64")
 					}
-					err = d.AlterTableAutoIDCache(sctx, ident, int64(opt.UintValue))
+					err = e.AlterTableAutoIDCache(sctx, ident, int64(opt.UintValue))
 				case ast.TableOptionAutoRandomBase:
-					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.AutoRandomType, opt.BoolValue)
+					err = e.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.AutoRandomType, opt.BoolValue)
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
-					err = d.AlterTableComment(sctx, ident, spec)
+					err = e.AlterTableComment(sctx, ident, spec)
 				case ast.TableOptionCharset, ast.TableOptionCollate:
 					// GetCharsetAndCollateInTableOption will get the last charset and collate in the options,
 					// so it should be handled only once.
@@ -4101,7 +4250,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 						return err
 					}
 					needsOverwriteCols := NeedToOverwriteColCharset(spec.Options)
-					err = d.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
+					err = e.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
 				case ast.TableOptionPlacementPolicy:
 					placementPolicyRef = &model.PolicyRefInfo{
@@ -4121,7 +4270,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 					if err != nil {
 						return err
 					}
-					err = d.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
+					err = e.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
 
 					ttlOptionsHandled = true
 				default:
@@ -4134,50 +4283,50 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			}
 
 			if placementPolicyRef != nil {
-				err = d.AlterTablePlacement(sctx, ident, placementPolicyRef)
+				err = e.AlterTablePlacement(sctx, ident, placementPolicyRef)
 			}
 		case ast.AlterTableSetTiFlashReplica:
-			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
+			err = e.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
 		case ast.AlterTableOrderByColumns:
-			err = d.OrderByColumns(sctx, ident)
+			err = e.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
-			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
+			err = e.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
 			if !variable.EnableCheckConstraint.Load() {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
-				err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
+				err = e.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
 			if !variable.EnableCheckConstraint.Load() {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
-				err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
+				err = e.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
 			}
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithoutValidation)
 		case ast.AlterTableAddStatistics:
-			err = d.AlterTableAddStatistics(sctx, ident, spec.Statistics, spec.IfNotExists)
+			err = e.AlterTableAddStatistics(sctx, ident, spec.Statistics, spec.IfNotExists)
 		case ast.AlterTableDropStatistics:
-			err = d.AlterTableDropStatistics(sctx, ident, spec.Statistics, spec.IfExists)
+			err = e.AlterTableDropStatistics(sctx, ident, spec.Statistics, spec.IfExists)
 		case ast.AlterTableAttributes:
-			err = d.AlterTableAttributes(sctx, ident, spec)
+			err = e.AlterTableAttributes(sctx, ident, spec)
 		case ast.AlterTablePartitionAttributes:
-			err = d.AlterTablePartitionAttributes(sctx, ident, spec)
+			err = e.AlterTablePartitionAttributes(sctx, ident, spec)
 		case ast.AlterTablePartitionOptions:
-			err = d.AlterTablePartitionOptions(sctx, ident, spec)
+			err = e.AlterTablePartitionOptions(sctx, ident, spec)
 		case ast.AlterTableCache:
-			err = d.AlterTableCache(sctx, ident)
+			err = e.AlterTableCache(sctx, ident)
 		case ast.AlterTableNoCache:
-			err = d.AlterTableNoCache(sctx, ident)
+			err = e.AlterTableNoCache(sctx, ident)
 		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
 			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
 			// MyISAM specific
 		case ast.AlterTableRemoveTTL:
 			// the parser makes sure we have only one `ast.AlterTableRemoveTTL` in an alter statement
-			err = d.AlterTableRemoveTTL(sctx, ident)
+			err = e.AlterTableRemoveTTL(sctx, ident)
 		default:
 			err = errors.Trace(dbterror.ErrUnsupportedAlterTableSpec)
 		}
@@ -4190,7 +4339,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
 		info := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
-		err = d.MultiSchemaChange(sctx, ident, info)
+		err = e.multiSchemaChange(sctx, ident, info)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4199,8 +4348,126 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	return nil
 }
 
-func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp autoid.AllocatorType, force bool) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
+	subJobs := info.SubJobs
+	if len(subJobs) == 0 {
+		return nil
+	}
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	logFn := logutil.DDLLogger().Warn
+	if intest.InTest {
+		logFn = logutil.DDLLogger().Fatal
+	}
+
+	var involvingSchemaInfo []model.InvolvingSchemaInfo
+	for _, j := range subJobs {
+		switch j.Type {
+		case model.ActionAlterTablePlacement:
+			ref, ok := j.Args[0].(*model.PolicyRefInfo)
+			if !ok {
+				logFn("unexpected type of policy reference info",
+					zap.Any("args[0]", j.Args[0]),
+					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
+				continue
+			}
+			if ref == nil {
+				continue
+			}
+			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+				Policy: ref.Name.L,
+				Mode:   model.SharedInvolving,
+			})
+		case model.ActionAddForeignKey:
+			ref, ok := j.Args[0].(*model.FKInfo)
+			if !ok {
+				logFn("unexpected type of foreign key info",
+					zap.Any("args[0]", j.Args[0]),
+					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
+				continue
+			}
+			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+				Database: ref.RefSchema.L,
+				Table:    ref.RefTable.L,
+				Mode:     model.SharedInvolving,
+			})
+		case model.ActionAlterTablePartitionPlacement:
+			if len(j.Args) < 2 {
+				logFn("unexpected number of arguments for partition placement",
+					zap.Int("len(args)", len(j.Args)),
+					zap.Any("args", j.Args))
+				continue
+			}
+			ref, ok := j.Args[1].(*model.PolicyRefInfo)
+			if !ok {
+				logFn("unexpected type of policy reference info",
+					zap.Any("args[0]", j.Args[0]),
+					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
+				continue
+			}
+			if ref == nil {
+				continue
+			}
+			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+				Policy: ref.Name.L,
+				Mode:   model.SharedInvolving,
+			})
+		}
+	}
+
+	if len(involvingSchemaInfo) > 0 {
+		involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    t.Meta().Name.L,
+		})
+	}
+
+	job := &model.Job{
+		SchemaID:            schema.ID,
+		TableID:             t.Meta().ID,
+		SchemaName:          schema.Name.L,
+		TableName:           t.Meta().Name.L,
+		Type:                model.ActionMultiSchemaChange,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                nil,
+		MultiSchemaInfo:     info,
+		ReorgMeta:           nil,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: involvingSchemaInfo,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
+	}
+	if containsDistTaskSubJob(subJobs) {
+		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
+		if err != nil {
+			return err
+		}
+	} else {
+		job.ReorgMeta = NewDDLReorgMeta(ctx)
+	}
+
+	err = checkMultiSchemaInfo(info, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	mergeAddIndex(info)
+	return e.DoDDLJob(ctx, job)
+}
+
+func containsDistTaskSubJob(subJobs []*model.SubJob) bool {
+	for _, sub := range subJobs {
+		if sub.Type == model.ActionAddIndex ||
+			sub.Type == model.ActionAddPrimaryKey {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp autoid.AllocatorType, force bool) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4250,8 +4517,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -4273,8 +4539,8 @@ func adjustNewBaseToNextGlobalID(ctx table.AllocatorContext, t table.Table, tp a
 }
 
 // ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
-func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint64) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, tableIdent)
+func (e *executor) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint64) error {
+	schema, t, err := e.getSchemaAndTableByIdent(tableIdent)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4289,7 +4555,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if uVal > 0 && tbInfo.HasClusteredIndex() {
 		return dbterror.ErrUnsupportedShardRowIDBits
 	}
-	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
+	err = verifyNoOverflowShardBits(e.sessPool, t, uVal)
 	if err != nil {
 		return err
 	}
@@ -4304,18 +4570,17 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Ident) (dbInfo *model.DBInfo, t table.Table, err error) {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+func (e *executor) getSchemaAndTableByIdent(tableIdent ast.Ident) (dbInfo *model.DBInfo, t table.Table, err error) {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
 		return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tableIdent.Schema)
 	}
-	t, err = is.TableByName(d.ctx, tableIdent.Schema, tableIdent.Name)
+	t, err = is.TableByName(e.ctx, tableIdent.Schema, tableIdent.Name)
 	if err != nil {
 		return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableIdent.Schema, tableIdent.Name)
 	}
@@ -4455,12 +4720,13 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 }
 
 // AddColumn will add a new column to the table.
-func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.InjectCall("afterGetSchemaAndTableByIdent", ctx)
 	tbInfo := t.Meta()
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
 		return errors.Trace(err)
@@ -4502,19 +4768,18 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
 // AddTablePartitions will add a new partition to the table.
-func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	t, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -4535,7 +4800,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		default:
 			return errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of HASH/KEY partitioned table"))
 		}
-		return d.hashPartitionManagement(ctx, ident, spec, pi)
+		return e.hashPartitionManagement(ctx, ident, spec, pi)
 	}
 
 	partInfo, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), meta, spec)
@@ -4549,7 +4814,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 			return errors.Trace(err)
 		}
 	}
-	if err := d.assignPartitionIDs(partInfo.Definitions); err != nil {
+	if err := e.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -4597,12 +4862,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
 	}
-	err = d.DoDDLJob(ctx, job)
+	err = e.DoDDLJob(ctx, job)
 	if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4689,8 +4953,8 @@ func getPartitionInfoTypeNone() *model.PartitionInfo {
 }
 
 // AlterTablePartitioning reorganize one set of partitions to a new set of partitions.
-func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
 	}
@@ -4763,7 +5027,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 
-	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
+	if err = e.assignPartitionIDs(newPartInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
 	// A new table ID would be needed for
@@ -4771,7 +5035,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	// since this table id will be removed in the final state when removing
 	// all the data with this table id.
 	var newID []int64
-	newID, err = d.genGlobalIDs(1)
+	newID, err = e.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4792,8 +5056,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	if err == nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 	}
@@ -4801,8 +5064,8 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 }
 
 // ReorganizePartitions reorganize one set of partitions to a new set of partitions.
-func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
 	}
@@ -4834,7 +5097,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
+	if err = e.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
@@ -4858,8 +5121,8 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
+	failpoint.InjectCall("afterReorganizePartition")
 	if err == nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 	}
@@ -4867,8 +5130,8 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 }
 
 // RemovePartitioning removes partitioning from a table.
-func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
 	}
@@ -4901,7 +5164,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
+	if err = e.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
 	// TODO: check where the default placement comes from (i.e. table level)
@@ -4924,8 +5187,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -4999,13 +5261,13 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
-func (d *ddl) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	t, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -5017,7 +5279,7 @@ func (d *ddl) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec 
 
 	switch pi.Type {
 	case model.PartitionTypeHash, model.PartitionTypeKey:
-		return d.hashPartitionManagement(sctx, ident, spec, pi)
+		return e.hashPartitionManagement(sctx, ident, spec, pi)
 
 	// Coalesce partition can only be used on hash/key partitions.
 	default:
@@ -5025,7 +5287,7 @@ func (d *ddl) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec 
 	}
 }
 
-func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, pi *model.PartitionInfo) error {
+func (e *executor) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, pi *model.PartitionInfo) error {
 	newSpec := *spec
 	newSpec.PartitionNames = make([]model.CIStr, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
@@ -5065,16 +5327,16 @@ func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, 
 		}
 	}
 
-	return d.ReorganizePartitions(sctx, ident, &newSpec)
+	return e.ReorganizePartitions(sctx, ident, &newSpec)
 }
 
-func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	t, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -5114,7 +5376,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		pids = append(pids, pi.Definitions[i].ID)
 	}
 
-	genIDs, err := d.genGlobalIDs(len(pids))
+	genIDs, err := e.genGlobalIDs(len(pids))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5132,21 +5394,20 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	t, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -5229,7 +5490,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
+	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		if dbterror.ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -5237,7 +5498,6 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		}
 		return errors.Trace(err)
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5384,8 +5644,8 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 	return nil
 }
 
-func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	ptSchema, pt, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5400,7 +5660,7 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(dbterror.ErrPartitionExchangeTempTable.FastGenByArgs(ntLocalTempTable.Meta().Name))
 	}
 
-	ntSchema, nt, err := d.getSchemaAndTableByIdent(ctx, ntIdent)
+	ntSchema, nt, err := e.getSchemaAndTableByIdent(ntIdent)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5443,23 +5703,23 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
+	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("after the exchange, please analyze related table of the exchange to update statistics"))
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
+	return nil
 }
 
 // DropColumn will drop a column from the table, now we don't support drop the column with index covered.
-func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.InjectCall("afterGetSchemaAndTableByIdent", ctx)
 
-	isDropable, err := checkIsDroppableColumn(ctx, d.infoCache.GetLatest(), schema, t, spec)
+	isDropable, err := checkIsDroppableColumn(ctx, e.infoCache.GetLatest(), schema, t, spec)
 	if err != nil {
 		return err
 	}
@@ -5485,8 +5745,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -5793,9 +6052,9 @@ func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Col
 	return nil
 }
 
-func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, originalColName model.CIStr,
+func (e *executor) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, originalColName model.CIStr,
 	spec *ast.AlterTableSpec) (*model.Job, error) {
-	is := d.infoCache.GetLatest()
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -6297,7 +6556,7 @@ func rangeBitsIsChanged(oldBits, newBits uint64) bool {
 // ChangeColumn renames an existing column and modifies the column's definition,
 // currently we only support limited kind of changes
 // that do not need to change or check data on the table.
-func (d *ddl) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
 		return dbterror.ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
@@ -6312,7 +6571,7 @@ func (d *ddl) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident a
 		return dbterror.ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
 
-	job, err := d.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
+	job, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(spec.OldColumnName.Name, ident.Name))
@@ -6321,22 +6580,21 @@ func (d *ddl) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident a
 		return errors.Trace(err)
 	}
 
-	err = d.DoDDLJob(sctx, job)
+	err = e.DoDDLJob(sctx, job)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
 // RenameColumn renames an existing column.
-func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	oldColName := spec.OldColumnName.Name
 	newColName := spec.NewColumnName.Name
 
-	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6388,14 +6646,13 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
-func (d *ddl) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
 		return dbterror.ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
@@ -6405,7 +6662,7 @@ func (d *ddl) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident a
 	}
 
 	originalColName := specNewColumn.Name.Name
-	job, err := d.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
+	job, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
@@ -6414,24 +6671,23 @@ func (d *ddl) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident a
 		return errors.Trace(err)
 	}
 
-	err = d.DoDDLJob(sctx, job)
+	err = e.DoDDLJob(sctx, job)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
-	is := d.infoCache.GetLatest()
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
-	t, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	t, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
@@ -6478,20 +6734,19 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
 // AlterTableComment updates the table comment information.
-func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -6512,14 +6767,13 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
 // AlterTableAutoIDCache updates the table comment information.
-func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, newCache int64) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, newCache int64) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6541,25 +6795,24 @@ func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, new
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
 // AlterTableCharsetAndCollate changes the table charset and collate.
-func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string, needsOverwriteCols bool) error {
+func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string, needsOverwriteCols bool) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {
 		return dbterror.ErrUnknownCharacterSet.GenWithStackByArgs(toCharset)
 	}
 
-	is := d.infoCache.GetLatest()
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -6595,8 +6848,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -6614,7 +6866,7 @@ func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replica
 }
 
 // addHypoTiFlashReplicaIntoCtx adds this hypothetical tiflash replica into this ctx.
-func (*ddl) setHypoTiFlashReplica(ctx sessionctx.Context, schemaName, tableName model.CIStr, replicaInfo *ast.TiFlashReplicaSpec) error {
+func (*executor) setHypoTiFlashReplica(ctx sessionctx.Context, schemaName, tableName model.CIStr, replicaInfo *ast.TiFlashReplicaSpec) error {
 	sctx := ctx.GetSessionVars()
 	if sctx.HypoTiFlashReplicas == nil {
 		sctx.HypoTiFlashReplicas = make(map[string]map[string]struct{})
@@ -6631,8 +6883,8 @@ func (*ddl) setHypoTiFlashReplica(ctx sessionctx.Context, schemaName, tableName 
 }
 
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
-func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6648,7 +6900,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	if replicaInfo.Hypo {
-		return d.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
+		return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
 	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
@@ -6667,8 +6919,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -6679,14 +6930,14 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 // When `ttlInfo` is nil, and `ttlCronJobSchedule` is not, it will use the original `.TTLInfo` in the table info and modify the
 // `.JobInterval`. If the `.TTLInfo` in the table info is empty, this function will return an error.
 // When `ttlInfo` is not nil, it simply submits the job with the `ttlInfo` and ignore the `ttlEnable`.
-func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *string) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *string) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -6725,20 +6976,19 @@ func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error {
+	is := e.infoCache.GetLatest()
 
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -6758,8 +7008,7 @@ func (d *ddl) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error
 			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
-		err = d.DoDDLJob(ctx, job)
-		err = d.callHookOnChanged(job, err)
+		err = e.DoDDLJob(ctx, job)
 		return errors.Trace(err)
 	}
 
@@ -6800,7 +7049,7 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 }
 
 // AlterTableAddStatistics registers extended statistics for a table.
-func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifNotExists bool) error {
+func (e *executor) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifNotExists bool) error {
 	if !ctx.GetSessionVars().EnableExtendedStats {
 		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
@@ -6808,7 +7057,7 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 	if stats.StatsType == ast.StatsTypeCardinality || stats.StatsType == ast.StatsTypeDependency {
 		return errors.New("Cardinality and Dependency statistics types are not supported now")
 	}
-	_, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return err
 	}
@@ -6844,27 +7093,27 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 
 	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
 	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return d.ddlCtx.statsHandle.InsertExtendedStats(stats.StatsName, colIDs, int(stats.StatsType), tblInfo.ID, ifNotExists)
+	return e.statsHandle.InsertExtendedStats(stats.StatsName, colIDs, int(stats.StatsType), tblInfo.ID, ifNotExists)
 }
 
 // AlterTableDropStatistics logically deletes extended statistics for a table.
-func (d *ddl) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifExists bool) error {
+func (e *executor) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifExists bool) error {
 	if !ctx.GetSessionVars().EnableExtendedStats {
 		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
-	_, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return err
 	}
 	tblInfo := tbl.Meta()
 	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
 	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return d.ddlCtx.statsHandle.MarkExtendedStatsDeleted(stats.StatsName, tblInfo.ID, ifExists)
+	return e.statsHandle.MarkExtendedStatsDeleted(stats.StatsName, tblInfo.ID, ifExists)
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
-func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
+	is := e.infoCache.GetLatest()
 	tb, ok := is.TableByID(physicalID)
 	if !ok {
 		tb, _, _ = is.FindTableByPartitionID(physicalID)
@@ -6894,8 +7143,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err := d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err := e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -6968,14 +7216,14 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 // RenameIndex renames an index.
 // In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
 // but index names are case-sensitive (we can rename index 'a' to 'A')
-func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	tb, err := is.TableByName(d.ctx, ident.Schema, ident.Name)
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
@@ -7002,8 +7250,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -7034,7 +7281,7 @@ const (
 )
 
 // dropTableObject provides common logic to DROP TABLE/VIEW/SEQUENCE.
-func (d *ddl) dropTableObject(
+func (e *executor) dropTableObject(
 	ctx sessionctx.Context,
 	objects []*ast.TableName,
 	ifExists bool,
@@ -7043,7 +7290,7 @@ func (d *ddl) dropTableObject(
 	var (
 		notExistTables []string
 		sessVars       = ctx.GetSessionVars()
-		is             = d.GetInfoSchemaWithInterceptor(ctx)
+		is             = e.infoCache.GetLatest()
 		dropExistErr   *terror.Error
 		jobType        model.ActionType
 	)
@@ -7080,7 +7327,7 @@ func (d *ddl) dropTableObject(
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		}
-		tableInfo, err := is.TableByName(d.ctx, tn.Schema, tn.Name)
+		tableInfo, err := is.TableByName(e.ctx, tn.Schema, tn.Name)
 		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 			continue
@@ -7147,8 +7394,7 @@ func (d *ddl) dropTableObject(
 			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
 
-		err = d.DoDDLJob(ctx, job)
-		err = d.callHookOnChanged(job, err)
+		err = e.DoDDLJob(ctx, job)
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 			continue
@@ -7180,17 +7426,17 @@ func (d *ddl) dropTableObject(
 }
 
 // DropTable will proceed even if some table in the list does not exists.
-func (d *ddl) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	return d.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject)
+func (e *executor) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject)
 }
 
 // DropView will proceed even if some view in the list does not exists.
-func (d *ddl) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	return d.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
+func (e *executor) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
 }
 
-func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
+func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -7201,7 +7447,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
-	referredFK := checkTableHasForeignKeyReferred(d.GetInfoSchemaWithInterceptor(ctx), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
+	referredFK := checkTableHasForeignKeyReferred(e.infoCache.GetLatest(), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
 	if referredFK != nil {
 		msg := fmt.Sprintf("`%s`.`%s` CONSTRAINT `%s`", referredFK.ChildSchema, referredFK.ChildTable, referredFK.ChildFKName)
 		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
@@ -7211,7 +7457,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tb.Meta().Partition != nil {
 		ids += len(tb.Meta().Partition.Definitions)
 	}
-	genIDs, err := d.genGlobalIDs(ids)
+	genIDs, err := e.genGlobalIDs(ids)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -7234,8 +7480,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		// but the session was killed before return.
 		ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}})
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		if config.TableLockEnabled() {
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
@@ -7252,13 +7497,13 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return nil
 }
 
-func (d *ddl) RenameTable(ctx sessionctx.Context, s *ast.RenameTableStmt) error {
+func (e *executor) RenameTable(ctx sessionctx.Context, s *ast.RenameTableStmt) error {
 	isAlterTable := false
 	var err error
 	if len(s.TableToTables) == 1 {
 		oldIdent := ast.Ident{Schema: s.TableToTables[0].OldTable.Schema, Name: s.TableToTables[0].OldTable.Name}
 		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
-		err = d.renameTable(ctx, oldIdent, newIdent, isAlterTable)
+		err = e.renameTable(ctx, oldIdent, newIdent, isAlterTable)
 	} else {
 		oldIdents := make([]ast.Ident, 0, len(s.TableToTables))
 		newIdents := make([]ast.Ident, 0, len(s.TableToTables))
@@ -7268,13 +7513,13 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, s *ast.RenameTableStmt) error 
 			oldIdents = append(oldIdents, oldIdent)
 			newIdents = append(newIdents, newIdent)
 		}
-		err = d.renameTables(ctx, oldIdents, newIdents, isAlterTable)
+		err = e.renameTables(ctx, oldIdents, newIdents, isAlterTable)
 	}
 	return err
 }
 
-func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
+	is := e.infoCache.GetLatest()
 	tables := make(map[string]int64)
 	schemas, tableID, err := ExtractTblInfos(is, oldIdent, newIdent, isAlterTable, tables)
 	if err != nil {
@@ -7308,13 +7553,12 @@ func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
+	is := e.infoCache.GetLatest()
 	oldTableNames := make([]*model.CIStr, 0, len(oldIdents))
 	tableNames := make([]*model.CIStr, 0, len(oldIdents))
 	oldSchemaIDs := make([]int64, 0, len(oldIdents))
@@ -7369,8 +7613,7 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -7482,13 +7725,13 @@ func GetName4AnonymousIndex(t table.Table, colName model.CIStr, idxName model.CI
 	return indexName
 }
 
-func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
+func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if indexOption != nil && indexOption.PrimaryKeyTp == model.PrimaryKeyTypeClustered {
 		return dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
 			"Please consider adding NONCLUSTERED primary key instead")
 	}
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -7571,8 +7814,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 	job.ReorgMeta = reorgMeta
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -7684,14 +7926,14 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 	return hiddenCols, nil
 }
 
-func (d *ddl) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
+func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	return d.createIndex(ctx, ident, stmt.KeyType, model.NewCIStr(stmt.IndexName),
+	return e.createIndex(ctx, ident, stmt.KeyType, model.NewCIStr(stmt.IndexName),
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
-func (*ddl) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName model.CIStr, indexInfo *model.IndexInfo) error {
+func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName model.CIStr, indexInfo *model.IndexInfo) error {
 	sctx := ctx.GetSessionVars()
 	indexName := indexInfo.Name
 
@@ -7712,14 +7954,14 @@ func (*ddl) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName mo
 	return nil
 }
 
-func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
+func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
 	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -7809,7 +8051,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if err != nil {
 			return err
 		}
-		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
+		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
@@ -7834,13 +8076,12 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 	job.ReorgMeta = reorgMeta
 
-	err = d.DoDDLJob(ctx, job)
+	err = e.DoDDLJob(ctx, job)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -7966,8 +8207,8 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 	return fkInfo, nil
 }
 
-func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
@@ -8010,7 +8251,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 			})
 		}
 		indexOption := &ast.IndexOption{}
-		err = d.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, indexOption, false)
+		err = e.createIndex(ctx, ti, ast.IndexKeyTypeNone, fkInfo.Name, indexPartSpecifications, indexOption, false)
 		if err != nil {
 			return err
 		}
@@ -8039,13 +8280,12 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
@@ -8069,14 +8309,13 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
+func (e *executor) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	err := d.dropIndex(ctx, ti, model.NewCIStr(stmt.IndexName), stmt.IfExists, stmt.IsHypo)
+	err := e.dropIndex(ctx, ti, model.NewCIStr(stmt.IndexName), stmt.IfExists, stmt.IsHypo)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
 		err = nil
 	}
@@ -8084,7 +8323,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 }
 
 // dropHypoIndexFromCtx drops this hypo-index from this ctx.
-func (*ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr, ifExists bool) error {
+func (*executor) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr, ifExists bool) error {
 	sctx := ctx.GetSessionVars()
 	if sctx.HypoIndexes != nil &&
 		sctx.HypoIndexes[schema.L] != nil &&
@@ -8101,8 +8340,8 @@ func (*ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index mo
 
 // dropIndex drops the specified index.
 // isHypo is used to indicate whether this operation is for a hypo-index.
-func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists, isHypo bool) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists, isHypo bool) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -8116,7 +8355,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	if isHypo {
-		return d.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExists)
+		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExists)
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
@@ -8162,8 +8401,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -8388,10 +8626,10 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes 
 }
 
 // LockTables uses to execute lock tables statement.
-func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
 	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
 	sessionInfo := model.SessionInfo{
-		ServerID:  d.GetID(),
+		ServerID:  e.uuid,
 		SessionID: ctx.GetSessionVars().ConnectionID,
 	}
 	uniqueTableID := make(map[int64]struct{})
@@ -8403,7 +8641,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		if err != nil {
 			return err
 		}
-		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		schema, t, err := e.getSchemaAndTableByIdent(ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -8444,30 +8682,29 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
-	err := d.DoDDLJob(ctx, job)
+	err := e.DoDDLJob(ctx, job)
 	if err == nil {
 		ctx.ReleaseTableLocks(unlockTables)
 		ctx.AddTableLock(lockTables)
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
 // UnlockTables uses to execute unlock tables statement.
-func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLockTpInfo) error {
+func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLockTpInfo) error {
 	if len(unlockTables) == 0 {
 		return nil
 	}
 	arg := &LockTablesArg{
 		UnlockTables: unlockTables,
 		SessionInfo: model.SessionInfo{
-			ServerID:  d.GetID(),
+			ServerID:  e.uuid,
 			SessionID: ctx.GetSessionVars().ConnectionID,
 		},
 	}
 
 	involveSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(unlockTables))
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	for _, t := range unlockTables {
 		schema, ok := is.SchemaByID(t.SchemaID)
 		if !ok {
@@ -8493,11 +8730,10 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
-	err := d.DoDDLJob(ctx, job)
+	err := e.DoDDLJob(ctx, job)
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8523,8 +8759,7 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 		return err
 	}
 	defer d.sessPool.Put(ctx)
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = d.executor.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -8538,7 +8773,7 @@ func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
 	return nil
 }
 
-func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+func (e *executor) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	uniqueTableID := make(map[int64]struct{})
 	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
 	unlockedTablesNum := 0
@@ -8549,7 +8784,7 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		if err != nil {
 			return err
 		}
-		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		schema, t, err := e.getSchemaAndTableByIdent(ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -8592,11 +8827,10 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	err := d.DoDDLJob(ctx, job)
+	err := e.DoDDLJob(ctx, job)
 	if err == nil {
 		ctx.ReleaseTableLocks(cleanupTables)
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -8610,7 +8844,7 @@ type LockTablesArg struct {
 	IsCleanup     bool
 }
 
-func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error {
+func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error {
 	// Existence of DB and table has been checked in the preprocessor.
 	oldTableInfo, ok := (ctx.Value(domainutil.RepairedTable)).(*model.TableInfo)
 	if !ok || oldTableInfo == nil {
@@ -8681,17 +8915,16 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStm
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
+	err = e.DoDDLJob(ctx, job)
 	if err == nil {
 		// Remove the old TableInfo from repairInfo before domain reload.
 		domainutil.RepairInfo.RemoveFromRepairInfo(oldDBInfo.Name.L, oldTableInfo.Name.L)
 	}
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
-	_, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
+	_, tb, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -8701,7 +8934,7 @@ func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
 	return nil
 }
 
-func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+func (e *executor) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
 	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
 	sequenceInfo, err := buildSequenceInfo(stmt, ident)
 	if err != nil {
@@ -8719,12 +8952,12 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, nil, WithOnExist(onExist))
+	return e.CreateTableWithInfo(ctx, ident.Schema, tbInfo, nil, WithOnExist(onExist))
 }
 
-func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
+func (e *executor) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
 	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	// Check schema existence.
 	db, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -8763,17 +8996,16 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
-	return d.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject)
+func (e *executor) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
+	return e.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject)
 }
 
-func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName model.CIStr, visibility ast.IndexVisibility) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName model.CIStr, visibility ast.IndexVisibility) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return err
 	}
@@ -8803,13 +9035,12 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -8835,17 +9066,16 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
+	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -8879,16 +9109,15 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
+	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+func (e *executor) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	var policyRefInfo *model.PolicyRefInfo
 	if spec.Options != nil {
 		for _, op := range spec.Options {
@@ -8904,7 +9133,7 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 	}
 
 	if policyRefInfo != nil {
-		err = d.AlterTablePartitionPlacement(ctx, ident, spec, policyRefInfo)
+		err = e.AlterTablePartitionPlacement(ctx, ident, spec, policyRefInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -8913,8 +9142,8 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 	return nil
 }
 
-func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent ast.Ident, spec *ast.AlterTableSpec, policyRefInfo *model.PolicyRefInfo) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, tableIdent)
+func (e *executor) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent ast.Ident, spec *ast.AlterTableSpec, policyRefInfo *model.PolicyRefInfo) (err error) {
+	schema, tb, err := e.getSchemaAndTableByIdent(tableIdent)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -8965,8 +9194,7 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
@@ -9090,7 +9318,7 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 }
 
 // AddResourceGroup implements the DDL interface, creates a resource group.
-func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
+func (e *executor) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
 	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
@@ -9098,7 +9326,7 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		return err
 	}
 
-	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
+	if _, ok := e.infoCache.GetLatest().ResourceGroupByName(groupName); ok {
 		if stmt.IfNotExists {
 			err = infoschema.ErrResourceGroupExists.FastGenByArgs(groupName)
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -9107,12 +9335,12 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
-	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
+	if err := e.checkResourceGroupValidation(groupInfo); err != nil {
 		return err
 	}
 
 	logutil.DDLLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
-	groupIDs, err := d.genGlobalIDs(1)
+	groupIDs, err := e.genGlobalIDs(1)
 	if err != nil {
 		return err
 	}
@@ -9129,23 +9357,22 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return err
 }
 
-func (*ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
+func (*executor) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
 	_, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
 	return err
 }
 
 // DropResourceGroup implements the DDL interface.
-func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
+func (e *executor) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
 	if groupName.L == rg.DefaultResourceGroupName {
 		return resourcegroup.ErrDroppingInternalResourceGroup
 	}
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)
 	if !ok {
@@ -9180,8 +9407,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return err
 }
 
@@ -9201,9 +9427,9 @@ func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.Resour
 }
 
 // AlterResourceGroup implements the DDL interface.
-func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) (err error) {
+func (e *executor) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)
 	if !ok {
@@ -9219,7 +9445,7 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 		return errors.Trace(err)
 	}
 
-	if err := d.checkResourceGroupValidation(newGroupInfo); err != nil {
+	if err := e.checkResourceGroupValidation(newGroupInfo); err != nil {
 		return err
 	}
 
@@ -9237,12 +9463,11 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return err
 }
 
-func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
+func (e *executor) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
 	}
@@ -9266,15 +9491,15 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 		onExists = OnExistError
 	}
 
-	return d.CreatePlacementPolicyWithInfo(ctx, policyInfo, onExists)
+	return e.CreatePlacementPolicyWithInfo(ctx, policyInfo, onExists)
 }
 
-func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) (err error) {
+func (e *executor) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) (err error) {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
 	}
 	policyName := stmt.PolicyName
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	// Check policy existence.
 	policy, ok := is.PolicyByName(policyName)
 	if !ok {
@@ -9302,17 +9527,16 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) (err error) {
+func (e *executor) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) (err error) {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
 	}
 	policyName := stmt.PolicyName
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := e.infoCache.GetLatest()
 	// Check policy existence.
 	policy, ok := is.PolicyByName(policyName)
 	if !ok {
@@ -9341,13 +9565,12 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, t, err := d.getSchemaAndTableByIdent(sctx, ti)
+func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error) {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return err
 	}
@@ -9367,7 +9590,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("partition mode")
 	}
 
-	succ, err := checkCacheTableSize(d.store, t.Meta().ID)
+	succ, err := checkCacheTableSize(e.store, t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -9400,8 +9623,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(sctx, job)
-	return d.callHookOnChanged(job, err)
+	return e.DoDDLJob(sctx, job)
 }
 
 func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
@@ -9439,8 +9661,8 @@ func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
 	return succ, err
 }
 
-func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+func (e *executor) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return err
 	}
@@ -9461,8 +9683,7 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	return d.callHookOnChanged(job, err)
+	return e.DoDDLJob(ctx, job)
 }
 
 // checkTooBigFieldLengthAndTryAutoConvert will check whether the field length is too big
@@ -9485,8 +9706,8 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 	return nil
 }
 
-func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, constr *ast.Constraint) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, constr *ast.Constraint) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -9554,13 +9775,12 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -9588,13 +9808,12 @@ func (d *ddl) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrNa
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, enforced bool) error {
-	is := d.infoCache.GetLatest()
+func (e *executor) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, enforced bool) error {
+	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -9622,9 +9841,876 @@ func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrN
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
+}
+
+func (e *executor) genGlobalIDs(count int) ([]int64, error) {
+	var ret []int64
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	// lock to reduce conflict
+	e.globalIDLock.Lock()
+	defer e.globalIDLock.Unlock()
+	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		var err error
+		ret, err = m.GenGlobalIDs(count)
+		return err
+	})
+
+	return ret, err
+}
+
+func (e *executor) genPlacementPolicyID() (int64, error) {
+	var ret int64
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		var err error
+		ret, err = m.GenPlacementPolicyID()
+		return err
+	})
+
+	return ret, err
+}
+
+// DoDDLJob will return
+// - nil: found in history DDL job and no job error
+// - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
+// - other: found in history DDL job and return that job error
+func (e *executor) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	return e.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
+}
+
+func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
+	job := jobW.Job
+	job.TraceInfo = &model.TraceInfo{
+		ConnectionID: ctx.GetSessionVars().ConnectionID,
+		SessionAlias: ctx.GetSessionVars().SessionAlias,
+	}
+	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
+		// In multiple schema change, we don't run the job.
+		// Instead, we merge all the jobs into one pending job.
+		return appendToSubJobs(mci, job)
+	}
+	// Get a global job ID and put the DDL job in the queue.
+	setDDLJobQuery(ctx, job)
+	setDDLJobMode(job)
+	e.deliverJobTask(jobW)
+
+	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
+		if val.(bool) {
+			<-jobW.ErrChs[0]
+			// The same job will be put to the DDL queue twice.
+			job = job.Clone()
+			newJobW := NewJobWrapper(job, jobW.IDAllocated)
+			e.deliverJobTask(newJobW)
+			// The second job result is used for test.
+			jobW = newJobW
+		}
+	})
+
+	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
+	err := <-jobW.ErrChs[0]
+	// job.ID must be allocated after previous channel receive returns nil.
+	defer e.delJobDoneCh(job.ID)
+	if err != nil {
+		// The transaction of enqueuing job is failed.
+		return errors.Trace(err)
+	}
+	failpoint.InjectCall("waitJobSubmitted")
+
+	sessVars := ctx.GetSessionVars()
+	sessVars.StmtCtx.IsDDLJobInQueue = true
+
+	// Notice worker that we push a new job and wait the job done.
+	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
+	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
+
+	// for local mode job, we add the history job directly now, so no need to check it.
+	// fast-create doesn't wait schema version synced, we must reload info-schema
+	// here to make sure later statements can see the created table/database.
+	if job.LocalMode {
+		return e.schemaLoader.Reload()
+	}
+
+	var historyJob *model.Job
+	jobID := job.ID
+
+	// Attach the context of the jobId to the calling session so that
+	// KILL can cancel this DDL job.
+	ctx.GetSessionVars().StmtCtx.DDLJobID = jobID
+
+	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
+	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
+	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
+	initInterval, _ := getJobCheckInterval(job, 0)
+	ticker := time.NewTicker(chooseLeaseTime(10*e.lease, initInterval))
+	startTime := time.Now()
+	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
+	defer func() {
+		ticker.Stop()
+		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
+		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		recordLastDDLInfo(ctx, historyJob)
+	}()
+	i := 0
+	notifyCh, _ := e.getJobDoneCh(job.ID)
+	for {
+		failpoint.InjectCall("storeCloseInLoop")
+		select {
+		case <-notifyCh:
+		case <-ticker.C:
+			i++
+			ticker = updateTickerInterval(ticker, 10*e.lease, job, i)
+		case <-e.ctx.Done():
+			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
+			return context.Canceled
+		}
+
+		// If the connection being killed, we need to CANCEL the DDL job.
+		if sessVars.SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
+			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
+				logutil.DDLLogger().Info("DoDDLJob will quit because context done")
+				return context.Canceled
+			}
+			if sessVars.StmtCtx.DDLJobID != 0 {
+				se, err := e.sessPool.Get()
+				if err != nil {
+					logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
+					continue
+				}
+				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
+				errs, err := CancelJobsBySystem(se, []int64{jobID})
+				e.sessPool.Put(se)
+				if len(errs) > 0 {
+					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
+				}
+				if err != nil {
+					logutil.DDLLogger().Warn("Kill command could not cancel DDL job", zap.Error(err))
+					continue
+				}
+			}
+		}
+
+		se, err := e.sessPool.Get()
+		if err != nil {
+			logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
+			continue
+		}
+		historyJob, err = GetHistoryJobByID(se, jobID)
+		e.sessPool.Put(se)
+		if err != nil {
+			logutil.DDLLogger().Error("get history DDL job failed, check again", zap.Error(err))
+			continue
+		}
+		if historyJob == nil {
+			logutil.DDLLogger().Debug("DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
+			continue
+		}
+
+		e.checkHistoryJobInTest(ctx, historyJob)
+
+		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
+		if historyJob.IsSynced() {
+			// Judge whether there are some warnings when executing DDL under the certain SQL mode.
+			if historyJob.ReorgMeta != nil && len(historyJob.ReorgMeta.Warnings) != 0 {
+				if len(historyJob.ReorgMeta.Warnings) != len(historyJob.ReorgMeta.WarningsCount) {
+					logutil.DDLLogger().Info("DDL warnings doesn't match the warnings count", zap.Int64("jobID", jobID))
+				} else {
+					for key, warning := range historyJob.ReorgMeta.Warnings {
+						keyCount := historyJob.ReorgMeta.WarningsCount[key]
+						if keyCount == 1 {
+							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+						} else {
+							newMsg := fmt.Sprintf("%d warnings with this error code, first warning: "+warning.GetMsg(), keyCount)
+							newWarning := dbterror.ClassTypes.Synthesize(terror.ErrCode(warning.Code()), newMsg)
+							ctx.GetSessionVars().StmtCtx.AppendWarning(newWarning)
+						}
+					}
+				}
+			}
+			appendMultiChangeWarningsToOwnerCtx(ctx, historyJob)
+
+			logutil.DDLLogger().Info("DDL job is finished", zap.Int64("jobID", jobID))
+			return nil
+		}
+
+		if historyJob.Error != nil {
+			logutil.DDLLogger().Info("DDL job is failed", zap.Int64("jobID", jobID))
+			return errors.Trace(historyJob.Error)
+		}
+		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
+	}
+}
+
+func (e *executor) getJobDoneCh(jobID int64) (chan struct{}, bool) {
+	return e.ddlJobDoneChMap.Load(jobID)
+}
+
+func (e *executor) delJobDoneCh(jobID int64) {
+	e.ddlJobDoneChMap.Delete(jobID)
+}
+
+func (d *ddl) limitDDLJobs(ch chan *JobWrapper, handler func([]*JobWrapper)) {
+	defer util.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
+
+	jobWs := make([]*JobWrapper, 0, batchAddingJobs)
+	for {
+		select {
+		// the channel is never closed
+		case jobW := <-ch:
+			jobWs = jobWs[:0]
+			jobLen := len(ch)
+			jobWs = append(jobWs, jobW)
+			for i := 0; i < jobLen; i++ {
+				jobWs = append(jobWs, <-ch)
+			}
+			handler(jobWs)
+		case <-d.ctx.Done():
+			return
+		}
+	}
+}
+
+func (e *executor) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
+	// If the workers don't run, we needn't notify workers.
+	// TODO: It does not affect informing the backfill worker.
+	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
+		return
+	}
+	if e.ownerManager.IsOwner() {
+		asyncNotify(ch)
+	} else {
+		e.notifyNewJobByEtcd(etcdPath, jobID, jobType)
+	}
+}
+
+func (e *executor) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
+	if e.etcdCli == nil {
+		return
+	}
+
+	jobIDStr := strconv.FormatInt(jobID, 10)
+	timeStart := time.Now()
+	err := ddlutil.PutKVToEtcd(e.ctx, e.etcdCli, 1, etcdPath, jobIDStr)
+	if err != nil {
+		logutil.DDLLogger().Info("notify handling DDL job failed",
+			zap.String("etcdPath", etcdPath),
+			zap.Int64("jobID", jobID),
+			zap.String("type", jobType),
+			zap.Error(err))
+	}
+	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerNotifyDDLJob, jobType, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+}
+
+func (e *executor) deliverJobTask(task *JobWrapper) {
+	if task.LocalMode {
+		e.limitJobChV2 <- task
+	} else {
+		e.limitJobCh <- task
+	}
+}
+
+// addBatchDDLJobsV1 gets global job IDs and puts the DDL jobs in the DDL queue.
+func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
+	startTime := time.Now()
+	var err error
+	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
+	toTable := !variable.DDLForce2Queue.Load()
+	if toTable {
+		err = d.addBatchDDLJobs(jobWs)
+	} else {
+		err = d.addBatchDDLJobs2Queue(jobWs)
+	}
+	var jobs string
+	for _, jobW := range jobWs {
+		if err == nil {
+			err = jobW.cacheErr
+		}
+		jobW.NotifyError(err)
+		jobs += jobW.Job.String() + "; "
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, jobW.Job.Type.String(),
+			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}
+	if err != nil {
+		logutil.DDLLogger().Warn("add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
+	} else {
+		logutil.DDLLogger().Info("add DDL jobs",
+			zap.Int("batch count", len(jobWs)),
+			zap.String("jobs", jobs),
+			zap.Bool("table", toTable))
+	}
+}
+
+// addBatchLocalDDLJobs gets global job IDs and delivery the DDL jobs to local TiDB
+func (d *ddl) addBatchLocalDDLJobs(jobWs []*JobWrapper) {
+	if newJobWs, err := combineBatchCreateTableJobs(jobWs); err == nil {
+		jobWs = newJobWs
+	}
+	err := d.addBatchDDLJobs(jobWs)
+	if err != nil {
+		for _, jobW := range jobWs {
+			jobW.NotifyError(err)
+		}
+		logutil.DDLLogger().Error("add DDL jobs failed", zap.Bool("local_mode", true), zap.Error(err))
+	} else {
+		logutil.DDLLogger().Info("add DDL jobs",
+			zap.Bool("local_mode", true),
+			zap.Int("batch count", len(jobWs)))
+	}
+}
+
+func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	// lock to reduce conflict
+	d.globalIDLock.Lock()
+	defer d.globalIDLock.Unlock()
+	return kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+
+		count := getRequiredGIDCount(jobWs)
+		ids, err := t.GenGlobalIDs(count)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		assignGIDsForJobs(jobWs, ids)
+
+		if err := d.checkFlashbackJobInQueue(t); err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, jobW := range jobWs {
+			job := jobW.Job
+			job.Version = currentVersion
+			job.StartTS = txn.StartTS()
+			setJobStateToQueueing(job)
+			if err = buildJobDependence(t, job); err != nil {
+				return errors.Trace(err)
+			}
+			jobListKey := meta.DefaultJobListKey
+			if job.MayNeedReorg() {
+				jobListKey = meta.AddIndexJobListKey
+			}
+			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+			}
+		})
+		return nil
+	})
+}
+
+func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
+	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, job := range jobs {
+		if job.Type == model.ActionFlashbackCluster {
+			return errors.Errorf("Can't add ddl job, have flashback cluster job")
+		}
+	}
+	return nil
+}
+
+// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL job table or local worker.
+func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
+	var err error
+
+	if len(jobWs) == 0 {
+		return nil
+	}
+
+	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
+	se, err := d.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer d.sessPool.Put(se)
+	found, err := d.sysTblMgr.HasFlashbackClusterJob(ctx, d.minJobIDRefresher.GetCurrMinJobID())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if found {
+		return errors.Errorf("Can't add ddl job, have flashback cluster job")
+	}
+
+	var (
+		startTS = uint64(0)
+		bdrRole = string(ast.BDRRoleNone)
+	)
+
+	err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+
+		bdrRole, err = t.GetBDRRole()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startTS = txn.StartTS()
+
+		// for localmode, we still need to check this variable if upgrading below v6.2.
+		if variable.DDLForce2Queue.Load() {
+			if err := d.checkFlashbackJobInQueue(t); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, jobW := range jobWs {
+		job := jobW.Job
+		job.Version = currentVersion
+		job.StartTS = startTS
+		job.BDRRole = bdrRole
+
+		// BDR mode only affects the DDL not from CDC
+		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
+			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+				for _, subJob := range job.MultiSchemaInfo.SubJobs {
+					if ast.DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, job) {
+						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+					}
+				}
+			} else if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type, job) {
+				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+			}
+		}
+
+		setJobStateToQueueing(job)
+
+		// currently doesn't support pause job in local mode.
+		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) && !job.LocalMode {
+			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
+				jobW.cacheErr = err
+				continue
+			}
+			logutil.DDLUpgradingLogger().Info("pause user DDL by system successful", zap.Stringer("job", job))
+		}
+	}
+
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	ddlSe := sess.NewSession(se)
+	localMode := jobWs[0].Job.LocalMode
+	if localMode {
+		if err = fillJobRelatedGIDs(ctx, ddlSe, jobWs); err != nil {
+			return err
+		}
+		for _, jobW := range jobWs {
+			if _, err := jobW.Encode(true); err != nil {
+				return err
+			}
+			d.localJobCh <- jobW
+		}
+		return nil
+	}
+
+	if err = GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
+		return errors.Trace(err)
+	}
+	for _, jobW := range jobWs {
+		d.initJobDoneCh(jobW.ID)
+	}
+
+	return nil
+}
+
+// GenGIDAndInsertJobsWithRetry generate job related global ID and inserts DDL jobs to the DDL job
+// table with retry. job id allocation and job insertion are in the same transaction,
+// as we want to make sure DDL jobs are inserted in id order, then we can query from
+// a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
+// so this function has side effect, it will set table/db/job id of 'jobs'.
+func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+	count := getRequiredGIDCount(jobWs)
+	return genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
+			}
+		})
+		assignGIDsForJobs(jobWs, ids)
+		injectModifyJobArgFailPoint(jobWs)
+		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
+	})
+}
+
+// fillJobRelatedGIDs similar to GenGIDAndInsertJobsWithRetry, but only fill job related global IDs.
+func fillJobRelatedGIDs(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+	var allocatedIDs []int64
+	count := getRequiredGIDCount(jobWs)
+	if err := genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
+		allocatedIDs = ids
+		return nil
+	}); err != nil {
+		return errors.Trace(err)
+	}
+
+	assignGIDsForJobs(jobWs, allocatedIDs)
+	return nil
+}
+
+// getRequiredGIDCount returns the count of required global IDs for the jobs. it's calculated
+// as: the count of jobs + the count of IDs for the jobs which do NOT have pre-allocated ID.
+func getRequiredGIDCount(jobWs []*JobWrapper) int {
+	count := len(jobWs)
+	idCountForTable := func(info *model.TableInfo) int {
+		c := 1
+		if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
+			c += len(partitionInfo.Definitions)
+		}
+		return c
+	}
+	for _, jobW := range jobWs {
+		if jobW.IDAllocated {
+			continue
+		}
+		switch jobW.Type {
+		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
+			info := jobW.Args[0].(*model.TableInfo)
+			count += idCountForTable(info)
+		case model.ActionCreateTables:
+			infos := jobW.Args[0].([]*model.TableInfo)
+			for _, info := range infos {
+				count += idCountForTable(info)
+			}
+		case model.ActionCreateSchema:
+			count++
+		}
+		// TODO support other type of jobs
+	}
+	return count
+}
+
+// assignGIDsForJobs should be used with getRequiredGIDCount, and len(ids) must equal
+// what getRequiredGIDCount returns.
+func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
+	idx := 0
+
+	assignIDsForTable := func(info *model.TableInfo) {
+		info.ID = ids[idx]
+		idx++
+		if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
+			for i := range partitionInfo.Definitions {
+				partitionInfo.Definitions[i].ID = ids[idx]
+				idx++
+			}
+		}
+	}
+	for _, jobW := range jobWs {
+		switch jobW.Type {
+		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
+			info := jobW.Args[0].(*model.TableInfo)
+			if !jobW.IDAllocated {
+				assignIDsForTable(info)
+			}
+			jobW.TableID = info.ID
+		case model.ActionCreateTables:
+			if !jobW.IDAllocated {
+				infos := jobW.Args[0].([]*model.TableInfo)
+				for _, info := range infos {
+					assignIDsForTable(info)
+				}
+			}
+		case model.ActionCreateSchema:
+			dbInfo := jobW.Args[0].(*model.DBInfo)
+			if !jobW.IDAllocated {
+				dbInfo.ID = ids[idx]
+				idx++
+			}
+			jobW.SchemaID = dbInfo.ID
+		}
+		// TODO support other type of jobs
+		jobW.ID = ids[idx]
+		idx++
+	}
+}
+
+// genGIDAndCallWithRetry generates global IDs and calls the function with retry.
+// generate ID and call function runs in the same transaction.
+func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, fn func(ids []int64) error) error {
+	var resErr error
+	for i := uint(0); i < kv.MaxRetryCnt; i++ {
+		resErr = func() (err error) {
+			if err := ddlSe.Begin(ctx); err != nil {
+				return errors.Trace(err)
+			}
+			defer func() {
+				if err != nil {
+					ddlSe.Rollback()
+				}
+			}()
+			txn, err := ddlSe.Txn()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			txn.SetOption(kv.Pessimistic, true)
+			forUpdateTS, err := lockGlobalIDKey(ctx, ddlSe, txn)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			txn.GetSnapshot().SetOption(kv.SnapshotTS, forUpdateTS)
+
+			m := meta.NewMeta(txn)
+			ids, err := m.GenGlobalIDs(count)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err = fn(ids); err != nil {
+				return errors.Trace(err)
+			}
+			return ddlSe.Commit(ctx)
+		}()
+
+		if resErr != nil && kv.IsTxnRetryableError(resErr) {
+			logutil.DDLLogger().Warn("insert job meet retryable error", zap.Error(resErr))
+			kv.BackOff(i)
+			continue
+		}
+		break
+	}
+	return resErr
+}
+
+// lockGlobalIDKey locks the global ID key in the meta store. it keeps trying if
+// meet write conflict, we cannot have a fixed retry count for this error, see this
+// https://github.com/pingcap/tidb/issues/27197#issuecomment-2216315057.
+// this part is same as how we implement pessimistic + repeatable read isolation
+// level in SQL executor, see doLockKeys.
+// NextGlobalID is a meta key, so we cannot use "select xx for update", if we store
+// it into a table row or using advisory lock, we will depends on a system table
+// that is created by us, cyclic. although we can create a system table without using
+// DDL logic, we will only consider change it when we have data dictionary and keep
+// it this way now.
+// TODO maybe we can unify the lock mechanism with SQL executor in the future, or
+// implement it inside TiKV client-go.
+func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transaction) (uint64, error) {
+	var (
+		iteration   uint
+		forUpdateTs = txn.StartTS()
+		ver         kv.Version
+		err         error
+	)
+	waitTime := ddlSe.GetSessionVars().LockWaitTimeout
+	m := meta.NewMeta(txn)
+	idKey := m.GlobalIDKey()
+	for {
+		lockCtx := tikv.NewLockCtx(forUpdateTs, waitTime, time.Now())
+		err = txn.LockKeys(ctx, lockCtx, idKey)
+		if err == nil || !terror.ErrorEqual(kv.ErrWriteConflict, err) {
+			break
+		}
+		// ErrWriteConflict contains a conflict-commit-ts in most case, but it cannot
+		// be used as forUpdateTs, see comments inside handleAfterPessimisticLockError
+		ver, err = ddlSe.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+		if err != nil {
+			break
+		}
+		forUpdateTs = ver.Ver
+
+		kv.BackOff(iteration)
+		// avoid it keep growing and overflow.
+		iteration = min(iteration+1, math.MaxInt)
+	}
+	return forUpdateTs, err
+}
+
+// combineBatchCreateTableJobs combine batch jobs to another batch jobs.
+// currently it only support combine CreateTable to CreateTables.
+func combineBatchCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
+	if len(jobWs) <= 1 {
+		return jobWs, nil
+	}
+	var schemaName string
+	jobs := make([]*model.Job, 0, len(jobWs))
+	for i, jobW := range jobWs {
+		// we don't merge jobs with ID pre-allocated.
+		if jobW.Job.Type != model.ActionCreateTable || jobW.IDAllocated {
+			return jobWs, nil
+		}
+		if i == 0 {
+			schemaName = jobW.Job.SchemaName
+		} else if jobW.Job.SchemaName != schemaName {
+			return jobWs, nil
+		}
+		jobs = append(jobs, jobW.Job)
+	}
+
+	job, err := BatchCreateTableWithJobs(jobs)
+	if err != nil {
+		return jobWs, err
+	}
+	logutil.DDLLogger().Info("combine jobs to batch create table job", zap.Int("len", len(jobWs)))
+
+	newJobW := &JobWrapper{
+		Job:    job,
+		ErrChs: []chan error{},
+	}
+	// combine the error chans.
+	for _, j := range jobWs {
+		newJobW.ErrChs = append(newJobW.ErrChs, j.ErrChs...)
+	}
+	return []*JobWrapper{newJobW}, nil
+}
+
+func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.Job, i int) *time.Ticker {
+	interval, changed := getJobCheckInterval(job, i)
+	if !changed {
+		return ticker
+	}
+	// For now we should stop old ticker and create a new ticker
+	ticker.Stop()
+	return time.NewTicker(chooseLeaseTime(lease, interval))
+}
+
+func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
+	if job == nil {
+		return
+	}
+	ctx.GetSessionVars().LastDDLInfo.Query = job.Query
+	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
+}
+
+func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
+	switch job.Type {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
+		job.Query = ""
+	default:
+		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	}
+}
+
+func setDDLJobMode(job *model.Job) {
+	if !variable.EnableFastCreateTable.Load() {
+		job.LocalMode = false
+		return
+	}
+
+	switch job.Type {
+	// currently, v2 only support CreateTable without foreign keys.
+	case model.ActionCreateTable:
+		tbInfo, ok := job.Args[0].(*model.TableInfo)
+		if ok && len(tbInfo.ForeignKeys) == 0 {
+			job.LocalMode = true
+			return
+		}
+	case model.ActionCreateSchema:
+		job.LocalMode = true
+		return
+	default:
+	}
+	job.LocalMode = false
+}
+
+var (
+	fastDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
+	}
+	normalDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+	}
+	slowDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		1 * time.Second,
+		3 * time.Second,
+	}
+)
+
+func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) {
+	plen := len(policy)
+	if i < plen {
+		return policy[i], true
+	}
+	return policy[plen-1], false
+}
+
+func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn,
+		model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
+		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
+	case model.ActionCreateTable, model.ActionCreateSchema:
+		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
+	default:
+		return getIntervalFromPolicy(normalDDLIntervalPolicy, i)
+	}
+}
+
+// TODO this failpoint is only checking how job scheduler handle
+// corrupted job args, we should test it there by UT, not here.
+func injectModifyJobArgFailPoint(jobWs []*JobWrapper) {
+	failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+		if val.(bool) {
+			for _, jobW := range jobWs {
+				job := jobW.Job
+				// Corrupt the DDL job argument.
+				if job.Type == model.ActionMultiSchemaChange {
+					if len(job.MultiSchemaInfo.SubJobs) > 0 && len(job.MultiSchemaInfo.SubJobs[0].Args) > 0 {
+						job.MultiSchemaInfo.SubJobs[0].Args[0] = 1
+					}
+				} else if len(job.Args) > 0 {
+					job.Args[0] = 1
+				}
+			}
+		}
+	})
+}
+
+func setJobStateToQueueing(job *model.Job) {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			sub.State = model.JobStateQueueing
+		}
+	}
+	job.State = model.JobStateQueueing
+}
+
+// buildJobDependence sets the curjob's dependency-ID.
+// The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
+func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
+	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
+	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
+	jobListKey := meta.DefaultJobListKey
+	if !curJob.MayNeedReorg() {
+		jobListKey = meta.AddIndexJobListKey
+	}
+	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, job := range jobs {
+		if curJob.ID < job.ID {
+			continue
+		}
+		isDependent, err := curJob.IsDependentOn(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isDependent {
+			logutil.DDLLogger().Info("current DDL job depends on other job",
+				zap.Stringer("currentJob", curJob),
+				zap.Stringer("dependentJob", job))
+			curJob.DependencyID = job.ID
+			break
+		}
+	}
+	return nil
 }
 
 // NewDDLReorgMeta create a DDL ReorgMeta.

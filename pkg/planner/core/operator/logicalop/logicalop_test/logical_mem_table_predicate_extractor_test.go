@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package logicalop_test
 
 import (
 	"context"
@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -41,7 +42,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
+func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -50,7 +51,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
-	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
+	logicalPlan, err := plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	// Obtain the leaf plan
@@ -59,7 +60,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 		leafPlan = leafPlan.Children()[0]
 	}
 
-	logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
+	logicalMemTable := leafPlan.(*logicalop.LogicalMemTable)
 	return logicalMemTable
 }
 
@@ -1823,7 +1824,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 	}
 }
 
-func TestInformSchemaTableExtract(t *testing.T) {
+func TestInfoSchemaTableExtract(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
@@ -1891,6 +1892,45 @@ func TestInformSchemaTableExtract(t *testing.T) {
 			},
 		},
 		{
+			sql:         "select * from information_schema.REFERENTIAL_CONSTRAINTS where constraint_schema ='t'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.REFERENTIAL_CONSTRAINTS where constraint_schema ='t' and constraint_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"constraint_name":   set.NewStringSet("cc"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.CHECK_CONSTRAINTS where constraint_schema ='t' and constraint_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"constraint_name":   set.NewStringSet("cc"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TIDB_CHECK_CONSTRAINTS where constraint_schema ='t' and constraint_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"constraint_name":   set.NewStringSet("cc"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLE_CONSTRAINTS where constraint_schema ='t' and table_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"table_name":        set.NewStringSet("cc"),
+			},
+		},
+		{
 			sql:         "select * from information_schema.KEY_COLUMN_USAGE where table_name ='t' or table_name ='A'",
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
@@ -1930,6 +1970,68 @@ func TestInformSchemaTableExtract(t *testing.T) {
 			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'b'",
 			skipRequest:   false,
 			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'b'",
+			skipRequest:   false,
+			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:         "select * from information_schema.SEQUENCES where sequence_schema ='a' and sequence_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"sequence_schema": set.NewStringSet("a"),
+				"sequence_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TIDB_INDEX_USAGE where table_schema ='a' and table_name='b' and index_name='c'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+				"index_name":   set.NewStringSet("c"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.PARTITIONS where table_schema ='a' and table_name='b' and partition_name='c'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema":   set.NewStringSet("a"),
+				"table_name":     set.NewStringSet("b"),
+				"partition_name": set.NewStringSet("c"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TIDB_INDEXES where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.VIEWS where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLE_CONSTRAINTS where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.SCHEMATA where schema_name ='a'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"schema_name": set.NewStringSet("a"),
+			},
 		},
 	}
 	parser := parser.New()

@@ -1038,16 +1038,32 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
-// CheckSpecialAttributes checks if the special attributes are in the table info.
-// Make it same as hasSpecialAttributes.
+var checkSubstringsInOrder = [7]string{
+	`"fk_info":null`,
+	`"partition":null`,
+	`"Lock":null`,
+	`"tiflash_replica":null`,
+	`"temp_table_type":0`,
+	`"policy_ref_info":null`,
+	`"ttl_info":null`,
+}
+
+// IsTableInfoMustLoad checks the above substrings in a table info's json representing.
+// When a table contains one of them, tidb must load the table info during schema full load.
+// hasSpecialAttributes() is a subset of it, the difference is that:
+// If a table need to be resident in-memory, its table info MUST be loaded.
+// If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
 // Exported for testing.
-// It's the regexp version for hasSpecialAttributes(), please keep up-to-date with it.
-func CheckSpecialAttributes(str string) bool {
-	if strings.Contains(str, "\"tiflash_replica\":null") && strings.Contains(str, "\"policy_ref_info\":null") &&
-		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") {
-		return false
+func IsTableInfoMustLoad(json []byte) bool {
+	idx := 0
+	for _, substr := range checkSubstringsInOrder {
+		idx = bytes.Index(json, hack.Slice(substr))
+		if idx == -1 {
+			return true
+		}
+		json = json[idx:]
 	}
-	return true
+	return false
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1060,9 +1076,9 @@ func Unescape(s string) string {
 	return s
 }
 
-// GetAllNameToIDAndSpecialAttributeInfo gets all the fields and values and table info for special attributes in a hash.
+// GetAllNameToIDAndTheMustLoadedTableInfo gets all the fields and values and table info for special attributes in a hash.
 // It's used to get some infos for information schema cache in a faster way.
-func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
+func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, nil, errors.Trace(err)
@@ -1088,7 +1104,7 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if CheckSpecialAttributes(string(hack.String(value))) {
+		if IsTableInfoMustLoad(value) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1275,7 +1291,7 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		// the default group is not persistanted to tikv by default.
+		// the default group is not persistent to tikv by default.
 		if groupID == defaultGroupID {
 			return defaultRGroupMeta, nil
 		}

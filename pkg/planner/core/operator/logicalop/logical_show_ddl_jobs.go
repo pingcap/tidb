@@ -12,51 +12,46 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
-// LogicalCTETable is for CTE table
-type LogicalCTETable struct {
-	logicalop.LogicalSchemaProducer
+// LogicalShowDDLJobs is for showing DDL job list.
+type LogicalShowDDLJobs struct {
+	LogicalSchemaProducer
 
-	SeedStat     *property.StatsInfo
-	Name         string
-	IDForStorage int
-
-	// SeedSchema is only used in columnStatsUsageCollector to get column mapping
-	SeedSchema *expression.Schema
+	JobNumber int64
 }
 
-// Init only assigns type and context.
-func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
+// Init initializes LogicalShowDDLJobs.
+func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
 	return &p
 }
 
 // *************************** start implementation of logicalPlan interface ***************************
 
-// HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
+// HashCode inherits the BaseLogicalPlan.<0th> interface.
 
-// PredicatePushDown inherits BaseLogicalPlan.LogicalPlan.<1st> implementation.
+// PredicatePushDown inherits the BaseLogicalPlan.<1st> interface.
 
-// PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.
+// PruneColumns inherits the BaseLogicalPlan.<2nd> interface.
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalCTETable) FindBestTask(prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return findBestTask4LogicalCTETable(p, prop, nil, nil)
+func (p *LogicalShowDDLJobs) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+	return utilfuncp.FindBestTask4LogicalShowDDLJobs(p, prop, planCounter, nil)
 }
 
-// BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
+// BuildKeyInfo inherits the BaseLogicalPlan.<4th> interface.
 
-// PushDownTopN inherits BaseLogicalPlan.LogicalPlan.<5th> implementation.
+// PushDownTopN inherits the BaseLogicalPlan.<5th> interface.
 
 // DeriveTopN inherits BaseLogicalPlan.LogicalPlan.<6th> implementation.
 
@@ -69,11 +64,12 @@ func (p *LogicalCTETable) FindBestTask(prop *property.PhysicalProperty, _ *base.
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements the base.LogicalPlan.<11th> interface.
-func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	p.SetStats(p.SeedStat)
+	// A fake count, just to avoid panic now.
+	p.SetStats(getFakeStats(selfSchema))
 	return p.StatsInfo(), nil
 }
 

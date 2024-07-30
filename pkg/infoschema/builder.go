@@ -55,6 +55,7 @@ type Builder struct {
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
 	infoData *Data
+	store    kv.Storage
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -545,9 +546,9 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 	b.infoSchema.delSchema(di)
 
 	// Copy the sortedTables that contain the table we are going to drop.
-	tableIDs := make([]int64, 0, len(di.Tables))
-	bucketIdxMap := make(map[int]struct{}, len(di.Tables))
-	for _, tbl := range di.Tables {
+	tableIDs := make([]int64, 0, len(di.Deprecated.Tables))
+	bucketIdxMap := make(map[int]struct{}, len(di.Deprecated.Tables))
+	for _, tbl := range di.Deprecated.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 		// TODO: If the table ID doesn't exist.
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
@@ -706,7 +707,7 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 
 	newTbl, ok := b.infoSchema.TableByID(tableID)
 	if ok {
-		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
+		dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, newTbl.Meta())
 	}
 	return affected, nil
 }
@@ -767,17 +768,19 @@ func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, t
 }
 
 func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64) {
-	for i, tblInfo := range dbInfo.Tables {
+	tables := dbInfo.Deprecated.Tables
+	for i, tblInfo := range tables {
 		if tblInfo.ID == tableID {
-			if i == len(dbInfo.Tables)-1 {
-				dbInfo.Tables = dbInfo.Tables[:i]
+			if i == len(tables)-1 {
+				tables = tables[:i]
 			} else {
-				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
+				tables = append(tables[:i], tables[i+1:]...)
 			}
 			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break
 		}
 	}
+	dbInfo.Deprecated.Tables = tables
 }
 
 // Build builds and returns the built infoschema.
@@ -865,6 +868,25 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.initMisc(dbInfos, policies, resourceGroups)
 
+	if b.enableV2 {
+		// We must not clear the historial versions like b.infoData = NewData(), because losing
+		// the historial versions would cause applyDiff get db not exist error and fail, then
+		// infoschema reloading retries with full load every time.
+		// See https://github.com/pingcap/tidb/issues/53442
+		//
+		// We must reset it, otherwise the stale tables remain and cause bugs later.
+		// For example, schema version 59:
+		//         107: t1
+		//         112: t2 (partitions p0=113, p1=114, p2=115)
+		// operation: alter table t2 exchange partition p0 with table t1
+		// schema version 60 if we do not reset:
+		//         107: t1   <- stale
+		//         112: t2 (partition p0=107, p1=114, p2=115)
+		//         113: t1
+		// See https://github.com/pingcap/tidb/issues/54796
+		b.infoData.resetBeforeFullLoad(schemaVersion)
+	}
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
 		if err != nil {
@@ -907,9 +929,9 @@ type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
-		tables: make(map[string]table.Table, len(di.Tables)),
+		tables: make(map[string]table.Table, len(di.Deprecated.Tables)),
 	}
-	for _, t := range di.Tables {
+	for _, t := range di.Deprecated.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
@@ -1000,6 +1022,12 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		builder.enableV2 = true
 	}
 	return builder
+}
+
+// WithStore attaches the given store to builder.
+func (b *Builder) WithStore(s kv.Storage) *Builder {
+	b.store = s
+	return b
 }
 
 func tableBucketIdx(tableID int64) int {
