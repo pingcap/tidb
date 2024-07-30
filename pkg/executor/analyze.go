@@ -407,6 +407,7 @@ func (e *AnalyzeExec) handleResultsError(
 	}
 	logutil.BgLogger().Info("use single session to save analyze results")
 	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
+	// FIXME: We should avoid use e.Ctx to execute another SQL.
 	subSctxs := []sessionctx.Context{e.Ctx()}
 	return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
 }
