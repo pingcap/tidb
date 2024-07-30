@@ -2335,6 +2335,7 @@ func matchIndicesProp(sctx base.PlanContext, idxCols []*expression.Column, colLe
 
 func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column,
 	idxColLens []int) (indexConds, tableConds []expression.Expression) {
+	pushDownCtx := GetPushDownCtx(ds.SCtx())
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
 		var covered bool
@@ -2343,7 +2344,7 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 		} else {
 			covered = ds.isIndexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)
 		}
-		if covered {
+		if covered && expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiKV) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)
