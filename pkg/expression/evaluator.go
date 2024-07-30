@@ -46,43 +46,59 @@ func (e *columnEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) error
 	return nil
 }
 
-// mergeInputIdxToOutputIdxes try to merge two separate inputIdxToOutputIdxes item together when we find
-// there is some column-ref inside the input chunk.
-// imaging a case:
+// mergeInputIdxToOutputIdxes merges separate inputIdxToOutputIdxes entries when column references
+// are detected within the input chunk. This process ensures consistent handling of columns derived
+// from the same original source.
 //
-// scan:                       a(addr: ???)
+// Consider the following scenario:
 //
-//	_________________________//            \\
+// Initial scan operation produces a column 'a':
 //
-// proj1:          a1(addr:0xe)              a2(addr:0xe)
+// scan:                       a (addr: ???)
 //
-//	_________________//  \\                      //  \\
+// This column 'a' is used in the first projection (proj1) to create two columns a1 and a2, both referencing 'a':
 //
-// proj2:   a3(addr:0xe) a4(addr:0xe)   a3(addr:0xe) a4(addr:0xe)
+//                         proj1
+//                        /     \
+//                       /       \
+//                      /         \
+//        a1 (addr: 0xe)           a2 (addr: 0xe)
+//        /                         \
+//       /                           \
+//      /                             \
+//     proj2                          proj2
+//     /     \                       /     \
+//    /       \                     /       \
+//   a3        a4                  a3        a4
+// (addr: 0xe) (addr: 0xe)      (addr: 0xe) (addr: 0xe)
 //
-// when we done with proj1 we can output a chunk with two column2 inside[a1, a2], since this two
-// is derived from single column a from scan, they are already made as column ref with same addr
-// in projection1. say the addr is 0xe for both a1 and a2 here.
+// Here, a1 and a2 share the same address (0xe), indicating they reference the same data from the original 'a'.
 //
-// when we start the projection2, we have two separate <inputIdx,[]outputIdxes> items here, like
-// <0, [0,1]> means project input chunk's 0th column twice, put them in 0th and 1st of output chunk.
-// <1, [2,3]> means project input chunk's 1st column twice, put them in 2nd and 3rd of output chunk.
+// When moving to the second projection (proj2), the system tries to project these columns further:
+// - The first set (left side) consists of a3 and a4, derived from a1, both retaining the address (0xe).
+// - The second set (right side) consists of a3 and a4, derived from a2, also starting with address (0xe).
 //
-// since we do have swap column logic inside projection for each <inputIdx,[]outputIdxes>, after the
-// <0, [0,1]> is applied, the input chunk a1 and a2's address will be swapped as a fake column. like
+// When proj1 is complete, the output chunk contains two columns [a1, a2], both derived from the single column 'a' from the scan.
+// Since both a1 and a2 are column references with the same address (0xe), they are treated as referencing the same data.
 //
-// proj1:          a1(addr:invalid)             a2(addr:invalid)
+// In proj2, two separate <inputIdx, []outputIdxes> items are created:
+// - <0, [0,1]>: This means the 0th input column (a1) is projected twice, into the 0th and 1st columns of the output chunk.
+// - <1, [2,3]>: This means the 1st input column (a2) is projected twice, into the 2nd and 3rd columns of the output chunk.
 //
-// ___________________//  \\                      //  \\
+// Due to the column swapping logic in each projection, after applying the <0, [0,1]> projection,
+// the addresses for a1 and a2 may become swapped or invalid:
 //
-// proj2:   a3(addr:0xe) a4(addr:0xe)   a3(addr:???) a4(addr:???)
+// proj1:          a1 (addr: invalid)             a2 (addr: invalid)
 //
-// then when we start the projection for second <1, [2,3]>, the targeted column a2 addr has already been
-// swapped as an invalid one. so swapping between a2 <-> a3 and a4 is not safe anymore.
+// This can lead to issues in proj2, where further operations on these columns may be unsafe:
+// 
+// proj2:   a3 (addr: 0xe) a4 (addr: 0xe)   a3 (addr: ???) a4 (addr: ???)
 //
-// keypoint: we should identify the original column ref from input chunk, and merge current inputIdxToOutputIdxes
-// as soon as possible. since input chunk's 0 and 1 is column referred. the final inputIdxToOutputIdxes should
-// be like: <0, [0,1,3,4]>.
+// Therefore, it's crucial to identify and merge the original column references early, ensuring
+// the final inputIdxToOutputIdxes mapping accurately reflects the shared origins of the data.
+// For instance, <0, [0,1,2,3]> indicates that the 0th input column (original 'a') is referenced
+// by all four output columns in the final output.
+
 func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputIdxToOutputIdxes map[int][]int) {
 	// step1: we should detect the self column-ref inside input chunk.
 	// we use the generic set rather than single int set to leverage the value mapping.
