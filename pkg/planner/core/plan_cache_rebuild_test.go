@@ -79,6 +79,66 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b>?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
+	// IndexMerge
+	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a=? or b=1'",
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a=? or b=1 or d=1'",
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a>? or b>1'",
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a>? or b>1 or d=1'",
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// HashAgg
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_agg() */ sum(a) from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_agg() */ sum(a) from t where a<? group by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_agg() */ sum(a), count(1) from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_agg() */ sum(a), count(1) from t where a<? group by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// StreamAgg
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ stream_agg() */ sum(a) from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ stream_agg() */ sum(a) from t where a<? group by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ stream_agg() */ sum(a), count(1) from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ stream_agg() */ sum(a), count(1) from t where a<? group by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// HashJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a<t2.a and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b<t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// MergeJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a<t2.a and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b<t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// TODO: IndexJoin
+	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
+	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
+	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
+	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b<t3.b and t1.a<?'`,
+	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
 	// Sort
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? order by a'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)

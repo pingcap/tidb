@@ -1288,8 +1288,8 @@ func (p *basePhysicalJoin) getInnerChildIdx() int {
 
 func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, bool) {
 	cloned := new(basePhysicalJoin)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
-	if err != nil {
+	base, ok := p.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *base
@@ -1974,8 +1974,8 @@ func (p *basePhysicalAgg) IsFinalAgg() bool {
 
 func (p *basePhysicalAgg) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, bool) {
 	cloned := new(basePhysicalAgg)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
-	if err != nil {
+	base, ok := p.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *base
