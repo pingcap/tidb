@@ -337,7 +337,7 @@ func TestVectorConversion(t *testing.T) {
 	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR);").Check(testkit.Rows("[1,2,3]"))
 	tk.MustQuery("SELECT CAST('[]' AS VECTOR);").Check(testkit.Rows("[]"))
 	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>);").Check(testkit.Rows("[1,2,3]"))
-	tk.MustContainErrMsg("SELECT CAST('[1,2,3]' AS VECTOR<DOUBLE>);", "Only VECTOR<FLOAT> is supported for now")
+	tk.MustContainErrMsg("SELECT CAST('[1,2,3]' AS VECTOR<DOUBLE>);", "Only VECTOR is supported for now")
 
 	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>(3));").Check(testkit.Rows("[1,2,3]"))
 	err := tk.QueryToErr("SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>(2));")
