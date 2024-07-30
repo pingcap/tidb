@@ -1933,16 +1933,16 @@ func (e *InfoSchemaTablesExtractor) SelectedSchemaNames() []model.CIStr {
 // SelectedTableIDs get table IDs specified in predicate.
 func (e *InfoSchemaTablesExtractor) SelectedTableIDs() []int64 {
 	strs := e.getSchemaObjectNames("tidb_table_id")
-	return e.parseIDs(strs)
+	return parseIDs(strs)
 }
 
 // SelectedPartitionIDs get partitions IDs specified in predicate.
 func (e *InfoSchemaTablesExtractor) SelectedPartitionIDs() []int64 {
 	strs := e.getSchemaObjectNames("tidb_partition_id")
-	return e.parseIDs(strs)
+	return parseIDs(strs)
 }
 
-func (e *InfoSchemaTablesExtractor) parseIDs(ids []model.CIStr) []int64 {
+func parseIDs(ids []model.CIStr) []int64 {
 	tableIDs := make([]int64, 0, len(ids))
 	for _, s := range ids {
 		v, err := strconv.ParseInt(s.L, 10, 64)
