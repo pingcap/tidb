@@ -414,8 +414,8 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("analyze table thash")
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
-
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+        // first plan will choose index lookup after analyze
+	tk.MustHavePlan("select * from thash where a<100", "IndexLookUp")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 
@@ -434,7 +434,7 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("drop session binding for select * from trange where a<100")
 	tk.MustExec("drop session binding for select * from tlist where a<100")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<100", "IndexLookUp")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 }
