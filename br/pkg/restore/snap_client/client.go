@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -677,7 +676,7 @@ func (rc *SnapClient) CreateTables(
 	ctx context.Context,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]CreatedTable, error) {
+) ([]*CreatedTable, error) {
 	log.Info("start create tables")
 	rc.generateRebasedTables(tables)
 
@@ -706,7 +705,7 @@ func (rc *SnapClient) createTables(
 	db *tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]CreatedTable, error) {
+) ([]*CreatedTable, error) {
 	log.Info("client to create tables")
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
@@ -716,7 +715,7 @@ func (rc *SnapClient) createTables(
 			return nil, errors.Trace(err)
 		}
 	}
-	cts := make([]CreatedTable, 0, len(tables))
+	cts := make([]*CreatedTable, 0, len(tables))
 	for _, table := range tables {
 		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 		if err != nil {
@@ -730,7 +729,7 @@ func (rc *SnapClient) createTables(
 				newTableInfo.IsCommonHandle)
 		}
 		rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-		ct := CreatedTable{
+		ct := &CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
 			OldTable:    table,
@@ -741,16 +740,16 @@ func (rc *SnapClient) createTables(
 	return cts, nil
 }
 
-func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]CreatedTable, error) {
+func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 	createdTables := struct {
 		sync.Mutex
-		tables []CreatedTable
+		tables []*CreatedTable
 	}{
-		tables: make([]CreatedTable, 0, len(tables)),
+		tables: make([]*CreatedTable, 0, len(tables)),
 	}
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
@@ -790,28 +789,28 @@ func (rc *SnapClient) createTable(
 	db *tidallocdb.DB,
 	table *metautil.Table,
 	newTS uint64,
-) (CreatedTable, error) {
+) (*CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
 		err := db.CreateTable(ctx, table, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
 		if err != nil {
-			return CreatedTable{}, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
 	newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 	if err != nil {
-		return CreatedTable{}, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
-		return CreatedTable{}, errors.Annotatef(berrors.ErrRestoreModeMismatch,
+		return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
 			"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
 			restore.TransferBoolToValue(table.Info.IsCommonHandle),
 			table.Info.IsCommonHandle,
 			newTableInfo.IsCommonHandle)
 	}
 	rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-	et := CreatedTable{
+	et := &CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
 		OldTable:    table,
@@ -824,15 +823,15 @@ func (rc *SnapClient) createTablesSingle(
 	dbPool []*tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]CreatedTable, error) {
+) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(dbPool)), "DDL workers")
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	createdTables := struct {
 		sync.Mutex
-		tables []CreatedTable
+		tables []*CreatedTable
 	}{
-		tables: make([]CreatedTable, 0, len(tables)),
+		tables: make([]*CreatedTable, 0, len(tables)),
 	}
 	for _, tbl := range tables {
 		table := tbl
@@ -998,128 +997,6 @@ func (rc *SnapClient) setSpeedLimit(ctx context.Context, rateLimit uint64) error
 		rc.hasSpeedLimited = true
 	}
 	return nil
-}
-
-func getFileRangeKey(f string) string {
-	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare with out the `_{cf}.sst` suffix
-	idx := strings.LastIndex(f, "_")
-	if idx < 0 {
-		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
-	}
-
-	return f[:idx]
-}
-
-// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
-func isFilesBelongToSameRange(f1, f2 string) bool {
-	return getFileRangeKey(f1) == getFileRangeKey(f2)
-}
-
-func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.File) {
-	if len(files) == 0 {
-		return nil, nil
-	}
-	idx := 1
-	for idx < len(files) {
-		if !isFilesBelongToSameRange(files[idx-1].Name, files[idx].Name) {
-			break
-		}
-		idx++
-	}
-
-	return files[:idx], files[idx:]
-}
-
-// RestoreSSTFiles tries to restore the files.
-func (rc *SnapClient) RestoreSSTFiles(
-	ctx context.Context,
-	tableIDWithFiles []TableIDWithFiles,
-	updateCh glue.Progress,
-) (err error) {
-	start := time.Now()
-	fileCount := 0
-	defer func() {
-		elapsed := time.Since(start)
-		if err == nil {
-			log.Info("Restore files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", fileCount, elapsed)
-		}
-	}()
-
-	log.Debug("start to restore files", zap.Int("files", fileCount))
-
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	eg, ectx := errgroup.WithContext(ctx)
-	err = rc.setSpeedLimit(ctx, rc.rateLimit)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	var rangeFiles []*backuppb.File
-	var leftFiles []*backuppb.File
-LOOPFORTABLE:
-	for _, tableIDWithFile := range tableIDWithFiles {
-		tableID := tableIDWithFile.TableID
-		files := tableIDWithFile.Files
-		rules := tableIDWithFile.RewriteRules
-		fileCount += len(files)
-		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
-			if ectx.Err() != nil {
-				log.Warn("Restoring encountered error and already stopped, give up remained files.",
-					zap.Int("remained", len(leftFiles)),
-					logutil.ShortError(ectx.Err()))
-				// We will fetch the error from the errgroup then (If there were).
-				// Also note if the parent context has been canceled or something,
-				// breaking here directly is also a reasonable behavior.
-				break LOOPFORTABLE
-			}
-			filesReplica := rangeFiles
-			rc.fileImporter.WaitUntilUnblock()
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
-				fileStart := time.Now()
-				defer func() {
-					if restoreErr == nil {
-						log.Info("import files done", logutil.Files(filesReplica),
-							zap.Duration("take", time.Since(fileStart)))
-						updateCh.Inc()
-					}
-				}()
-				if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
-					return errors.Trace(importErr)
-				}
-
-				// the data of this range has been import done
-				if rc.checkpointRunner != nil && len(filesReplica) > 0 {
-					rangeKey := getFileRangeKey(filesReplica[0].Name)
-					// The checkpoint range shows this ranges of kvs has been restored into
-					// the table corresponding to the table-id.
-					if err := checkpoint.AppendRangesForRestore(ectx, rc.checkpointRunner, tableID, rangeKey); err != nil {
-						return errors.Trace(err)
-					}
-				}
-				return nil
-			})
-		}
-	}
-
-	if err := eg.Wait(); err != nil {
-		summary.CollectFailureUnit("file", err)
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
-		return errors.Trace(err)
-	}
-	// Once the parent context canceled and there is no task running in the errgroup,
-	// we may break the for loop without error in the errgroup. (Will this happen?)
-	// At that time, return the error in the context here.
-	return ctx.Err()
 }
 
 func (rc *SnapClient) execChecksum(

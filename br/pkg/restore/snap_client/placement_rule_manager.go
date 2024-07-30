@@ -40,7 +40,7 @@ import (
 // PlacementRuleManager manages to set the placement rule of tables to label constraint key `exclusive`,
 // and unset the rule.
 type PlacementRuleManager interface {
-	SetPlacementRule(ctx context.Context, tables []CreatedTable) error
+	SetPlacementRule(ctx context.Context, tables []*CreatedTable) error
 	ResetPlacementRules(ctx context.Context) error
 }
 
@@ -101,7 +101,7 @@ func NewPlacementRuleManager(ctx context.Context, pdClient pd.Client, pdHTTPCli 
 type offlinePlacementRuleManager struct{}
 
 // SetPlacementRule implements the interface `PlacementRuleManager`, it does nothing actually.
-func (offlinePlacementRuleManager) SetPlacementRule(ctx context.Context, tables []CreatedTable) error {
+func (offlinePlacementRuleManager) SetPlacementRule(ctx context.Context, tables []*CreatedTable) error {
 	return nil
 }
 
@@ -120,7 +120,7 @@ type onlinePlacementRuleManager struct {
 }
 
 // SetPlacementRule sets the placement rule of tables to label constraint key `exclusive`,
-func (manager *onlinePlacementRuleManager) SetPlacementRule(ctx context.Context, tables []CreatedTable) error {
+func (manager *onlinePlacementRuleManager) SetPlacementRule(ctx context.Context, tables []*CreatedTable) error {
 	for _, tbl := range tables {
 		manager.restoreTables[tbl.Table.ID] = struct{}{}
 		if tbl.Table.Partition != nil && tbl.Table.Partition.Definitions != nil {

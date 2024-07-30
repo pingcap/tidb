@@ -1121,7 +1121,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
-	postHandleCh := afterTableRestoredCh
+	postHandleCh := afterTableRestoredCh(ctx, createdTables)
 
 	// pipeline checksum
 	if cfg.Checksum {
@@ -1626,4 +1626,18 @@ func DDLJobLogIncrementalCompactBlockListRule(ddlJob *model.Job) bool {
 func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
 	_, ok := actions[action]
 	return ok
+}
+
+func afterTableRestoredCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan *snapclient.CreatedTable {
+	ch := make(chan *snapclient.CreatedTable)
+	go func() {
+		for _, createdTable := range createdTables {
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- createdTable:
+			}
+		}
+	}()
+	return ch
 }

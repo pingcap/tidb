@@ -57,7 +57,7 @@ type TableIDWithFiles struct {
 	// RewriteRules is the rewrite rules for the specify table.
 	// because these rules belongs to the *one table*.
 	// we can hold them here.
-	RewriteRules *restoreutils.RewriteRules
+	RewriteRule *restoreutils.RewriteRules
 }
 
 func defaultOutputTableChan() chan *CreatedTable {
