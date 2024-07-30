@@ -86,3 +86,16 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
+
+func TestViewFull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+	tk.MustExec("INSERT INTO t0 VALUES (1), (2);")
+	tk.MustExec("INSERT INTO t1 VALUES (3);")
+	tk.MustExec("CREATE VIEW v0(c0, c1) AS SELECT t0.c0, (false NOT REGEXP t1.c0) LIKE 0 FROM t1, t0 GROUP BY t1.c0")
+	tk.MustExec("SELECT v0.c0 FROM v0;")
+	tk.MustQuery("SELECT t0.c0, (false NOT REGEXP t1.c0) LIKE 0 FROM t1, t0 GROUP BY t1.c0")
+}
