@@ -399,7 +399,15 @@ func (e *AnalyzeExec) handleResultsError(
 		// FIXME: Since we don't use it either to save analysis results or to store job history, it has no effect. Please remove this :(
 		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
 		if len(subSctxs) > 0 {
-			logutil.BgLogger().Info("use multiple sessions to save analyze results", zap.Int("sessionCount", len(subSctxs)))
+			sessionCount := len(subSctxs)
+			logutil.BgLogger().Info("use multiple sessions to save analyze results", zap.Int("sessionCount", sessionCount))
+			if sessionCount < partitionStatsConcurrency {
+				logutil.BgLogger().Warn(
+					"insufficient sessions to save analyze results, consider increasing analyze-partition-concurrency-quota to improve concurrency",
+					zap.Int("sessionCount", sessionCount),
+					zap.Int("needSessionCount", partitionStatsConcurrency),
+				)
+			}
 			defer func() {
 				dom.ReleaseAnalyzeExec(subSctxs)
 			}()
