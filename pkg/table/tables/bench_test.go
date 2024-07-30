@@ -17,7 +17,6 @@ package tables_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -56,7 +55,6 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	}
 
 	var hitCount, missCount uint64
-	var traverseDuration time.Duration
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Reset environment for each batch
@@ -82,7 +80,6 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 		metrics := txn.GetMemBuffer().GetMetrics()
 		hitCount += metrics.MemDBHitCount
 		missCount += metrics.MemDBMissCount
-		traverseDuration += metrics.TraverseDuration
 
 		// Rollback the transaction to avoid interference between batches
 		ctx.RollbackTxn(context.Background())
@@ -93,7 +90,6 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	b.ReportMetric(avgTimePerRecord, "ns/record")
 	b.ReportMetric(float64(hitCount)/float64(totalRecords), "cacheHit/record")
 	b.ReportMetric(float64(missCount)/float64(totalRecords), "cacheMiss/record")
-	b.ReportMetric(float64(traverseDuration.Nanoseconds())/float64(totalRecords), "traverse_ns/record")
 }
 
 func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
@@ -119,7 +115,6 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 	}
 
 	var hitCount, missCount uint64
-	var traverseDuration time.Duration
 	// Add initial records
 	se := tk.Session()
 	for j := 0; j < batchSize; j++ {
@@ -152,7 +147,6 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		metrics := txn.GetMemBuffer().GetMetrics()
 		hitCount += metrics.MemDBHitCount
 		missCount += metrics.MemDBMissCount
-		traverseDuration += metrics.TraverseDuration
 
 		// Rollback the transaction to avoid interference between batches
 		se.RollbackTxn(context.Background())
@@ -164,7 +158,6 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 	b.ReportMetric(avgTimePerRecord, "ns/record")
 	b.ReportMetric(float64(hitCount)/float64(totalRecords), "cacheHit/record")
 	b.ReportMetric(float64(missCount)/float64(totalRecords), "cacheMiss/record")
-	b.ReportMetric(float64(traverseDuration.Nanoseconds())/float64(totalRecords), "traverse_ns/record")
 }
 
 func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
@@ -194,7 +187,6 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 	}
 
 	var hitCount, missCount uint64
-	var traverseDuration time.Duration
 	// Add initial records
 	se := tk.Session()
 	for j := 0; j < batchSize; j++ {
@@ -230,7 +222,6 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		metrics := txn.GetMemBuffer().GetMetrics()
 		hitCount += metrics.MemDBHitCount
 		missCount += metrics.MemDBMissCount
-		traverseDuration += metrics.TraverseDuration
 
 		// Rollback the transaction to avoid interference between batches
 		se.RollbackTxn(context.Background())
@@ -242,5 +233,4 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 	b.ReportMetric(avgTimePerRecord, "ns/record")
 	b.ReportMetric(float64(hitCount)/float64(totalRecords), "cacheHit/record")
 	b.ReportMetric(float64(missCount)/float64(totalRecords), "cacheMiss/record")
-	b.ReportMetric(float64(traverseDuration.Nanoseconds())/float64(totalRecords), "traverse_ns/record")
 }
