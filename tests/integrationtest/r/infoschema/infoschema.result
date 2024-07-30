@@ -115,6 +115,7 @@ Projection_4	8000.00	root		Column#5, Column#10
   └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
 select engine, DATA_LENGTH from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 engine	DATA_LENGTH
+InnoDB	8
 explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 id	estRows	task	access object	operator info
 Projection_4	8000.00	root		Column#5, Column#10

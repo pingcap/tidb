@@ -643,23 +643,27 @@ func getMatchTableInfos(
 			if err != nil {
 				continue
 			}
-			found := false
-			for _, t := range tables {
-				if t.ID == tbl.Meta().ID {
-					found = true // deduplicate
-				}
-			}
-			if found {
-				continue
-			}
 			tables = append(tables, tbl.Meta())
 		}
 		if !fetchAllTables {
-			return tables, nil
+			return deduplicateTableInfos(tables), nil
 		}
 	}
 	// There is no specified table in where condition.
 	return is.SchemaTableInfos(ctx, schema)
+}
+
+func deduplicateTableInfos(tables []*model.TableInfo) []*model.TableInfo {
+	idMap := make(map[int64]struct{}, len(tables))
+	tmp := tables[:0]
+	for _, t := range tables {
+		_, found := idMap[t.ID]
+		if !found {
+			idMap[t.ID] = struct{}{}
+			tmp = append(tmp, t)
+		}
+	}
+	return tmp
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
