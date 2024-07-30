@@ -31,7 +31,7 @@ import (
 // Plan Should be used as embedded struct in Plan implementations.
 type Plan struct {
 	ctx     context.PlanContext
-	stats   *property.StatsInfo
+	stats   *property.StatsInfo `plan-cache-clone:"shallow"`
 	tp      string
 	id      int
 	qbBlock int // Query Block offset

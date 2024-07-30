@@ -604,8 +604,18 @@ func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSO
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) GetType(_ EvalContext) *types.FieldType            { return m.t }
-func (m *MockExpr) Clone() Expression                                 { return nil }
+func (m *MockExpr) GetType(_ EvalContext) *types.FieldType { return m.t }
+
+func (m *MockExpr) Clone() Expression {
+	cloned := new(MockExpr)
+	cloned.i = m.i
+	cloned.err = m.err
+	if m.t != nil {
+		cloned.t = m.t.Clone()
+	}
+	return cloned
+}
+
 func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
 func (m *MockExpr) ConstLevel() ConstLevel                            { return ConstNone }

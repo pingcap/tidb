@@ -37,7 +37,9 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.Ranges = util.CloneRanges(op.Ranges)
 	cloned.HandleIdx = make([]int, len(op.HandleIdx))
 	copy(cloned.HandleIdx, op.HandleIdx)
-	cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+	if op.HandleCols != nil {
+		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+	}
 	cloned.ByItems = util.CloneByItems(op.ByItems)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
 	if op.SampleInfo != nil {
@@ -69,7 +71,9 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.ByItems = util.CloneByItems(op.ByItems)
-	cloned.pkIsHandleCol = op.pkIsHandleCol.Clone().(*expression.Column)
+	if op.pkIsHandleCol != nil {
+		cloned.pkIsHandleCol = op.pkIsHandleCol.Clone().(*expression.Column)
+	}
 	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
 	copy(cloned.constColsByCond, op.constColsByCond)
 	return cloned, true
@@ -244,7 +248,9 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 	cloned.tablePlan = tablePlan.(base.PhysicalPlan)
 	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	cloned.ExtraHandleCol = op.ExtraHandleCol.Clone().(*expression.Column)
+	if op.ExtraHandleCol != nil {
+		cloned.ExtraHandleCol = op.ExtraHandleCol.Clone().(*expression.Column)
+	}
 	cloned.PushedLimit = op.PushedLimit.Clone()
 	cloned.CommonHandleCols = util.CloneCols(op.CommonHandleCols)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
@@ -278,6 +284,8 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	}
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
-	cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+	if op.HandleCols != nil {
+		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+	}
 	return cloned, true
 }

@@ -105,11 +105,15 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]property.SortItem":
 			c.write("cloned.%v = util.CloneSortItem(op.%v)", f.Name, f.Name)
 		case "util.HandleCols":
+			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
+			c.write("}")
 		case "*core.PhysPlanPartInfo", "*core.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 		case "*expression.Column":
+			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Clone().(*expression.Column)", f.Name, f.Name)
+			c.write("}")
 		case "base.PhysicalPlan":
 			c.write("%v, ok := op.%v.CloneForPlanCache(newCtx)", f.Name, f.Name)
 			c.write("if !ok {return nil, false}")
