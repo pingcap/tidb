@@ -409,9 +409,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
-	if from.tp != nil {
-		b.tp = from.tp.Clone()
-	}
+	b.tp = from.tp
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
