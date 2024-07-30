@@ -35,7 +35,7 @@ func (st *subTable) lookup(hashValue uint64) uintptr {
 }
 
 func (st *subTable) getTotalMemoryUsage() int64 {
-	return st.rowData.getTotalMemoryUsage() + int64(len(st.hashTable))*serialization.UnsafePointerLen
+	return st.rowData.getTotalMemoryUsage() + getHashTableMemoryUsage(uint64(len(st.hashTable)))
 }
 
 func (st *subTable) getSegmentNum() int {
@@ -54,6 +54,18 @@ func nextPowerOfTwo(value uint64) uint64 {
 	return ret
 }
 
+func getHashTableLength(table *rowTable) uint64 {
+	if table.validKeyCount() == 0 {
+		return 0
+	}
+	
+	return max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
+}
+
+func getHashTableMemoryUsage(hashTableLength uint64) int64 {
+	return int64(hashTableLength) * serialization.UnsafePointerLen
+}
+
 func newSubTable(table *rowTable, tracker *memory.Tracker) *subTable {
 	ret := &subTable{
 		rowData:          table,
@@ -66,9 +78,14 @@ func newSubTable(table *rowTable, tracker *memory.Tracker) *subTable {
 	if table.validKeyCount() == 0 {
 		ret.isHashTableEmpty = true
 	}
-	hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
+
+	hashTableLength := getHashTableLength(table)
+	if hashTableLength == 0 {
+		return ret
+	}
+	
 	if tracker != nil {
-		tracker.Consume(int64(hashTableLength) * serialization.UnsafePointerLen)
+		tracker.Consume(getHashTableMemoryUsage(hashTableLength))
 	}
 	ret.hashTable = make([]uintptr, hashTableLength)
 	ret.posMask = hashTableLength - 1

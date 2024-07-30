@@ -17,6 +17,7 @@ package join
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
 var (
@@ -156,10 +156,6 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	seg := htc.getCurrentRowSegment(workerID, partitionID, false)
 	seg.rowStartOffset = append(seg.rowStartOffset, builder.startPosInRawData[partitionID]...)
 
-	if len(seg.rowStartOffset) < len(seg.validJoinKeyPos) {
-		panic("xzxdebug panic") // TODO remove it
-	}
-
 	builder.crrntSizeOfRowTable[partitionID] = 0
 	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
@@ -173,8 +169,8 @@ func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable
 	totalMemoryUsage := int64(0)
 	partitionsMemoryUsage := make([]int64, 0)
 	for _, table := range rowTables {
-		hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
-		memoryUsage := int64(hashTableLength) * serialization.UnsafePointerLen
+		hashTableLength := getHashTableLength(table)
+		memoryUsage := getHashTableMemoryUsage(hashTableLength)
 		partitionsMemoryUsage = append(partitionsMemoryUsage, memoryUsage)
 		totalMemoryUsage += memoryUsage
 	}
@@ -190,6 +186,7 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 	htc.memoryTracker.Consume(totalMemoryUsage)
 
 	if spillHelper != nil && spillHelper.isSpillNeeded() {
+		spillHelper.spillTriggeredBeforeBuildingHashTableForTest = true
 		err := spillHelper.spillRowTable()
 		if err != nil {
 			return nil, err
@@ -233,7 +230,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 	}
 
 	for i := 0; i < partitionNumber; i++ {
-		// No tracker needs to be passed as memory has been consumed before
+		// No tracker needs to be passed as memory has been consumed in `tryToSpill`
 		htc.hashTable.tables[i] = newSubTable(rowTables[i], nil)
 	}
 
@@ -646,7 +643,7 @@ func (e *HashJoinV2Exec) getRestoredChunkNum(restoredPartition *restorePartition
 	return chunkNum
 }
 
-func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, doneCh <-chan struct{}) {
+func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, doneCh <-chan struct{}, wg *sync.WaitGroup) {
 	// TODO mock the random fail in `fetchBuildSideRowsImpl`
 	defer func() {
 		defer close(syncCh)
@@ -655,6 +652,8 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 			return
 		}
+
+		wg.Wait()
 
 		// Spill remaining rows
 		if e.spillHelper.isSpillTriggeredNoLock() {
@@ -697,9 +696,7 @@ func (e *HashJoinV2Exec) restoreAndBuild(
 
 	chunkNum := e.getRestoredChunkNum(restoredPartition)
 
-	e.controlPrebuildWorkersForRestore(chunkNum, syncCh, fetcherAndWorkerSyncer, e.buildFetcherFinishCh)
-
-	preBuildWorkerWg.Wait()
+	e.controlPrebuildWorkersForRestore(chunkNum, syncCh, fetcherAndWorkerSyncer, e.buildFetcherFinishCh, preBuildWorkerWg)
 
 	buildFetcherAndDispatcherSyncChan <- struct{}{}
 }
@@ -910,8 +907,6 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 
 	lastRound := 0
 
-	log.Info("xzxdebug round 0 finished ##############")
-
 	for {
 		select {
 		case <-e.buildFetcherFinishCh: // executor may be closed in advance
@@ -936,7 +931,7 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 			return
 		}
 
-		log.Info("xzxdebug start a restore round ------------")
+		log.Info(fmt.Sprintf("xzxdebug start a restore round ------------ %d", e.memTracker.BytesConsumed()))
 
 		// Collect, so that we can close them in the end.
 		// We must collect them once they are popped from stack, or the resource may

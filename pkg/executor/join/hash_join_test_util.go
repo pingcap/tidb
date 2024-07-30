@@ -271,6 +271,26 @@ func executeHashJoinExec(t *testing.T, hashJoinExec *HashJoinV2Exec) []*chunk.Ch
 	return results
 }
 
+func executeHashJoinExecAndGetError(t *testing.T, hashJoinExec *HashJoinV2Exec) error {
+	tmpCtx := context.Background()
+	err := hashJoinExec.Open(tmpCtx)
+	require.NoError(t, err)
+	chk := exec.NewFirstChunk(hashJoinExec)
+	for {
+		err = hashJoinExec.Next(tmpCtx, chk)
+		if err != nil {
+			return err
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		chk.Reset()
+	}
+	err = hashJoinExec.Close()
+	return err
+}
+
 func getSortedResults(t *testing.T, hashJoinExec *HashJoinV2Exec, resultTypes []*types.FieldType) []chunk.Row {
 	results := executeHashJoinExec(t, hashJoinExec)
 	return sortRows(results, resultTypes)

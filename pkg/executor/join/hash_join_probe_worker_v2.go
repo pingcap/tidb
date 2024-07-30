@@ -173,7 +173,6 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 			detail = fmt.Sprintf("%s[%d %d], ", detail, partID, rowNum)
 			totalSpilledRowNum += rowNum
 		}
-		log.Info(fmt.Sprintf("xzxdebug worker %d info, result row num: %d, spilled probe num: %d, detail: %s", w.WorkerID, totalOutputRowNum, totalSpilledRowNum, detail))
 	}()
 
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
@@ -208,7 +207,6 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error 
 	totalOutputRowNum := 0
 
 	defer func() {
-		log.Info(fmt.Sprintf("xzxdebug restored worker %d, totalRestoredRowNum: %d, totalOutputRowNum: %d", w.WorkerID, totalRestoredRowNum, totalOutputRowNum))
 		if r := recover(); r != nil {
 			err := util.GetRecoverError(r)
 			errInfo := err.Error()

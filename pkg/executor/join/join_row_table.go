@@ -246,7 +246,9 @@ func (rt *rowTable) getSegmentNum() int {
 func (rt *rowTable) getTotalMemoryUsage() int64 {
 	totalMemoryUsage := int64(0)
 	for _, seg := range rt.segments {
-		totalMemoryUsage += seg.totalUsedBytes()
+		if seg.finalized {
+			totalMemoryUsage += seg.totalUsedBytes()
+		}
 	}
 	return totalMemoryUsage
 }

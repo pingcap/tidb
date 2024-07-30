@@ -16,7 +16,6 @@ package join
 
 import (
 	"bytes"
-	"fmt"
 	"hash"
 	"hash/fnv"
 	"slices"
@@ -24,7 +23,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -34,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
+
+const exceedMaxSpillRoundErrInfo = "Exceed max spill round"
 
 type hashJoinSpillHelper struct {
 	cond         *sync.Cond
@@ -76,10 +76,11 @@ type hashJoinSpillHelper struct {
 	// This variable will be set to false before restoring
 	spillTriggered bool
 
-	spillTriggeredForTest              bool
-	spillRoundForTest                  int
-	spillTriggedInBuildingStageForTest bool
-	allPartitionsSpilledForTest        bool
+	spillTriggeredForTest                        bool
+	spillRoundForTest                            int
+	spillTriggedInBuildingStageForTest           bool
+	spillTriggeredBeforeBuildingHashTableForTest bool
+	allPartitionsSpilledForTest                  bool
 }
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
@@ -444,14 +445,6 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	}
 	h.hashJoinExec.hashTableContext.memoryTracker.Consume(-totalReleasedMemory)
 
-	// debug ---------------
-	spilledPartition := ""
-	for _, partID := range partitionsNeedSpill {
-		spilledPartition = fmt.Sprintf("%s %d", spilledPartition, partID)
-	}
-	log.Info(fmt.Sprintf("xzxdebug release mem: %d, mem consumption: %d, spilled partition: %s", totalReleasedMemory, h.hashJoinExec.hashTableContext.memoryTracker.BytesConsumed(), spilledPartition))
-	// ---------------
-
 	return nil
 }
 
@@ -472,6 +465,7 @@ func (h *hashJoinSpillHelper) spillRemainingRows() error {
 		totalReleasedMemoryUsage += h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(partID)
 	}
 
+	h.bytesConsumed.Store(h.memTracker.BytesConsumed())
 	return h.spillRowTableImpl(spilledPartitions, totalReleasedMemoryUsage)
 }
 
@@ -506,7 +500,7 @@ func (h *hashJoinSpillHelper) reset() {
 
 func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 	if lastRound+1 > h.hashJoinExec.maxSpillRound {
-		return errors.NewNoStackError("Exceed max spill round")
+		return errors.NewNoStackError(exceedMaxSpillRoundErrInfo)
 	}
 
 	h.hashJoinExec.HashJoinCtxV2.resetHashTableContextForRestore()
@@ -567,6 +561,10 @@ func (h *hashJoinSpillHelper) isSpillTriggedInBuildingStageForTest() bool {
 
 func (h *hashJoinSpillHelper) areAllPartitionsSpilledForTest() bool {
 	return h.allPartitionsSpilledForTest
+}
+
+func (h *hashJoinSpillHelper) isSpillTriggeredBeforeBuildingHashTableForTest() bool {
+	return h.spillTriggeredBeforeBuildingHashTableForTest
 }
 
 // Data in this structure are in same partition

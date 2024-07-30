@@ -87,7 +87,7 @@ func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []c
 }
 
 func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1500000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1700000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -101,12 +101,55 @@ func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []c
 	checkResults(t, retTypes, result, expectedResult)
 }
 
+func testInnerJoinSpillCase3(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 6400000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	hashJoinExec := buildHashJoinV2Exec(info)
+	result := getSortedResults(t, hashJoinExec, retTypes)
+	require.False(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
+	require.False(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
+	require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
+	require.True(t, hashJoinExec.spillHelper.isSpillTriggeredBeforeBuildingHashTableForTest())
+	checkResults(t, retTypes, result, expectedResult)
+}
+
+func testInnerJoinSpillCase4(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1500000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	hashJoinExec := buildHashJoinV2Exec(info)
+	result := getSortedResults(t, hashJoinExec, retTypes)
+	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
+	require.True(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
+	require.True(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
+	require.True(t, hashJoinExec.spillHelper.isSpillTriggeredBeforeBuildingHashTableForTest())
+	checkResults(t, retTypes, result, expectedResult)
+}
+
+func testInnerJoinSpillCase5(t *testing.T, ctx *mock.Context, info *hashJoinInfo, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	hashJoinExec := buildHashJoinV2Exec(info)
+	err := executeHashJoinExecAndGetError(t, hashJoinExec)
+	require.Equal(t, exceedMaxSpillRoundErrInfo, err.Error())
+}
+
 // Case 1: Trigger spill during the building of row table and spill partial partitions
 // Case 2: Trigger spill during the building of row table and spill all partitions
 // Case 3: Trigger spill before creating hash table when row table has been built and spill partial partitions
-// Case 4: Trigger re-spill and spill partial partitions in re-spill
-// Case 5: Trigger re-spill and spill all partitions in re-spill
-// Case 6: Trigger re-spill and exceed max spill round
+// Case 4: Trigger re-spill
+// Case 5: Trigger re-spill and exceed max spill round
 func TestInnerJoinSpillCorrectness(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -155,6 +198,9 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 
 	testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 	testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
 
 	// TODO re-execute the same hash join executor and trigger spill
 }
