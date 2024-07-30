@@ -396,7 +396,7 @@ func (e *AnalyzeExec) handleResultsError(
 	dom := domain.GetDomain(e.Ctx())
 	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if partitionStatsConcurrency > 1 {
-		// FIXME: It has no effect because we don't use ether to save the analysis result or job history.  Please remove this :(
+		// FIXME: Since we don't use it either to save analysis results or to store job history, it has no effect. Please remove this option :(
 		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
 		if len(subSctxs) > 0 {
 			logutil.BgLogger().Info("use multiple sessions to save analyze results", zap.Int("sessionCount", len(subSctxs)))
