@@ -1664,10 +1664,10 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 		if ok {
 			//used to adjust FromUnixTime precision #Fixbug35184
 			if x.FuncName.L == ast.Cast {
-				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
-					x.RetType.SetDecimal(6)
-					fieldLen := mathutil.Min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)
-					x.RetType.SetFlen(fieldLen)
+				if x.GetStaticType().GetDecimal() == 0 && (x.GetStaticType().GetType() == mysql.TypeNewDecimal) {
+					x.GetStaticType().SetDecimal(6)
+					fieldLen := mathutil.Min(x.GetStaticType().GetFlen()+6, mysql.MaxDecimalWidth)
+					x.GetStaticType().SetFlen(fieldLen)
 				}
 			}
 		}

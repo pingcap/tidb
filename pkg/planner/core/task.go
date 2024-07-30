@@ -1480,7 +1480,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			eq := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
 			caseWhen := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
 			divide := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
-			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
+			*divide.(*expression.ScalarFunction).GetStaticType() = *p.schema.Columns[i].RetType
 			exprs = append(exprs, divide)
 		} else {
 			// other non-avg agg use the old schema as it did.

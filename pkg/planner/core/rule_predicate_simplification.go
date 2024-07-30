@@ -104,7 +104,7 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 		newValues = append(newValues, lastValue)
 		specialCase = true
 	}
-	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), v.FuncName.L, v.RetType, newValues...)
+	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), v.FuncName.L, v.GetStaticType(), newValues...)
 	return newPred, specialCase
 }
 

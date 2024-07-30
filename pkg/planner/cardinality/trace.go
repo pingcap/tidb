@@ -79,7 +79,7 @@ func exprToString(ctx expression.EvalContext, e expression.Expression) (string, 
 				}
 				buffer.WriteString(argStr)
 				buffer.WriteString(", ")
-				buffer.WriteString(expr.RetType.String())
+				buffer.WriteString(expr.GetStaticType().String())
 			}
 		default:
 			for i, arg := range expr.GetArgs() {

@@ -95,7 +95,7 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
-		warnErr := errors.NewNoStackError("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
+		warnErr := errors.NewNoStackError("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.GetStaticType().CompactStr() + ") is not supported to push down to " + storageName + " now.")
 
 		ctx.AppendWarning(warnErr)
 		return false
@@ -313,7 +313,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		}
 	case ast.Cast:
 		sourceType := function.GetArgs()[0].GetType(ctx)
-		retType := function.RetType
+		retType := function.GetStaticType()
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastTimeAsInt,
 			tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastJsonAsInt*/ :
@@ -325,7 +325,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			return sourceType.GetType() == retType.GetType() || retType.GetType() == mysql.TypeDouble
 		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
 			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
-			return function.RetType.IsDecimalValid()
+			return function.GetStaticType().IsDecimalValid()
 		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
 			tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastJsonAsString /*, tipb.ScalarFuncSig_CastDurationAsString*/ :
 			return true
@@ -406,7 +406,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
 	switch scalarFunc.FuncName.L {
 	case ast.Cast:
-		return scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal
+		return scalarFunc.GetStaticType().EvalType() == types.ETInt || scalarFunc.GetStaticType().EvalType() == types.ETReal || scalarFunc.GetStaticType().EvalType() == types.ETDecimal
 	default:
 		return false
 	}

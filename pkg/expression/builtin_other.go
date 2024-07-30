@@ -952,7 +952,6 @@ func BuildGetVarFunction(ctx BuildContext, expr Expression, retType *types.Field
 	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.GetVar),
-		RetType:  retType,
 		Function: f,
 	}, nil
 }

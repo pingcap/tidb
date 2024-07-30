@@ -882,7 +882,7 @@ func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Exp
 		for i, arg := range x.GetArgs() {
 			args[i] = evaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.GetStaticType().Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
@@ -943,7 +943,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			}
 		}
 
-		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		c := NewFunctionInternal(ctx, x.FuncName.L, x.GetStaticType().Clone(), args...)
 		cons, ok := c.(*Constant)
 		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
 		// then we think the result Null Constant is also affected by the column schema
@@ -1073,7 +1073,6 @@ func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *Scalar
 	terror.Log(err)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
-		RetType:  retTp,
 		Function: bt,
 	}
 }
@@ -1115,7 +1114,6 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
-		RetType:  f.getRetTp(),
 	}
 	if keepNull {
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)

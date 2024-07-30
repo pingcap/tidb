@@ -37,10 +37,7 @@ import (
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	FuncName model.CIStr
-	// RetType is the type that ScalarFunction returns.
-	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType           *types.FieldType
+	FuncName          model.CIStr
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
@@ -128,7 +125,7 @@ func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
 		for _, arg := range sf.GetArgs() {
 			buffer.WriteString(arg.StringWithCtx(ctx, redact))
 			buffer.WriteString(", ")
-			buffer.WriteString(sf.RetType.String())
+			buffer.WriteString(sf.GetStaticType().String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
@@ -258,7 +255,6 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	}
 	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
-		RetType:  retType,
 		Function: f,
 	}
 	if fold == 1 {
@@ -336,7 +332,6 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 		hashcode: sf.hashcode,
 	}
@@ -353,7 +348,7 @@ func (sf *ScalarFunction) GetType(_ EvalContext) *types.FieldType {
 
 // GetStaticType returns the static type of the scalar function.
 func (sf *ScalarFunction) GetStaticType() *types.FieldType {
-	return sf.RetType
+	return sf.Function.getRetTp()
 }
 
 // Equal implements Expression interface.
@@ -366,7 +361,7 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
-	if !sf.RetType.Equal(fun.RetType) {
+	if !sf.GetStaticType().Equal(fun.GetStaticType()) {
 		return false
 	}
 	return sf.Function.equal(ctx, fun.Function)
@@ -464,7 +459,7 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 		d.SetNull()
 		return d, err
 	}
-	d.SetValue(res, sf.RetType)
+	d.SetValue(res, sf.GetStaticType())
 	return
 }
 
@@ -647,7 +642,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 		// Cast is a special case. The RetType should also be considered as an argument.
 		// Please see `newFunctionImpl()` for detail.
 		if sf.FuncName.L == ast.Cast {
-			evalTp := sf.RetType.EvalType()
+			evalTp := sf.GetStaticType().EvalType()
 			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
 		}
 	}
@@ -664,7 +659,7 @@ func ReHashCode(sf *ScalarFunction) {
 	// Cast is a special case. The RetType should also be considered as an argument.
 	// Please see `newFunctionImpl()` for detail.
 	if sf.FuncName.L == ast.Cast {
-		evalTp := sf.RetType.EvalType()
+		evalTp := sf.GetStaticType().EvalType()
 		sf.hashcode = append(sf.hashcode, byte(evalTp))
 	}
 }
@@ -834,9 +829,6 @@ func (sf *ScalarFunction) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyScalarFunctionSize + int64(len(sf.FuncName.L)+len(sf.FuncName.O)) + int64(cap(sf.hashcode))
-	if sf.RetType != nil {
-		sum += sf.RetType.MemoryUsage()
-	}
 	if sf.Function != nil {
 		sum += sf.Function.MemoryUsage()
 	}

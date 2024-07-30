@@ -57,7 +57,7 @@ func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string
 				buffer.WriteString(arg.ExplainInfo(ctx))
 			}
 			buffer.WriteString(", ")
-			buffer.WriteString(expr.RetType.String())
+			buffer.WriteString(expr.GetStaticType().String())
 		}
 	default:
 		for i, arg := range expr.GetArgs() {
@@ -90,7 +90,7 @@ func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
 		for _, arg := range expr.GetArgs() {
 			buffer.WriteString(arg.ExplainNormalizedInfo4InList())
 			buffer.WriteString(", ")
-			buffer.WriteString(expr.RetType.String())
+			buffer.WriteString(expr.GetStaticType().String())
 		}
 	case ast.In:
 		buffer.WriteString("...")

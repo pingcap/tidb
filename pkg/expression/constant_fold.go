@@ -62,9 +62,9 @@ func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
-			return &Constant{Value: value, RetType: expr.RetType, DeferredExpr: expr}, true
+			return &Constant{Value: value, RetType: expr.GetStaticType(), DeferredExpr: expr}, true
 		}
-		return &Constant{Value: value, RetType: expr.RetType}, false
+		return &Constant{Value: value, RetType: expr.GetStaticType()}, false
 	}
 	if mysql.HasNotNullFlag(arg0.GetType(ctx.GetEvalCtx()).GetFlag()) {
 		return NewZero(), false
@@ -218,7 +218,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 				// is true. We just check whether the result expression is null or false and then let it die. Basically,
 				// the constant is used once briefly and will not be retained for a long time. Hence setting DeferredExpr
 				// of Constant to nil is ok.
-				return &Constant{Value: value, RetType: x.RetType}, false
+				return &Constant{Value: value, RetType: x.GetStaticType()}, false
 			}
 			evalCtx := ctx.GetEvalCtx()
 			if isTrue, err := value.ToBool(evalCtx.TypeCtx()); err == nil && isTrue == 0 {
@@ -226,12 +226,12 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 				// is true. We just check whether the result expression is null or false and then let it die. Basically,
 				// the constant is used once briefly and will not be retained for a long time. Hence setting DeferredExpr
 				// of Constant to nil is ok.
-				return &Constant{Value: value, RetType: x.RetType}, false
+				return &Constant{Value: value, RetType: x.GetStaticType()}, false
 			}
 			return expr, isDeferredConst
 		}
 		value, err := x.Eval(ctx.GetEvalCtx(), chunk.Row{})
-		retType := x.RetType.Clone()
+		retType := x.GetStaticType().Clone()
 		if !hasNullArg {
 			// set right not null flag for constant value
 			switch value.Kind() {

@@ -453,10 +453,10 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				return substituted, hasFail, v
 			}
 			if substituted {
-				flag := v.RetType.GetFlag()
+				flag := v.GetStaticType().GetFlag()
 				var e Expression
 				if v.FuncName.L == ast.Cast {
-					e = BuildCastFunction(ctx, newArg, v.RetType)
+					e = BuildCastFunction(ctx, newArg, v.GetStaticType())
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
@@ -493,7 +493,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		oldCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
+		oldCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.GetStaticType().EvalType(), v.GetArgs()...)
 		if err != nil {
 			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
 			return false, false, v
@@ -513,7 +513,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				changed = false
 				copy(tmpArgForCollCheck, refExprArr.Result())
 				tmpArgForCollCheck[idx] = newFuncExpr
-				newCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
+				newCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.GetStaticType().EvalType(), tmpArgForCollCheck...)
 				if err != nil {
 					logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
 					return false, failed, v
@@ -542,7 +542,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			newFunc, err := NewFunction(ctx, v.FuncName.L, v.GetStaticType(), refExprArr.Result()...)
 			if err != nil {
 				return true, true, v
 			}
@@ -639,7 +639,7 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf Expression
 		)
 		if x.FuncName.L == ast.Cast {
-			newSf = BuildCastFunction(ctx, newArgs[0], x.RetType)
+			newSf = BuildCastFunction(ctx, newArgs[0], x.GetStaticType())
 		} else if x.FuncName.L == ast.Grouping {
 			newSf = x.Clone()
 			newSf.(*ScalarFunction).GetArgs()[0] = newArgs[0]
@@ -786,7 +786,7 @@ func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int) (Exp
 		return parentF, false
 	}
 	// eg: if (cast(A) EQ const) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
-	if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+	if cast.GetStaticType().EvalType() == types.ETString && !collate.CompatibleCollate(cast.GetStaticType().GetCollate(), collation) {
 		return parentF, false
 	}
 	// 1-castOffset should be constant
@@ -801,15 +801,15 @@ func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int) (Exp
 	}
 
 	// current only consider varchar and integer
-	if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+	if !noPrecisionLossCastCompatible(cast.GetStaticType(), c.RetType) {
 		return parentF, false
 	}
 
 	// the column is covered by indexes, deconstructing it out.
 	if castOffset == 0 {
-		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, c, parentF.GetArgs()[1]), true
+		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.GetStaticType(), c, parentF.GetArgs()[1]), true
 	}
-	return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, parentF.GetArgs()[0], c), true
+	return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.GetStaticType(), parentF.GetArgs()[0], c), true
 }
 
 // eliminateCastFunction will detect the original arg before and the cast type after, once upon
@@ -870,7 +870,7 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 			return expr, false
 		}
 		// eg: if (cast(A) IN {const}) with incompatible collation, even if cast is eliminated, the condition still can not be used to build range.
-		if cast.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(cast.RetType.GetCollate(), collation) {
+		if cast.GetStaticType().EvalType() == types.ETString && !collate.CompatibleCollate(cast.GetStaticType().GetCollate(), collation) {
 			return expr, false
 		}
 		for _, arg := range f.GetArgs()[1:] {
@@ -884,12 +884,12 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 			return expr, false
 		}
 		// current only consider varchar and integer
-		if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+		if !noPrecisionLossCastCompatible(cast.GetStaticType(), c.RetType) {
 			return expr, false
 		}
 		newArgs := []Expression{c}
 		newArgs = append(newArgs, f.GetArgs()[1:]...)
-		return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, newArgs...), true
+		return NewFunctionInternal(sctx, f.FuncName.L, f.GetStaticType(), newArgs...), true
 	}
 	return expr, false
 }

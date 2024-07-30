@@ -255,7 +255,6 @@ func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 	}
 	res = &ScalarFunction{
 		FuncName: model.NewCIStr(InternalFuncToBinary),
-		RetType:  f.getRetTp(),
 		Function: f,
 	}
 	return FoldConstant(ctx, res)
@@ -270,7 +269,6 @@ func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldT
 	}
 	res = &ScalarFunction{
 		FuncName: model.NewCIStr(InternalFuncFromBinary),
-		RetType:  tp,
 		Function: f,
 	}
 	return FoldConstant(ctx, res)
