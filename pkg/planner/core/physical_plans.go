@@ -159,6 +159,9 @@ const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
 
 // Clone clones the PhysPlanPartInfo.
 func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
+	if pi == nil {
+		return nil
+	}
 	cloned := new(PhysPlanPartInfo)
 	cloned.PruningConds = util.CloneExprs(pi.PruningConds)
 	cloned.PartitionNames = util.CloneCIStrs(pi.PartitionNames)
@@ -435,6 +438,9 @@ type PushedDownLimit struct {
 
 // Clone clones this pushed-down list.
 func (p *PushedDownLimit) Clone() *PushedDownLimit {
+	if p == nil {
+		return nil
+	}
 	cloned := new(PushedDownLimit)
 	*cloned = *p
 	return cloned
@@ -1282,8 +1288,8 @@ func (p *basePhysicalJoin) getInnerChildIdx() int {
 
 func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, bool) {
 	cloned := new(basePhysicalJoin)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
-	if err != nil {
+	base, ok := p.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *base
@@ -1968,8 +1974,8 @@ func (p *basePhysicalAgg) IsFinalAgg() bool {
 
 func (p *basePhysicalAgg) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, bool) {
 	cloned := new(basePhysicalAgg)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
-	if err != nil {
+	base, ok := p.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *base
