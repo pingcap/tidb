@@ -172,6 +172,7 @@ func equalRowCountOnColumn(sctx context.PlanContext, c *statistics.Column, val t
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 {
+		// If the table hasn't been modified, it's safe to return 0. Otherwise, the TopN could be stale - return 1.
 		if modifyCount == 0 {
 			return 0, nil
 		}
