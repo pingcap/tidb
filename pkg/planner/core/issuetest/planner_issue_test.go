@@ -86,3 +86,9 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
+
+func TestIssue45956(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show databases WHERE TRUE IN (SELECT TRUE) < ALL (SELECT TRUE);").Check(testkit.Rows())
+}
