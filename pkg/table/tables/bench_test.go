@@ -54,6 +54,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
+	var hitCount, missCount uint64
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Reset environment for each batch
@@ -76,6 +77,9 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 			}
 		}
 		b.StopTimer()
+		metrics := txn.GetMemBuffer().GetMetrics()
+		hitCount += metrics.MemDBHitCount
+		missCount += metrics.MemDBMissCount
 
 		// Rollback the transaction to avoid interference between batches
 		ctx.RollbackTxn(context.Background())
@@ -84,6 +88,8 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	totalRecords := batchSize * b.N
 	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
 	b.ReportMetric(avgTimePerRecord, "ns/record")
+	b.ReportMetric(float64(hitCount)/float64(totalRecords), "cacheHit/record")
+	b.ReportMetric(float64(missCount)/float64(totalRecords), "cacheMiss/record")
 }
 
 func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
@@ -108,6 +114,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
+	var hitCount, missCount uint64
 	// Add initial records
 	se := tk.Session()
 	for j := 0; j < batchSize; j++ {
@@ -137,6 +144,10 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		}
 		b.StopTimer()
 
+		metrics := txn.GetMemBuffer().GetMetrics()
+		hitCount += metrics.MemDBHitCount
+		missCount += metrics.MemDBMissCount
+
 		// Rollback the transaction to avoid interference between batches
 		se.RollbackTxn(context.Background())
 		require.NoError(b, err)
@@ -145,6 +156,8 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 	totalRecords := batchSize * b.N
 	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
 	b.ReportMetric(avgTimePerRecord, "ns/record")
+	b.ReportMetric(float64(hitCount)/float64(totalRecords), "cacheHit/record")
+	b.ReportMetric(float64(missCount)/float64(totalRecords), "cacheMiss/record")
 }
 
 func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
@@ -173,6 +186,7 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		newData[j] = types.MakeDatums(j, "updated")
 	}
 
+	var hitCount, missCount uint64
 	// Add initial records
 	se := tk.Session()
 	for j := 0; j < batchSize; j++ {
@@ -205,6 +219,10 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		}
 		b.StopTimer()
 
+		metrics := txn.GetMemBuffer().GetMetrics()
+		hitCount += metrics.MemDBHitCount
+		missCount += metrics.MemDBMissCount
+
 		// Rollback the transaction to avoid interference between batches
 		se.RollbackTxn(context.Background())
 		require.NoError(b, err)
@@ -213,4 +231,6 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 	totalRecords := batchSize * b.N
 	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
 	b.ReportMetric(avgTimePerRecord, "ns/record")
+	b.ReportMetric(float64(hitCount)/float64(totalRecords), "cacheHit/record")
+	b.ReportMetric(float64(missCount)/float64(totalRecords), "cacheMiss/record")
 }

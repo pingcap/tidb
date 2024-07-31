@@ -42,6 +42,7 @@ import (
 	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -189,6 +190,9 @@ func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 func (mb *MemBuf) Size() int {
 	return mb.size
 }
+
+// GetMetrics implements kv.MemBuffer
+func (mb *MemBuf) GetMetrics() tikv.Metrics { return tikv.Metrics{} }
 
 // Len returns the number of entries in the DB.
 func (t *transaction) Len() int {
