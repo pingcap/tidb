@@ -272,7 +272,7 @@ func TestCancel(t *testing.T) {
 
 	resetHook := func(h *callback.TestDDLCallback) {
 		h.OnJobRunBeforeExported = nil
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 		dom.DDL().SetHook(h.Clone())
 	}
 	registerHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
