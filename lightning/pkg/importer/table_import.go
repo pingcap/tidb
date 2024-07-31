@@ -29,6 +29,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/web"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
+	"github.com/shirou/gopsutil/v3/mem"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -672,6 +674,13 @@ func (tr *TableImporter) preprocessEngine(
 		chunkCp     *checkpoints.ChunkCheckpoint
 	}
 
+	memInfo, err := mem.VirtualMemory()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// set the total memory limit for lightning to 80% of the total memory
+	memLimiter := membuf.NewLimiter(int(memInfo.Total * 4 / 5))
+
 	// chunks that are finished writing, but checkpoints are not finished due to flush not finished.
 	var checkFlushLock sync.Mutex
 	flushPendingChunks := make([]chunkFlushStatus, 0, 16)
@@ -765,18 +774,26 @@ ChunkLoop:
 			setError(err)
 			break
 		}
+
+		var memoryUsage int
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			chunkSize, err := getChunkCompressedSizeForParquet(ctx, chunk, rc.store)
+			memoryUsage = int(chunkSize * 2)
+			if err != nil {
+				setError(err)
+				break
+			}
+			memLimiter.Acquire(memoryUsage) // parquet reader uses 2 as the concurrent reader number
+		}
+
 		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
 		if err != nil {
 			setError(err)
 			break
 		}
 
-		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// TODO: use the compressed size of the chunk to conduct memory control
-			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
+		cr.memLimiter = memLimiter
+		cr.memoryUsage = memoryUsage
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
@@ -1184,6 +1201,9 @@ func (tr *TableImporter) postProcess(
 	return true, nil
 }
 
+// getChunkCompressedSizeForParquet calculate the chunk compressed size for parquet files
+// using the maximum row group size among all the row groups,
+// unit in bytes.
 func getChunkCompressedSizeForParquet(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
