@@ -159,3 +159,7 @@ func (m *MockGlue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func
 	}
 	return fn(glueSession)
 }
+
+func (m *MockGlue) GetType() string {
+	return "MockGlue"
+}

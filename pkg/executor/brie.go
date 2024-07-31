@@ -753,6 +753,10 @@ func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Sess
 	return fn(glueSession)
 }
 
+func (gs *tidbGlue) GetType() string {
+	return "ExecGlue"
+}
+
 type tidbGlueSession struct {
 	// the session context of the brie task's subtask, such as `CREATE TABLE`.
 	se sessionctx.Context
