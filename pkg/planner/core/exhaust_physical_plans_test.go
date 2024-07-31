@@ -196,12 +196,15 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	require.NoError(t, err)
 	joinNode.OtherConditions = others
 	helper := &indexJoinBuildHelper{
+		sctx:                  ctx,
 		joinOtherConditions:   others,
 		lastColManager:        nil,
+		outerJoinKeys:         testCase.innerKeys,
+		innerJoinKeys:         testCase.innerKeys,
 		innerStats:            dataSourceNode.StatsInfo(),
 		innerSchema:           dataSourceNode.Schema(),
 		innerPushedConditions: dataSourceNode.PushedDownConds}
-	_, err = helper.analyzeLookUpFilters(testCtx.path, testCase.innerKeys, testCase.innerKeys, testCase.rebuildMode)
+	_, err = helper.analyzeLookUpFilters(testCtx.path, testCase.rebuildMode)
 	if helper.chosenRanges == nil {
 		helper.chosenRanges = ranger.Ranges{}
 	}
