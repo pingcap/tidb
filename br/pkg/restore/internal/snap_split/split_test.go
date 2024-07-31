@@ -86,7 +86,7 @@ func encodeBytes(keys [][]byte) {
 
 func TestRawSplit(t *testing.T) {
 	// Fix issue #36490.
-	splitKeys := [][]byte{[]byte{}}
+	splitKeys := [][]byte{{}}
 	ctx := context.Background()
 	rangeBoundaries := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	mockPDCli := split.NewMockPDClientForSplit()

@@ -291,26 +291,6 @@ func getFileRangeKey(f string) string {
 	return f[:idx]
 }
 
-// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
-func isFilesBelongToSameRange(f1, f2 string) bool {
-	return getFileRangeKey(f1) == getFileRangeKey(f2)
-}
-
-func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.File) {
-	if len(files) == 0 {
-		return nil, nil
-	}
-	idx := 1
-	for idx < len(files) {
-		if !isFilesBelongToSameRange(files[idx-1].Name, files[idx].Name) {
-			break
-		}
-		idx++
-	}
-
-	return files[:idx], files[idx:]
-}
-
 // RestoreSSTFiles tries to restore the files.
 func (rc *SnapClient) RestoreSSTFiles(
 	ctx context.Context,

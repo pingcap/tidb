@@ -33,8 +33,8 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
-func generateTables() []snapclient.CreatedTable {
-	return []snapclient.CreatedTable{
+func generateTables() []*snapclient.CreatedTable {
+	return []*snapclient.CreatedTable{
 		{
 			Table: &model.TableInfo{
 				ID: 1,
