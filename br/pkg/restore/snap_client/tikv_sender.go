@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -227,18 +226,26 @@ func (client *SnapClient) RestoreTables(
 	placementRuleManager.SetPlacementRule(ctx, createdTables)
 	defer placementRuleManager.ResetPlacementRules(ctx)
 
+	start := time.Now()
 	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(ctx, createdTables, allFiles, checkpointSetWithTableID, splitSizeBytes, splitKeyCount, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("Merge ranges", zap.Duration("take", time.Since(start)))
+	start = time.Now()
 
 	if err = client.SplitRanges(ctx, sortedSplitKeys, updateCh, false); err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("Split regions", zap.Duration("take", time.Since(start)))
+	start = time.Now()
 
 	if err = client.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh); err != nil {
 		return errors.Trace(err)
 	}
+	elapsed := time.Since(start)
+	log.Info("Retore files", zap.Duration("take", elapsed))
+	summary.CollectSuccessUnit("files", len(allFiles), elapsed)
 
 	return nil
 }
@@ -307,86 +314,63 @@ func drainFilesByRange(files []*backuppb.File) ([]*backuppb.File, []*backuppb.Fi
 // RestoreSSTFiles tries to restore the files.
 func (rc *SnapClient) RestoreSSTFiles(
 	ctx context.Context,
-	tableIDWithFiles [][]TableIDWithFiles,
+	tableIDWithFilesGroup [][]TableIDWithFiles,
 	updateCh glue.Progress,
-) (err error) {
-	start := time.Now()
-	fileCount := 0
-	defer func() {
-		elapsed := time.Since(start)
-		if err == nil {
-			log.Info("Restore files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", fileCount, elapsed)
-		}
-	}()
-
-	log.Debug("start to restore files", zap.Int("files", fileCount))
-
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	eg, ectx := errgroup.WithContext(ctx)
-	err = rc.setSpeedLimit(ctx, rc.rateLimit)
-	if err != nil {
+) error {
+	if err := rc.setSpeedLimit(ctx, rc.rateLimit); err != nil {
 		return errors.Trace(err)
 	}
 
-	var rangeFiles []*backuppb.File
-	var leftFiles []*backuppb.File
-LOOPFORTABLE:
-	for _, tableIDWithFile := range tableIDWithFiles {
-		tableID := tableIDWithFile.TableID
-		files := tableIDWithFile.Files
-		rules := tableIDWithFile.RewriteRules
-		fileCount += len(files)
-		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
-			if ectx.Err() != nil {
-				log.Warn("Restoring encountered error and already stopped, give up remained files.",
-					zap.Int("remained", len(leftFiles)),
-					logutil.ShortError(ectx.Err()))
-				// We will fetch the error from the errgroup then (If there were).
-				// Also note if the parent context has been canceled or something,
-				// breaking here directly is also a reasonable behavior.
-				break LOOPFORTABLE
-			}
-			filesReplica := rangeFiles
-			rc.fileImporter.WaitUntilUnblock()
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
-				fileStart := time.Now()
-				defer func() {
-					if restoreErr == nil {
-						log.Info("import files done", logutil.Files(filesReplica),
-							zap.Duration("take", time.Since(fileStart)))
-						updateCh.Inc()
-					}
-				}()
-				if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
-					return errors.Trace(importErr)
-				}
-
-				// the data of this range has been import done
-				if rc.checkpointRunner != nil && len(filesReplica) > 0 {
-					rangeKey := getFileRangeKey(filesReplica[0].Name)
-					// The checkpoint range shows this ranges of kvs has been restored into
-					// the table corresponding to the table-id.
-					if err := checkpoint.AppendRangesForRestore(ectx, rc.checkpointRunner, tableID, rangeKey); err != nil {
-						return errors.Trace(err)
-					}
-				}
-				return nil
-			})
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, tableIDWithFiles := range tableIDWithFilesGroup {
+		if ectx.Err() != nil {
+			log.Warn("Restoring encountered error and already stopped, give up remained files.",
+				logutil.ShortError(ectx.Err()))
+			// We will fetch the error from the errgroup then (If there were).
+			// Also note if the parent context has been canceled or something,
+			// breaking here directly is also a reasonable behavior.
+			break
 		}
+		filesReplica := tableIDWithFiles
+		rc.fileImporter.WaitUntilUnblock()
+		rc.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
+			fileStart := time.Now()
+			defer func() {
+				if restoreErr == nil {
+					log.Info("import files done", zapFilesGroup(filesReplica),
+						zap.Duration("take", time.Since(fileStart)))
+					updateCh.Inc()
+				}
+			}()
+			if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
+				return errors.Trace(importErr)
+			}
+
+			// the data of this range has been import done
+			if rc.checkpointRunner != nil && len(filesReplica) > 0 {
+				for _, filesGroup := range filesReplica {
+					rangeKeySet := make(map[string]struct{})
+					for _, file := range filesGroup.Files {
+						rangeKey := getFileRangeKey(file.Name)
+						rangeKeySet[rangeKey] = struct{}{}
+					}
+					for rangeKey := range rangeKeySet {
+						// The checkpoint range shows this ranges of kvs has been restored into
+						// the table corresponding to the table-id.
+						if err := checkpoint.AppendRangesForRestore(ectx, rc.checkpointRunner, filesGroup.TableID, rangeKey); err != nil {
+							return errors.Trace(err)
+						}
+					}
+				}
+			}
+
+			return nil
+		})
 	}
 
 	if err := eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
+		log.Error("restore files failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	// Once the parent context canceled and there is no task running in the errgroup,

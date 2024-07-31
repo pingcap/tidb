@@ -1104,11 +1104,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		progressLen += int64(len(tables))
 	}
 	// Redirect to log if there is no log file to avoid unreadable output.
-	updateCh := g.StartProgress(
-		ctx,
-		cmdName,
-		progressLen,
-		!cfg.LogProgress)
+	updateCh := g.StartProgress(ctx, cmdName, progressLen, !cfg.LogProgress)
 	defer updateCh.Close()
 
 	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), cfg.Online)

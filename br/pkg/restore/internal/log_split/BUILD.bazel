@@ -13,7 +13,6 @@ go_library(
         "//br/pkg/restore/internal/snap_split",
         "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
-        "//br/pkg/rtree",
         "//br/pkg/utils",
         "//pkg/kv",
         "//pkg/tablecodec",
