@@ -776,10 +776,6 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToOnOff(DefTiDBScatterRegion), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBScatterRegionByClusterLevel, Value: BoolToOnOff(DefTiDBScatterRegionByClusterLevel), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.ScatterRegionByClusterLevel = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetEnabled(TiDBOptOn(val))
@@ -2274,32 +2270,29 @@ var defaultSysVars = []*SysVar{
 		s.EnableGlobalIndex = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode,
-		Value: DefTiDBPartitionPruneMode, Type: TypeEnum,
-		PossibleValues: []string{"static", "dynamic", "static-only", "dynamic-only"},
-		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			mode := PartitionPruneMode(normalizedValue).Update()
-			if !mode.Valid() {
-				return normalizedValue, ErrWrongTypeForVar.GenWithStackByArgs(TiDBPartitionPruneMode)
-			}
-			return string(mode), nil
-		}, GetSession: func(s *SessionVars) (string, error) {
-			return s.PartitionPruneMode.Load(), nil
-		}, SetSession: func(s *SessionVars, val string) error {
-			newMode := strings.ToLower(strings.TrimSpace(val))
-			if PartitionPruneMode(s.PartitionPruneMode.Load()) == Static && PartitionPruneMode(newMode) == Dynamic {
-				s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
-				s.StmtCtx.AppendWarning(errors.NewNoStackError("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
-			}
-			s.PartitionPruneMode.Store(newMode)
-			return nil
-		}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			newMode := strings.ToLower(strings.TrimSpace(val))
-			if PartitionPruneMode(newMode) == Dynamic {
-				s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
-			}
-			return nil
-		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: DefTiDBPartitionPruneMode, Type: TypeEnum, PossibleValues: []string{"static", "dynamic", "static-only", "dynamic-only"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		mode := PartitionPruneMode(normalizedValue).Update()
+		if !mode.Valid() {
+			return normalizedValue, ErrWrongTypeForVar.GenWithStackByArgs(TiDBPartitionPruneMode)
+		}
+		return string(mode), nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return s.PartitionPruneMode.Load(), nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		newMode := strings.ToLower(strings.TrimSpace(val))
+		if PartitionPruneMode(s.PartitionPruneMode.Load()) == Static && PartitionPruneMode(newMode) == Dynamic {
+			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
+			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
+		}
+		s.PartitionPruneMode.Store(newMode)
+		return nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		newMode := strings.ToLower(strings.TrimSpace(val))
+		if PartitionPruneMode(newMode) == Dynamic {
+			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
+		}
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: DefTiDBRedactLog, Type: TypeEnum, PossibleValues: []string{Off, On, Marker}, SetSession: func(s *SessionVars, val string) error {
 		s.EnableRedactLog = val
 		errors.RedactLogEnabled.Store(val)
