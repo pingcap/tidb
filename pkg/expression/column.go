@@ -93,11 +93,6 @@ func (col *CorrelatedColumn) Traverse(action TraverseAction) Expression {
 	return action.Transform(col)
 }
 
-// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	return genVecFromConstExpr(ctx, col, types.ETVectorFloat32, input, result)
-}
-
 // Eval implements Expression interface.
 func (col *CorrelatedColumn) Eval(_ EvalContext, _ chunk.Row) (types.Datum, error) {
 	return *col.Data, nil
