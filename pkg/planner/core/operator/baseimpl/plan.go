@@ -138,6 +138,14 @@ func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
 	return planTrace
 }
 
+// CloneWithNewCtx clones the plan with new context.
+func (p *Plan) CloneWithNewCtx(newCtx base.PlanContext) *Plan {
+	cloned := new(Plan)
+	*cloned = *p
+	cloned.ctx = newCtx
+	return cloned
+}
+
 // CloneForPlanCache clones the plan for Plan Cache.
 func (*Plan) CloneForPlanCache(base.PlanContext) (cloned base.Plan, ok bool) {
 	return nil, false

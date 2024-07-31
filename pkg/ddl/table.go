@@ -58,12 +58,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 	tbInfo := job.Args[0].(*model.TableInfo)
 
 	tbInfo.State = model.StateNone
-	var err error
-	if variable.EnableFastCreateTable.Load() {
-		err = checkTableNotExistsByName(d, t, schemaID, job.SchemaName, tbInfo.Name.L)
-	} else {
-		err = checkTableNotExists(d, schemaID, tbInfo.Name.L)
-	}
+	err := checkTableNotExists(d, schemaID, tbInfo.Name.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -1528,19 +1523,6 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 func checkTableNotExists(d *ddlCtx, schemaID int64, tableName string) error {
 	is := d.infoCache.GetLatest()
 	return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
-}
-
-func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaName, tableName string) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
-	is := d.infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
-	}
-	return t.CheckTableNameNotExists(t.TableNameKey(schemaName, tableName))
 }
 
 func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
