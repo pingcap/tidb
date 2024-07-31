@@ -558,7 +558,7 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -592,10 +592,8 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int, index i1(a, b), index i2(b));")
 	tk.MustExec("insert into t values (1, 2);")
-	originHook := dom.DDL().GetHook()
 	var checked bool
-	callback := &callback.TestDDLCallback{Do: dom}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.MultiSchemaInfo == nil {
 			return
 		}
@@ -606,11 +604,9 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NoError(t, rs.Close())
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	dom.DDL().SetHook(callback)
+	})
 	tk.MustExec("alter table t alter index i1 invisible, modify column a tinyint, alter index i2 invisible;")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	require.True(t, checked)
 	tk.MustGetErrCode("select * from t use index (i1);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index (i2);", errno.ErrKeyDoesNotExist)
