@@ -6180,11 +6180,7 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 			return tb, true, nil
 		}
 
-		var err error
-		tb, err = types.AddDate(0, int64(v), 0, t)
-		if err != nil {
-			return tb, false, err
-		}
+		tb = types.AddDate(0, int64(v), 0, t)
 	case "QUARTER":
 		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
 			return tb, true, nil
