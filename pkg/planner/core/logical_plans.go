@@ -30,7 +30,7 @@ var (
 	_ base.LogicalPlan = &LogicalSelection{}
 	_ base.LogicalPlan = &LogicalApply{}
 	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
-	_ base.LogicalPlan = &LogicalTableDual{}
+	_ base.LogicalPlan = &logicalop.LogicalTableDual{}
 	_ base.LogicalPlan = &DataSource{}
 	_ base.LogicalPlan = &TiKVSingleGather{}
 	_ base.LogicalPlan = &LogicalTableScan{}
@@ -42,12 +42,12 @@ var (
 	_ base.LogicalPlan = &LogicalWindow{}
 	_ base.LogicalPlan = &LogicalExpand{}
 	_ base.LogicalPlan = &LogicalUnionScan{}
-	_ base.LogicalPlan = &LogicalMemTable{}
-	_ base.LogicalPlan = &LogicalShow{}
-	_ base.LogicalPlan = &LogicalShowDDLJobs{}
+	_ base.LogicalPlan = &logicalop.LogicalMemTable{}
+	_ base.LogicalPlan = &logicalop.LogicalShow{}
+	_ base.LogicalPlan = &logicalop.LogicalShowDDLJobs{}
 	_ base.LogicalPlan = &LogicalCTE{}
 	_ base.LogicalPlan = &logicalop.LogicalCTETable{}
-	_ base.LogicalPlan = &LogicalSequence{}
+	_ base.LogicalPlan = &logicalop.LogicalSequence{}
 )
 
 // ExtractNotNullFromConds extracts not-null columns from conditions.

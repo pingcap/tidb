@@ -58,3 +58,14 @@ select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4
 explain select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 
+# TestPartitionsColumn
+create table pt1(a int primary key, b int) partition by hash(a) partitions 4;
+create table pt2(a int primary key, b int) partition by hash(a) partitions 4;
+-- sorted_result
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_schema = 'infoschema__infoschema';
+-- sorted_result
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt1' and table_schema = 'infoschema__infoschema';
+-- sorted_result
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt2' and table_schema = 'infoschema__infoschema';
+-- sorted_result
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt0' and table_schema = 'infoschema__infoschema';

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
@@ -52,6 +53,9 @@ func (rs *resultReorder) optimize(_ context.Context, lp base.LogicalPlan, _ *opt
 
 func (rs *resultReorder) completeSort(lp base.LogicalPlan) bool {
 	if rs.isInputOrderKeeper(lp) {
+		if len(lp.Children()) == 0 {
+			return true
+		}
 		return rs.completeSort(lp.Children()[0])
 	} else if sort, ok := lp.(*LogicalSort); ok {
 		cols := sort.Schema().Columns // sort results by all output columns
@@ -98,7 +102,7 @@ func (rs *resultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 
 func (*resultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 	switch lp.(type) {
-	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
+	case *LogicalSelection, *LogicalProjection, *LogicalLimit, *logicalop.LogicalTableDual:
 		return true
 	}
 	return false
