@@ -1201,7 +1201,7 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 			break
 		}
 		// The last loop still not reach the max value, return error.
-		if i == mysql.PartitionCountLimit - 1 {
+		if i == mysql.PartitionCountLimit-1 {
 			return errors.Trace(dbterror.ErrTooManyPartitions)
 		}
 	}
