@@ -571,7 +571,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (base.Plan, erro
 func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (base.Plan, error) {
 	privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	if _, ok := v.Value.(*ast.DefaultExpr); ok {
 		return nil, errors.New("Unknown DEFAULT for SET CONFIG")
 	}
@@ -609,7 +609,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (bas
 
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, error) {
 	var p base.LogicalPlan
-	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
+	dual := logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 	dual.SetSchema(expression.NewSchema())
 	p = dual
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
@@ -689,7 +689,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 			}
 			// The mocked plan need one output for the complex cases.
 			// See the following IF branch.
-			mockTablePlan := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
+			mockTablePlan := logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 			var err error
 			var possiblePlan base.LogicalPlan
 			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
@@ -697,7 +697,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 				return nil, err
 			}
 			// It's possible that the subquery of the SET_VAR is a complex one so we need to get the result by evaluating the plan.
-			if _, ok := possiblePlan.(*LogicalTableDual); !ok {
+			if _, ok := possiblePlan.(*logicalop.LogicalTableDual); !ok {
 				physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, possiblePlan)
 				if err != nil {
 					return nil, err
@@ -3745,7 +3745,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, extraPriv, tn.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
 	}
 
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
 	mockTablePlan.SetOutputNames(insertPlan.tableColNames)
 
@@ -3880,7 +3880,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 	return affectedValuesCols, nil
 }
 
-func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
+func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *logicalop.LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
 	if col.Hidden {
 		return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 	}
@@ -3915,12 +3915,12 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 		// subquery in insert values should not reference upper scope
 		usingPlan := mockTablePlan
 		if _, ok := expr.(*ast.SubqueryExpr); ok {
-			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+			usingPlan = logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
 		var np base.LogicalPlan
 		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
 		if np != nil {
-			if _, ok := np.(*LogicalTableDual); !ok {
+			if _, ok := np.(*logicalop.LogicalTableDual); !ok {
 				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
 				// This is a TODO and we will support it later.
 				return nil, errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
@@ -3942,7 +3942,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 	return outExpr, nil
 }
 
-func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *logicalop.LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
@@ -4133,7 +4133,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (base.Plan, error) {
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
 		err     error
 		options = make([]*LoadDataOpt, 0, len(ld.Options))
@@ -4203,7 +4203,7 @@ var (
 )
 
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (base.Plan, error) {
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
 		err              error
 		options          = make([]*LoadDataOpt, 0, len(ld.Options))
@@ -4389,7 +4389,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Pla
 	if indexInfo == nil {
 		return nil, plannererrors.ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
@@ -4504,7 +4504,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.Lo
 func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
 	tblInfo := node.Table.TableInfo
 	handleColInfos := buildHandleColumnInfos(tblInfo)
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
@@ -4575,7 +4575,7 @@ const (
 )
 
 func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.ColumnInfo, rowIdx int,
-	b *PlanBuilder, mockTablePlan *LogicalTableDual) ([]types.Datum, error) {
+	b *PlanBuilder, mockTablePlan *logicalop.LogicalTableDual) ([]types.Datum, error) {
 	if len(valueList) != len(handleColInfos) {
 		var err error
 		switch rowIdx {

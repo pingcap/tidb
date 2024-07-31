@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
@@ -53,7 +54,7 @@ func noZeroColumnLayOut(p base.LogicalPlan) error {
 		if len(p.Children()) > 0 && p.Schema() == p.Children()[0].Schema() {
 			return nil
 		}
-		_, ok := p.(*LogicalTableDual)
+		_, ok := p.(*logicalop.LogicalTableDual)
 		if !ok {
 			return errors.Errorf("Operator %s has zero row output", p.ExplainID().String())
 		}

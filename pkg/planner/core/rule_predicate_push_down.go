@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -181,7 +182,7 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return nil
 	}
 	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
+		dual := logicalop.LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
 		dual.SetSchema(p.Schema())
 		return dual
 	}
