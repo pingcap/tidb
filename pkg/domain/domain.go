@@ -408,25 +408,27 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 3. There are less 100 diffs.
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
-	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
-		if err == nil {
-			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
-			isV2, _ := infoschema.IsV2(is)
-			do.infoCache.Insert(is, schemaTs)
-			logutil.BgLogger().Info("diff load InfoSchema success",
-				zap.Bool("isV2", isV2),
-				zap.Int64("currentSchemaVersion", currentSchemaVersion),
-				zap.Int64("neededSchemaVersion", neededSchemaVersion),
-				zap.Duration("elapsed time", time.Since(startTime)),
-				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
-				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
-				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
-				zap.Strings("diffTypes", diffTypes))
-			return is, false, currentSchemaVersion, relatedChanges, nil
+	if rand.Intn(2) == 0 {
+		if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
+			is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
+			if err == nil {
+				infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
+				isV2, _ := infoschema.IsV2(is)
+				do.infoCache.Insert(is, schemaTs)
+				logutil.BgLogger().Info("diff load InfoSchema success",
+					zap.Bool("isV2", isV2),
+					zap.Int64("currentSchemaVersion", currentSchemaVersion),
+					zap.Int64("neededSchemaVersion", neededSchemaVersion),
+					zap.Duration("elapsed time", time.Since(startTime)),
+					zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
+					zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
+					zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
+					zap.Strings("diffTypes", diffTypes))
+				return is, false, currentSchemaVersion, relatedChanges, nil
+			}
+			// We can fall back to full load, don't need to return the error.
+			logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 		}
-		// We can fall back to full load, don't need to return the error.
-		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
 	// full load.
 	schemas, err := do.fetchAllSchemasWithTables(m)
@@ -591,10 +593,10 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		}
 		diTables := make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
-			if tbl.State != model.StatePublic {
-				// schema is not public, can't be used outside.
-				continue
-			}
+			//if tbl.State != model.StatePublic {
+			//	// schema is not public, can't be used outside.
+			//	continue
+			//}
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check whether the table is in repair mode.
 			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
