@@ -207,7 +207,6 @@ func CloneHandles(handles []kv.Handle) []kv.Handle {
 		cloned = append(cloned, h.Copy())
 	}
 	return cloned
-
 }
 
 // QueryTimeRange represents a time range specified by TIME_RANGE hint
