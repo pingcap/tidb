@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -710,17 +711,31 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
 	tk.MustExec("set @@global.tidb_enable_fast_create_table=ON")
 
-	for i := 0; i < 400; i++ {
-		tk.MustExec(fmt.Sprintf("create database db_%d", i))
+	var wg sync.WaitGroup
+	dbPerWorker := 10
+	for i := 0; i < 40; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk2 := testkit.NewTestKit(t, store)
+			for j := 0; j < dbPerWorker; j++ {
+				dbName := fmt.Sprintf("db_%d", i*dbPerWorker+j)
+				tk2.MustExec(fmt.Sprintf("create database %s", dbName))
+			}
+		}()
 	}
 
-	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-	flashbackTs := oracle.GetTimeFromTS(ts)
+	wg.Wait()
+
+	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
+	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
 
 	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS))
 
+	// this test will fail before the fix, because the DDL job KV entry is too large.
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
 }
