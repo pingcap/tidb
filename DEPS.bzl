@@ -4179,8 +4179,19 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:UhvIdNeglgwlsTuzDHwo/MBYtI6r/6IDT+B/KyENSLY=",
         version = "v2.0.8-0.20240710074042-ce640b992b7c",
+=======
+        sha256 = "944aac8d5c6f85c45028d1e1d9bfab6c1a8bdafac7673129e9c3c1a44fb05e34",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240731082154-05c2c6641a7c",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240731082154-05c2c6641a7c.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240731082154-05c2c6641a7c.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240731082154-05c2c6641a7c.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240731082154-05c2c6641a7c.zip",
+        ],
+>>>>>>> a0089c688e1 (*: update tikv/client-go for fix rpc client panic cause by concurrent close (#55094))
     )
     go_repository(
         name = "com_github_tikv_pd",
