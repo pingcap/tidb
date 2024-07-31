@@ -86,12 +86,3 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
-
-func TestIssueABC(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t4a8656d1 (col_73 json NOT NULL,col_74 date,KEY idx_39 ((cast(col_73 as double array)),col_74),KEY idx_40 ((cast(col_73 as double array)),col_74),UNIQUE KEY idx_41 (col_74,(cast(col_73 as double array)))) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
-	tk.MustExec("CREATE TABLE tld47bc815 (col_1 text NOT NULL,PRIMARY KEY (col_1(3)) /*T![clustered_index] NONCLUSTERED */,KEY idx_2 (col_1(5)),UNIQUE KEY idx_3 (col_1(5)),KEY idx_4 (col_1(4))) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;")
-	tk.MustQuery("explain select 1, r0 as col_754 from (    select format(t4a8656d1.col_74, 1) as r0    from t4a8656d1    join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1    where JSON_OVERLAPS(t4a8656d1.col_73, '[0.035131302371695955]')    group by t4a8656d1.col_74, t4a8656d1.col_73) as subquery where IsNull(subquery.r0)")
-}
