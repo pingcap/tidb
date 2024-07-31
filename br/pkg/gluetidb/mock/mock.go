@@ -160,6 +160,6 @@ func (m *MockGlue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func
 	return fn(glueSession)
 }
 
-func (_ *MockGlue) GetClient() int {
-	return glue.BrClient
+func (*MockGlue) GetClient() glue.GlueClient {
+	return glue.ClientBr
 }
