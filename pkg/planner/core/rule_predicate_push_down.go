@@ -21,15 +21,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"go.uber.org/zap"
 )
 
 type ppdSolver struct{}
@@ -87,19 +84,6 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 	return canBePushDown, canNotBePushDown
 }
 
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
-	predicates = DeleteTrueExprs(ds, predicates)
-	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
-	// TODO: remove it to the place building logical plan
-	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
-	ds.AllConds = predicates
-	ds.PushedDownConds, predicates = expression.PushDownExprs(GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
-	appendDataSourcePredicatePushDownTraceStep(ds, opt)
-	return predicates, ds
-}
-
 // BreakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
 func BreakDownPredicates(p *LogicalProjection, predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
@@ -114,18 +98,6 @@ func BreakDownPredicates(p *LogicalProjection, predicates []expression.Expressio
 		}
 	}
 	return canBePushed, canNotBePushed
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
-	// condition related with grouping column shouldn't be pushed down through it.
-	// currently, since expand is adjacent to aggregate, any filter above aggregate wanted to be push down through expand only have two cases:
-	// 		1. agg function related filters. (these condition is always above aggregate)
-	// 		2. group-by item related filters. (there condition is always related with grouping sets columns, which can't be pushed down)
-	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
-	remained, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return append(remained, predicates...), child
 }
 
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
@@ -315,40 +287,6 @@ func appendAddSelectionTraceStep(p base.LogicalPlan, child base.LogicalPlan, sel
 		return fmt.Sprintf("add %v_%v to connect %v_%v and %v_%v", sel.TP(), sel.ID(), p.TP(), p.ID(), child.TP(), child.ID())
 	}
 	opt.AppendStepToCurrent(sel.ID(), sel.TP(), reason, action)
-}
-
-// AddPrefix4ShardIndexes add expression prefix for shard index. e.g. an index is test.uk(tidb_shard(a), a).
-// It transforms the sql "SELECT * FROM test WHERE a = 10" to
-// "SELECT * FROM test WHERE tidb_shard(a) = val AND a = 10", val is the value of tidb_shard(10).
-// It also transforms the sql "SELECT * FROM test WHERE a IN (10, 20, 30)" to
-// "SELECT * FROM test WHERE tidb_shard(a) = val1 AND a = 10 OR tidb_shard(a) = val2 AND a = 20"
-// @param[in] conds            the original condtion of this datasource
-// @retval - the new condition after adding expression prefix
-func (ds *DataSource) AddPrefix4ShardIndexes(sc base.PlanContext, conds []expression.Expression) []expression.Expression {
-	if !ds.ContainExprPrefixUk {
-		return conds
-	}
-
-	var err error
-	newConds := conds
-
-	for _, path := range ds.PossibleAccessPaths {
-		if !path.IsUkShardIndexPath {
-			continue
-		}
-		newConds, err = ds.addExprPrefixCond(sc, path, newConds)
-		if err != nil {
-			logutil.BgLogger().Error("Add tidb_shard expression failed",
-				zap.Error(err),
-				zap.Uint64("connection id", sc.GetSessionVars().ConnectionID),
-				zap.String("database name", ds.DBName.L),
-				zap.String("table name", ds.TableInfo.Name.L),
-				zap.String("index name", path.Index.Name.L))
-			return conds
-		}
-	}
-
-	return newConds
 }
 
 func (ds *DataSource) addExprPrefixCond(sc base.PlanContext, path *util.AccessPath,

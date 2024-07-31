@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -90,29 +91,6 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 		}
 	}
 	return true
-}
-
-func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
-	dst := replace[string(origin.HashCode())]
-	if dst != nil {
-		retType, inOperand := origin.RetType, origin.InOperand
-		*origin = *dst
-		origin.RetType, origin.InOperand = retType, inOperand
-	}
-}
-
-// ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
-	switch expr := origin.(type) {
-	case *expression.Column:
-		resolveColumnAndReplace(expr, replace)
-	case *expression.CorrelatedColumn:
-		resolveColumnAndReplace(&expr.Column, replace)
-	case *expression.ScalarFunction:
-		for _, arg := range expr.GetArgs() {
-			ResolveExprAndReplace(arg, replace)
-		}
-	}
 }
 
 func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
@@ -205,7 +183,7 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
 	default:
 		for _, dst := range p.Schema().Columns {
-			resolveColumnAndReplace(dst, replace)
+			ruleutil.ResolveColumnAndReplace(dst, replace)
 		}
 	}
 	// replace all of exprs in logical plan

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -2468,7 +2469,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 
 func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
 	switch x := p.(type) {
-	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *LogicalJoin:
 		if x.FullSchema != nil {

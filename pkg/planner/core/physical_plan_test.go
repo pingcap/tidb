@@ -231,7 +231,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("explain select a, sum(b) from t group by a, c")
@@ -278,7 +278,7 @@ func TestJoinHintCompatibilityWithBinding(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("select * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
@@ -305,7 +305,7 @@ func TestJoinHintCompatibilityWithVariable(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
@@ -449,7 +449,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	tk.MustExec("create table t1 (id int, client_type tinyint, client_no char(18), taxpayer_no varchar(50), status tinyint, update_time datetime)")
 	tk.MustExec("alter table t1 set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t1")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("create table t2 (id int, company_no char(18), name varchar(200), tax_registry_no varchar(30))")
 	tk.MustExec("insert into t1(id, taxpayer_no, client_no, client_type, status, update_time) values (1, 'TAX001', 'Z9005', 1, 1, '2024-02-18 10:00:00'), (2, 'TAX002', 'Z9005', 1, 0, '2024-02-18 09:00:00'), (3, 'TAX003', 'Z9005', 2, 1, '2024-02-18 08:00:00'), (4, 'TAX004', 'Z9006', 1, 1, '2024-02-18 12:00:00')")

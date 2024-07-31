@@ -144,12 +144,11 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
-	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
-		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+		p.SetChildren(p.innerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -158,12 +157,11 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
-	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
-		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+		p.SetChildren(p.innerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -172,12 +170,11 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
-	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
-		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+		p.SetChildren(p.innerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -1011,13 +1008,21 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
-	// current expand can only be run in MPP TiFlash mode.
+	// current expand can only be run in MPP TiFlash mode or Root Tidb mode.
+	// if expr inside could not be pushed down to tiFlash, it will error in converting to pb side.
 	if mpp, ok := t.(*MppTask); ok {
 		p.SetChildren(mpp.p)
 		mpp.p = p
 		return mpp
 	}
-	return base.InvalidTask
+	// For root task
+	// since expand should be in root side accordingly, convert to root task now.
+	root := t.ConvertToRootTask(p.SCtx())
+	t = attachPlan2Task(p, root)
+	if root, ok := tasks[0].(*RootTask); ok && root.IsEmpty() {
+		t.(*RootTask).SetEmpty(true)
+	}
+	return t
 }
 
 // Attach2Task implements PhysicalPlan interface.

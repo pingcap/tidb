@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -152,14 +153,14 @@ func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
 func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
 		for _, arg := range desc.Args {
-			ResolveExprAndReplace(arg, replace)
+			ruleutil.ResolveExprAndReplace(arg, replace)
 		}
 	}
 	for _, item := range p.PartitionBy {
-		resolveColumnAndReplace(item.Col, replace)
+		ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
 	for _, item := range p.OrderBy {
-		resolveColumnAndReplace(item.Col, replace)
+		ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
 }
 
