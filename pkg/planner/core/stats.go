@@ -47,17 +47,6 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 	return p.StatsInfo().RowCount
 }
 
-func getFakeStats(schema *expression.Schema) *property.StatsInfo {
-	profile := &property.StatsInfo{
-		RowCount: 1,
-		ColNDVs:  make(map[int64]float64, schema.Len()),
-	}
-	for _, col := range schema.Columns {
-		profile.ColNDVs[col.UniqueID] = 1
-	}
-	return profile
-}
-
 // RecursiveDeriveStats4Test is a exporter just for test.
 func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
 	return p.RecursiveDeriveStats(nil)

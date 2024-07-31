@@ -175,9 +175,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *LogicalShow:
+	case *logicalop.LogicalShow:
 		str = "Show"
-		if pl := in.(*LogicalShow); pl.Extractor != nil {
+		if pl := in.(*logicalop.LogicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
 	case *PhysicalShow:
@@ -185,7 +185,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		if pl := in.(*PhysicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
-	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
+	case *logicalop.LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
 	case *LogicalSort, *PhysicalSort:
 		str = "Sort"
@@ -212,7 +212,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = name + "{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *LogicalSequence:
+	case *logicalop.LogicalSequence:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

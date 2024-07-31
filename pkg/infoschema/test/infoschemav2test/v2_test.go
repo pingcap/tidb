@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestSpecialSchemas(t *testing.T) {
@@ -331,7 +332,7 @@ func BenchmarkTableByName(t *testing.B) {
 }
 
 func TestFullLoadAndSnapshot(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
 
@@ -341,6 +342,9 @@ func TestFullLoadAndSnapshot(t *testing.T) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	tk.MustExec("use test")
+	tk.MustExec("create global temporary table tmp (id int) on commit delete rows")
 
 	tk.MustExec("create database db1")
 	tk.MustExec("create database db2")
@@ -360,6 +364,13 @@ func TestFullLoadAndSnapshot(t *testing.T) {
 	tk.MustExec("use db1")
 	tk.MustQuery("show tables").Check(testkit.Rows())
 
+	// Cover a bug that after full load using infoschema v2, the temporary table is gone.
+	// Check global temporary table not dispear after full load.
+	require.True(t, dom.InfoSchema().HasTemporaryTable())
+	tk.MustExec("begin")
+	tk.MustExec("insert into test.tmp values (1)")
+	tk.MustExec("commit")
+
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("dropdatabase")`)
 	tk.MustExec("drop database db1")
 	tk.MustExecToErr("use db1")
@@ -374,4 +385,46 @@ func TestFullLoadAndSnapshot(t *testing.T) {
 	tk.MustQuery("show tables").Check(testkit.Rows())
 	tk.MustExec("use db1")
 	tk.MustQuery("show tables").Check(testkit.Rows("t"))
+}
+
+func TestIssue54926(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	time1 := time.Now()
+	time1TS := oracle.GoTimeToTS(time1)
+	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key);")
+	tk.MustExec(`drop table if exists t`)
+	time.Sleep(50 * time.Millisecond)
+	time2 := time.Now()
+	time2TS := oracle.GoTimeToTS(time2)
+	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+
+	tk2.MustExec("create table test.t (id int primary key)")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1073741824")
+	dom.Reload()
+
+	// test set txn as of will flush/mutex tidb_snapshot
+	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
+	require.Equal(t, time1TS, tk.Session().GetSessionVars().SnapshotTS)
+	require.NotNil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
+	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().SnapshotTS)
+	require.NotNil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
+	require.Equal(t, time2TS, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
+	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
 }

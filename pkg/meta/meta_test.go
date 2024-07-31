@@ -760,55 +760,74 @@ func TestName(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCheckSpecialAttributes(t *testing.T) {
+func TestIsTableInfoMustLoad(t *testing.T) {
 	tableInfo := &model.TableInfo{
 		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
 	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(b))
+	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
 		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(b))
+	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
 		PlacementPolicyRef: &model.PolicyRefInfo{ID: 1},
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(b))
+	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
 		Partition: &model.PartitionInfo{Expr: "a"},
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(b))
+	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
 		Lock: &model.TableLockInfo{State: model.TableLockStatePreLock},
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(b))
+	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
 		ForeignKeys: []*model.FKInfo{{ID: 1}},
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.CheckSpecialAttributes(b))
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		TempTableType: model.TempTableGlobal,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
 		ID: 123,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.False(t, meta.CheckSpecialAttributes(b))
+	require.False(t, meta.IsTableInfoMustLoad(b))
+}
+
+func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
+	// The order matter!
+	// IsTableInfoMustLoad relies on the order of the json marshal result,
+	// or the internal of the json marshal in other words.
+	// This test cover the invariance, if Go std library changes, we can catch it.
+	tableInfo := &model.TableInfo{}
+	b, err := json.Marshal(tableInfo)
+	require.NoError(t, err)
+	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
+	require.Equal(t, string(b), expect)
 }
 
 func TestTableNameExtract(t *testing.T) {
@@ -851,7 +870,7 @@ func TestTableNameExtract(t *testing.T) {
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
 }
 
-func BenchmarkCheckSpecialAttributes(b *testing.B) {
+func BenchmarkIsTableInfoMustLoad(b *testing.B) {
 	benchCases := [][2]string{
 		{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
 		{"wide", `
@@ -879,12 +898,12 @@ CREATE TABLE t (
 
 	for _, benchCase := range benchCases {
 		b.Run(benchCase[0], func(b *testing.B) {
-			benchCheckSpecialAttributes(b, benchCase[1])
+			benchIsTableInfoMustLoad(b, benchCase[1])
 		})
 	}
 }
 
-func benchCheckSpecialAttributes(b *testing.B, sql string) {
+func benchIsTableInfoMustLoad(b *testing.B, sql string) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(b, err)
@@ -896,7 +915,7 @@ func benchCheckSpecialAttributes(b *testing.B, sql string) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		got := meta.CheckSpecialAttributes(data)
+		got := meta.IsTableInfoMustLoad(data)
 		intest.Assert(!got)
 	}
 }

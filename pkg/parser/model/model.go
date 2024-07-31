@@ -2002,12 +2002,6 @@ func (t RunawayActionType) String() string {
 	}
 }
 
-// ResourceGroupRefInfo is the struct to refer the resource group.
-type ResourceGroupRefInfo struct {
-	ID   int64 `json:"id"`
-	Name CIStr `json:"name"`
-}
-
 // ResourceGroupRunawaySettings is the runaway settings of the resource group
 type ResourceGroupRunawaySettings struct {
 	ExecElapsedTimeMs uint64            `json:"exec_elapsed_time_ms"`
