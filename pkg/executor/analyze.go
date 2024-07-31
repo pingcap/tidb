@@ -403,7 +403,7 @@ func (e *AnalyzeExec) handleResultsError(
 			logutil.BgLogger().Info("use multiple sessions to save analyze results", zap.Int("sessionCount", sessionCount))
 			if sessionCount < partitionStatsConcurrency {
 				warningMessage := "Insufficient sessions to save analyze results. Consider increasing the 'analyze-partition-concurrency-quota' configuration to improve analyze performance. " +
-					"This value should typically be greater than or equal to 'tidb_analyze_partition_concurrency' variable."
+					"This value should typically be greater than or equal to the 'tidb_analyze_partition_concurrency' variable."
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(warningMessage))
 				logutil.BgLogger().Warn(
 					warningMessage,
