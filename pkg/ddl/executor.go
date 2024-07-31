@@ -3308,8 +3308,9 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		return
 	}
 	var (
-		preSplit      func()
-		scatterRegion bool
+		preSplit                    func()
+		scatterRegion               bool
+		scatterRegionByClusterLevel bool
 	)
 	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
 	if err != nil {
@@ -3317,10 +3318,14 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
+	val, ok = ctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegionByClusterLevel)
+	if ok {
+		scatterRegionByClusterLevel = variable.TiDBOptOn(val)
+	}
 	if len(parts) > 0 {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion, scatterRegionByClusterLevel) }
 	} else {
-		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion, scatterRegionByClusterLevel) }
 	}
 	if scatterRegion {
 		preSplit()
