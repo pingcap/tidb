@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1814,7 +1815,6 @@ type InfoSchemaTablesExtractor struct {
 	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
 
-	colNames      []string
 	ColPredicates map[string]set.StringSet
 }
 
@@ -1825,10 +1825,11 @@ func (e *InfoSchemaTablesExtractor) Extract(ctx base.PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	var resultSet, resultSet1 set.StringSet
-	e.colNames = []string{"table_schema", "constraint_schema", "table_name", "constraint_name", "sequence_schema", "sequence_name", "partition_name", "schema_name", "index_name"}
+	colNames := []string{"table_schema", "constraint_schema", "table_name", "constraint_name",
+		"sequence_schema", "sequence_name", "partition_name", "schema_name", "index_name", "tidb_table_id"}
 	e.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
-	for _, colName := range e.colNames {
+	for _, colName := range colNames {
 		remained, e.SkipRequest, resultSet = e.extractColWithLower(ctx, schema, names, remained, colName)
 		if e.SkipRequest {
 			break
@@ -1895,4 +1896,76 @@ func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
 	}
 	// No need to filter records since no predicate for the column exists.
 	return false
+}
+
+var _ TableSchemaSelector = (*InfoSchemaTablesExtractor)(nil)
+
+// TableSchemaSelector is used to help determine if a specified table/schema name contained in predicate,
+// and return all specified table/schema names in predicate.
+type TableSchemaSelector interface {
+	SelectedSchemaNames() []model.CIStr
+
+	HasTables() bool
+	SelectedTableNames() []model.CIStr
+	SelectedTableIDs() []int64
+	SelectedPartitionIDs() []int64
+}
+
+// HasTables returns true if there is table names or table IDs specified in predicate.
+func (e *InfoSchemaTablesExtractor) HasTables() bool {
+	_, hasTableName := e.ColPredicates["table_name"]
+	_, hasTableID := e.ColPredicates["tidb_table_id"]
+	_, hasPartID := e.ColPredicates["tidb_partition_id"]
+	return hasTableName || hasTableID || hasPartID
+}
+
+// SelectedTableNames gets the table names specified in predicate.
+func (e *InfoSchemaTablesExtractor) SelectedTableNames() []model.CIStr {
+	return e.getSchemaObjectNames("table_name")
+}
+
+// SelectedSchemaNames gets the schema names specified in predicate.
+func (e *InfoSchemaTablesExtractor) SelectedSchemaNames() []model.CIStr {
+	return e.getSchemaObjectNames("table_schema")
+}
+
+// SelectedTableIDs get table IDs specified in predicate.
+func (e *InfoSchemaTablesExtractor) SelectedTableIDs() []int64 {
+	strs := e.getSchemaObjectNames("tidb_table_id")
+	return parseIDs(strs)
+}
+
+// SelectedPartitionIDs get partitions IDs specified in predicate.
+func (e *InfoSchemaTablesExtractor) SelectedPartitionIDs() []int64 {
+	strs := e.getSchemaObjectNames("tidb_partition_id")
+	return parseIDs(strs)
+}
+
+func parseIDs(ids []model.CIStr) []int64 {
+	tableIDs := make([]int64, 0, len(ids))
+	for _, s := range ids {
+		v, err := strconv.ParseInt(s.L, 10, 64)
+		if err != nil {
+			continue
+		}
+		tableIDs = append(tableIDs, v)
+	}
+	slices.Sort(tableIDs)
+	return tableIDs
+}
+
+// getSchemaObjectNames gets the schema object names specified in predicate of given column name.
+func (e *InfoSchemaTablesExtractor) getSchemaObjectNames(colName string) []model.CIStr {
+	predVals, ok := e.ColPredicates[colName]
+	if ok && len(predVals) > 0 {
+		tableNames := make([]model.CIStr, 0, len(predVals))
+		predVals.IterateWith(func(n string) {
+			tableNames = append(tableNames, model.NewCIStr(n))
+		})
+		slices.SortFunc(tableNames, func(a, b model.CIStr) int {
+			return strings.Compare(a.L, b.L)
+		})
+		return tableNames
+	}
+	return nil
 }
