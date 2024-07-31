@@ -71,6 +71,13 @@ const GlobalWithoutColumnPos = -1
 // This plan is much faster to build and to execute because it avoids the optimization and coprocessor cost.
 type PointGetPlan struct {
 	baseimpl.Plan
+
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []base.PhysicalPlan
+	// explicit partition selection
+	PartitionNames []model.CIStr
+
 	dbName           string
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo `plan-cache-clone:"shallow"`
@@ -101,12 +108,6 @@ type PointGetPlan struct {
 	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
-
-	// probeParents records the IndexJoins and Applys with this operator in their inner children.
-	// Please see comments in PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
-	// explicit partition selection
-	PartitionNames []model.CIStr
 }
 
 // GetEstRowCountForDisplay implements PhysicalPlan interface.
@@ -423,6 +424,12 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 type BatchPointGetPlan struct {
 	baseSchemaProducer
 
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []base.PhysicalPlan
+	// explicit partition selection
+	PartitionNames []model.CIStr
+
 	ctx              base.PlanContext
 	dbName           string
 	TblInfo          *model.TableInfo `plan-cache-clone:"shallow"`
@@ -456,12 +463,6 @@ type BatchPointGetPlan struct {
 	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
-
-	// probeParents records the IndexJoins and Applys with this operator in their inner children.
-	// Please see comments in PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
-	// explicit partition selection
-	PartitionNames []model.CIStr
 }
 
 // GetEstRowCountForDisplay implements PhysicalPlan interface.

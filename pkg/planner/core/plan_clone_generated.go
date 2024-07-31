@@ -232,6 +232,12 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned := new(PointGetPlan)
 	*cloned = *op
 	cloned.Plan = *op.Plan.CloneWithNewCtx(newCtx)
+	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
+	if !ok {
+		return nil, false
+	}
+	cloned.probeParents = probeParents
+	cloned.PartitionNames = util.CloneCIStrs(op.PartitionNames)
 	cloned.schema = op.schema.Clone()
 	if op.PartitionIdx != nil {
 		cloned.PartitionIdx = new(int)
@@ -251,12 +257,6 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned.AccessConditions = util.CloneExpressions(op.AccessConditions)
 	cloned.ctx = newCtx
 	cloned.accessCols = util.CloneColumns(op.accessCols)
-	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
-	if !ok {
-		return nil, false
-	}
-	cloned.probeParents = probeParents
-	cloned.PartitionNames = util.CloneCIStrs(op.PartitionNames)
 	return cloned, true
 }
 
@@ -265,6 +265,12 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned := new(BatchPointGetPlan)
 	*cloned = *op
 	cloned.baseSchemaProducer = *op.baseSchemaProducer.CloneWithNewCtx(newCtx)
+	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
+	if !ok {
+		return nil, false
+	}
+	cloned.probeParents = probeParents
+	cloned.PartitionNames = util.CloneCIStrs(op.PartitionNames)
 	cloned.ctx = newCtx
 	cloned.Handles = util.CloneHandles(op.Handles)
 	cloned.HandleParams = util.CloneConstants(op.HandleParams)
@@ -277,12 +283,6 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
 	copy(cloned.PartitionIdxs, op.PartitionIdxs)
 	cloned.accessCols = util.CloneColumns(op.accessCols)
-	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
-	if !ok {
-		return nil, false
-	}
-	cloned.probeParents = probeParents
-	cloned.PartitionNames = util.CloneCIStrs(op.PartitionNames)
 	return cloned, true
 }
 
