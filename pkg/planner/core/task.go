@@ -144,12 +144,11 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
-	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
-		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+		p.SetChildren(p.innerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -158,12 +157,11 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
-	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
-		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+		p.SetChildren(p.innerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -172,12 +170,11 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
-	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
-		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+		p.SetChildren(p.innerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
