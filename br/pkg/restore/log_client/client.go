@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -151,6 +152,9 @@ func (rc *LogClient) Close() {
 
 func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*restoreutils.RewriteRules, compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction]) error {
 	eg, eCtx := errgroup.WithContext(ctx)
+	for tid, rules := range rules {
+		log.Info("Using rewrite rules.", zap.Int64("table_id", tid), zap.Stringer("rules", rules))
+	}
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
@@ -158,7 +162,8 @@ func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*
 		i := r.Item
 		rewriteRules, ok := rules[i.Meta.TableId]
 		if !ok {
-			return errors.New("not found table id")
+			log.Warn("Skipped excluded tables.", zap.Int64("table_id", i.Meta.TableId))
+			continue
 		}
 		// no need to merge sst files here
 		ranges, _, err := restoreutils.MergeAndRewriteFileRanges(i.SstOutputs, rewriteRules, 0, 0)
@@ -172,9 +177,11 @@ func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*
 		}
 		// TODO implement update ch
 		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-			err = rc.restorer.SplitRanges(eCtx, ranges, nil)
-			if err != nil {
-				return errors.Trace(err)
+			if _, ok := os.LookupEnv("br_skip_split"); !ok {
+				err = rc.restorer.SplitRanges(eCtx, ranges, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			return rc.restorer.RestoreFiles(eCtx, []sstfiles.SstFilesInfo{restoreFiles}, nil)
 		})
@@ -281,9 +288,10 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	// TODO make a better concurrencyPerStore
+	log.Info("Initializing client.", zap.Stringer("api", rc.dom.Store().GetCodec().GetAPIVersion()))
 	snapFileImporter, err := sstfiles.NewSnapFileImporter(
 		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
-		importCli, backend, false, false, stores, sstfiles.RewriteModeLegacy, 128, createCallBacks, closeCallBacks)
+		importCli, backend, false, false, stores, sstfiles.RewriteModeKeyspace, 128, createCallBacks, closeCallBacks)
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}

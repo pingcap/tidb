@@ -55,7 +55,7 @@ func UnmarshalDir[T any](ctx context.Context, walkOpt *WalkOption, s ExternalSto
 			}
 			var meta T
 			if err := unmarshal(&meta, path, metaBytes); err != nil {
-				return errors.Annotatef(err, "failed to parse subcompaction meta of file %s", path)
+				return errors.Annotatef(err, "failed to unmarshal file %s", path)
 			}
 			select {
 			case ch <- &meta:
