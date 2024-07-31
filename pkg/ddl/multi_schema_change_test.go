@@ -404,7 +404,7 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 		assertMultiSchema(t, job, 1)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StatePublic
 	})
-	dom.DDL().SetHook(cancelHook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cancelHook.OnJobUpdated)
 	tk.MustExec("alter table t add index t(a, b), add index t1(a), " +
 		"add index t2(a), add index t3(a, b);")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
