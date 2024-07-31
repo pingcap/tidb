@@ -1809,6 +1809,8 @@ func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(relatedExprs [
 				innerSchema:           ijHelper.innerSchema,
 				innerPushedConditions: ijHelper.innerPushedConditions,
 				innerStats:            ijHelper.innerStats,
+				innerJoinKeys:         ijHelper.innerJoinKeys,
+				outerJoinKeys:         ijHelper.outerJoinKeys,
 				joinOtherConditions:   ijHelper.joinOtherConditions},
 			path: path,
 		}
