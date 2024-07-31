@@ -1377,10 +1377,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableFastCreateTable, Value: BoolToOnOff(DefTiDBEnableFastCreateTable), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		if EnableFastCreateTable.Load() != TiDBOptOn(val) {
-			err := SwitchFastCreateTable(TiDBOptOn(val))
-			if err != nil {
-				return err
-			}
+			EnableFastCreateTable.Store(TiDBOptOn(val))
 		}
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {

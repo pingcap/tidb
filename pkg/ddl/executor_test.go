@@ -265,69 +265,6 @@ func TestCreateDropCreateTable(t *testing.T) {
 	require.Less(t, dropTS, create1TS, "second create should finish after drop")
 }
 
-func TestBuildQueryStringFromJobs(t *testing.T) {
-	testCases := []struct {
-		name     string
-		jobs     []*model.Job
-		expected string
-	}{
-		{
-			name:     "Empty jobs",
-			jobs:     []*model.Job{},
-			expected: "",
-		},
-		{
-			name:     "Single create table job",
-			jobs:     []*model.Job{{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));"}},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));",
-		},
-		{
-			name: "Multiple create table jobs with trailing semicolons",
-			jobs: []*model.Job{
-				{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));"},
-				{Query: "CREATE TABLE products (id INT PRIMARY KEY, description TEXT);"},
-			},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255)); CREATE TABLE products (id INT PRIMARY KEY, description TEXT);",
-		},
-		{
-			name: "Multiple create table jobs with and without trailing semicolons",
-			jobs: []*model.Job{
-				{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255))"},
-				{Query: "CREATE TABLE products (id INT PRIMARY KEY, description TEXT);"},
-				{Query: "   CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product_id INT) "},
-			},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255)); CREATE TABLE products (id INT PRIMARY KEY, description TEXT); CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product_id INT);",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			actual := ddl.BuildQueryStringFromJobs(tc.jobs)
-			require.Equal(t, tc.expected, actual, "Query strings do not match")
-		})
-	}
-}
-
-func TestBatchCreateTableWithJobs(t *testing.T) {
-	job1 := &model.Job{
-		SchemaID:   1,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t1", L: "t1"}}, false},
-		Query:      "create table db1.t1 (c1 int, c2 int)",
-	}
-	job2 := &model.Job{
-		SchemaID:   1,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t2", L: "t2"}}, &model.TableInfo{}},
-		Query:      "create table db1.t2 (c1 int, c2 int);",
-	}
-	job, err := ddl.BatchCreateTableWithJobs([]*model.Job{job1, job2})
-	require.NoError(t, err)
-	require.Equal(t, "create table db1.t1 (c1 int, c2 int); create table db1.t2 (c1 int, c2 int);", job.Query)
-}
-
 func getGlobalID(ctx context.Context, t *testing.T, store kv.Storage) int64 {
 	res := int64(0)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
