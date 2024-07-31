@@ -183,8 +183,8 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	return nil
 }
 
-func (g Glue) GetType() string {
-	return "TidbGlue"
+func (_ Glue) GetClient() int {
+	return glue.BrClient
 }
 
 // GetSessionCtx implements glue.Glue

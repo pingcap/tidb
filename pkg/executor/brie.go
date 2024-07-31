@@ -753,8 +753,8 @@ func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Sess
 	return fn(glueSession)
 }
 
-func (gs *tidbGlue) GetType() string {
-	return "ExecGlue"
+func (_ *tidbGlue) GetClient() int {
+	return glue.SqlClient
 }
 
 type tidbGlueSession struct {
