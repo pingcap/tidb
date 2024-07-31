@@ -421,14 +421,9 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
-<<<<<<< HEAD
+			failpoint.InjectCall("afterDelivery2Worker", job)
 			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
-=======
-			failpoint.InjectCall("afterDelivery2Worker", job)
-			s.runningJobs.remove(job)
-			asyncNotify(s.ddlJobNotifyCh)
->>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720))
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 		ownerID := d.ownerManager.ID()

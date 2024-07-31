@@ -155,11 +155,6 @@ go_library(
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/stringutil",
-<<<<<<< HEAD
-        "//pkg/util/syncutil",
-=======
-        "//pkg/util/tiflash",
->>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720))
         "//pkg/util/timeutil",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
