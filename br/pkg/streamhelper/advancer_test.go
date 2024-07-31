@@ -580,7 +580,6 @@ func TestCheckPointResume(t *testing.T) {
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 }
 
-<<<<<<< HEAD
 func TestUnregisterAfterPause(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
@@ -770,7 +769,8 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 		err := adv.OnTick(ctx)
 		return err == nil
 	}, 5*time.Second, 300*time.Millisecond)
-=======
+}
+
 func TestOwnershipLost(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	c.splitAndScatter(manyRegions(0, 10240)...)
@@ -821,5 +821,4 @@ func TestSubscriptionPanic(t *testing.T) {
 	}
 	cancel()
 	wg.Wait()
->>>>>>> f01f305fabb (log_backup: fix panic during advancer owner transfer (#52671))
 }
