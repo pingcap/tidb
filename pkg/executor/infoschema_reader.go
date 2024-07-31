@@ -235,7 +235,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getAutoIncrementID(sctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) int64 {
+func getAutoIncrementID(sctx sessionctx.Context, tblInfo *model.TableInfo) int64 {
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(tblInfo.ID)
 	if !ok {
@@ -610,7 +610,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				var autoIncID any
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
-					autoIncID = getAutoIncrementID(sctx, schema, table)
+					autoIncID = getAutoIncrementID(sctx, table)
 				}
 				tableType := "BASE TABLE"
 				if util.IsSystemView(schema.L) {
