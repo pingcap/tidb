@@ -368,6 +368,7 @@ func (importer *SnapFileImporter) ImportSSTFiles(
 							logutil.Key("endKey", endKey),
 							logutil.Key("file-simple-start", files[0].StartKey),
 							logutil.Key("file-simple-end", files[0].EndKey),
+							zap.Stringer("rewrite-rules", rewriteRules),
 							logutil.ShortError(e))
 						continue regionLoop
 					}

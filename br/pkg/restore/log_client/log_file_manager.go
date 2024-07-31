@@ -348,7 +348,7 @@ func (rc *LogFileManager) OpenCompactionIter(ctx context.Context, migs []*backup
 	compactionDirs := make([]string, 0, 8)
 	for _, mig := range migs {
 		for _, c := range mig.Compactions {
-			compactionDirs = append(compactionDirs, c.GeneratedFiles)
+			compactionDirs = append(compactionDirs, c.Artifactes)
 		}
 	}
 
@@ -442,14 +442,15 @@ func (rc *LogFileManager) ReadAllEntries(
 	return kvEntries, nextKvEntries, nil
 }
 
-type WithMigrate struct {
-	metas        MetaIter
-	compactions  SubCompactionIter
-	deletedFiles map[string]*pb.SpansOfFile
-}
-
 func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubCompactionIter {
-	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: prefix}, s, func(t *pb.LogFileSubcompaction, name string, b []byte) error { return t.Unmarshal(b) })
+	return iter.FlatMap(storage.UnmarshalDir(
+		ctx,
+		&storage.WalkOption{SubDir: prefix},
+		s,
+		func(t *pb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
+	), func(subcs *pb.LogFileSubcompactions) iter.TryNextor[*pb.LogFileSubcompaction] {
+		return iter.FromSlice(subcs.Subcompactions)
+	})
 }
 
 func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*pb.Migration] {

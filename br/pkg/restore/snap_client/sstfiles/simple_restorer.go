@@ -21,7 +21,7 @@ import (
 	"context"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
@@ -57,15 +57,14 @@ func (s *SimpleFileRestorer) Close() error {
 // data range after rewrite.
 // updateCh is used to record progress.
 func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
-	var splitClientOpt split.ClientOptionalParameter
 	if updateCh != nil {
-		splitClientOpt = split.WithOnSplit(func(keys [][]byte) {
+		splitClientOpt := split.WithOnSplit(func(keys [][]byte) {
 			for range keys {
 				updateCh.Inc()
 			}
 		})
+		s.splitter.ApplyOptions(splitClientOpt)
 	}
-	s.splitter.ApplyOptions(splitClientOpt)
 	splitter := utils.NewRegionSplitter(s.splitter)
 	return splitter.ExecuteSplit(ctx, ranges)
 }

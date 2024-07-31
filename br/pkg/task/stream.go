@@ -1297,7 +1297,7 @@ func restoreStream(
 	client.SetCurrentTS(currentTS)
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
+	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, len(cfg.FullBackupStorage) == 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1350,6 +1350,11 @@ func restoreStream(
 	if err != nil {
 		return err
 	}
+	migs, err := client.GetMigrations(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	client.BuildMigrations(migs)
 
 	// get full backup meta storage to generate rewrite rules.
 	fullBackupStorage, err := parseFullBackupTablesStorage(cfg)
@@ -1426,11 +1431,7 @@ func restoreStream(
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		// TODO consider checkpoint
-		migs, err := client.GetMigrations(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		client.BuildMigrations(migs)
+
 		compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
 		err = client.RestoreCompactedSsts(ctx, rewriteRules, compactionIter)
 		if err != nil {
