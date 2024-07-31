@@ -58,7 +58,6 @@ var (
 	// is a new DDL job.
 	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
-	localWorkerWaitingDuration  = 10 * time.Millisecond
 	schedulerLoopRetryInterval  = time.Second
 )
 
@@ -77,8 +76,6 @@ func (t jobType) String() string {
 		return "general"
 	case jobTypeReorg:
 		return "reorg"
-	case jobTypeLocal:
-		return "local"
 	}
 	return "unknown job type: " + strconv.Itoa(int(t))
 }
@@ -86,7 +83,6 @@ func (t jobType) String() string {
 const (
 	jobTypeGeneral jobType = iota
 	jobTypeReorg
-	jobTypeLocal
 )
 
 type ownerListener struct {
@@ -244,21 +240,6 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 	}
 
 	return true, nil
-}
-
-// startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
-func (d *ddl) startLocalWorkerLoop() {
-	for {
-		select {
-		case <-d.ctx.Done():
-			return
-		case jobW, ok := <-d.localJobCh:
-			if !ok {
-				return
-			}
-			d.delivery2LocalWorker(d.localWorkerPool, jobW)
-		}
-	}
 }
 
 func (s *jobScheduler) scheduleLoop() {
@@ -464,51 +445,6 @@ func (s *jobScheduler) mustReloadSchemas() {
 		case <-time.After(schedulerLoopRetryInterval):
 		}
 	}
-}
-
-// delivery2LocalWorker runs the DDL job of v2 in local.
-// send the result to the error channels in the task.
-// delivery2Localworker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
-	job := jobW.Job
-	wk, err := pool.get()
-	if err != nil {
-		jobW.NotifyResult(err)
-		return
-	}
-	for wk == nil {
-		select {
-		case <-d.ctx.Done():
-			return
-		case <-time.After(localWorkerWaitingDuration):
-		}
-		wk, err = pool.get()
-		if err != nil {
-			jobW.NotifyResult(err)
-			return
-		}
-	}
-	d.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-		defer func() {
-			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
-		}()
-
-		for i := int64(0); i < variable.GetDDLErrorCountLimit(); i++ {
-			err = wk.HandleLocalDDLJob(d.ddlCtx, job)
-			// since local the job is not inserted into the ddl job queue, we need to add retry logic here.
-			if err == nil || !isRetryableError(err) {
-				break
-			}
-			logutil.DDLLogger().Info("handle local ddl job", zap.Int64("retry times", i), zap.Error(err))
-			time.Sleep(time.Second)
-		}
-		pool.put(wk)
-		if err != nil {
-			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
-		}
-		jobW.NotifyResult(err)
-	})
 }
 
 // deliveryJob deliver the job to the worker to run it asynchronously.
