@@ -90,3 +90,16 @@ func TestNextPowerOfTwo(t *testing.T) {
 	require.Equal(t, int64(1024), NextPowerOfTwo(1024))
 	require.Equal(t, int64(0x100000000), NextPowerOfTwo(0xabcd1234))
 }
+
+func TestDivide2Batches(t *testing.T) {
+	require.EqualValues(t, []int{}, Divide2Batches(0, 1))
+	require.EqualValues(t, []int{1}, Divide2Batches(1, 1))
+	require.EqualValues(t, []int{1}, Divide2Batches(1, 3))
+	require.EqualValues(t, []int{1, 1}, Divide2Batches(2, 2))
+	require.EqualValues(t, []int{1, 1}, Divide2Batches(2, 10))
+	require.EqualValues(t, []int{10}, Divide2Batches(10, 1))
+	require.EqualValues(t, []int{5, 5}, Divide2Batches(10, 2))
+	require.EqualValues(t, []int{4, 3, 3}, Divide2Batches(10, 3))
+	require.EqualValues(t, []int{3, 3, 2, 2}, Divide2Batches(10, 4))
+	require.EqualValues(t, []int{2, 2, 2, 2, 2}, Divide2Batches(10, 5))
+}
