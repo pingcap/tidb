@@ -65,7 +65,7 @@ func (b *BuildWorkerV2) clearSegmentsInRowTable(partID int) {
 }
 
 // buildHashTableForList builds hash table from `list`.
-func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
+func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) {
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
@@ -75,8 +75,9 @@ func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 	}()
 
 	for task := range taskCh {
+		triggerIntest(4)
 		if w.HashJoinCtx.finished.Load() {
-			return nil
+			return
 		}
 
 		start := time.Now()
@@ -85,7 +86,6 @@ func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 		failpoint.Inject("buildHashTablePanic", nil)
 		cost += int64(time.Since(start))
 	}
-	return nil
 }
 
 func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
@@ -118,6 +118,11 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	for chk := range srcChkCh {
 		if hashJoinCtx.finished.Load() {
 			return
+		}
+
+		err = triggerIntest(5)
+		if err != nil {
+			return err
 		}
 
 		err = w.processOneChunk(typeCtx, chk, fetcherAndWorkerSyncer, &cost)
@@ -172,6 +177,11 @@ func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syn
 
 		// TODO reuse chunk
 		chk, err := inDisk.GetChunk(i)
+		if err != nil {
+			return err
+		}
+
+		err = triggerIntest(3)
 		if err != nil {
 			return err
 		}

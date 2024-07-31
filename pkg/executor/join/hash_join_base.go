@@ -332,6 +332,12 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 			return
 		}
 
+		err = triggerIntest(2)
+		if err != nil {
+			errCh <- errors.Trace(err)
+			return
+		}
+
 		chk := hashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.BuildSideExec, chk)
 

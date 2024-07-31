@@ -47,6 +47,11 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 			return joinResult.err
 		}
 		if joinResult.chk.IsFull() {
+			err := triggerIntest(3)
+			if err != nil {
+				return err
+			}
+
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			if !ok {
@@ -116,8 +121,6 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 
 	totalOutputRowNum := 0
 
-	// TODO add random failpoint to slow some workers
-
 	var (
 		probeSideResult *chunk.Chunk
 	)
@@ -142,6 +145,12 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if !ok {
 			break
+		}
+
+		err := triggerIntest(3)
+		if err != nil {
+			handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, err)
+			return
 		}
 
 		start := time.Now()
@@ -234,6 +243,11 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error 
 
 		// TODO reuse chunk
 		chk, err := inDisk.GetChunk(i)
+		if err != nil {
+			return err
+		}
+
+		err = triggerIntest(3)
 		if err != nil {
 			return err
 		}

@@ -19,12 +19,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime/trace"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -644,7 +646,6 @@ func (e *HashJoinV2Exec) getRestoredChunkNum(restoredPartition *restorePartition
 }
 
 func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, doneCh <-chan struct{}, wg *sync.WaitGroup) {
-	// TODO mock the random fail in `fetchBuildSideRowsImpl`
 	defer func() {
 		defer close(syncCh)
 
@@ -667,6 +668,12 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 
 	for i := 0; i < chunkNum; i++ {
 		err := checkSpillAndExecute(fetcherAndWorkerSyncer, e.spillHelper)
+		if err != nil {
+			handleError(e.joinResultCh, &e.finished, err)
+			return
+		}
+
+		err = triggerIntest(3)
 		if err != nil {
 			handleError(e.joinResultCh, &e.finished, err)
 			return
@@ -801,6 +808,11 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 	failpoint.Inject("createTasksPanic", nil)
 
 	for partIdx, subTable := range subTables {
+		err = triggerIntest(8)
+		if err != nil {
+			return false, err
+		}
+
 		segmentsLen := len(subTable.rowData.segments)
 		if isBalanced {
 			select {
@@ -875,9 +887,7 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 
 	preBuildWorkerWg := &sync.WaitGroup{}
 
-	// srcChkCh, fetcherAndWorkerSyncer := e.fetchBuildSideRows(ctx, buildFetcherAndPrebuildWorkerSyncChan, buildFetcherAndBuildWorkerSyncChan, e.finalSync) // TODO remove it
 	e.startPrebuildWorkers(srcChkCh, fetcherAndWorkerSyncer, preBuildWorkerWg)
-
 	e.startBuildTaskDispatcher(buildFetcherAndDispatcherSyncChan)
 
 	// Actually we can directly return error by the function `fetchBuildSideRowsImpl`.
@@ -1015,10 +1025,7 @@ func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask, wg *sync
 		e.waiterWg.RunWithRecover(
 			func() {
 				// log.Info(fmt.Sprintf("xzxdebug start build worker %d", workerID))
-				err := e.BuildWorkers[workerID].buildHashTable(buildTaskCh)
-				if err != nil {
-					handleError(e.joinResultCh, &e.finished, err)
-				}
+				e.BuildWorkers[workerID].buildHashTable(buildTaskCh)
 			},
 			func(r any) {
 				// log.Info(fmt.Sprintf("xzxdebug leave build worker %d", workerID))
@@ -1145,4 +1152,29 @@ func (e *hashJoinRuntimeStatsV2) Merge(rs execdetails.RuntimeStats) {
 	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
 		e.maxFetchAndProbe = tmp.maxFetchAndProbe
 	}
+}
+
+func triggerIntest(errProbability int) error {
+	failpoint.Inject("slowWorkers", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(100000)
+			if num < 4 {
+				time.Sleep(time.Duration(num) * time.Millisecond)
+			}
+		}
+	})
+
+	var err error
+	failpoint.Inject("panicOrError", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(100000)
+			if num < errProbability/2 {
+				panic("Random panic")
+			} else if num < errProbability {
+				err = errors.New("Random error is triggered")
+			}
+		}
+	})
+
+	return err
 }

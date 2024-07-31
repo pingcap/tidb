@@ -17,6 +17,7 @@ package join
 import (
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -212,7 +213,8 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	// TODO enable random fail
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
 	for i := 0; i < 3; i++ {
 		testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
