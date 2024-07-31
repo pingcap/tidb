@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -1365,16 +1366,20 @@ func Exhaust(ec <-chan error) []error {
 	}
 }
 
-func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, glue glue.Glue) error {
-	if glue.GetType() != "ExecGlue" {
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	// Tasks from br client use other checks to validate
+	if g.GetClient() != glue.SqlClient {
 		return nil
 	}
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {
-		if _, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name, table.Info.Name); err == nil {
+		_, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name, table.Info.Name)
+		if err == nil {
 			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
 			allUnique = false
+		} else if errors.Cause(err) != infoschema.ErrTableNotExists {
+			return errors.Trace(err)
 		}
 	}
 	if !allUnique {

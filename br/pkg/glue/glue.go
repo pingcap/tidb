@@ -13,6 +13,11 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
+const (
+	BrClient int = iota
+	SqlClient
+)
+
 // Glue is an abstraction of TiDB function calls used in BR.
 type Glue interface {
 	GetDomain(store kv.Storage) (*domain.Domain, error)
@@ -37,8 +42,8 @@ type Glue interface {
 	// and we must reuse the exists session and don't close it in SQL backup job.
 	UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se Session) error) error
 
-	// GetType returns the glue type
-	GetType() string
+	// GetClient returns the client type of the glue
+	GetClient() int
 }
 
 // Session is an abstraction of the session.Session interface.
