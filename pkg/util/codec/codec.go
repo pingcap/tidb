@@ -581,7 +581,6 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			jsonHashBuffer = jsonHashBuffer[:0]
 			jsonHashBuffer = column.GetJSON(physicalRowindex).HashValue(jsonHashBuffer)
 			if serializeMode == KeepVarColumnLength {
-				// for enum, the size must be less than uint32.MAX, so use uint32 here
 				size := uint64(len(jsonHashBuffer))
 				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint64)...)
 			}
