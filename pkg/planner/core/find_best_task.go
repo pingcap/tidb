@@ -90,7 +90,8 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
 }
 
-func findBestTask4LogicalTableDual(p *LogicalTableDual, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+	p := lp.(*logicalop.LogicalTableDual)
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -467,13 +468,13 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	switch join := pp.(type) {
 	case *PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
-		plan = join.innerTask.Plan()
+		plan = join.innerPlan
 	case *PhysicalIndexHashJoin:
 		index = join.InnerChildIdx
-		plan = join.innerTask.Plan()
+		plan = join.innerPlan
 	case *PhysicalIndexJoin:
 		index = join.InnerChildIdx
-		plan = join.innerTask.Plan()
+		plan = join.innerPlan
 	}
 	if index != -1 {
 		child := lp.(*logicalop.BaseLogicalPlan).Children()[index]

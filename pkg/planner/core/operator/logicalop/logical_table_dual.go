@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"strconv"
@@ -20,11 +20,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -33,7 +33,7 @@ import (
 // outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
 // cause any actual problems now.
 type LogicalTableDual struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	// RowCount could only be 0 or 1.
 	RowCount int
@@ -41,7 +41,7 @@ type LogicalTableDual struct {
 
 // Init initializes LogicalTableDual.
 func (p LogicalTableDual) Init(ctx base.PlanContext, offset int) *LogicalTableDual {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)
 	return &p
 }
 
@@ -90,7 +90,7 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
 func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	return findBestTask4LogicalTableDual(p, prop, planCounter, opt)
+	return utilfuncp.FindBestTask4LogicalTableDual(p, prop, planCounter, opt)
 }
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.

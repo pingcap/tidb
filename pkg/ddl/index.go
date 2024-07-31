@@ -796,11 +796,13 @@ SwitchIndexState:
 
 		allIndexIDs := make([]int64, 0, len(allIndexInfos))
 		ifExists := make([]bool, 0, len(allIndexInfos))
+		isGlobal := make([]bool, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
 			allIndexIDs = append(allIndexIDs, indexInfo.ID)
 			ifExists = append(ifExists, false)
+			isGlobal = append(isGlobal, indexInfo.Global)
 		}
-		job.Args = []any{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta())}
+		job.Args = []any{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta()), isGlobal}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {

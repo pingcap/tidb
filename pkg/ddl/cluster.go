@@ -322,9 +322,9 @@ func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []i
 	return flashbackIDs
 }
 
-// GetTableDataKeyRanges get keyRanges by `flashbackIDs`.
+// getTableDataKeyRanges get keyRanges by `flashbackIDs`.
 // This func will return all flashback table data key ranges.
-func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
+func getTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 	var keyRanges []kv.KeyRange
 
 	nonFlashbackTableIDs = append(nonFlashbackTableIDs, -1)
@@ -349,10 +349,52 @@ func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 	return keyRanges
 }
 
-// GetFlashbackKeyRanges get keyRanges for flashback cluster.
+type keyRangeMayExclude struct {
+	r       kv.KeyRange
+	exclude bool
+}
+
+// appendContinuousKeyRanges merges not exclude continuous key ranges and appends
+// to given []kv.KeyRange, assuming the gap between key ranges has no data.
+//
+// Precondition: schemaKeyRanges is sorted by start key. schemaKeyRanges are
+// non-overlapping.
+func appendContinuousKeyRanges(result []kv.KeyRange, schemaKeyRanges []keyRangeMayExclude) []kv.KeyRange {
+	var (
+		continuousStart, continuousEnd kv.Key
+	)
+
+	for _, r := range schemaKeyRanges {
+		if r.exclude {
+			if continuousStart != nil {
+				result = append(result, kv.KeyRange{
+					StartKey: continuousStart,
+					EndKey:   continuousEnd,
+				})
+				continuousStart = nil
+			}
+			continue
+		}
+
+		if continuousStart == nil {
+			continuousStart = r.r.StartKey
+		}
+		continuousEnd = r.r.EndKey
+	}
+
+	if continuousStart != nil {
+		result = append(result, kv.KeyRange{
+			StartKey: continuousStart,
+			EndKey:   continuousEnd,
+		})
+	}
+	return result
+}
+
+// getFlashbackKeyRanges get keyRanges for flashback cluster.
 // It contains all non system table key ranges and meta data key ranges.
 // The time complexity is O(nlogn).
-func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
+func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
 	schemas := is.AllSchemas()
 
@@ -367,26 +409,51 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 	}
 
 	schemaIDs := make(map[int64]struct{})
+	excludeSchemaIDs := make(map[int64]struct{})
 	for _, schema := range schemas {
-		if !filter.IsSystemSchema(schema.Name.L) {
+		if filter.IsSystemSchema(schema.Name.L) {
+			excludeSchemaIDs[schema.ID] = struct{}{}
+		} else {
 			schemaIDs[schema.ID] = struct{}{}
 		}
 	}
 	for _, schema := range snapshotSchemas {
-		if !filter.IsSystemSchema(schema.Name.L) {
+		if filter.IsSystemSchema(schema.Name.L) {
+			excludeSchemaIDs[schema.ID] = struct{}{}
+		} else {
 			schemaIDs[schema.ID] = struct{}{}
 		}
 	}
 
-	// The meta data key ranges.
+	schemaKeyRanges := make([]keyRangeMayExclude, 0, len(schemaIDs)+len(excludeSchemaIDs))
 	for schemaID := range schemaIDs {
 		metaStartKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID))
 		metaEndKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID + 1))
-		keyRanges = append(keyRanges, kv.KeyRange{
-			StartKey: metaStartKey,
-			EndKey:   metaEndKey,
+		schemaKeyRanges = append(schemaKeyRanges, keyRangeMayExclude{
+			r: kv.KeyRange{
+				StartKey: metaStartKey,
+				EndKey:   metaEndKey,
+			},
+			exclude: false,
 		})
 	}
+	for schemaID := range excludeSchemaIDs {
+		metaStartKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID))
+		metaEndKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID + 1))
+		schemaKeyRanges = append(schemaKeyRanges, keyRangeMayExclude{
+			r: kv.KeyRange{
+				StartKey: metaStartKey,
+				EndKey:   metaEndKey,
+			},
+			exclude: true,
+		})
+	}
+
+	slices.SortFunc(schemaKeyRanges, func(a, b keyRangeMayExclude) int {
+		return bytes.Compare(a.r.StartKey, b.r.StartKey)
+	})
+
+	keyRanges = appendContinuousKeyRanges(keyRanges, schemaKeyRanges)
 
 	startKey := tablecodec.EncodeMetaKeyPrefix([]byte("DBs"))
 	keyRanges = append(keyRanges, kv.KeyRange{
@@ -396,11 +463,11 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 
 	var nonFlashbackTableIDs []int64
 	for _, db := range schemas {
-		tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
-		if err != nil {
-			return nil, errors.Trace(err)
+		tbls, err2 := is.SchemaTableInfos(ctx, db.Name)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
 		}
-		for _, table := range tblInfos {
+		for _, table := range tbls {
 			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
 				continue
 			}
@@ -413,7 +480,7 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 		}
 	}
 
-	return append(keyRanges, GetTableDataKeyRanges(nonFlashbackTableIDs)...), nil
+	return append(keyRanges, getTableDataKeyRanges(nonFlashbackTableIDs)...), nil
 }
 
 // SendPrepareFlashbackToVersionRPC prepares regions for flashback, the purpose is to put region into flashback state which region stop write
@@ -712,7 +779,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.Args[startTSOffset] = startTS
-		keyRanges, err = GetFlashbackKeyRanges(sess, flashbackTS)
+		keyRanges, err = getFlashbackKeyRanges(w.ctx, sess, flashbackTS)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

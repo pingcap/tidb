@@ -572,12 +572,23 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		now = now.In(tz)
 	}
 
-	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
+	cancelJobs := false
+	cancelReason := ""
+	switch {
+	case !variable.EnableTTLJob.Load():
+		cancelJobs = true
+		cancelReason = "tidb_ttl_job_enable turned off"
+	case !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now):
+		cancelJobs = true
+		cancelReason = "out of TTL job schedule window"
+	}
+
+	if cancelJobs {
 		if len(m.runningJobs) > 0 {
 			for _, job := range m.runningJobs {
-				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id))
+				logutil.Logger(m.ctx).Info(fmt.Sprintf("cancel job because %s", cancelReason), zap.String("jobID", job.id))
 
-				summary, err := summarizeErr(errors.New("ttl job is disabled"))
+				summary, err := summarizeErr(errors.New(cancelReason))
 				if err != nil {
 					logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
 				}
