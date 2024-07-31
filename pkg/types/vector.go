@@ -100,7 +100,7 @@ func (v VectorFloat32) String() string {
 	buf = append(buf, '[')
 	for i, v := range elements {
 		if i > 0 {
-			buf = append(buf, ","...)
+			buf = append(buf, ',')
 		}
 		buf = strconv.AppendFloat(buf, float64(v), 'f', -1, 32)
 	}
