@@ -72,8 +72,8 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		// Don't check `intest.InTest` for benchmark. We should allow to run benchmarks without `intest` tag, because some assert may have significant performance
 		// impact.
 		require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
-		require.False(t, intest.InIntegrationTest, "you should not add --tags=integrationtest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	}
+	require.False(t, intest.InIntegrationTest, "you should not add --tags=integrationtest when just to do unit test or benchmark, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
 		require: require.New(t),
