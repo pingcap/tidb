@@ -112,6 +112,7 @@ func (l *ownerListener) OnBecomeOwner() {
 		sessPool:       l.ddl.sessPool,
 		delRangeMgr:    l.ddl.delRangeMgr,
 	}
+	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
 }
 
