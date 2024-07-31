@@ -83,14 +83,14 @@ func (col *CorrelatedColumn) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, re
 	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
 }
 
-// Traverse implements the TraverseDown interface.
-func (col *CorrelatedColumn) Traverse(action TraverseAction) Expression {
-	return action.Transform(col)
-}
-
 // VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
 func (col *CorrelatedColumn) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETVectorFloat32, input, result)
+}
+
+// Traverse implements the TraverseDown interface.
+func (col *CorrelatedColumn) Traverse(action TraverseAction) Expression {
+	return action.Transform(col)
 }
 
 // Eval implements Expression interface.
