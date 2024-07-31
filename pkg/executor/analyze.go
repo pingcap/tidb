@@ -394,7 +394,6 @@ func (e *AnalyzeExec) handleResultsError(
 	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	dom := domain.GetDomain(e.Ctx())
-
 	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if partitionStatsConcurrency > 1 {
 		// FIXME: Since we don't use it either to save analysis results or to store job history, it has no effect. Please remove this :(
