@@ -462,7 +462,8 @@ func TestSchemaSimpleTableInfos(t *testing.T) {
 	is := tk.Session().GetInfoSchema()
 	// Cover special schema
 	tblInfos, err := is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("INFORMATION_SCHEMA"))
-	var res []string
+	require.NoError(t, err)
+	res := make([]string, 0, len(tblInfos))
 	for _, tbl := range tblInfos {
 		res = append(res, tbl.Name.L)
 	}
