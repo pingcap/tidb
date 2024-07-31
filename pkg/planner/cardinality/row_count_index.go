@@ -407,9 +407,8 @@ func equalRowCountOnIndex(sctx context.PlanContext, idx *statistics.Index, b []b
 		// If the table hasn't been modified, it's safe to return 0. Otherwise, the TopN could be stale - return 1.
 		if modifyCount == 0 {
 			return 0
-		} else {
-			return 1
 		}
+		return 1
 	}
 	return idx.Histogram.NotNullCount() / histNDV
 }
