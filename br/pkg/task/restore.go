@@ -842,7 +842,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkTableExistence(ctx, mgr, tables); err != nil {
+		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1365,7 +1365,10 @@ func Exhaust(ec <-chan error) []error {
 	}
 }
 
-func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table) error {
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, glue glue.Glue) error {
+	if glue.GetType() != "ExecGlue" {
+		return nil
+	}
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {
