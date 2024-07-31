@@ -1029,7 +1029,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.
-				dual := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				dual.SetOutputNames(p.OutputNames())
 				dual.SetSchema(p.Schema())
 				return dual, nil
@@ -2180,7 +2180,7 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 		count = math.MaxUint64 - offset
 	}
 	if offset+count == 0 {
-		tableDual := LogicalTableDual{RowCount: 0}.Init(b.ctx, b.getSelectOffset())
+		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(b.ctx, b.getSelectOffset())
 		tableDual.SetSchema(src.Schema())
 		tableDual.SetOutputNames(src.OutputNames())
 		return tableDual, nil
@@ -4064,9 +4064,9 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p base.LogicalPlan) ba
 	return seq
 }
 
-func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
+func (b *PlanBuilder) buildTableDual() *logicalop.LogicalTableDual {
 	b.handleHelper.pushMap(nil)
-	return LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
+	return logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 }
 
 func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
@@ -4278,7 +4278,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				case *LogicalLimit:
 					limitBeg = x.Offset
 					limitEnd = x.Offset + x.Count
-				case *LogicalTableDual:
+				case *logicalop.LogicalTableDual:
 					// Beg and End will both be 0.
 				default:
 					return nil, errors.Errorf("invalid type for limit plan: %v", cte.limitLP)

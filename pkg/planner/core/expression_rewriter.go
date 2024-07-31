@@ -92,7 +92,7 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 	}
 	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 	b.allowBuildCastArray = allowCastArray
-	fakePlan := LogicalTableDual{}.Init(sctx, 0)
+	fakePlan := logicalop.LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.SetSchema(schema)
 		fakePlan.SetOutputNames(names)
@@ -1122,7 +1122,7 @@ out:
 			p = p.Children()[0]
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
-				p = LogicalTableDual{RowCount: 1}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+				p = logicalop.LogicalTableDual{RowCount: 1}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 				break out
 			}
 			p = p.Children()[0]

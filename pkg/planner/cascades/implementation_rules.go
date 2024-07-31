@@ -105,7 +105,7 @@ func (*ImplTableDual) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplTableDual) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	logicDual := expr.ExprNode.(*plannercore.LogicalTableDual)
+	logicDual := expr.ExprNode.(*logicalop.LogicalTableDual)
 	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.QueryBlockOffset())
 	dual.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewTableDualImpl(dual)}, nil

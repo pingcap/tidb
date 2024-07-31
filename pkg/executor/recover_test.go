@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -689,4 +690,52 @@ func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	// clear GC variables first.
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
+}
+
+func TestFlashbackClusterWithManyDBs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	backup := kv.TxnEntrySizeLimit.Load()
+	kv.TxnEntrySizeLimit.Store(50000)
+	t.Cleanup(func() {
+		kv.TxnEntrySizeLimit.Store(backup)
+	})
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
+	tk.MustExec("set @@global.tidb_enable_fast_create_table=ON")
+
+	var wg sync.WaitGroup
+	dbPerWorker := 10
+	for i := 0; i < 40; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk2 := testkit.NewTestKit(t, store)
+			for j := 0; j < dbPerWorker; j++ {
+				dbName := fmt.Sprintf("db_%d", i*dbPerWorker+j)
+				tk2.MustExec(fmt.Sprintf("create database %s", dbName))
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
+	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
+
+	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS))
+
+	// this test will fail before the fix, because the DDL job KV entry is too large.
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
 }

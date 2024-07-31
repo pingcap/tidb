@@ -242,7 +242,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *PhysicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
-	case *LogicalTableDual, *PhysicalTableDual:
+	case *logicalop.LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
 		str = "HashAgg"

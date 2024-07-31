@@ -113,3 +113,7 @@ var FindBestTask4LogicalShowDDLJobs func(lp base.LogicalPlan, prop *property.Phy
 // ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
+
+// FindBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
+var FindBestTask4LogicalTableDual func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)

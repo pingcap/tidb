@@ -30,7 +30,7 @@ var (
 	_ base.LogicalPlan = &LogicalSelection{}
 	_ base.LogicalPlan = &LogicalApply{}
 	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
-	_ base.LogicalPlan = &LogicalTableDual{}
+	_ base.LogicalPlan = &logicalop.LogicalTableDual{}
 	_ base.LogicalPlan = &DataSource{}
 	_ base.LogicalPlan = &TiKVSingleGather{}
 	_ base.LogicalPlan = &LogicalTableScan{}
