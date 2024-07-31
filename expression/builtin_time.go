@@ -2966,7 +2966,10 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 	}
 
 	goTime = goTime.Add(time.Duration(nano))
-	goTime = types.AddDate(year, month, day, goTime)
+	goTime, err = types.AddDate(year, month, day, goTime)
+	if err != nil {
+		return types.ZeroTime, true, err
+	}
 
 	// Adjust fsp as required by outer - always respect type inference.
 	date.SetFsp(resultFsp)
@@ -6187,7 +6190,11 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 			return tb, true, nil
 		}
 
-		tb = types.AddDate(0, int64(v), 0, t)
+		var err error
+		tb, err = types.AddDate(0, int64(v), 0, t)
+		if err != nil {
+			return tb, true, err
+		}
 	case "QUARTER":
 		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
 			return tb, true, nil
