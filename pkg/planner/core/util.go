@@ -153,8 +153,17 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
-	names  types.NameSlice
+	names  types.NameSlice `plan-cache-clone:"shallow"`
 	baseimpl.Plan
+}
+
+// CloneWithNewCtx clones the baseSchemaProducer with new context.
+func (s *baseSchemaProducer) CloneWithNewCtx(newCtx base.PlanContext) *baseSchemaProducer {
+	cloned := new(baseSchemaProducer)
+	cloned.Plan = *s.Plan.CloneWithNewCtx(newCtx)
+	cloned.schema = s.schema.Clone()
+	cloned.names = s.names
+	return cloned
 }
 
 // OutputNames returns the outputting names of each column.
