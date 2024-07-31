@@ -85,6 +85,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 type memtableRetriever struct {
@@ -591,8 +592,8 @@ func getMatchSchemas(
 	extractor base.MemTablePredicateExtractor,
 	is infoschema.InfoSchema,
 ) []model.CIStr {
-	ex := extractor.(plannercore.TableSchemaSelector)
-	if ex != nil {
+	ex, ok := extractor.(plannercore.TableSchemaSelector)
+	if ok {
 		if schemas := ex.SelectedSchemaNames(); len(schemas) > 0 {
 			ret := schemas[:0]
 			for _, s := range schemas {
@@ -616,12 +617,12 @@ func getMatchTableInfosForPartitions(
 	schema model.CIStr,
 	is infoschema.InfoSchema,
 ) ([]*model.TableInfo, error) {
-	ex := extractor.(plannercore.TableSchemaSelector)
-	if ex == nil || !ex.HasTables() {
+	ex, ok := extractor.(plannercore.TableSchemaSelector)
+	if !ok || !ex.HasTables() {
 		// There is no specified table in predicate.
 		return is.SchemaTableInfos(ctx, schema)
 	}
-	tables := make([]*model.TableInfo, 0, 8)
+	tables := make(map[int64]*model.TableInfo, 8)
 	// Find all table infos from predicate.
 	for _, n := range ex.SelectedTableNames() {
 		tbl, err := is.TableByName(ctx, schema, n)
@@ -631,7 +632,8 @@ func getMatchTableInfosForPartitions(
 			}
 			return nil, errors.Trace(err)
 		}
-		tables = append(tables, tbl.Meta())
+		tblInfo := tbl.Meta()
+		tables[tblInfo.ID] = tblInfo
 	}
 	for _, pid := range ex.SelectedPartitionIDs() {
 		tbl, db, _ := is.FindTableByPartitionID(pid)
@@ -641,9 +643,10 @@ func getMatchTableInfosForPartitions(
 		if db.Name.L != schema.L {
 			continue
 		}
-		tables = append(tables, tbl.Meta())
+		tblInfo := tbl.Meta()
+		tables[tblInfo.ID] = tblInfo
 	}
-	return deduplicateTableInfos(tables), nil
+	return maps.Values(tables), nil
 }
 
 func getMatchTableInfos(
@@ -652,12 +655,12 @@ func getMatchTableInfos(
 	schema model.CIStr,
 	is infoschema.InfoSchema,
 ) ([]*model.TableInfo, error) {
-	ex := extractor.(plannercore.TableSchemaSelector)
-	if ex == nil || !ex.HasTables() {
+	ex, ok := extractor.(plannercore.TableSchemaSelector)
+	if !ok || !ex.HasTables() {
 		// There is no specified table in predicate.
 		return is.SchemaTableInfos(ctx, schema)
 	}
-	tables := make([]*model.TableInfo, 0, 8)
+	tables := make(map[int64]*model.TableInfo, 8)
 	// Find all table infos from predicate.
 	for _, n := range ex.SelectedTableNames() {
 		tbl, err := is.TableByName(ctx, schema, n)
@@ -667,7 +670,8 @@ func getMatchTableInfos(
 			}
 			return nil, errors.Trace(err)
 		}
-		tables = append(tables, tbl.Meta())
+		tblInfo := tbl.Meta()
+		tables[tblInfo.ID] = tblInfo
 	}
 	for _, id := range ex.SelectedTableIDs() {
 		tbl, ok := is.TableByID(id)
@@ -681,22 +685,10 @@ func getMatchTableInfos(
 			}
 			return nil, errors.Trace(err)
 		}
-		tables = append(tables, tbl.Meta())
+		tblInfo := tbl.Meta()
+		tables[tblInfo.ID] = tblInfo
 	}
-	return deduplicateTableInfos(tables), nil
-}
-
-func deduplicateTableInfos(tables []*model.TableInfo) []*model.TableInfo {
-	idMap := make(map[int64]struct{}, len(tables))
-	tmp := tables[:0]
-	for _, t := range tables {
-		_, found := idMap[t.ID]
-		if !found {
-			idMap[t.ID] = struct{}{}
-			tmp = append(tmp, t)
-		}
-	}
-	return tmp
+	return maps.Values(tables), nil
 }
 
 func (e *memtableRetriever) setDataFromOneTable(

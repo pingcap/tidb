@@ -1815,7 +1815,6 @@ type InfoSchemaTablesExtractor struct {
 	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
 
-	colNames      []string
 	ColPredicates map[string]set.StringSet
 }
 
@@ -1826,11 +1825,11 @@ func (e *InfoSchemaTablesExtractor) Extract(ctx base.PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	var resultSet, resultSet1 set.StringSet
-	e.colNames = []string{"table_schema", "constraint_schema", "table_name", "constraint_name",
+	colNames := []string{"table_schema", "constraint_schema", "table_name", "constraint_name",
 		"sequence_schema", "sequence_name", "partition_name", "schema_name", "index_name", "tidb_table_id"}
 	e.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
-	for _, colName := range e.colNames {
+	for _, colName := range colNames {
 		remained, e.SkipRequest, resultSet = e.extractColWithLower(ctx, schema, names, remained, colName)
 		if e.SkipRequest {
 			break
