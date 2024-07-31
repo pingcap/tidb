@@ -16,6 +16,7 @@ package core
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -145,7 +146,9 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 		for _, cnfItem := range cnfItems {
 			if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
 				pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
+				fmt.Println("wtf456")
 			} else {
+				fmt.Println("wtf789")
 				needSelection = true
 			}
 		}
@@ -172,9 +175,12 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
 		if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, partialPath.IndexFilters, kv.TiKV) {
+			fmt.Println("wtf2")
 			needSelection = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			partialPath.IndexFilters = nil
+		} else {
+			fmt.Println("wtf3")
 		}
 		// Keep this filter as a part of table filters for safety if it has any parameter.
 		if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), cnfItems) {
@@ -534,9 +540,11 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 		for i, cond := range path.IndexFilters {
 			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
 			if !expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiKV) {
+				fmt.Println("WTF123")
 				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
 				notCoveredConds = append(notCoveredConds, cond)
 			} else {
+				fmt.Println("WTF1234")
 				coveredConds = append(coveredConds, cond)
 			}
 		}
@@ -872,6 +880,9 @@ DNF path
 			TableRowIdScan(t)                         --- COP
 */
 func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexMergeConds []expression.Expression) error {
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("ok")
+	}
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
 		len(ds.PossibleAccessPaths) > 1 // have multiple index paths
 	if !isPossibleIdxMerge {
@@ -1029,6 +1040,9 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			TableRowIdScan(t)
 */
 func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []expression.Expression) error {
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("10")
+	}
 	dnfMVIndexPaths, err := ds.generateIndexMergeOnDNF4MVIndex(normalPathCnt, filters)
 	if err != nil {
 		return err
