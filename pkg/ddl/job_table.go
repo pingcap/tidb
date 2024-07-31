@@ -89,12 +89,22 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		not = ""
 		label = "get_job_reorg"
 	}
+<<<<<<< HEAD:pkg/ddl/job_table.go
 	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
 		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
 		and %s reorg %s order by processing desc, job_id`
 	var excludedJobIDs string
 	if ids := d.runningJobs.allIDs(); len(ids) > 0 {
 		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
+=======
+	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
+	l.scheduler.start()
+}
+
+func (l *ownerListener) OnRetireOwner() {
+	if l.scheduler == nil {
+		return
+>>>>>>> aaca081cec3 (ddl: record get owner TS and compare it before runReorgJob quit (#55049)):pkg/ddl/job_scheduler.go
 	}
 	sql := fmt.Sprintf(getJobSQL, not, excludedJobIDs)
 	rows, err := se.Execute(context.Background(), sql, label)
