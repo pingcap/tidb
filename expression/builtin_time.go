@@ -2908,7 +2908,7 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 	goTime = goTime.Add(time.Duration(nano))
 	goTime, err = types.AddDate(year, month, day, goTime)
 	if err != nil {
-		return types.ZeroTime, true, err
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
 	if goTime.Nanosecond() == 0 {
