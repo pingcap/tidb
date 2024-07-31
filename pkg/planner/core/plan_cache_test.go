@@ -1253,6 +1253,20 @@ func TestPlanCacheBindingIgnore(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
+func TestIssue53505(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (v varchar(16))`)
+	tk.MustExec(`insert into t values ('156')`)
+	tk.MustExec(`prepare stmt7 from 'select * from t where v = conv(?, 16, 8)'`)
+	tk.MustExec(`set @arg=0x6E`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustExec(`set @arg=0x70`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows()) // empty
+}
+
 func TestBuiltinFuncFlen(t *testing.T) {
 	// same as TestIssue45378 and TestIssue45253
 	store := testkit.CreateMockStore(t)
