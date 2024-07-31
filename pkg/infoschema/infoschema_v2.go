@@ -587,7 +587,7 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 }
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
-	return is.tableByID(id, false)
+	return is.tableByID(id, true)
 }
 
 func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok bool) {
