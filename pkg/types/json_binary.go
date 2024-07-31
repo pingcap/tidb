@@ -520,7 +520,6 @@ func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 		// of the json.SyntaxError, e.g. the Offset of the syntax.
 		err = ErrInvalidJSONText.Wrap(err).GenWithStackByArgs(err)
 	}
-
 	return
 }
 
