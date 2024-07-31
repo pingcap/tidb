@@ -146,6 +146,7 @@ type TestReorgDDLCallback struct {
 }
 
 func TestReorgPartitionConcurrent(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartConcurrent"

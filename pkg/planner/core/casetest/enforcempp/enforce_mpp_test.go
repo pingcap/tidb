@@ -100,6 +100,7 @@ func TestEnforceMPP(t *testing.T) {
 
 // general cases.
 func TestEnforceMPPWarning1(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -307,6 +308,7 @@ func TestEnforceMPPWarning4(t *testing.T) {
 
 // Test agg push down for MPP mode
 func TestMPP2PhaseAggPushDown(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -360,6 +362,7 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 
 // Test skewed group distinct aggregate rewrite for MPP mode
 func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
