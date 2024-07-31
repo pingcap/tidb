@@ -394,16 +394,17 @@ func (e *AnalyzeExec) handleResultsError(
 	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	dom := domain.GetDomain(e.Ctx())
+
 	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if partitionStatsConcurrency > 1 {
 		// FIXME: Since we don't use it either to save analysis results or to store job history, it has no effect. Please remove this :(
 		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
+		warningMessage := "Insufficient sessions to save analyze results. Consider increasing the 'analyze-partition-concurrency-quota' configuration to improve analyze performance. " +
+			"This value should typically be greater than or equal to the 'tidb_analyze_partition_concurrency' variable."
 		if len(subSctxs) > 0 {
 			sessionCount := len(subSctxs)
 			logutil.BgLogger().Info("use multiple sessions to save analyze results", zap.Int("sessionCount", sessionCount))
 			if sessionCount < partitionStatsConcurrency {
-				warningMessage := "Insufficient sessions to save analyze results. Consider increasing the 'analyze-partition-concurrency-quota' configuration to improve analyze performance. " +
-					"This value should typically be greater than or equal to the 'tidb_analyze_partition_concurrency' variable."
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(warningMessage))
 				logutil.BgLogger().Warn(
 					warningMessage,
@@ -415,6 +416,13 @@ func (e *AnalyzeExec) handleResultsError(
 				dom.ReleaseAnalyzeExec(subSctxs)
 			}()
 			return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
+		} else {
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(warningMessage))
+			logutil.BgLogger().Warn(
+				warningMessage,
+				zap.Int("sessionCount", 0),
+				zap.Int("needSessionCount", partitionStatsConcurrency),
+			)
 		}
 	}
 	logutil.BgLogger().Info("use single session to save analyze results")
