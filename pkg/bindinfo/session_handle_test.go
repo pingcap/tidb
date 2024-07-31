@@ -381,8 +381,6 @@ func TestDropSingleBindings(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
-<<<<<<< HEAD
-=======
 func TestIssue53834(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -406,7 +404,6 @@ func TestIssue53834(t *testing.T) {
 	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
 }
 
->>>>>>> 9906339471d (planner: fix the issue that statement-level hints in sub-queries of Insert/Replace can not take effect (#54083))
 func TestPreparedStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
