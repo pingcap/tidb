@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"reflect"
 	"strings"
 	"testing"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
