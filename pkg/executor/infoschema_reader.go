@@ -690,7 +690,6 @@ func getMatchTableInfos(
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
-	ctx context.Context,
 	sctx sessionctx.Context,
 	loc *time.Location,
 	checker privilege.Manager,
@@ -839,7 +838,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
-			rows, err = e.setDataFromOneTable(ctx, sctx, loc, checker, schema, table, rows, useStatsCache)
+			rows, err = e.setDataFromOneTable(sctx, loc, checker, schema, table, rows, useStatsCache)
 			if err != nil {
 				return errors.Trace(err)
 			}
