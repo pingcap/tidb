@@ -250,7 +250,9 @@ type ddl struct {
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
 	// get notification if any DDL job submitted or finished.
-	ddlJobNotifyCh chan struct{}
+	ddlJobNotifyCh    chan struct{}
+	sysTblMgr         systable.Manager
+	minJobIDRefresher *systable.MinJobIDRefresher
 
 	// globalIDLock locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
@@ -702,7 +704,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
 		mu:              &d.mu,
 		globalIDLock:    &d.globalIDLock,
-		stateSyncer:     d.stateSyncer,
 	}
 	d.executor = e
 
@@ -738,13 +739,13 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool = d.sessPool
-	d.executor.sysTblMgr = systable.NewManager(d.sessPool)
-	d.executor.minJobIDRefresher = systable.NewMinJobIDRefresher(d.executor.sysTblMgr)
+	d.sysTblMgr = systable.NewManager(d.sessPool)
+	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
 	d.wg.Run(func() {
-		d.executor.limitDDLJobs()
+		d.limitDDLJobs()
 	})
 	d.wg.Run(func() {
-		d.executor.minJobIDRefresher.Start(d.ctx)
+		d.minJobIDRefresher.Start(d.ctx)
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
@@ -913,7 +914,7 @@ func (d *ddl) SetHook(h Callback) {
 }
 
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
-	return d.executor.minJobIDRefresher
+	return d.minJobIDRefresher
 }
 
 func (d *ddl) startCleanDeadTableLock() {

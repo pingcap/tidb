@@ -45,11 +45,11 @@ import (
 	"go.uber.org/zap"
 )
 
-func (e *executor) limitDDLJobs() {
+func (d *ddl) limitDDLJobs() {
 	defer util.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
 
 	jobWs := make([]*JobWrapper, 0, batchAddingJobs)
-	ch := e.limitJobCh
+	ch := d.limitJobCh
 	for {
 		select {
 		// the channel is never closed
@@ -61,15 +61,15 @@ func (e *executor) limitDDLJobs() {
 			for i := 0; i < jobLen; i++ {
 				jobWs = append(jobWs, <-ch)
 			}
-			e.addBatchDDLJobs(jobWs)
-		case <-e.ctx.Done():
+			d.addBatchDDLJobs(jobWs)
+		case <-d.ctx.Done():
 			return
 		}
 	}
 }
 
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
-func (e *executor) addBatchDDLJobs(jobWs []*JobWrapper) {
+func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) {
 	startTime := time.Now()
 	var (
 		err   error
@@ -87,9 +87,9 @@ func (e *executor) addBatchDDLJobs(jobWs []*JobWrapper) {
 				jobWs = newWs
 			}
 		}
-		err = e.addBatchDDLJobs2Table(jobWs)
+		err = d.addBatchDDLJobs2Table(jobWs)
 	} else {
-		err = e.addBatchDDLJobs2Queue(jobWs)
+		err = d.addBatchDDLJobs2Queue(jobWs)
 	}
 	var jobs string
 	for _, jobW := range jobWs {
@@ -240,20 +240,20 @@ func mergeCreateTableJobsOfSameSchema(jobWs []*JobWrapper) (*model.Job, error) {
 }
 
 // addBatchDDLJobs2Table gets global job IDs and puts the DDL jobs in the DDL job table.
-func (e *executor) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
+func (d *ddl) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	var err error
 
 	if len(jobWs) == 0 {
 		return nil
 	}
 
-	ctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
-	se, err := e.sessPool.Get()
+	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
+	se, err := d.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer e.sessPool.Put(se)
-	found, err := e.sysTblMgr.HasFlashbackClusterJob(ctx, e.minJobIDRefresher.GetCurrMinJobID())
+	defer d.sessPool.Put(se)
+	found, err := d.sysTblMgr.HasFlashbackClusterJob(ctx, d.minJobIDRefresher.GetCurrMinJobID())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -266,7 +266,7 @@ func (e *executor) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		bdrRole = string(ast.BDRRoleNone)
 	)
 
-	err = kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 
 		bdrRole, err = t.GetBDRRole()
@@ -276,7 +276,7 @@ func (e *executor) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		startTS = txn.StartTS()
 
 		if variable.DDLForce2Queue.Load() {
-			if err := e.checkFlashbackJobInQueue(t); err != nil {
+			if err := d.checkFlashbackJobInQueue(t); err != nil {
 				return err
 			}
 		}
@@ -308,7 +308,7 @@ func (e *executor) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 		setJobStateToQueueing(job)
 
-		if e.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
+		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
 			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 				jobW.cacheErr = err
@@ -324,18 +324,22 @@ func (e *executor) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		return errors.Trace(err)
 	}
 	for _, jobW := range jobWs {
-		e.initJobDoneCh(jobW.ID)
+		d.initJobDoneCh(jobW.ID)
 	}
 
 	return nil
 }
 
-func (e *executor) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
+func (d *ddl) initJobDoneCh(jobID int64) {
+	d.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
+}
+
+func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// lock to reduce conflict
-	e.globalIDLock.Lock()
-	defer e.globalIDLock.Unlock()
-	return kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
+	d.globalIDLock.Lock()
+	defer d.globalIDLock.Unlock()
+	return kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 
 		count := getRequiredGIDCount(jobWs)
@@ -345,7 +349,7 @@ func (e *executor) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 		}
 		assignGIDsForJobs(jobWs, ids)
 
-		if err := e.checkFlashbackJobInQueue(t); err != nil {
+		if err := d.checkFlashbackJobInQueue(t); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -374,7 +378,7 @@ func (e *executor) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	})
 }
 
-func (*executor) checkFlashbackJobInQueue(t *meta.Meta) error {
+func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
 	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	if err != nil {
 		return errors.Trace(err)

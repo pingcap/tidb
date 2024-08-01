@@ -36,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
-	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	rg "github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -174,6 +172,7 @@ type ExecutorForTest interface {
 // all fields are shared with ddl now.
 type executor struct {
 	statsHandle *handle.Handle
+	sessPool    *sess.Pool
 
 	ctx             context.Context
 	uuid            string
@@ -189,12 +188,6 @@ type executor struct {
 	ddlJobNotifyCh  chan struct{}
 	mu              *hookStruct // TODO remove it.
 	globalIDLock    *sync.Mutex
-	stateSyncer     syncer.StateSyncer
-
-	// those fields are initialized on ddl.Start
-	sessPool          *sess.Pool
-	sysTblMgr         systable.Manager
-	minJobIDRefresher *systable.MinJobIDRefresher
 }
 
 var _ Executor = (*executor)(nil)
@@ -6460,10 +6453,6 @@ func (e *executor) getJobDoneCh(jobID int64) (chan struct{}, bool) {
 
 func (e *executor) delJobDoneCh(jobID int64) {
 	e.ddlJobDoneChMap.Delete(jobID)
-}
-
-func (e *executor) initJobDoneCh(jobID int64) {
-	e.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
 }
 
 func (e *executor) deliverJobTask(task *JobWrapper) {
