@@ -256,7 +256,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 }
 
 func getAutoIncrementID(
-	ctx context.Context,
 	is infoschema.InfoSchema,
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
@@ -721,7 +720,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 		var autoIncID any
 		hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 		if hasAutoIncID {
-			autoIncID = getAutoIncrementID(ctx, e.is, sctx, table)
+			autoIncID = getAutoIncrementID(e.is, sctx, table)
 		}
 		tableType := "BASE TABLE"
 		if util.IsSystemView(schema.L) {
