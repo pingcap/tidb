@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
@@ -34,14 +35,14 @@ func TestNewExprIterFromGroupElem(t *testing.T) {
 		do.StatsHandle().Close()
 	}()
 	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0)), schema)
-	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0)))
-	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0)))
 
 	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0)), schema)
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0)))
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0)))
 
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(ctx, 0))
 	expr.Children = append(expr.Children, g0)
@@ -82,15 +83,15 @@ func TestExprIterNext(t *testing.T) {
 		do.StatsHandle().Close()
 	}()
 	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)), schema)
-	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 1}.Init(ctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
-	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 2}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 2}.Init(ctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewNull()}}.Init(ctx, 0)))
 
 	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(ctx, 0)), schema)
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 3}.Init(ctx, 0)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 4}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 4}.Init(ctx, 0)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)))
 
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(ctx, 0))
@@ -135,24 +136,24 @@ func TestExprIterReset(t *testing.T) {
 		do.StatsHandle().Close()
 	}()
 	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)), schema)
-	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 1}.Init(ctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
-	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 2}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 2}.Init(ctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewNull()}}.Init(ctx, 0)))
 
 	sel1 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(ctx, 0))
 	sel2 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0))
 	sel3 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(ctx, 0))
 	g1 := NewGroupWithSchema(sel1, schema)
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 3}.Init(ctx, 0)))
 	g1.Insert(sel2)
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 4}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 4}.Init(ctx, 0)))
 	g1.Insert(sel3)
 
 	g2 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(ctx, 0)), schema)
-	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 3}.Init(ctx, 0)))
 	g2.Insert(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
-	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 4}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 4}.Init(ctx, 0)))
 	g2.Insert(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)))
 
 	// link join with Group 0 and 1
@@ -212,14 +213,14 @@ func TestExprIterWithEngineType(t *testing.T) {
 		do.StatsHandle().Close()
 	}()
 	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(pattern.EngineTiFlash)
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 1}.Init(ctx, 0)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 2}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 2}.Init(ctx, 0)))
 
 	g2 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(pattern.EngineTiKV)
-	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 2}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 2}.Init(ctx, 0)))
 	g2.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
-	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 3}.Init(ctx, 0)))
 
 	flashGather := NewGroupExpr(plannercore.TiKVSingleGather{}.Init(ctx, 0))
 	flashGather.Children = append(flashGather.Children, g1)
