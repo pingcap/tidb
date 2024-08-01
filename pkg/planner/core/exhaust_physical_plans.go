@@ -771,7 +771,7 @@ childLoop:
 		case *DataSource:
 			wrapper.ds = child
 			break childLoop
-		case *LogicalProjection, *LogicalSelection, *LogicalAggregation:
+		case *logicalop.LogicalProjection, *LogicalSelection, *LogicalAggregation:
 			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 				return nil
 			}
@@ -1128,7 +1128,7 @@ func constructInnerByZippedChildren(zippedChildren []base.LogicalPlan, child bas
 		switch x := zippedChildren[i].(type) {
 		case *LogicalUnionScan:
 			child = constructInnerUnionScan(x, child)
-		case *LogicalProjection:
+		case *logicalop.LogicalProjection:
 			child = constructInnerProj(x, child)
 		case *LogicalSelection:
 			child = constructInnerSel(x, child)
@@ -1160,7 +1160,7 @@ func constructInnerSel(sel *LogicalSelection, child base.PhysicalPlan) base.Phys
 	return physicalSel
 }
 
-func constructInnerProj(proj *LogicalProjection, child base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerProj(proj *logicalop.LogicalProjection, child base.PhysicalPlan) base.PhysicalPlan {
 	if proj == nil {
 		return child
 	}
@@ -2662,7 +2662,8 @@ func exhaustPhysicalPlans4LogicalExpand(p *LogicalExpand, prop *property.Physica
 	return physicalExpands, true, nil
 }
 
-func exhaustPhysicalPlans4Projection(p *LogicalProjection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalProjection)
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil, true, nil
@@ -3014,7 +3015,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				return false
 			}
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
-		case *LogicalProjection:
+		case *logicalop.LogicalProjection:
 			if storeTp != kv.TiFlash {
 				return false
 			}

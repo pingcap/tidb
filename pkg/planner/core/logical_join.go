@@ -1574,7 +1574,7 @@ func (p *LogicalJoin) updateEQCond() {
 				needRProj = needRProj || !rOk
 			}
 
-			var lProj, rProj *LogicalProjection
+			var lProj, rProj *logicalop.LogicalProjection
 			if needLProj {
 				lProj = p.getProj(0)
 			}
@@ -1630,13 +1630,13 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
+func (p *LogicalJoin) getProj(idx int) *logicalop.LogicalProjection {
 	child := p.Children()[idx]
-	proj, ok := child.(*LogicalProjection)
+	proj, ok := child.(*logicalop.LogicalProjection)
 	if ok {
 		return proj
 	}
-	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.QueryBlockOffset())
+	proj = logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.QueryBlockOffset())
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}

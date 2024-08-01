@@ -26,7 +26,7 @@ import (
 var (
 	_ base.LogicalPlan = &LogicalJoin{}
 	_ base.LogicalPlan = &LogicalAggregation{}
-	_ base.LogicalPlan = &LogicalProjection{}
+	_ base.LogicalPlan = &logicalop.LogicalProjection{}
 	_ base.LogicalPlan = &LogicalSelection{}
 	_ base.LogicalPlan = &LogicalApply{}
 	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}

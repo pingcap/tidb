@@ -102,7 +102,7 @@ func (rs *resultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 
 func (*resultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 	switch lp.(type) {
-	case *LogicalSelection, *LogicalProjection, *logicalop.LogicalLimit, *logicalop.LogicalTableDual:
+	case *LogicalSelection, *logicalop.LogicalProjection, *logicalop.LogicalLimit, *logicalop.LogicalTableDual:
 		return true
 	}
 	return false

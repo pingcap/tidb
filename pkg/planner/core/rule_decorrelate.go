@@ -156,7 +156,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				appendRemoveMaxOneRowTraceStep(m, opt)
 				return s.optimize(ctx, p, opt)
 			}
-		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
+		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
 			allConst := len(proj.Exprs) > 0
@@ -343,7 +343,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 						defaultValueMap := s.aggDefaultValueMap(agg)
 						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+							proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
 							proj.SetSchema(apply.Schema())
 							proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
 							for i, val := range defaultValueMap {
@@ -432,7 +432,7 @@ func appendRemoveLimitTraceStep(limit *logicalop.LogicalLimit, opt *optimizetrac
 	opt.AppendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
 
-func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", proj.TP(), proj.ID())
 	}
@@ -442,7 +442,7 @@ func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *op
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is moved as %v_%v's parent", proj.TP(), proj.ID(), np.TP(), np.ID())
 	}
@@ -474,7 +474,7 @@ func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *Logical
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAddProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAddProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is added as %v_%v's parent", proj.TP(), proj.ID(), p.TP(), p.ID())
 	}

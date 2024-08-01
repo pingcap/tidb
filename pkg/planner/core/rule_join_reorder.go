@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -317,7 +318,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			}
 		}
 		if schemaChanged {
-			proj := LogicalProjection{
+			proj := logicalop.LogicalProjection{
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
 			}.Init(p.SCtx(), p.QueryBlockOffset())
 			// Clone the schema here, because the schema may be changed by column pruning rules.
@@ -538,9 +539,9 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 }
 
 func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*logicalop.LogicalProjection)
 	if !ok {
-		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj = logicalop.LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
 		proj.SetSchema(p.Schema().Clone())
 		proj.SetChildren(p)
 	}

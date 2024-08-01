@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -215,7 +216,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 	// it has count(), we have split it into sum()+count(), since sum() returns decimal
 	// we have to return a project operator that casts decimal to bigint
-	proj := LogicalProjection{
+	proj := logicalop.LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, column := range topAggSchema.Columns {
