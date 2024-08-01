@@ -149,7 +149,7 @@ func (*ImplProjection) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (m
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	logicProj := expr.ExprNode.(*plannercore.LogicalProjection)
+	logicProj := expr.ExprNode.(*logicalop.LogicalProjection)
 	childProp, ok := logicProj.TryToGetChildProp(reqProp)
 	if !ok {
 		return nil, nil

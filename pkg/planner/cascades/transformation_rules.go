@@ -544,7 +544,7 @@ func NewRulePushSelDownProjection() Transformation {
 // 3. just keep unchanged.
 func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
 	for _, expr := range proj.Exprs {
@@ -775,7 +775,7 @@ func NewRulePushLimitDownProjection() Transformation {
 
 // Match implements Transformation interface.
 func (*PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
-	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
 			return false
@@ -788,7 +788,7 @@ func (*PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
 // This rule tries to pushes the Limit through Projection.
 func (*PushLimitDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	projExpr := memo.NewGroupExpr(proj)
@@ -1164,9 +1164,9 @@ func NewRuleMergeAdjacentProjection() Transformation {
 // It will transform `proj->proj->x` to `proj->x`
 // or just keep the adjacent projections unchanged.
 func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	childGroup := old.Children[0].Group
-	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	child := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	if expression.ExprsHasSideEffects(child.Exprs) {
 		return nil, false, false, nil
 	}
@@ -1178,7 +1178,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		}
 	}
 
-	newProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.QueryBlockOffset())
+	newProj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.QueryBlockOffset())
 	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
@@ -1293,7 +1293,7 @@ func NewRulePushTopNDownProjection() Transformation {
 
 // Match implements Transformation interface.
 func (*PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
-	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
 			return false
@@ -1306,7 +1306,7 @@ func (*PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
 // This rule tries to pushes the TopN through Projection.
 func (*PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	ctx := topN.SCtx()
@@ -1518,7 +1518,7 @@ func NewRuleMergeAggregationProjection() Transformation {
 
 // Match implements Transformation interface.
 func (*MergeAggregationProjection) Match(old *memo.ExprIter) bool {
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	return !expression.ExprsHasSideEffects(proj.Exprs)
 }
 
@@ -1526,7 +1526,7 @@ func (*MergeAggregationProjection) Match(old *memo.ExprIter) bool {
 // It will transform `Aggregation->Projection->X` to `Aggregation->X`.
 func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	oldAgg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].GetExpr().Schema()
 
 	ctx := oldAgg.SCtx()
@@ -2008,7 +2008,7 @@ func (*EliminateOuterJoinBelowProjection) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to eliminate outer join which below projection.
 func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	joinExpr := old.Children[0].GetExpr()
 	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
 
@@ -2258,7 +2258,7 @@ func (*InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*m
 	for i := range oldTopNSchema.Columns {
 		topProjExprs[i] = oldTopNSchema.Columns[i]
 	}
-	topProj := plannercore.LogicalProjection{
+	topProj := logicalop.LogicalProjection{
 		Exprs: topProjExprs,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
 	topProj.SetSchema(oldTopNSchema)
@@ -2285,7 +2285,7 @@ func (*InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*m
 		bottomProjSchema = append(bottomProjSchema, newCol)
 		newByItems = append(newByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
 	}
-	bottomProj := plannercore.LogicalProjection{
+	bottomProj := logicalop.LogicalProjection{
 		Exprs: bottomProjExprs,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
 	newSchema := expression.NewSchema(bottomProjSchema...)
@@ -2408,7 +2408,7 @@ func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*me
 	}
 
 	// Construct GroupExpr, Group (Agg -> Proj -> Child).
-	proj := plannercore.LogicalProjection{
+	proj := logicalop.LogicalProjection{
 		Exprs: projExprs,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	projSchema := expression.NewSchema(projSchemaCols...)

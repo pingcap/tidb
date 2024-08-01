@@ -240,7 +240,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		case *LogicalTableScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
-		case *LogicalProjection:
+		case *logicalop.LogicalProjection:
 			// Schema change from children to self.
 			schema := x.Schema()
 			for i, expr := range x.Exprs {

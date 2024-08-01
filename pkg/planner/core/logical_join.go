@@ -1574,7 +1574,7 @@ func (p *LogicalJoin) updateEQCond() {
 				needRProj = needRProj || !rOk
 			}
 
-			var lProj, rProj *LogicalProjection
+			var lProj, rProj *logicalop.LogicalProjection
 			if needLProj {
 				lProj = p.getProj(0)
 			}
@@ -1584,10 +1584,10 @@ func (p *LogicalJoin) updateEQCond() {
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
 				if lProj != nil {
-					lKey = lProj.appendExpr(lKey)
+					lKey = lProj.AppendExpr(lKey)
 				}
 				if rProj != nil {
-					rKey = rProj.appendExpr(rKey)
+					rKey = rProj.AppendExpr(rKey)
 				}
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 				if isNA {
@@ -1630,13 +1630,13 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
+func (p *LogicalJoin) getProj(idx int) *logicalop.LogicalProjection {
 	child := p.Children()[idx]
-	proj, ok := child.(*LogicalProjection)
+	proj, ok := child.(*logicalop.LogicalProjection)
 	if ok {
 		return proj
 	}
-	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.QueryBlockOffset())
+	proj = logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.QueryBlockOffset())
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}

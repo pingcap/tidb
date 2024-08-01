@@ -83,7 +83,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandJoin
 	case *plannercore.LogicalAggregation:
 		return OperandAggregation
-	case *plannercore.LogicalProjection:
+	case *logicalop.LogicalProjection:
 		return OperandProjection
 	case *plannercore.LogicalSelection:
 		return OperandSelection

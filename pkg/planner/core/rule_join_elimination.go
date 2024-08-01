@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
@@ -212,7 +213,7 @@ func (o *outerJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	}
 
 	switch x := p.(type) {
-	case *LogicalProjection:
+	case *logicalop.LogicalProjection:
 		parentCols = parentCols[:0]
 		for _, expr := range x.Exprs {
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)

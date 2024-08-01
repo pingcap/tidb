@@ -59,7 +59,7 @@ func needIncludeChildrenString(plan base.Plan) bool {
 
 func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
-	case *LogicalProjection:
+	case *logicalop.LogicalProjection:
 		strs = append(strs, "{"+x.FDs().String()+"}")
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
@@ -236,7 +236,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
-	case *LogicalProjection, *PhysicalProjection:
+	case *logicalop.LogicalProjection, *PhysicalProjection:
 		str = "Projection"
 	case *logicalop.LogicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
