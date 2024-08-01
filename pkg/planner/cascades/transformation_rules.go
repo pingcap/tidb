@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
@@ -1478,7 +1479,7 @@ func (*MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	childGroups := old.Children[0].GetExpr().Children
 
 	if child.Count <= topN.Offset {
-		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
+		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
 		tableDual.SetSchema(old.GetExpr().Schema())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
@@ -1714,7 +1715,7 @@ func (*MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gro
 	childGroups := old.Children[0].GetExpr().Children
 
 	if child.Count <= limit.Offset {
-		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
+		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
 		tableDual.SetSchema(old.GetExpr().Schema())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
@@ -1757,7 +1758,7 @@ func (*TransformLimitToTableDual) Match(expr *memo.ExprIter) bool {
 // This rule tries to convert limit to tableDual.
 func (*TransformLimitToTableDual) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
-	tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(limit.SCtx(), limit.QueryBlockOffset())
+	tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(limit.SCtx(), limit.QueryBlockOffset())
 	tableDual.SetSchema(old.GetExpr().Schema())
 	tableDualExpr := memo.NewGroupExpr(tableDual)
 	return []*memo.GroupExpr{tableDualExpr}, true, true, nil

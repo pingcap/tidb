@@ -29,7 +29,7 @@ func TestGetOperand(t *testing.T) {
 	require.Equal(t, OperandSelection, GetOperand(&plannercore.LogicalSelection{}))
 	require.Equal(t, OperandApply, GetOperand(&plannercore.LogicalApply{}))
 	require.Equal(t, OperandMaxOneRow, GetOperand(&logicalop.LogicalMaxOneRow{}))
-	require.Equal(t, OperandTableDual, GetOperand(&plannercore.LogicalTableDual{}))
+	require.Equal(t, OperandTableDual, GetOperand(&logicalop.LogicalTableDual{}))
 	require.Equal(t, OperandDataSource, GetOperand(&plannercore.DataSource{}))
 	require.Equal(t, OperandUnionScan, GetOperand(&plannercore.LogicalUnionScan{}))
 	require.Equal(t, OperandUnionAll, GetOperand(&plannercore.LogicalUnionAll{}))

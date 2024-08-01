@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
@@ -62,6 +63,11 @@ func CloneExprs(exprs []expression.Expression) []expression.Expression {
 	return cloned
 }
 
+// CloneExpressions uses CloneExprs to clone a slice of expression.Expression.
+func CloneExpressions(exprs []expression.Expression) []expression.Expression {
+	return CloneExprs(exprs)
+}
+
 // CloneScalarFunctions uses (*ScalarFunction).Clone to clone a slice of *ScalarFunction.
 func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
 	if scalarFuncs == nil {
@@ -90,6 +96,59 @@ func CloneCols(cols []*expression.Column) []*expression.Column {
 	return cloned
 }
 
+// CloneColumns uses CloneCols to clone a slice of expression.Column.
+func CloneColumns(cols []*expression.Column) []*expression.Column {
+	return CloneCols(cols)
+}
+
+// CloneConstants uses (*Constant).Clone to clone a slice of *Constant.
+func CloneConstants(constants []*expression.Constant) []*expression.Constant {
+	if constants == nil {
+		return nil
+	}
+	cloned := make([]*expression.Constant, 0, len(constants))
+	for _, c := range constants {
+		cloned = append(cloned, c.Clone().(*expression.Constant))
+	}
+	return cloned
+}
+
+// CloneConstant2D uses CloneConstants to clone a 2D slice of *Constant.
+func CloneConstant2D(constants [][]*expression.Constant) [][]*expression.Constant {
+	if constants == nil {
+		return nil
+	}
+	cloned := make([][]*expression.Constant, 0, len(constants))
+	for _, c := range constants {
+		cloned = append(cloned, CloneConstants(c))
+	}
+	return cloned
+}
+
+// CloneDatums uses Datum.Clone to clone a slice of Datum.
+func CloneDatums(datums []types.Datum) []types.Datum {
+	if datums == nil {
+		return nil
+	}
+	cloned := make([]types.Datum, 0, len(datums))
+	for _, d := range datums {
+		cloned = append(cloned, *d.Clone())
+	}
+	return cloned
+}
+
+// CloneDatum2D uses CloneDatums to clone a 2D slice of Datum.
+func CloneDatum2D(datums [][]types.Datum) [][]types.Datum {
+	if datums == nil {
+		return nil
+	}
+	cloned := make([][]types.Datum, 0, len(datums))
+	for _, d := range datums {
+		cloned = append(cloned, CloneDatums(d))
+	}
+	return cloned
+}
+
 // CloneColInfos uses (*ColumnInfo).Clone to clone a slice of *ColumnInfo.
 func CloneColInfos(cols []*model.ColumnInfo) []*model.ColumnInfo {
 	if cols == nil {
@@ -114,8 +173,8 @@ func CloneRanges(ranges []*ranger.Range) []*ranger.Range {
 	return cloned
 }
 
-// CloneByItems uses (*ByItems).Clone to clone a slice of *ByItems.
-func CloneByItems(byItems []*ByItems) []*ByItems {
+// CloneByItemss uses (*ByItems).Clone to clone a slice of *ByItems.
+func CloneByItemss(byItems []*ByItems) []*ByItems {
 	if byItems == nil {
 		return nil
 	}
@@ -126,14 +185,26 @@ func CloneByItems(byItems []*ByItems) []*ByItems {
 	return cloned
 }
 
-// CloneSortItem uses SortItem.Clone to clone a slice of SortItem.
-func CloneSortItem(items []property.SortItem) []property.SortItem {
+// CloneSortItems uses SortItem.Clone to clone a slice of SortItem.
+func CloneSortItems(items []property.SortItem) []property.SortItem {
 	if items == nil {
 		return nil
 	}
 	cloned := make([]property.SortItem, 0, len(items))
 	for _, item := range items {
 		cloned = append(cloned, item.Clone())
+	}
+	return cloned
+}
+
+// CloneHandles uses Handle.Copy to clone a slice of Handle.
+func CloneHandles(handles []kv.Handle) []kv.Handle {
+	if handles == nil {
+		return nil
+	}
+	cloned := make([]kv.Handle, 0, len(handles))
+	for _, h := range handles {
+		cloned = append(cloned, h.Copy())
 	}
 	return cloned
 }
