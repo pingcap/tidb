@@ -1963,7 +1963,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath
 func compareIndexJoinChoice(best, current *indexJoinPathResult) (curIsBetter bool) {
 	// Notice that there may be the cases like `t1.a = t2.a and b > 2 and b < 1`, so ranges can be nil though the conditions are valid.
 	// Obviously when the range is nil, we don't need index join.
-	if len(current.chosenRanges.Range()) == 0 {
+	if current == nil || len(current.chosenRanges.Range()) == 0 {
 		return false
 	}
 	if best == nil {
