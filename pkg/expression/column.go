@@ -418,6 +418,21 @@ func (col *Column) String() string {
 	return col.string(errors.RedactLogDisable)
 }
 
+// StringForExplain implements Explainable interface.
+func (col *Column) StringForExplain(_ ParamValues, redact string) string {
+	if col.IsHidden && col.VirtualExpr != nil {
+		// A hidden column without virtual expression indicates it's a stored type.
+		// a virtual column should be able to be stringified without context.
+		return col.VirtualExpr.StringForExplain(exprctx.EmptyParamValues, redact)
+	}
+	if col.OrigName != "" {
+		return col.OrigName
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	return builder.String()
+}
+
 func (col *Column) string(redact string) string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.

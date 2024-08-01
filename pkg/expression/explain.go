@@ -184,14 +184,14 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 	for i, expr := range exprs {
 		switch expr.(type) {
 		case *Column, *CorrelatedColumn:
-			builder.WriteString(expr.StringWithCtx(ctx, redactMode))
+			builder.WriteString(expr.StringForExplain(ctx, redactMode))
 			if expr.StringWithCtx(ctx, redactMode) != schema.Columns[i].StringWithCtx(ctx, redactMode) {
 				// simple col projected again with another uniqueID without origin name.
 				builder.WriteString("->")
 				builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 			}
 		case *Constant:
-			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
+			v := expr.StringForExplain(ctx, errors.RedactLogDisable)
 			length := 64
 			if len(v) < length {
 				redact.WriteRedact(builder, v, redactMode)
@@ -200,11 +200,11 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 				fmt.Fprintf(builder, "(len:%d)", len(v))
 			}
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
+			builder.WriteString(schema.Columns[i].StringForExplain(ctx, redactMode))
 		default:
-			builder.WriteString(expr.StringWithCtx(ctx, redactMode))
+			builder.WriteString(expr.StringForExplain(ctx, redactMode))
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
+			builder.WriteString(schema.Columns[i].StringForExplain(ctx, redactMode))
 		}
 		if i+1 < len(exprs) {
 			builder.WriteString(", ")

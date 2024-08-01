@@ -117,6 +117,24 @@ func TestVectorColumnInfo(t *testing.T) {
 	tk.MustGetErrMsg("create table t(embedding VECTOR<FLOAT>(16001))", "vector cannot have more than 16000 dimensions")
 }
 
+func TestVectorConstantExplain(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
+	tk.MustExec("CREATE TABLE t(c VECTOR);")
+	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
+		"Projection_3 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
+		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
+		"Projection_3 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
+		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+}
+
 func TestFixedVector(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

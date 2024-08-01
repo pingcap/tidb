@@ -152,6 +152,29 @@ func (sf *ScalarFunction) String() string {
 	return sf.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)
 }
 
+// StringForExplain implements Explainable interface.
+func (sf *ScalarFunction) StringForExplain(ctx ParamValues, redact string) string {
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
+	switch sf.FuncName.L {
+	case ast.Cast:
+		for _, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.StringForExplain(ctx, redact))
+			buffer.WriteString(", ")
+			buffer.WriteString(sf.RetType.String())
+		}
+	default:
+		for i, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.StringForExplain(ctx, redact))
+			if i+1 != len(sf.GetArgs()) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
 // typeInferForNull infers the NULL constants field type and set the field type
 // of NULL constant same as other non-null operands.
 func typeInferForNull(ctx EvalContext, args []Expression) {

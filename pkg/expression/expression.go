@@ -166,9 +166,16 @@ const (
 	ConstStrict
 )
 
+// Explainable is the interface for expressions to output themselves in EXPLAIN context.
+type Explainable interface {
+	// StringForExplain
+	StringForExplain(ParamValues, string) string
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	VecExpr
+	Explainable
 	CollationInfo
 
 	Traverse(TraverseAction) Expression
