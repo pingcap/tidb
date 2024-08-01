@@ -23,7 +23,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,7 +79,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
-	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -667,25 +665,6 @@ func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, 
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
-}
-
-func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef *model.PolicyRefInfo) (*model.PolicyRefInfo, error) {
-	if placementPolicyRef == nil {
-		return nil, nil
-	}
-
-	if placementPolicyRef.Name.L == defaultPlacementPolicyName {
-		// When policy name is 'default', it means to remove the placement settings
-		return nil, nil
-	}
-
-	policy, ok := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().PolicyByName(placementPolicyRef.Name)
-	if !ok {
-		return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
-	}
-
-	placementPolicyRef.ID = policy.ID
-	return placementPolicyRef, nil
 }
 
 func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) error {
@@ -1893,139 +1872,6 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 		return errors.Trace(errors.New("unknown placement policy option"))
 	}
 	return nil
-}
-
-// SetDirectResourceGroupSettings tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast.ResourceGroupOption) error {
-	resourceGroupSettings := groupInfo.ResourceGroupSettings
-	switch opt.Tp {
-	case ast.ResourceRURate:
-		return SetDirectResourceGroupRUSecondOption(resourceGroupSettings, opt.UintValue, opt.BoolValue)
-	case ast.ResourcePriority:
-		resourceGroupSettings.Priority = opt.UintValue
-	case ast.ResourceUnitCPU:
-		resourceGroupSettings.CPULimiter = opt.StrValue
-	case ast.ResourceUnitIOReadBandwidth:
-		resourceGroupSettings.IOReadBandwidth = opt.StrValue
-	case ast.ResourceUnitIOWriteBandwidth:
-		resourceGroupSettings.IOWriteBandwidth = opt.StrValue
-	case ast.ResourceBurstableOpiton:
-		// Some about BurstLimit(b):
-		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
-		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
-		//   - If b > 0, that means the limiter is limited capacity. (current not used).
-		limit := int64(0)
-		if opt.BoolValue {
-			limit = -1
-		}
-		resourceGroupSettings.BurstLimit = limit
-	case ast.ResourceGroupRunaway:
-		if len(opt.RunawayOptionList) == 0 {
-			resourceGroupSettings.Runaway = nil
-		}
-		for _, opt := range opt.RunawayOptionList {
-			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt); err != nil {
-				return err
-			}
-		}
-	case ast.ResourceGroupBackground:
-		if groupInfo.Name.L != rg.DefaultResourceGroupName {
-			// FIXME: this is a temporary restriction, so we don't add a error-code for it.
-			return errors.New("unsupported operation. Currently, only the default resource group support change background settings")
-		}
-		if len(opt.BackgroundOptions) == 0 {
-			resourceGroupSettings.Background = nil
-		}
-		for _, opt := range opt.BackgroundOptions {
-			if err := SetDirectResourceGroupBackgroundOption(resourceGroupSettings, opt); err != nil {
-				return err
-			}
-		}
-	default:
-		return errors.Trace(errors.New("unknown resource unit type"))
-	}
-	return nil
-}
-
-// SetDirectResourceGroupRUSecondOption tries to set ru second part of the ResourceGroupSettings.
-func SetDirectResourceGroupRUSecondOption(resourceGroupSettings *model.ResourceGroupSettings, intVal uint64, unlimited bool) error {
-	if unlimited {
-		resourceGroupSettings.RURate = uint64(math.MaxInt32)
-		resourceGroupSettings.BurstLimit = -1
-	} else {
-		resourceGroupSettings.RURate = intVal
-	}
-	return nil
-}
-
-// SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
-func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupRunawayOption) error {
-	if resourceGroupSettings.Runaway == nil {
-		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
-	}
-	settings := resourceGroupSettings.Runaway
-	switch opt.Tp {
-	case ast.RunawayRule:
-		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
-		dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
-		if err != nil {
-			return err
-		}
-		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
-	case ast.RunawayAction:
-		settings.Action = opt.ActionOption.Type
-	case ast.RunawayWatch:
-		settings.WatchType = opt.WatchOption.Type
-		if dur := opt.WatchOption.Duration; len(dur) > 0 {
-			dur, err := time.ParseDuration(dur)
-			if err != nil {
-				return err
-			}
-			settings.WatchDurationMs = dur.Milliseconds()
-		} else {
-			settings.WatchDurationMs = 0
-		}
-	default:
-		return errors.Trace(errors.New("unknown runaway option type"))
-	}
-	return nil
-}
-
-// SetDirectResourceGroupBackgroundOption set background configs of the ResourceGroupSettings.
-func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupBackgroundOption) error {
-	if resourceGroupSettings.Background == nil {
-		resourceGroupSettings.Background = &model.ResourceGroupBackgroundSettings{}
-	}
-	switch opt.Type {
-	case ast.BackgroundOptionTaskNames:
-		jobTypes, err := parseBackgroundJobTypes(opt.StrValue)
-		if err != nil {
-			return err
-		}
-		resourceGroupSettings.Background.JobTypes = jobTypes
-	default:
-		return errors.Trace(errors.New("unknown background option type"))
-	}
-	return nil
-}
-
-func parseBackgroundJobTypes(t string) ([]string, error) {
-	if len(t) == 0 {
-		return []string{}, nil
-	}
-
-	segs := strings.Split(t, ",")
-	res := make([]string, 0, len(segs))
-	for _, s := range segs {
-		ty := strings.ToLower(strings.TrimSpace(s))
-		if len(ty) > 0 {
-			if !slices.Contains(kvutil.ExplicitTypeList, ty) {
-				return nil, infoschema.ErrResourceGroupInvalidBackgroundTaskName.GenWithStackByArgs(ty)
-			}
-			res = append(res, ty)
-		}
-	}
-	return res, nil
 }
 
 func shardingBits(tblInfo *model.TableInfo) uint64 {
@@ -6310,125 +6156,6 @@ func (e *executor) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIde
 	return errors.Trace(err)
 }
 
-func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.PolicyInfo, error) {
-	policyInfo := &model.PolicyInfo{PlacementSettings: &model.PlacementSettings{}}
-	policyInfo.Name = name
-	for _, opt := range options {
-		err := SetDirectPlacementOpt(policyInfo.PlacementSettings, opt.Tp, opt.StrValue, opt.UintValue)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return policyInfo, nil
-}
-
-func removeTablePlacement(tbInfo *model.TableInfo) bool {
-	hasPlacementSettings := false
-	if tbInfo.PlacementPolicyRef != nil {
-		tbInfo.PlacementPolicyRef = nil
-		hasPlacementSettings = true
-	}
-
-	if removePartitionPlacement(tbInfo.Partition) {
-		hasPlacementSettings = true
-	}
-
-	return hasPlacementSettings
-}
-
-func removePartitionPlacement(partInfo *model.PartitionInfo) bool {
-	if partInfo == nil {
-		return false
-	}
-
-	hasPlacementSettings := false
-	for i := range partInfo.Definitions {
-		def := &partInfo.Definitions[i]
-		if def.PlacementPolicyRef != nil {
-			def.PlacementPolicyRef = nil
-			hasPlacementSettings = true
-		}
-	}
-	return hasPlacementSettings
-}
-
-func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error {
-	if dbInfo.PlacementPolicyRef == nil {
-		return nil
-	}
-
-	sessVars := ctx.GetSessionVars()
-	if sessVars.PlacementMode == variable.PlacementModeIgnore {
-		dbInfo.PlacementPolicyRef = nil
-		sessVars.StmtCtx.AppendNote(
-			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		)
-		return nil
-	}
-
-	var err error
-	dbInfo.PlacementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, dbInfo.PlacementPolicyRef)
-	return err
-}
-
-func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	sessVars := ctx.GetSessionVars()
-	if sessVars.PlacementMode == variable.PlacementModeIgnore && removeTablePlacement(tbInfo) {
-		sessVars.StmtCtx.AppendNote(
-			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		)
-		return nil
-	}
-
-	var err error
-	tbInfo.PlacementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, tbInfo.PlacementPolicyRef)
-	if err != nil {
-		return err
-	}
-
-	if tbInfo.Partition != nil {
-		for i := range tbInfo.Partition.Definitions {
-			partition := &tbInfo.Partition.Definitions[i]
-			partition.PlacementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, partition.PlacementPolicyRef)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionInfo) error {
-	sessVars := ctx.GetSessionVars()
-	if sessVars.PlacementMode == variable.PlacementModeIgnore && removePartitionPlacement(partInfo) {
-		sessVars.StmtCtx.AppendNote(
-			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		)
-		return nil
-	}
-
-	var err error
-	for i := range partInfo.Definitions {
-		partition := &partInfo.Definitions[i]
-		partition.PlacementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, partition.PlacementPolicyRef)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
-	sessVars := ctx.GetSessionVars()
-	if sessVars.PlacementMode == variable.PlacementModeIgnore {
-		sessVars.StmtCtx.AppendNote(
-			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		)
-		return true
-	}
-	return false
-}
-
 // AddResourceGroup implements the DDL interface, creates a resource group.
 func (e *executor) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
@@ -6447,7 +6174,7 @@ func (e *executor) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateReso
 		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
-	if err := e.checkResourceGroupValidation(groupInfo); err != nil {
+	if err := checkResourceGroupValidation(groupInfo); err != nil {
 		return err
 	}
 
@@ -6470,11 +6197,6 @@ func (e *executor) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateReso
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = e.DoDDLJob(ctx, job)
-	return err
-}
-
-func (*executor) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
-	_, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
 	return err
 }
 
@@ -6523,21 +6245,6 @@ func (e *executor) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResou
 	return err
 }
 
-func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
-	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
-	if oldGroup.ResourceGroupSettings != nil {
-		*groupInfo.ResourceGroupSettings = *oldGroup.ResourceGroupSettings
-	}
-	for _, opt := range options {
-		err := SetDirectResourceGroupSettings(groupInfo, opt)
-		if err != nil {
-			return nil, err
-		}
-	}
-	groupInfo.ResourceGroupSettings.Adjust()
-	return groupInfo, nil
-}
-
 // AlterResourceGroup implements the DDL interface.
 func (e *executor) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
@@ -6557,7 +6264,7 @@ func (e *executor) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterRes
 		return errors.Trace(err)
 	}
 
-	if err := e.checkResourceGroupValidation(newGroupInfo); err != nil {
+	if err := checkResourceGroupValidation(newGroupInfo); err != nil {
 		return err
 	}
 
