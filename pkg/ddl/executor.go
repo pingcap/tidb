@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -66,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -74,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -939,26 +936,6 @@ func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
 	return false
 }
 
-func setEmptyCheckConstraintName(tableLowerName string, namesMap map[string]bool, constrs []*ast.Constraint) {
-	cnt := 1
-	constraintPrefix := tableLowerName + "_chk_"
-	for _, constr := range constrs {
-		if constr.Name == "" {
-			constrName := fmt.Sprintf("%s%d", constraintPrefix, cnt)
-			for {
-				// loop until find constrName that haven't been used.
-				if !namesMap[constrName] {
-					namesMap[constrName] = true
-					break
-				}
-				cnt++
-				constrName = fmt.Sprintf("%s%d", constraintPrefix, cnt)
-			}
-			constr.Name = constrName
-		}
-	}
-}
-
 // checkInvisibleIndexOnPK check if primary key is invisible index.
 // Note: PKIsHandle == true means the table already has a visible primary key,
 // we do not need do a check for this case and return directly,
@@ -972,32 +949,6 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 		return dbterror.ErrPKIndexCantBeInvisible
 	}
 	return nil
-}
-
-func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	var err error
-	if err = checkPartitionNameUnique(tbInfo.Partition); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkAddPartitionTooManyPartitions(uint64(len(tbInfo.Partition.Definitions))); err != nil {
-		return err
-	}
-	if err = checkAddPartitionOnTemporaryMode(tbInfo); err != nil {
-		return err
-	}
-	if err = checkPartitionColumnsUnique(tbInfo); err != nil {
-		return err
-	}
-
-	switch tbInfo.Partition.Type {
-	case model.PartitionTypeRange:
-		err = checkPartitionByRange(ctx, tbInfo)
-	case model.PartitionTypeHash, model.PartitionTypeKey:
-		err = checkPartitionByHash(ctx, tbInfo)
-	case model.PartitionTypeList:
-		err = checkPartitionByList(ctx, tbInfo)
-	}
-	return errors.Trace(err)
 }
 
 func (e *executor) assignPartitionIDs(defs []model.PartitionDefinition) error {
@@ -1612,177 +1563,6 @@ func (e *executor) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (er
 	}
 
 	return e.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, WithOnExist(onExist))
-}
-
-func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	return checkNoHashPartitions(ctx, tbInfo.Partition.Num)
-}
-
-// checkPartitionByRange checks validity of a "BY RANGE" partition.
-func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	failpoint.Inject("CheckPartitionByRangeErr", func() {
-		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryMemoryExceeded)
-		panic(ctx.GetSessionVars().SQLKiller.HandleSignal())
-	})
-	pi := tbInfo.Partition
-
-	if len(pi.Columns) == 0 {
-		return checkRangePartitionValue(ctx, tbInfo)
-	}
-
-	return checkRangeColumnsPartitionValue(ctx, tbInfo)
-}
-
-// checkPartitionByList checks validity of a "BY LIST" partition.
-func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	return checkListPartitionValue(ctx.GetExprCtx(), tbInfo)
-}
-
-func isValidKeyPartitionColType(fieldType types.FieldType) bool {
-	switch fieldType.GetType() {
-	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry, mysql.TypeTiDBVectorFloat32:
-		return false
-	default:
-		return true
-	}
-}
-
-func isColTypeAllowedAsPartitioningCol(partType model.PartitionType, fieldType types.FieldType) bool {
-	// For key partition, the permitted partition field types can be all field types except
-	// BLOB, JSON, Geometry
-	if partType == model.PartitionTypeKey {
-		return isValidKeyPartitionColType(fieldType)
-	}
-	// The permitted data types are shown in the following list:
-	// All integer types
-	// DATE and DATETIME
-	// CHAR, VARCHAR, BINARY, and VARBINARY
-	// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
-	// Note that also TIME is allowed in MySQL. Also see https://bugs.mysql.com/bug.php?id=84362
-	switch fieldType.GetType() {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
-	case mysql.TypeVarchar, mysql.TypeString:
-	default:
-		return false
-	}
-	return true
-}
-
-func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
-	for _, col := range tbInfo.Partition.Columns {
-		colInfo := tbInfo.FindPublicColumnByName(col.L)
-		if colInfo == nil {
-			return errors.Trace(dbterror.ErrFieldNotFoundPart)
-		}
-		if !isColTypeAllowedAsPartitioningCol(tbInfo.Partition.Type, colInfo.FieldType) {
-			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.O)
-		}
-	}
-	return nil
-}
-
-func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	// Range columns partition key supports multiple data types with integer、datetime、string.
-	pi := tbInfo.Partition
-	defs := pi.Definitions
-	if len(defs) < 1 {
-		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("RANGE")
-	}
-
-	curr := &defs[0]
-	if len(curr.LessThan) != len(pi.Columns) {
-		return errors.Trace(ast.ErrPartitionColumnList)
-	}
-	var prev *model.PartitionDefinition
-	for i := 1; i < len(defs); i++ {
-		prev, curr = curr, &defs[i]
-		succ, err := checkTwoRangeColumns(ctx, curr, prev, pi, tbInfo)
-		if err != nil {
-			return err
-		}
-		if !succ {
-			return errors.Trace(dbterror.ErrRangeNotIncreasing)
-		}
-	}
-	return nil
-}
-
-func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDefinition, pi *model.PartitionInfo, tbInfo *model.TableInfo) (bool, error) {
-	if len(curr.LessThan) != len(pi.Columns) {
-		return false, errors.Trace(ast.ErrPartitionColumnList)
-	}
-	for i := 0; i < len(pi.Columns); i++ {
-		// Special handling for MAXVALUE.
-		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) && !strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
-			// If current is maxvalue, it certainly >= previous.
-			return true, nil
-		}
-		if strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
-			// Current is not maxvalue, and previous is maxvalue.
-			return false, nil
-		}
-
-		// The tuples of column values used to define the partitions are strictly increasing:
-		// PARTITION p0 VALUES LESS THAN (5,10,'ggg')
-		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
-		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
-		colInfo := findColumnByName(pi.Columns[i].L, tbInfo)
-		cmp, err := parseAndEvalBoolExpr(ctx.GetExprCtx(), curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
-		if err != nil {
-			return false, err
-		}
-
-		if cmp > 0 {
-			return true, nil
-		}
-
-		if cmp < 0 {
-			return false, nil
-		}
-	}
-	return false, nil
-}
-
-// equal, return 0
-// greater, return 1
-// less, return -1
-func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (int64, error) {
-	lexpr, err := expression.ParseSimpleExpr(ctx, l, expression.WithTableInfo("", tbInfo), expression.WithCastExprTo(&colInfo.FieldType))
-	if err != nil {
-		return 0, err
-	}
-	rexpr, err := expression.ParseSimpleExpr(ctx, r, expression.WithTableInfo("", tbInfo), expression.WithCastExprTo(&colInfo.FieldType))
-	if err != nil {
-		return 0, err
-	}
-
-	e, err := expression.NewFunctionBase(ctx, ast.EQ, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
-	if err != nil {
-		return 0, err
-	}
-	e.SetCharsetAndCollation(colInfo.GetCharset(), colInfo.GetCollate())
-	res, _, err1 := e.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
-	if err1 != nil {
-		return 0, err1
-	}
-	if res == 1 {
-		return 0, nil
-	}
-
-	e, err = expression.NewFunctionBase(ctx, ast.GT, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
-	if err != nil {
-		return 0, err
-	}
-	e.SetCharsetAndCollation(colInfo.GetCharset(), colInfo.GetCollate())
-	res, _, err1 = e.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
-	if err1 != nil {
-		return 0, err1
-	}
-	if res > 0 {
-		return 1, nil
-	}
-	return -1, nil
 }
 
 func checkCharsetAndCollation(cs string, co string) error {

@@ -1006,6 +1006,26 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, constraintT
 	return nil
 }
 
+func setEmptyCheckConstraintName(tableLowerName string, namesMap map[string]bool, constrs []*ast.Constraint) {
+	cnt := 1
+	constraintPrefix := tableLowerName + "_chk_"
+	for _, constr := range constrs {
+		if constr.Name == "" {
+			constrName := fmt.Sprintf("%s%d", constraintPrefix, cnt)
+			for {
+				// loop until find constrName that haven't been used.
+				if !namesMap[constrName] {
+					namesMap[constrName] = true
+					break
+				}
+				cnt++
+				constrName = fmt.Sprintf("%s%d", constraintPrefix, cnt)
+			}
+			constr.Name = constrName
+		}
+	}
+}
+
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
