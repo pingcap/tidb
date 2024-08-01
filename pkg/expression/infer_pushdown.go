@@ -121,10 +121,6 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 
 func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreType, canEnumPush bool) bool {
 	pc := ctx.PbConverter()
-	if expr.GetType(ctx.EvalCtx()).GetType() == mysql.TypeTiDBVectorFloat32 {
-		// For both TiKV and TiFlash, currently Vector cannot be pushed.
-		return false
-	}
 	if storeType == kv.TiFlash {
 		switch expr.GetType(ctx.EvalCtx()).GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
