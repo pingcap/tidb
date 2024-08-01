@@ -290,7 +290,7 @@ type ImplSort struct {
 
 // Match implements ImplementationRule match interface.
 func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	ls := expr.ExprNode.(*plannercore.LogicalSort)
+	ls := expr.ExprNode.(*logicalop.LogicalSort)
 	return plannercore.MatchItems(prop, ls.ByItems)
 }
 
@@ -298,7 +298,7 @@ func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 // If all of the sort items are columns, generate a NominalSort, otherwise
 // generate a PhysicalSort.
 func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	ls := expr.ExprNode.(*plannercore.LogicalSort)
+	ls := expr.ExprNode.(*logicalop.LogicalSort)
 	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
 		ns := plannercore.NominalSort{}.Init(
@@ -356,7 +356,7 @@ func (*ImplLimit) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (mat
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
-	logicalLimit := expr.ExprNode.(*plannercore.LogicalLimit)
+	logicalLimit := expr.ExprNode.(*logicalop.LogicalLimit)
 	newProp := &property.PhysicalProperty{ExpectedCnt: float64(logicalLimit.Count + logicalLimit.Offset)}
 	physicalLimit := plannercore.PhysicalLimit{
 		Offset: logicalLimit.Offset,
@@ -373,7 +373,7 @@ type ImplTopN struct {
 
 // Match implements ImplementationRule Match interface.
 func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	topN := expr.ExprNode.(*logicalop.LogicalTopN)
 	if expr.Group.EngineType != pattern.EngineTiDB {
 		return prop.IsSortItemEmpty()
 	}
@@ -382,7 +382,7 @@ func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplTopN) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
-	lt := expr.ExprNode.(*plannercore.LogicalTopN)
+	lt := expr.ExprNode.(*logicalop.LogicalTopN)
 	resultProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	topN := plannercore.PhysicalTopN{
 		ByItems: lt.ByItems,
@@ -406,14 +406,14 @@ type ImplTopNAsLimit struct {
 
 // Match implements ImplementationRule Match interface.
 func (*ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	topN := expr.ExprNode.(*logicalop.LogicalTopN)
 	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
 	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
-	lt := expr.ExprNode.(*plannercore.LogicalTopN)
+	lt := expr.ExprNode.(*logicalop.LogicalTopN)
 	newProp := &property.PhysicalProperty{ExpectedCnt: float64(lt.Count + lt.Offset)}
 	newProp.SortItems = make([]property.SortItem, len(lt.ByItems))
 	for i, item := range lt.ByItems {

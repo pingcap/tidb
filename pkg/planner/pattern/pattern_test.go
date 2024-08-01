@@ -33,10 +33,10 @@ func TestGetOperand(t *testing.T) {
 	require.Equal(t, OperandDataSource, GetOperand(&plannercore.DataSource{}))
 	require.Equal(t, OperandUnionScan, GetOperand(&plannercore.LogicalUnionScan{}))
 	require.Equal(t, OperandUnionAll, GetOperand(&plannercore.LogicalUnionAll{}))
-	require.Equal(t, OperandSort, GetOperand(&plannercore.LogicalSort{}))
-	require.Equal(t, OperandTopN, GetOperand(&plannercore.LogicalTopN{}))
+	require.Equal(t, OperandSort, GetOperand(&logicalop.LogicalSort{}))
+	require.Equal(t, OperandTopN, GetOperand(&logicalop.LogicalTopN{}))
 	require.Equal(t, OperandLock, GetOperand(&plannercore.LogicalLock{}))
-	require.Equal(t, OperandLimit, GetOperand(&plannercore.LogicalLimit{}))
+	require.Equal(t, OperandLimit, GetOperand(&logicalop.LogicalLimit{}))
 }
 
 func TestOperandMatch(t *testing.T) {

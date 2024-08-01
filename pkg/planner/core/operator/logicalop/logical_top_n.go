@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
@@ -20,17 +20,17 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
-	logicalop.BaseLogicalPlan
+	BaseLogicalPlan
 
 	ByItems []*util.ByItems
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
@@ -42,7 +42,7 @@ type LogicalTopN struct {
 
 // Init initializes LogicalTopN.
 func (lt LogicalTopN) Init(ctx base.PlanContext, offset int) *LogicalTopN {
-	lt.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTopN, &lt, offset)
+	lt.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeTopN, &lt, offset)
 	return &lt
 }
 
@@ -52,11 +52,11 @@ func (lt LogicalTopN) Init(ctx base.PlanContext, offset int) *LogicalTopN {
 func (lt *LogicalTopN) ExplainInfo() string {
 	ectx := lt.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
-	buffer = explainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
+	buffer = util.ExplainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
 	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
 		buffer.WriteString("order by ")
 	}
-	buffer = explainByItems(lt.SCtx().GetExprCtx().GetEvalCtx(), buffer, lt.ByItems)
+	buffer = util.ExplainByItems(lt.SCtx().GetExprCtx().GetEvalCtx(), buffer, lt.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
 	return buffer.String()
 }
@@ -82,7 +82,7 @@ func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column)
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	child := lt.Children()[0]
 	var cols []*expression.Column
-	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
+	lt.ByItems, cols = utilfuncp.PruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
 	lt.Children()[0], err = child.PruneColumns(parentUsedCols, opt)
@@ -119,7 +119,7 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 	if lt.StatsInfo() != nil {
 		return lt.StatsInfo(), nil
 	}
-	lt.SetStats(deriveLimitStats(childStats[0], float64(lt.Count)))
+	lt.SetStats(util.DeriveLimitStats(childStats[0], float64(lt.Count)))
 	return lt.StatsInfo(), nil
 }
 
@@ -136,10 +136,7 @@ func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (lt *LogicalTopN) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if MatchItems(prop, lt.ByItems) {
-		return append(getPhysTopN(lt, prop), getPhysLimits(lt, prop)...), true, nil
-	}
-	return nil, true, nil
+	return utilfuncp.ExhaustPhysicalPlans4LogicalTopN(lt, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -176,8 +173,8 @@ func (lt *LogicalTopN) GetPartitionBy() []property.SortItem {
 	return lt.PartitionBy
 }
 
-// isLimit checks if TopN is a limit plan.
-func (lt *LogicalTopN) isLimit() bool {
+// IsLimit checks if TopN is a limit plan.
+func (lt *LogicalTopN) IsLimit() bool {
 	return len(lt.ByItems) == 0
 }
 
@@ -185,7 +182,7 @@ func (lt *LogicalTopN) isLimit() bool {
 // AttachChild will tracer the children change while SetChild doesn't.
 func (lt *LogicalTopN) AttachChild(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// Remove this TopN if its child is a TableDual.
-	dual, isDual := p.(*logicalop.LogicalTableDual)
+	dual, isDual := p.(*LogicalTableDual)
 	if isDual {
 		numDualRows := uint64(dual.RowCount)
 		if numDualRows < lt.Offset {
@@ -196,7 +193,7 @@ func (lt *LogicalTopN) AttachChild(p base.LogicalPlan, opt *optimizetrace.Logica
 		return dual
 	}
 
-	if lt.isLimit() {
+	if lt.IsLimit() {
 		limit := LogicalLimit{
 			Count:            lt.Count,
 			Offset:           lt.Offset,
@@ -211,4 +208,14 @@ func (lt *LogicalTopN) AttachChild(p base.LogicalPlan, opt *optimizetrace.Logica
 	lt.SetChildren(p)
 	appendTopNPushDownTraceStep(lt, p, opt)
 	return lt
+}
+
+func appendTopNPushDownTraceStep(parent base.LogicalPlan, child base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
+	action := func() string {
+		return fmt.Sprintf("%v_%v is added as %v_%v's parent", parent.TP(), parent.ID(), child.TP(), child.ID())
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v is pushed down", parent.TP())
+	}
+	opt.AppendStepToCurrent(parent.ID(), parent.TP(), reason, action)
 }

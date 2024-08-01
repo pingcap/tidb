@@ -312,6 +312,9 @@ func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 
 // Copy implements the Handle interface.
 func (ch *CommonHandle) Copy() Handle {
+	if ch == nil {
+		return nil
+	}
 	encoded := make([]byte, len(ch.encoded))
 	copy(encoded, ch.encoded)
 	colEndOffsets := make([]uint16, len(ch.colEndOffsets))

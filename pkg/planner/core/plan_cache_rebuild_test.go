@@ -138,6 +138,14 @@ func TestPlanCacheClone(t *testing.T) {
 	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b<t3.b and t1.a<?'`,
 	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
+	// Limit
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? limit 1'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select b from t use index(b) where b<=? limit 10'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=? limit 100'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
 	// Sort
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? order by a'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
@@ -148,16 +156,27 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=? order by a+4'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
-	// TODO: PointGet doesn't support Clone
+	// TopN
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? order by a limit 5'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a>=? order by b limit 5'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(primary) where a<? and b<? order by a+b limit 5'`,
+		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=? order by a+4 limit 5'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
 	// PointPlan
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d=?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a in (?,?)'`,
-	//	`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d in (?,?)'`,
-	//	`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d=?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// BatchPointPlan
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a in (?,?)'`,
+		`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d in (?,?)'`,
+		`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 }
 
 func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exec1, exec2 string) {
