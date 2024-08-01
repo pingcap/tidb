@@ -3256,7 +3256,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = tbl.id
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, "", tblInfo)
+		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3289,7 +3289,7 @@ func InitMDLTable(store kv.Storage) error {
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = ddl.MDLTableID
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, "", tblInfo)
+		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

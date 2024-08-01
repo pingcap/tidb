@@ -17,6 +17,7 @@ package util
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"time"
 	"unsafe"
 
@@ -253,4 +254,16 @@ func GetMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
 		sortColOffsets = append(sortColOffsets, offset)
 	}
 	return sortColOffsets
+}
+
+// DeriveLimitStats derives the stats of the top-n plan.
+func DeriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
+	stats := &property.StatsInfo{
+		RowCount: math.Min(limitCount, childProfile.RowCount),
+		ColNDVs:  make(map[int64]float64, len(childProfile.ColNDVs)),
+	}
+	for id, c := range childProfile.ColNDVs {
+		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
+	}
+	return stats
 }
