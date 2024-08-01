@@ -372,7 +372,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		// We shallow copy the PhysicalCTE here because we don't want the probeParents (see comments in PhysicalPlan
 		// for details) to affect the row count display of the independent CTE plan tree.
 		copiedCTE := *plan
-		copiedCTE.probeParents = nil
+		copiedCTE.SetProbeParents(nil)
 		if info.isRoot {
 			// If it's executed in TiDB, we need to record it since we don't have producer and consumer
 			f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)

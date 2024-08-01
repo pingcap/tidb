@@ -83,11 +83,11 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalSelection)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalPlan = *basePlan
+	cloned.BasePhysicalPlan = *basePlan
 	cloned.Conditions = util.CloneExpressions(op.Conditions)
 	return cloned, true
 }
@@ -109,11 +109,11 @@ func (op *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.P
 func (op *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalSort)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalPlan = *basePlan
+	cloned.BasePhysicalPlan = *basePlan
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	return cloned, true
 }
@@ -122,11 +122,11 @@ func (op *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTopN)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalPlan = *basePlan
+	cloned.BasePhysicalPlan = *basePlan
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
 	return cloned, true

@@ -21,16 +21,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // AsSctx converts PlanContext to sessionctx.Context.
@@ -247,133 +242,6 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 	return res
 }
 
-type basePhysicalPlan struct {
-	baseimpl.Plan
-
-	childrenReqProps []*property.PhysicalProperty `plan-cache-clone:"shallow"`
-	self             base.PhysicalPlan
-	children         []base.PhysicalPlan
-
-	// used by the new cost interface
-	planCostInit bool
-	planCost     float64
-	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
-
-	// probeParents records the IndexJoins and Applys with this operator in their inner children.
-	// Please see comments in op.PhysicalPlan for details.
-	probeParents []base.PhysicalPlan `plan-cache-clone:"shallow"`
-
-	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
-	// 1. For ExchangeSender, means its output will be partitioned by hash key.
-	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
-	TiFlashFineGrainedShuffleStreamCount uint64
-}
-
-func (p *basePhysicalPlan) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, bool) {
-	cloned := new(basePhysicalPlan)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	cloned.self = newSelf
-	cloned.children = make([]base.PhysicalPlan, 0, len(p.children))
-	for _, child := range p.children {
-		clonedChild, ok := child.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		clonedPP, ok := clonedChild.(base.PhysicalPlan)
-		if !ok {
-			return nil, false
-		}
-		cloned.children = append(cloned.children, clonedPP)
-	}
-	return cloned, true
-}
-
-func (p *basePhysicalPlan) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
-	base := &basePhysicalPlan{
-		Plan:                                 p.Plan,
-		self:                                 newSelf,
-		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
-		probeParents:                         p.probeParents,
-	}
-	base.SetSCtx(newCtx)
-	for _, child := range p.children {
-		cloned, err := child.Clone(newCtx)
-		if err != nil {
-			return nil, err
-		}
-		base.children = append(base.children, cloned)
-	}
-	for _, prop := range p.childrenReqProps {
-		if prop == nil {
-			continue
-		}
-		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
-	}
-	return base, nil
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *basePhysicalPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
-	return nil, errors.Errorf("%T doesn't support cloning", p.self)
-}
-
-// ExplainInfo implements Plan interface.
-func (*basePhysicalPlan) ExplainInfo() string {
-	return ""
-}
-
-// ExplainNormalizedInfo implements op.PhysicalPlan interface.
-func (*basePhysicalPlan) ExplainNormalizedInfo() string {
-	return ""
-}
-
-func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
-	return p.childrenReqProps[idx]
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (*basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	return nil
-}
-
-// MemoryUsage return the memory usage of baseop.PhysicalPlan
-func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.Plan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
-		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64 +
-		size.SizeOfUint64 + size.SizeOfBool
-
-	for _, prop := range p.childrenReqProps {
-		sum += prop.MemoryUsage()
-	}
-	for _, plan := range p.children {
-		sum += plan.MemoryUsage()
-	}
-	return
-}
-
-func (p *basePhysicalPlan) GetEstRowCountForDisplay() float64 {
-	if p == nil {
-		return 0
-	}
-	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
-}
-
-func (p *basePhysicalPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
-	if p == nil {
-		return 1
-	}
-	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
-}
-
-func (p *basePhysicalPlan) SetProbeParents(probeParents []base.PhysicalPlan) {
-	p.probeParents = probeParents
-}
-
 // HasMaxOneRow returns if the LogicalPlan will output at most one row.
 func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	if len(childMaxOneRow) == 0 {
@@ -397,65 +265,4 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 		}
 	}
 	return false
-}
-
-func newBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan, offset int) basePhysicalPlan {
-	return basePhysicalPlan{
-		Plan: baseimpl.NewBasePlan(ctx, tp, offset),
-		self: self,
-	}
-}
-
-// Schema implements Plan Schema interface.
-func (p *basePhysicalPlan) Schema() *expression.Schema {
-	return p.children[0].Schema()
-}
-
-// Children implements op.PhysicalPlan Children interface.
-func (p *basePhysicalPlan) Children() []base.PhysicalPlan {
-	return p.children
-}
-
-// SetChildren implements op.PhysicalPlan SetChildren interface.
-func (p *basePhysicalPlan) SetChildren(children ...base.PhysicalPlan) {
-	p.children = children
-}
-
-// SetChild implements op.PhysicalPlan SetChild interface.
-func (p *basePhysicalPlan) SetChild(i int, child base.PhysicalPlan) {
-	p.children[i] = child
-}
-
-// BuildPlanTrace implements Plan
-func (p *basePhysicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	tp := ""
-	info := ""
-	if p.self != nil {
-		tp = p.self.TP()
-		info = p.self.ExplainInfo()
-	}
-
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: tp, ExplainInfo: info}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *basePhysicalPlan) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	if len(p.Children()) < 1 {
-		return
-	}
-	childrenID := make([]int, 0)
-	for _, child := range p.Children() {
-		childCandidate := &tracing.CandidatePlanTrace{
-			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
-				ExplainInfo: child.ExplainInfo()},
-		}
-		op.AppendCandidate(childCandidate)
-		child.AppendChildCandidate(op)
-		childrenID = append(childrenID, child.ID())
-	}
-	op.GetTracer().Candidates[p.ID()].PlanTrace.AppendChildrenID(childrenID...)
 }

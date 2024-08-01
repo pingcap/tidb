@@ -210,7 +210,7 @@ func GetMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schema *expre
 				reqProps[0].ExpectedCnt = leftStatsInfo.RowCount * expCntScale
 				reqProps[1].ExpectedCnt = rightStatsInfo.RowCount * expCntScale
 			}
-			mergeJoin.childrenReqProps = reqProps
+			mergeJoin.SetChildrenReqProps(reqProps)
 			_, desc := prop.AllSameOrder()
 			mergeJoin.Desc = desc
 			joins = append(joins, mergeJoin)
@@ -356,7 +356,7 @@ func getEnforcedMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schem
 	}
 	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset())
 	enforcedPhysicalMergeJoin.SetSchema(schema)
-	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
+	enforcedPhysicalMergeJoin.SetChildrenReqProps([]*property.PhysicalProperty{lProp, rProp})
 	enforcedPhysicalMergeJoin.initCompareFuncs()
 	return []base.PhysicalPlan{enforcedPhysicalMergeJoin}
 }
@@ -2965,7 +2965,7 @@ func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalPrope
 		}.Init(p.SCtx(), p.StatsInfo())
 	}
 	pcte.SetSchema(p.Schema())
-	pcte.childrenReqProps = []*property.PhysicalProperty{prop.CloneEssentialFields()}
+	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})
 	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
 }
 

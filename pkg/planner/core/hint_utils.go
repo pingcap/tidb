@@ -184,28 +184,28 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			})
 		}
 	case *PhysicalMergeJoin:
-		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintSMJ, p.QueryBlockOffset(), nodeType, pp.children...)
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintSMJ, p.QueryBlockOffset(), nodeType, pp.Children()...)
 		if hint != nil {
 			res = append(res, hint)
 		}
 	case *PhysicalHashJoin:
 		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
-		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintHJ, p.QueryBlockOffset(), nodeType, pp.children...)
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintHJ, p.QueryBlockOffset(), nodeType, pp.Children()...)
 		if hint != nil {
 			res = append(res, hint)
 		}
 	case *PhysicalIndexJoin:
-		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLJ, p.QueryBlockOffset(), nodeType, pp.Children()[pp.InnerChildIdx])
 		if hint != nil {
 			res = append(res, hint)
 		}
 	case *PhysicalIndexMergeJoin:
-		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLMJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLMJ, p.QueryBlockOffset(), nodeType, pp.Children()[pp.InnerChildIdx])
 		if hint != nil {
 			res = append(res, hint)
 		}
 	case *PhysicalIndexHashJoin:
-		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLHJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLHJ, p.QueryBlockOffset(), nodeType, pp.Children()[pp.InnerChildIdx])
 		if hint != nil {
 			res = append(res, hint)
 		}

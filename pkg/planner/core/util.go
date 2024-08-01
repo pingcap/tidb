@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"slices"
 	"strings"
 
@@ -96,27 +97,27 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
 type physicalSchemaProducer struct {
 	schema *expression.Schema
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 }
 
 func (s *physicalSchemaProducer) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, bool) {
 	cloned := new(physicalSchemaProducer)
 	cloned.schema = s.Schema().Clone()
-	base, ok := s.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	base, ok := s.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, newSelf)
 	if !ok {
 		return nil, false
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.BasePhysicalPlan = *base
 	return cloned, true
 }
 
 func (s *physicalSchemaProducer) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
-	base, err := s.basePhysicalPlan.cloneWithSelf(newCtx, newSelf)
+	base, err := s.BasePhysicalPlan.CloneWithSelf(newCtx, newSelf)
 	if err != nil {
 		return nil, err
 	}
 	return &physicalSchemaProducer{
-		basePhysicalPlan: *base,
+		BasePhysicalPlan: *base,
 		schema:           s.Schema().Clone(),
 	}, nil
 }
@@ -146,7 +147,7 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
+	sum = s.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer
 	return
 }
 
