@@ -927,7 +927,7 @@ func (d *Datum) compareMysqlTime(ctx Context, time Time) (int, error) {
 	}
 }
 
-func (d *Datum) compareVectorFloat32(sc Context, vec VectorFloat32) (int, error) {
+func (d *Datum) compareVectorFloat32(ctx Context, vec VectorFloat32) (int, error) {
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
