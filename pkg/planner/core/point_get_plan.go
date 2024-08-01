@@ -2068,10 +2068,9 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	var err error
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(tbl.ID)
-	pubCols := t.Cols()
 	idxs := t.DeletableIndices()
 	deletableCols := t.DeletableCols()
-	colPosInfo, err := buildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), handleCols, pubCols, idxs, deletableCols, tbl)
+	colPosInfo, err := buildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), handleCols, idxs, deletableCols, tbl)
 	if err != nil {
 		return nil
 	}

@@ -5331,13 +5331,12 @@ func buildColPositionInfoForDelete(
 	var cols2PosInfos TblColPosInfoSlice
 	for tblID, handleCols := range tblID2Handle {
 		tbl := tblID2Table[tblID]
-		pubCols := tbl.Cols()
 		deletableIdxs := tbl.DeletableIndices()
 		deletableCols := tbl.DeletableCols()
 		tblInfo := tbl.Meta()
 
 		for _, handleCol := range handleCols {
-			curColPosInfo, err := buildSingleTableColPosInfoForDelete(names, handleCol, pubCols, deletableIdxs, deletableCols, tblInfo)
+			curColPosInfo, err := buildSingleTableColPosInfoForDelete(names, handleCol, deletableIdxs, deletableCols, tblInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -5352,7 +5351,6 @@ func buildColPositionInfoForDelete(
 func buildSingleTableColPosInfoForDelete(
 	names []*types.FieldName,
 	handleCol util.HandleCols,
-	pubCols []*table.Column,
 	deletableIdxs []table.Index,
 	deletableCols []*table.Column,
 	tblInfo *model.TableInfo,
@@ -5388,10 +5386,6 @@ func buildSingleTableColPosInfoForDelete(
 		idxCols := idx.Meta().Columns
 		colPos := make([]int, 0, len(idxCols))
 		for _, col := range idxCols {
-			if col.Offset == len(pubCols) {
-				colPos = append(colPos, len(pubCols))
-				continue
-			}
 			colPos = append(colPos, offsetMap[col.Offset])
 		}
 		indexColMap[idx.Meta().ID] = colPos
