@@ -1030,6 +1030,66 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 	return nil
 }
 
+func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]types.Datum, error) {
+	// Validate() has already checked len(colNames) = len(exprs)
+	// create table ... partition by range columns (cols)
+	// partition p0 values less than (expr)
+	// check the type of cols[i] and expr is consistent.
+	valDatums := make([]types.Datum, 0, len(colTypes))
+	for i, colExpr := range exprs {
+		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
+			valDatums = append(valDatums, types.NewStringDatum(partitionMaxValue))
+			continue
+		}
+		if d, ok := colExpr.(*ast.DefaultExpr); ok {
+			if d.Name != nil {
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+			continue
+		}
+		colType := colTypes[i]
+		val, err := expression.EvalSimpleAst(ctx, colExpr)
+		if err != nil {
+			return nil, err
+		}
+		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
+		vkind := val.Kind()
+		switch colType.GetType() {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
+			switch vkind {
+			case types.KindString, types.KindBytes, types.KindNull:
+			default:
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			switch vkind {
+			case types.KindInt64, types.KindUint64, types.KindNull:
+			default:
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeFloat, mysql.TypeDouble:
+			switch vkind {
+			case types.KindFloat32, types.KindFloat64, types.KindNull:
+			default:
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeString, mysql.TypeVarString:
+			switch vkind {
+			case types.KindString, types.KindBytes, types.KindNull, types.KindBinaryLiteral:
+			default:
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		}
+		evalCtx := ctx.GetEvalCtx()
+		newVal, err := val.ConvertTo(evalCtx.TypeCtx(), &colType)
+		if err != nil {
+			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+		}
+		valDatums = append(valDatums, newVal)
+	}
+	return valDatums, nil
+}
+
 func astIntValueExprFromStr(s string, unsigned bool) (ast.ExprNode, error) {
 	if unsigned {
 		u, err := strconv.ParseUint(s, 10, 64)

@@ -250,9 +250,7 @@ type ddl struct {
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
 	// get notification if any DDL job submitted or finished.
-	ddlJobNotifyCh    chan struct{}
-	sysTblMgr         systable.Manager
-	minJobIDRefresher *systable.MinJobIDRefresher
+	ddlJobNotifyCh chan struct{}
 
 	// globalIDLock locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
@@ -542,10 +540,6 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
-func (dc *ddlCtx) initJobDoneCh(jobID int64) {
-	dc.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
-}
-
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
 	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
 		// broadcast done event as we might merge multiple jobs into one when fast
@@ -574,6 +568,8 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
+// TODO this is called after ddl started, will cause panic if related DDL are executed
+// in between.
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
 	d.executor.statsHandle = h
@@ -706,6 +702,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
 		mu:              &d.mu,
 		globalIDLock:    &d.globalIDLock,
+		stateSyncer:     d.stateSyncer,
 	}
 	d.executor = e
 
@@ -741,13 +738,13 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool = d.sessPool
-	d.sysTblMgr = systable.NewManager(d.sessPool)
-	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
+	d.executor.sysTblMgr = systable.NewManager(d.sessPool)
+	d.executor.minJobIDRefresher = systable.NewMinJobIDRefresher(d.executor.sysTblMgr)
 	d.wg.Run(func() {
-		d.limitDDLJobs()
+		d.executor.limitDDLJobs()
 	})
 	d.wg.Run(func() {
-		d.minJobIDRefresher.Start(d.ctx)
+		d.executor.minJobIDRefresher.Start(d.ctx)
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
@@ -916,7 +913,7 @@ func (d *ddl) SetHook(h Callback) {
 }
 
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
-	return d.minJobIDRefresher
+	return d.executor.minJobIDRefresher
 }
 
 func (d *ddl) startCleanDeadTableLock() {
@@ -940,7 +937,7 @@ func (d *ddl) startCleanDeadTableLock() {
 				continue
 			}
 			for se, tables := range deadLockTables {
-				err := d.CleanDeadTableLock(tables, se)
+				err := d.cleanDeadTableLock(tables, se)
 				if err != nil {
 					logutil.DDLLogger().Info("clean dead table lock failed.", zap.Error(err))
 				}
@@ -949,6 +946,32 @@ func (d *ddl) startCleanDeadTableLock() {
 			return
 		}
 	}
+}
+
+// cleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &LockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []any{arg},
+	}
+
+	ctx, err := d.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.Put(ctx)
+	err = d.executor.DoDDLJob(ctx, job)
+	return errors.Trace(err)
 }
 
 // SwitchMDL enables MDL or disable MDL.

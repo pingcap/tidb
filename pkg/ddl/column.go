@@ -358,6 +358,30 @@ func checkDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo,
 	return tblInfo, colInfo, idxInfos, false, nil
 }
 
+func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
+	if ok, dep, isHidden := hasDependentByGeneratedColumn(tblInfo, colName); ok {
+		if isHidden {
+			return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(dep)
+		}
+		return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(dep)
+	}
+
+	if len(tblInfo.Columns) == 1 {
+		return dbterror.ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
+			colName, tblInfo.Name)
+	}
+	// We only support dropping column with single-value none Primary Key index covered now.
+	err := isColumnCanDropWithIndex(colName.L, tblInfo.Indices)
+	if err != nil {
+		return err
+	}
+	err = IsColumnDroppableWithCheckConstraint(colName, tblInfo)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func onSetDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	err := job.DecodeArgs(newCol)
