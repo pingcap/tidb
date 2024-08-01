@@ -1189,7 +1189,11 @@ func (b *builtinConvSig) evalString(ctx EvalContext, row chunk.Row) (res string,
 	switch x := b.args[0].(type) {
 	case *Constant:
 		if x.Value.Kind() == types.KindBinaryLiteral {
-			str = x.Value.GetBinaryLiteral().ToBitLiteralString(true)
+			datum, err := x.Eval(ctx, row)
+			if err != nil {
+				return "", false, err
+			}
+			str = datum.GetBinaryLiteral().ToBitLiteralString(true)
 		}
 	case *ScalarFunction:
 		if x.FuncName.L == ast.Cast {

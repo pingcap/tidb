@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
