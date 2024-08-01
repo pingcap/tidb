@@ -1584,10 +1584,10 @@ func (p *LogicalJoin) updateEQCond() {
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
 				if lProj != nil {
-					lKey = lProj.appendExpr(lKey)
+					lKey = lProj.AppendExpr(lKey)
 				}
 				if rProj != nil {
-					rKey = rProj.appendExpr(rKey)
+					rKey = rProj.AppendExpr(rKey)
 				}
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 				if isNA {

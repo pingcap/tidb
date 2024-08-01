@@ -578,7 +578,8 @@ func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, child
 	return ndvs
 }
 
-func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.Column {
+// AppendExpr adds the expression to the projection.
+func (p *LogicalProjection) AppendExpr(expr expression.Expression) *expression.Column {
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
