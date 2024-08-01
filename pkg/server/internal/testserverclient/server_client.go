@@ -37,9 +37,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -2786,6 +2789,184 @@ func (cli *TestServerClient) RunTestTypeAndCharsetOfSendLongData(t *testing.T) {
 			require.Equal(t, gbkStr, txt)
 		}
 	})
+}
+
+func (cli *TestServerClient) getNewDB(t *testing.T, overrider configOverrider) *testkit.DBTestKit {
+	db, err := sql.Open("mysql", cli.GetDSN(overrider))
+	require.NoError(t, err)
+
+	return testkit.NewDBTestKit(t, db)
+}
+
+func MustExec(ctx context.Context, t *testing.T, conn *sql.Conn, sql string) {
+	_, err := conn.QueryContext(ctx, sql)
+	require.NoError(t, err)
+}
+
+func MustQuery(ctx context.Context, t *testing.T, cli *TestServerClient, conn *sql.Conn, sql string) {
+	rs, err := conn.QueryContext(ctx, sql)
+	require.NoError(t, err)
+	if rs != nil {
+		cli.Rows(t, rs)
+		rs.Close()
+	}
+}
+
+type sqlWithErr struct {
+	stmt *sql.Stmt
+	sql  string
+}
+
+type expectQuery struct {
+	sql  string
+	rows []string
+}
+
+func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		MustExec(ctx, t, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
+		MustExec(ctx, t, conn, "use test_db_state")
+		MustExec(ctx, t, conn, `CREATE TABLE stock (
+  a int NOT NULL,
+  b char(30) NOT NULL,
+  c int,
+  d char(64),
+  PRIMARY KEY(a,b)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+		MustExec(ctx, t, conn, "insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
+		MustExec(ctx, t, conn, "alter table stock add column cct_1 int default 10")
+		MustExec(ctx, t, conn, "alter table stock modify cct_1 json")
+		MustExec(ctx, t, conn, "alter table stock add column adc_1 smallint")
+		defer MustExec(ctx, t, conn, "drop database test_db_state")
+
+		sqls := make([]sqlWithErr, 5)
+		sqls[0] = sqlWithErr{nil, "begin"}
+		sqls[1] = sqlWithErr{nil, "SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE"}
+		sqls[2] = sqlWithErr{nil, "UPDATE stock SET c = ? WHERE a= ? AND b = 'a'"}
+		sqls[3] = sqlWithErr{nil, "UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'"}
+		sqls[4] = sqlWithErr{nil, "commit"}
+		dropColumnSQL := "alter table stock drop column cct_1"
+		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
+		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
+	})
+}
+
+func runTestInSchemaState(
+	t *testing.T,
+	conn *sql.Conn,
+	cli *TestServerClient,
+	dom *domain.Domain,
+	state model.SchemaState,
+	isOnJobUpdated bool,
+	dropColumnSQL string,
+	sqlWithErrs []sqlWithErr,
+	expectQuery *expectQuery,
+) {
+	ctx := context.Background()
+	MustExec(ctx, t, conn, "use test_db_state")
+
+	callback := &callback.TestDDLCallback{Do: dom}
+	prevState := model.StateNone
+	var checkErr error
+	dbt := cli.getNewDB(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	})
+	conn1, err := dbt.GetDB().Conn(ctx)
+	require.NoError(t, err)
+	defer func() {
+		err := dbt.GetDB().Close()
+		require.NoError(t, err)
+	}()
+	MustExec(ctx, t, conn1, "use test_db_state")
+
+	for i, sqlWithErr := range sqlWithErrs {
+		// Start the test txn.
+		// Step 1: begin(when i = 0).
+		if i == 0 || i == len(sqlWithErrs)-1 {
+			sqlWithErr := sqlWithErrs[i]
+			MustExec(ctx, t, conn1, sqlWithErr.sql)
+		} else {
+			// Step 2: prepare stmts.
+			// SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE
+			// UPDATE stock SET c = ? WHERE a= ? AND b = 'a'
+			// UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'
+			stmt, err := conn1.PrepareContext(ctx, sqlWithErr.sql)
+			require.NoError(t, err)
+			sqlWithErr.stmt = stmt
+			sqlWithErrs[i] = sqlWithErr
+		}
+	}
+
+	// Step 3: begin.
+	sqlWithErr := sqlWithErrs[0]
+	MustExec(ctx, t, conn1, sqlWithErr.sql)
+
+	prevState = model.StateNone
+	state = model.StateWriteOnly
+	cbFunc1 := func(job *model.Job) {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
+			return
+		}
+		prevState = jobStateOrLastSubJobState(job)
+		if prevState != state {
+			return
+		}
+		// Step 4: exec stmts in write-only state (dropping a colum).
+		// SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE, args:(1,"a"),(2,"b")
+		// UPDATE stock SET c = ? WHERE a= ? AND b = 'a',                        args:(100+1, 1)
+		// UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b',               args:(100+2, 2)
+		// commit.
+		sqls := sqlWithErrs[1:]
+		for i, sqlWithErr := range sqls {
+			if i == 0 {
+				_, err = sqlWithErr.stmt.ExecContext(ctx, 1, "a", 2, "b")
+				require.NoError(t, err)
+			} else if i == 1 || i == 2 {
+				_, err = sqlWithErr.stmt.ExecContext(ctx, 100+i, i)
+				require.NoError(t, err)
+			} else {
+				MustQuery(ctx, t, cli, conn1, sqlWithErr.sql)
+			}
+		}
+	}
+	if isOnJobUpdated {
+		callback.OnJobUpdatedExported.Store(&cbFunc1)
+	} else {
+		callback.OnJobRunBeforeExported = cbFunc1
+	}
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	d.SetHook(callback)
+	MustExec(ctx, t, conn, dropColumnSQL)
+	require.NoError(t, checkErr)
+
+	// Check the result.
+	// select * from stock
+	if expectQuery != nil {
+		rs, err := conn.QueryContext(ctx, expectQuery.sql)
+		require.NoError(t, err)
+		if expectQuery.rows == nil {
+			require.Nil(t, rs)
+		} else {
+			cli.CheckRows(t, rs, expectQuery.rows[0])
+		}
+	}
+	d.SetHook(originalCallback)
+}
+
+func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		subs := job.MultiSchemaInfo.SubJobs
+		return subs[len(subs)-1].SchemaState
+	}
+	return job.SchemaState
 }
 
 //revive:enable:exported

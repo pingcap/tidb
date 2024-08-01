@@ -81,6 +81,30 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	require.Equal(t, "123.45.67.89:1234,56.78.90.12:3456", cfg.TiDB.PdAddr)
 }
 
+func TestStrictFormat(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
+		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
+	)
+	defer ts.Close()
+
+	cfg := NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+	cfg.Mydumper.SourceDir = "."
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
+	cfg.Mydumper.StrictFormat = true
+
+	err := cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "mydumper.strict-format can not be used with empty mydumper.csv.terminator")
+	t.Log(err.Error())
+
+	cfg.Mydumper.CSV.Terminator = "\r\n"
+	err = cfg.Adjust(context.Background())
+	require.NoError(t, err)
+}
+
 func TestPausePDSchedulerScope(t *testing.T) {
 	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
