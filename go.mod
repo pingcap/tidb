@@ -338,5 +338,5 @@ replace (
 
 replace (
 	github.com/plar/go-adaptive-radix-tree => github.com/you06/go-adaptive-radix-tree v0.0.0-20240523051018-0278e8bfcd2b
-	github.com/tikv/client-go/v2 => github.com/you06/client-go/v2 v2.0.0-alpha.0.20240801080922-9bcaf42a70e4
+	github.com/tikv/client-go/v2 => github.com/you06/client-go/v2 v2.0.0-alpha.0.20240801122022-90e7e39c64bf
 )
