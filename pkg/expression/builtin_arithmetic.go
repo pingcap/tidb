@@ -522,6 +522,15 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinArithmeticMultiplyVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
+		return sig, nil
+	}
 	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
