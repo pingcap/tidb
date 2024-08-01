@@ -2038,7 +2038,7 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
-		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTablesExtractor)
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaBaseExtractor)
 		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
 		require.Equal(t, ca.colPredicates, columnsTableExtractor.ColPredicates, "SQL: %v", ca.sql)
 	}
