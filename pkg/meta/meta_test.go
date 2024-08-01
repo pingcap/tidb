@@ -237,7 +237,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t"),
 		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
+	err = m.CreateTableOrView(1, tbInfo)
 	require.NoError(t, err)
 
 	n, err = m.GetAutoIDAccessors(1, 1).RowID().Inc(10)
@@ -248,7 +248,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
+	err = m.CreateTableOrView(1, tbInfo)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
@@ -275,7 +275,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("bb"),
 		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo2)
+	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
 
 	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
@@ -309,7 +309,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.DropTableOrView(1, dbInfo.Name.L, tbInfo2.ID, tbInfo2.Name.L)
+	err = m.DropTableOrView(1, tbInfo2.ID)
 	require.NoError(t, err)
 	err = m.GetAutoIDAccessors(1, tbInfo2.ID).Del()
 	require.NoError(t, err)
@@ -341,7 +341,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo100)
+	err = m.CreateTableOrView(1, tbInfo100)
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
@@ -367,7 +367,7 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
+	err = m.CreateTableAndSetAutoID(1, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
@@ -377,9 +377,9 @@ func TestMeta(t *testing.T) {
 	require.Equal(t, []byte(strconv.FormatInt(1234, 10)), val)
 	require.Equal(t, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc}, key)
 
-	err = m.DropDatabase(1, dbInfo.Name.L)
+	err = m.DropDatabase(1)
 	require.NoError(t, err)
-	err = m.DropDatabase(currentDBID, dbInfo.Name.L)
+	err = m.DropDatabase(currentDBID)
 	require.NoError(t, err)
 
 	dbs, err = m.ListDatabases()

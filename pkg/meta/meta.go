@@ -687,7 +687,7 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 }
 
 // CreateTableOrView creates a table with tableInfo in database.
-func (m *Meta) CreateTableOrView(dbID int64, dbName string, tableInfo *model.TableInfo) error {
+func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -830,8 +830,8 @@ func (m *Meta) GetSchemaCacheSize() (size uint64, isNull bool, err error) {
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
-	err := m.CreateTableOrView(dbID, dbName, tableInfo)
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
+	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -855,8 +855,8 @@ func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *mod
 }
 
 // CreateSequenceAndSetSeqValue creates sequence with tableInfo in database, and rebase the sequence seqValue.
-func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, dbName string, tableInfo *model.TableInfo, seqValue int64) error {
-	err := m.CreateTableOrView(dbID, dbName, tableInfo)
+func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
+	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -894,7 +894,7 @@ func (m *Meta) DropPolicy(policyID int64) error {
 }
 
 // DropDatabase drops whole database.
-func (m *Meta) DropDatabase(dbID int64, dbName string) error {
+func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.txn.HClear(dbKey); err != nil {
@@ -910,8 +910,8 @@ func (m *Meta) DropDatabase(dbID int64, dbName string) error {
 
 // DropSequence drops sequence in database.
 // Sequence is made of table struct and kv value pair.
-func (m *Meta) DropSequence(dbID int64, dbName string, tblID int64, tbName string) error {
-	err := m.DropTableOrView(dbID, dbName, tblID, tbName)
+func (m *Meta) DropSequence(dbID int64, tblID int64) error {
+	err := m.DropTableOrView(dbID, tblID)
 	if err != nil {
 		return err
 	}
@@ -926,7 +926,7 @@ func (m *Meta) DropSequence(dbID int64, dbName string, tblID int64, tbName strin
 // DropTableOrView drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTableOrView(dbID int64, dbName string, tblID int64, tbName string) error {
+func (m *Meta) DropTableOrView(dbID int64, tblID int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
