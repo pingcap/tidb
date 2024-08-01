@@ -193,6 +193,6 @@ Projection_14	6.40	root		1->Column#10, Column#9
       │   ├─Selection_25(Build)	0.00	cop[tikv]		
       │   │ └─IndexRangeScan_24	10.00	cop[tikv]	table:t4a8656d1, index:idx_39(cast(`col_73` as double array), col_74)	range:[0.035131302371695955,0.035131302371695955], keep order:false, stats:pseudo
       │   └─TableRowIDScan_26(Probe)	10.00	cop[tikv]	table:t4a8656d1	keep order:false, stats:pseudo
-      └─Projection_34(Probe)	10000.00	root		cast(planner__core__casetest__pushdown__push_down.tld47bc815.col_1, datetime(6) BINARY)->Column#13
-        └─TableReader_36	10000.00	root		data:TableFullScan_35
-          └─TableFullScan_35	10000.00	cop[tikv]	table:tld47bc815	keep order:false, stats:pseudo
+      └─TableReader_39(Probe)	10000.00	root		data:Projection_35
+        └─Projection_35	10000.00	cop[tikv]		cast(planner__core__casetest__pushdown__push_down.tld47bc815.col_1, datetime(6) BINARY)->Column#13
+          └─TableFullScan_38	10000.00	cop[tikv]	table:tld47bc815	keep order:false, stats:pseudo
