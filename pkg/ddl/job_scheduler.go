@@ -628,9 +628,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) 
 	s.cleanMDLInfo(job, ownerID)
 	s.synced(job)
 
-	s.mu.RLock()
-	s.mu.hook.OnJobUpdated(job)
-	s.mu.RUnlock()
+	failpoint.InjectCall("onJobUpdated", job)
 	return nil
 }
 

@@ -23,5 +23,4 @@ import (
 func TestCallback(t *testing.T) {
 	cb := &ddl.BaseCallback{}
 	cb.OnJobRunBefore(nil)
-	cb.OnJobUpdated(nil)
 }
