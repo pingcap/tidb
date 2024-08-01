@@ -7,7 +7,7 @@ import (
 	"github.com/docker/go-units"
 )
 
-type ConfigTerm[T uint | uint64] struct {
+type ConfigTerm[T any] struct {
 	Value    T
 	Modified bool
 }
@@ -16,6 +16,7 @@ type KVConfig struct {
 	ImportGoroutines    ConfigTerm[uint]
 	MergeRegionSize     ConfigTerm[uint64]
 	MergeRegionKeyCount ConfigTerm[uint64]
+	SplitRegionOnTable  ConfigTerm[bool]
 }
 
 func ParseImportThreadsFromConfig(resp []byte) (uint, error) {
@@ -33,6 +34,19 @@ func ParseImportThreadsFromConfig(resp []byte) (uint, error) {
 	}
 
 	return c.Import.Threads, nil
+}
+
+func ParseSplitRegionOnTable(resp []byte) (bool, error) {
+	type coprocessor struct {
+		SplitRegionOnTable bool `json:"split-region-on-table"`
+	}
+
+	type config struct {
+		Cop coprocessor `json:"coprocessor"`
+	}
+	var c config
+	e := json.Unmarshal(resp, &c)
+	return c.Cop.SplitRegionOnTable, e
 }
 
 func ParseMergeRegionSizeFromConfig(resp []byte) (uint64, uint64, error) {

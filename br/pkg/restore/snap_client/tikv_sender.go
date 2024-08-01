@@ -90,6 +90,7 @@ func SortAndValidateFileRanges(
 	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
+	splitOnTable bool,
 	updateCh glue.Progress,
 ) ([][]byte, [][]TableIDWithFiles, error) {
 	// sort the created table by downstream stream table id
@@ -202,6 +203,16 @@ func SortAndValidateFileRanges(
 				lastFilesGroup[len(lastFilesGroup)-1].Files = append(lastFilesGroup[len(lastFilesGroup)-1].Files, newFiles...)
 			}
 		}
+
+		// If the config split-table/split-region-on-table is on, it skip merging ranges over tables.
+		if splitOnTable {
+			// Besides, if there only one split key for the table, is skip splitting the key.
+			lastKey = nil
+			if lastFilesGroup != nil {
+				tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
+				lastFilesGroup = nil
+			}
+		}
 	}
 	// append the key of the last range anyway
 	if lastKey != nil {
@@ -221,13 +232,14 @@ func (client *SnapClient) RestoreTables(
 	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
+	splitOnTable bool,
 	updateCh glue.Progress,
 ) error {
 	placementRuleManager.SetPlacementRule(ctx, createdTables)
 	defer placementRuleManager.ResetPlacementRules(ctx)
 
 	start := time.Now()
-	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(ctx, createdTables, allFiles, checkpointSetWithTableID, splitSizeBytes, splitKeyCount, updateCh)
+	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(ctx, createdTables, allFiles, checkpointSetWithTableID, splitSizeBytes, splitKeyCount, splitOnTable, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -139,3 +139,38 @@ func TestRegionSplitInfo(t *testing.T) {
 	s = &mockRestrictedSQLExecutor{rows: rows, fields: fields}
 	require.Equal(t, utils.GetSplitKeys(s), int64(100000))
 }
+
+func TestSplitTable(t *testing.T) {
+	// config format:
+	// MySQL [(none)]> show config where name = 'split-table' and value = 'true' and type = 'tidb';
+	// +------+----------------+-------------+-------+
+	// | Type | Instance       | Name        | Value |
+	// +------+----------------+-------------+-------+
+	// | tidb | 127.0.0.1:4000 | split-table | true  |
+	// +------+----------------+-------------+-------+
+	// MySQL [(none)]> show config where name = 'split-table' and value = 'true' and type = 'tidb';
+	// Empty set
+
+	fields := make([]*ast.ResultField, 4)
+	tps := []*types.FieldType{
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeString),
+	}
+	for i := 0; i < len(tps); i++ {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *tps[i]
+		fields[i] = rf
+	}
+	rows := make([]chunk.Row, 0, 1)
+	row := chunk.MutRowFromValues("tidb", "127.0.0.1:4000", "split-table", "true").ToRow()
+	rows = append(rows, row)
+	s := &mockRestrictedSQLExecutor{rows: rows, fields: fields}
+	require.Equal(t, utils.GetSplitTable(s), true)
+
+	rows = make([]chunk.Row, 0, 1)
+	s = &mockRestrictedSQLExecutor{rows: rows, fields: fields}
+	require.Equal(t, utils.GetSplitTable(s), false)
+}

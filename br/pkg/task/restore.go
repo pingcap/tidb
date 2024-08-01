@@ -552,6 +552,15 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	return nil
 }
 
+func GetTiDBConfig(g glue.Glue, storage kv.Storage) (splitTable bool, err error) {
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	return utils.GetSplitTable(execCtx), nil
+}
+
 func CheckNewCollationEnable(
 	backupNewCollationEnable string,
 	g glue.Glue,
@@ -767,6 +776,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 	codec := mgr.GetStorage().GetCodec()
+
+	// Get TiDB config
+	splitTable, err := GetTiDBConfig(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// need retrieve these configs from tikv if not set in command.
 	kvConfigs := &pconfig.KVConfig{
@@ -1111,7 +1126,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, updateCh); err != nil {
+	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
+		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, kvConfigs.SplitRegionOnTable.Value || splitTable,
+		updateCh,
+	); err != nil {
 		return errors.Trace(err)
 	}
 
