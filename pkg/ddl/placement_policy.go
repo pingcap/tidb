@@ -631,3 +631,36 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	}
 	return false
 }
+
+// SetDirectPlacementOpt tries to make the PlacementSettings assignments generic for Schema/Table/Partition
+func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placementOptionType ast.PlacementOptionType, stringVal string, uintVal uint64) error {
+	switch placementOptionType {
+	case ast.PlacementOptionPrimaryRegion:
+		placementSettings.PrimaryRegion = stringVal
+	case ast.PlacementOptionRegions:
+		placementSettings.Regions = stringVal
+	case ast.PlacementOptionFollowerCount:
+		placementSettings.Followers = uintVal
+	case ast.PlacementOptionVoterCount:
+		placementSettings.Voters = uintVal
+	case ast.PlacementOptionLearnerCount:
+		placementSettings.Learners = uintVal
+	case ast.PlacementOptionSchedule:
+		placementSettings.Schedule = stringVal
+	case ast.PlacementOptionConstraints:
+		placementSettings.Constraints = stringVal
+	case ast.PlacementOptionLeaderConstraints:
+		placementSettings.LeaderConstraints = stringVal
+	case ast.PlacementOptionLearnerConstraints:
+		placementSettings.LearnerConstraints = stringVal
+	case ast.PlacementOptionFollowerConstraints:
+		placementSettings.FollowerConstraints = stringVal
+	case ast.PlacementOptionVoterConstraints:
+		placementSettings.VoterConstraints = stringVal
+	case ast.PlacementOptionSurvivalPreferences:
+		placementSettings.SurvivalPreferences = stringVal
+	default:
+		return errors.Trace(errors.New("unknown placement policy option"))
+	}
+	return nil
+}

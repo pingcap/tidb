@@ -23,9 +23,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -34,6 +39,7 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -41,7 +47,353 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 )
+
+// DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
+// 1. it expects the argument of job has been deserialized.
+// 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
+func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
+	schemaID := job.SchemaID
+	tbInfo := job.Args[0].(*model.TableInfo)
+
+	tbInfo.State = model.StateNone
+	err := checkTableNotExists(d, schemaID, tbInfo.Name.L)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return tbInfo, errors.Trace(err)
+	}
+
+	err = checkConstraintNamesNotExists(t, schemaID, tbInfo.Constraints)
+	if err != nil {
+		if infoschema.ErrCheckConstraintDupName.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return tbInfo, errors.Trace(err)
+	}
+
+	retryable, err := checkTableForeignKeyValidInOwner(d, t, job, tbInfo, fkCheck)
+	if err != nil {
+		if !retryable {
+			job.State = model.JobStateCancelled
+		}
+		return tbInfo, errors.Trace(err)
+	}
+	// Allocate foreign key ID.
+	for _, fkInfo := range tbInfo.ForeignKeys {
+		fkInfo.ID = allocateFKIndexID(tbInfo)
+		fkInfo.State = model.StatePublic
+	}
+	switch tbInfo.State {
+	case model.StateNone:
+		// none -> public
+		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
+		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
+		if err != nil {
+			return tbInfo, errors.Trace(err)
+		}
+
+		failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(tbInfo, errors.New("mock create table error"))
+			}
+		})
+
+		// build table & partition bundles if any.
+		if err = checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t, job, tbInfo); err != nil {
+			return tbInfo, errors.Trace(err)
+		}
+
+		if tbInfo.TiFlashReplica != nil {
+			replicaInfo := tbInfo.TiFlashReplica
+			if pi := tbInfo.GetPartitionInfo(); pi != nil {
+				logutil.DDLLogger().Info("Set TiFlash replica pd rule for partitioned table when creating", zap.Int64("tableID", tbInfo.ID))
+				if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.LocationLabels, tbInfo.ID); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(e)
+				}
+				// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
+				if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.LocationLabels, tbInfo.ID); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(e)
+				}
+			} else {
+				logutil.DDLLogger().Info("Set TiFlash replica pd rule when creating", zap.Int64("tableID", tbInfo.ID))
+				if e := infosync.ConfigureTiFlashPDForTable(tbInfo.ID, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(e)
+				}
+			}
+		}
+
+		bundles, err := placement.NewFullTableBundles(t, tbInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return tbInfo, errors.Trace(err)
+		}
+
+		// Send the placement bundle to PD.
+		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
+		return tbInfo, nil
+	default:
+		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
+	}
+}
+
+func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock do job error"))
+		}
+	})
+
+	// just decode, createTable will use it as Args[0]
+	tbInfo := &model.TableInfo{}
+	fkCheck := false
+	if err := job.DecodeArgs(tbInfo, &fkCheck); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if len(tbInfo.ForeignKeys) > 0 {
+		return createTableWithForeignKeys(d, t, job, tbInfo, fkCheck)
+	}
+
+	tbInfo, err := createTable(d, t, job, fkCheck)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	ver, err = updateSchemaVersion(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	createTableEvent := statsutil.NewCreateTableEvent(
+		job.SchemaID,
+		tbInfo,
+	)
+	asyncNotifyEvent(d, createTableEvent)
+	return ver, errors.Trace(err)
+}
+
+func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
+	switch tbInfo.State {
+	case model.StateNone, model.StatePublic:
+		// create table in non-public or public state. The function `createTable` will always reset
+		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
+		// public state.
+		// when `br` restores table, the state of `tbInfo` will be public.
+		tbInfo, err = createTable(d, t, job, fkCheck)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		tbInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		tbInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		createTableEvent := statsutil.NewCreateTableEvent(
+			job.SchemaID,
+			tbInfo,
+		)
+		asyncNotifyEvent(d, createTableEvent)
+		return ver, nil
+	default:
+		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
+	}
+	return ver, errors.Trace(err)
+}
+
+func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+	var ver int64
+
+	var args []*model.TableInfo
+	fkCheck := false
+	err := job.DecodeArgs(&args, &fkCheck)
+	if err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// We don't construct jobs for every table, but only tableInfo
+	// The following loop creates a stub job for every table
+	//
+	// it clones a stub job from the ActionCreateTables job
+	stubJob := job.Clone()
+	stubJob.Args = make([]any, 1)
+	for i := range args {
+		stubJob.TableID = args[i].ID
+		stubJob.Args[0] = args[i]
+		if args[i].Sequence != nil {
+			err := createSequenceWithCheck(t, stubJob, args[i])
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		} else {
+			tbInfo, err := createTable(d, t, stubJob, fkCheck)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			args[i] = tbInfo
+		}
+	}
+
+	ver, err = updateSchemaVersion(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	job.BinlogInfo.SetTableInfos(ver, args)
+
+	for i := range args {
+		createTableEvent := statsutil.NewCreateTableEvent(
+			job.SchemaID,
+			args[i],
+		)
+		asyncNotifyEvent(d, createTableEvent)
+	}
+
+	return ver, errors.Trace(err)
+}
+
+func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
+	err := checkTableInfoValid(tbInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return t.CreateTableOrView(schemaID, tbInfo)
+}
+
+func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	tbInfo := &model.TableInfo{}
+	var orReplace bool
+	var _placeholder int64 // oldTblInfoID
+	if err := job.DecodeArgs(tbInfo, &orReplace, &_placeholder); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tbInfo.State = model.StateNone
+
+	oldTableID, err := findTableIDByName(d, t, schemaID, tbInfo.Name.L)
+	if infoschema.ErrTableNotExists.Equal(err) {
+		err = nil
+	}
+	failpoint.InjectCall("onDDLCreateView", job)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		} else if !infoschema.ErrTableExists.Equal(err) {
+			return ver, errors.Trace(err)
+		}
+		if !orReplace {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+	ver, err = updateSchemaVersion(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	switch tbInfo.State {
+	case model.StateNone:
+		// none -> public
+		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
+		if oldTableID > 0 && orReplace {
+			err = t.DropTableOrView(schemaID, oldTableID)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			err = t.GetAutoIDAccessors(schemaID, oldTableID).Del()
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		return ver, nil
+	default:
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
+	}
+}
+
+func findTableIDByName(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) (int64, error) {
+	// Try to use memory schema info to check first.
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return 0, err
+	}
+	is := d.infoCache.GetLatest()
+	if is != nil && is.SchemaMetaVersion() == currVer {
+		return findTableIDFromInfoSchema(is, schemaID, tableName)
+	}
+
+	return findTableIDFromStore(t, schemaID, tableName)
+}
+
+func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) (int64, error) {
+	schema, ok := is.SchemaByID(schemaID)
+	if !ok {
+		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+	}
+	tbl, err := is.TableByName(context.Background(), schema.Name, model.NewCIStr(tableName))
+	if err != nil {
+		return 0, err
+	}
+	return tbl.Meta().ID, nil
+}
+
+func findTableIDFromStore(t *meta.Meta, schemaID int64, tableName string) (int64, error) {
+	tbls, err := t.ListSimpleTables(schemaID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+		}
+		return 0, errors.Trace(err)
+	}
+	for _, tbl := range tbls {
+		if tbl.Name.L == tableName {
+			return tbl.ID, nil
+		}
+	}
+	return 0, infoschema.ErrTableNotExists.FastGenByArgs(tableName)
+}
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
@@ -195,6 +547,15 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	err := checkTableInfoValid(tbInfo)
 	tbInfo.State = oldState
 	return err
+}
+
+// checkTableInfoValid uses to check table info valid. This is used to validate table info.
+func checkTableInfoValid(tblInfo *model.TableInfo) error {
+	_, err := tables.TableFromMeta(autoid.NewAllocators(false), tblInfo)
+	if err != nil {
+		return err
+	}
+	return checkInvisibleIndexOnPK(tblInfo)
 }
 
 func checkDuplicateColumn(cols []*model.ColumnInfo) error {
@@ -1130,4 +1491,17 @@ func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isS
 		}
 	}
 	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered
+}
+
+// BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
+func BuildViewInfo(s *ast.CreateViewStmt) (*model.ViewInfo, error) {
+	// Always Use `format.RestoreNameBackQuotes` to restore `SELECT` statement despite the `ANSI_QUOTES` SQL Mode is enabled or not.
+	restoreFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
+	var sb strings.Builder
+	if err := s.Select.Restore(format.NewRestoreCtx(restoreFlag, &sb)); err != nil {
+		return nil, err
+	}
+
+	return &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
+		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
 }

@@ -22,12 +22,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -37,6 +40,7 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -45,6 +49,100 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"go.uber.org/zap"
 )
+
+func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
+		ver, err = onDropColumn(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error before decode args"))
+		}
+	})
+
+	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
+	if err != nil {
+		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
+			job.Warning = toTError(err)
+			job.State = model.JobStateDone
+			return ver, nil
+		}
+		return ver, errors.Trace(err)
+	}
+	if columnInfo == nil {
+		columnInfo = InitAndAddColumnToTable(tblInfo, colFromArgs)
+		logutil.DDLLogger().Info("run add column job", zap.Stringer("job", job), zap.Reflect("columnInfo", *columnInfo))
+		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	originalState := columnInfo.State
+	switch columnInfo.State {
+	case model.StateNone:
+		// none -> delete only
+		columnInfo.State = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != columnInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		// delete only -> write only
+		columnInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Update the job state when all affairs done.
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		// write only -> reorganization
+		columnInfo.State = model.StateWriteReorganization
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Update the job state when all affairs done.
+		job.SchemaState = model.StateWriteReorganization
+		job.MarkNonRevertible()
+	case model.StateWriteReorganization:
+		// reorganization -> public
+		// Adjust table column offset.
+		failpoint.InjectCall("onAddColumnStateWriteReorg")
+		offset, err := LocateOffsetToMove(columnInfo.Offset, pos, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
+		columnInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		addColumnEvent := statsutil.NewAddColumnEvent(
+			job.SchemaID,
+			tblInfo,
+			[]*model.ColumnInfo{columnInfo},
+		)
+		asyncNotifyEvent(d, addColumnEvent)
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
+	}
+
+	return ver, errors.Trace(err)
+}
 
 func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	err := checkUnsupportedColumnConstraint(specNewColumn, ti)
@@ -71,6 +169,24 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	}
 
 	return CreateNewColumn(ctx, schema, spec, t, specNewColumn)
+}
+
+func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
+	for _, constraint := range col.Options {
+		switch constraint.Tp {
+		case ast.ColumnOptionAutoIncrement:
+			return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionPrimaryKey:
+			return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint PRIMARY KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionUniqKey:
+			return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint UNIQUE KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionAutoRandom:
+			errMsg := fmt.Sprintf(autoid.AutoRandomAlterAddColumn, col.Name, ti.Schema, ti.Name)
+			return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+		}
+	}
+
+	return nil
 }
 
 // CreateNewColumn creates a new column according to the column information.
@@ -198,6 +314,33 @@ func buildColumnAndConstraint(
 		return nil, nil, errors.Trace(err)
 	}
 	return col, cts, nil
+}
+
+// getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
+// of column definition. If there's no collate in the option, the default collate of column's charset will be used.
+func getCharsetAndCollateInColumnDef(sessVars *variable.SessionVars, def *ast.ColumnDef) (chs, coll string, err error) {
+	chs = def.Tp.GetCharset()
+	coll = def.Tp.GetCollate()
+	if chs != "" && coll == "" {
+		if coll, err = GetDefaultCollation(sessVars, chs); err != nil {
+			return "", "", errors.Trace(err)
+		}
+	}
+	for _, opt := range def.Options {
+		if opt.Tp == ast.ColumnOptionCollate {
+			info, err := collate.GetCollationByName(opt.StrValue)
+			if err != nil {
+				return "", "", errors.Trace(err)
+			}
+			if chs == "" {
+				chs = info.CharsetName
+			} else if chs != info.CharsetName {
+				return "", "", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
+			}
+			coll = info.Name
+		}
+	}
+	return
 }
 
 // OverwriteCollationWithBinaryFlag is used to handle the case like

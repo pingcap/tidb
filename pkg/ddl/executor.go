@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1001,15 +1000,6 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 	return errors.Trace(err)
 }
 
-// checkTableInfoValid uses to check table info valid. This is used to validate table info.
-func checkTableInfoValid(tblInfo *model.TableInfo) error {
-	_, err := tables.TableFromMeta(autoid.NewAllocators(false), tblInfo)
-	if err != nil {
-		return err
-	}
-	return checkInvisibleIndexOnPK(tblInfo)
-}
-
 func (e *executor) assignPartitionIDs(defs []model.PartitionDefinition) error {
 	genIDs, err := e.genGlobalIDs(len(defs))
 	if err != nil {
@@ -1624,19 +1614,6 @@ func (e *executor) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (er
 	return e.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, WithOnExist(onExist))
 }
 
-// BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
-func BuildViewInfo(s *ast.CreateViewStmt) (*model.ViewInfo, error) {
-	// Always Use `format.RestoreNameBackQuotes` to restore `SELECT` statement despite the `ANSI_QUOTES` SQL Mode is enabled or not.
-	restoreFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
-	var sb strings.Builder
-	if err := s.Select.Restore(format.NewRestoreCtx(restoreFlag, &sb)); err != nil {
-		return nil, err
-	}
-
-	return &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
-		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
-}
-
 func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	return checkNoHashPartitions(ctx, tbInfo.Partition.Num)
 }
@@ -1841,39 +1818,6 @@ func (e *executor) getAutoIDRequirement() autoid.Requirement {
 	}
 }
 
-// SetDirectPlacementOpt tries to make the PlacementSettings assignments generic for Schema/Table/Partition
-func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placementOptionType ast.PlacementOptionType, stringVal string, uintVal uint64) error {
-	switch placementOptionType {
-	case ast.PlacementOptionPrimaryRegion:
-		placementSettings.PrimaryRegion = stringVal
-	case ast.PlacementOptionRegions:
-		placementSettings.Regions = stringVal
-	case ast.PlacementOptionFollowerCount:
-		placementSettings.Followers = uintVal
-	case ast.PlacementOptionVoterCount:
-		placementSettings.Voters = uintVal
-	case ast.PlacementOptionLearnerCount:
-		placementSettings.Learners = uintVal
-	case ast.PlacementOptionSchedule:
-		placementSettings.Schedule = stringVal
-	case ast.PlacementOptionConstraints:
-		placementSettings.Constraints = stringVal
-	case ast.PlacementOptionLeaderConstraints:
-		placementSettings.LeaderConstraints = stringVal
-	case ast.PlacementOptionLearnerConstraints:
-		placementSettings.LearnerConstraints = stringVal
-	case ast.PlacementOptionFollowerConstraints:
-		placementSettings.FollowerConstraints = stringVal
-	case ast.PlacementOptionVoterConstraints:
-		placementSettings.VoterConstraints = stringVal
-	case ast.PlacementOptionSurvivalPreferences:
-		placementSettings.SurvivalPreferences = stringVal
-	default:
-		return errors.Trace(errors.New("unknown placement policy option"))
-	}
-	return nil
-}
-
 func shardingBits(tblInfo *model.TableInfo) uint64 {
 	if tblInfo.ShardRowIDBits > 0 {
 		return tblInfo.ShardRowIDBits
@@ -1886,33 +1830,6 @@ func shardingBits(tblInfo *model.TableInfo) uint64 {
 func isIgnorableSpec(tp ast.AlterTableType) bool {
 	// AlterTableLock/AlterTableAlgorithm are ignored.
 	return tp == ast.AlterTableLock || tp == ast.AlterTableAlgorithm
-}
-
-// getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
-// of column definition. If there's no collate in the option, the default collate of column's charset will be used.
-func getCharsetAndCollateInColumnDef(sessVars *variable.SessionVars, def *ast.ColumnDef) (chs, coll string, err error) {
-	chs = def.Tp.GetCharset()
-	coll = def.Tp.GetCollate()
-	if chs != "" && coll == "" {
-		if coll, err = GetDefaultCollation(sessVars, chs); err != nil {
-			return "", "", errors.Trace(err)
-		}
-	}
-	for _, opt := range def.Options {
-		if opt.Tp == ast.ColumnOptionCollate {
-			info, err := collate.GetCollationByName(opt.StrValue)
-			if err != nil {
-				return "", "", errors.Trace(err)
-			}
-			if chs == "" {
-				chs = info.CharsetName
-			} else if chs != info.CharsetName {
-				return "", "", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
-			}
-			coll = info.Name
-		}
-	}
-	return
 }
 
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
@@ -2557,24 +2474,6 @@ func (e *executor) getSchemaAndTableByIdent(tableIdent ast.Ident) (dbInfo *model
 		return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableIdent.Schema, tableIdent.Name)
 	}
 	return schema, t, nil
-}
-
-func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
-	for _, constraint := range col.Options {
-		switch constraint.Tp {
-		case ast.ColumnOptionAutoIncrement:
-			return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
-		case ast.ColumnOptionPrimaryKey:
-			return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint PRIMARY KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
-		case ast.ColumnOptionUniqKey:
-			return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint UNIQUE KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
-		case ast.ColumnOptionAutoRandom:
-			errMsg := fmt.Sprintf(autoid.AutoRandomAlterAddColumn, col.Name, ti.Schema, ti.Name)
-			return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
-		}
-	}
-
-	return nil
 }
 
 // AddColumn will add a new column to the table.
