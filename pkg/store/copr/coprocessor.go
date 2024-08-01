@@ -214,7 +214,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// Set concurrency to 2 can reduce the memory usage and I've tested that it does not necessarily
 		// decrease the performance.
 		// For ReqTypeAnalyze, we keep its concurrency to avoid slow analyze(see https://github.com/pingcap/tidb/issues/40162 for details).
-		if it.concurrency > 2 && it.req.Tp != kv.ReqTypeAnalyze {
+		if it.concurrency > 2 && it.req.Tp != kv.ReqTypeAnalyze && it.req.StoreType != kv.TiFlash {
 			oldConcurrency := it.concurrency
 			partitionNum := req.KeyRanges.PartitionNum()
 			if partitionNum > it.concurrency {
