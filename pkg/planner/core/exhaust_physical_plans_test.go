@@ -184,7 +184,7 @@ type indexJoinTestCase struct {
 	compareFilters string
 }
 
-func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...any) *indexJoinBuildHelper {
+func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...any) *indexJoinPathResult {
 	ctx := testCtx.dataSourceNode.SCtx()
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode
@@ -198,28 +198,30 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	helper := &indexJoinBuildHelper{
 		sctx:                  ctx,
 		joinOtherConditions:   others,
-		lastColManager:        nil,
 		outerJoinKeys:         testCase.innerKeys,
 		innerJoinKeys:         testCase.innerKeys,
 		innerStats:            dataSourceNode.StatsInfo(),
 		innerSchema:           dataSourceNode.Schema(),
 		innerPushedConditions: dataSourceNode.PushedDownConds}
-	_, err = helper.analyzeLookUpFilters(testCtx.path, testCase.rebuildMode)
-	if helper.chosenRanges == nil {
-		helper.chosenRanges = ranger.Ranges{}
+	result, _, err := helper.analyzeIndexJoinPath(testCtx.path, testCase.rebuildMode)
+	if result == nil {
+		result = &indexJoinPathResult{}
+	}
+	if result.chosenRanges == nil {
+		result.chosenRanges = ranger.Ranges{}
 	}
 	require.NoError(t, err)
 	if testCase.rebuildMode {
-		require.Equal(t, testCase.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), msgAndArgs)
+		require.Equal(t, testCase.ranges, fmt.Sprintf("%v", result.chosenRanges.Range()), msgAndArgs)
 	} else {
 		ectx := ctx.GetExprCtx().GetEvalCtx()
-		require.Equal(t, testCase.accesses, expression.StringifyExpressionsWithCtx(ectx, helper.chosenAccess), msgAndArgs)
-		require.Equal(t, testCase.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), msgAndArgs)
-		require.Equal(t, testCase.idxOff2KeyOff, fmt.Sprintf("%v", helper.idxOff2KeyOff), msgAndArgs)
-		require.Equal(t, testCase.remained, expression.StringifyExpressionsWithCtx(ectx, helper.chosenRemained), msgAndArgs)
-		require.Equal(t, testCase.compareFilters, fmt.Sprintf("%v", helper.lastColManager), msgAndArgs)
+		require.Equal(t, testCase.accesses, expression.StringifyExpressionsWithCtx(ectx, result.chosenAccess), msgAndArgs)
+		require.Equal(t, testCase.ranges, fmt.Sprintf("%v", result.chosenRanges.Range()), msgAndArgs)
+		require.Equal(t, testCase.idxOff2KeyOff, fmt.Sprintf("%v", result.idxOff2KeyOff), msgAndArgs)
+		require.Equal(t, testCase.remained, expression.StringifyExpressionsWithCtx(ectx, result.chosenRemained), msgAndArgs)
+		require.Equal(t, testCase.compareFilters, fmt.Sprintf("%v", result.lastColManager), msgAndArgs)
 	}
-	return helper
+	return result
 }
 
 func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
