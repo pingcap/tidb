@@ -649,10 +649,10 @@ func TestOptionalProp(t *testing.T) {
 
 	require.Equal(t, context.OptionalEvalPropKeySet(0), f.RequiredOptionalEvalProps())
 	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet(),
-		getOptionalEvalPropsForExpr(fe))
+		GetOptionalEvalPropsForExpr(fe))
 	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet()|
 		context.OptPropAdvisoryLock.AsPropKeySet(),
-		getOptionalEvalPropsForExpr(fe)|getOptionalEvalPropsForExpr(fe2))
+		GetOptionalEvalPropsForExpr(fe)|GetOptionalEvalPropsForExpr(fe2))
 
 	evalSuit := NewEvaluatorSuite([]Expression{fe, fe2}, false)
 	require.Equal(t, context.OptPropCurrentUser.AsPropKeySet()|context.OptPropDDLOwnerInfo.AsPropKeySet()|
