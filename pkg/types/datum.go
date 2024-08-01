@@ -2083,7 +2083,7 @@ func (d *Datum) ToString() (string, error) {
 }
 
 // StringForExplain implements Explainable interface.
-func (d *Datum) StringForExplain(ctx ParamValuesVectorFloat32, redact string) string {
+func (d *Datum) StringForExplain(ctx ParamValues, redact string) string {
 	switch d.Kind() {
 	case KindVectorFloat32:
 		return d.GetVectorFloat32().StringForExplain(ctx, redact)

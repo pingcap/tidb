@@ -36,7 +36,7 @@ func init() {
 }
 
 // ParamValuesVectorFloat32 is a readonly interface to return param for VectorFloat32
-type ParamValuesVectorFloat32 interface {
+type ParamValues interface {
 	// GetParamValue returns the value of the parameter by index.
 	GetParamValue(idx int) (Datum, error)
 }
@@ -102,7 +102,7 @@ func (v VectorFloat32) Elements() []float32 {
 
 // StringForExplain implements Explainable interface.
 // In EXPLAIN context, we truncate the elements to avoid too long output.
-func (v VectorFloat32) StringForExplain(ctx ParamValuesVectorFloat32, redact string) string {
+func (v VectorFloat32) StringForExplain(ctx ParamValues, redact string) string {
 	const (
 		maxDisplayElements = 5
 	)
