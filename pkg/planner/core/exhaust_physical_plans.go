@@ -3025,7 +3025,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				return false
 			}
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *LogicalTableDual:
+		case *logicalop.LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
 		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
 			if storeTp != kv.TiFlash {

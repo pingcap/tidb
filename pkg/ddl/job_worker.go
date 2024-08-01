@@ -338,13 +338,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// for local mode job, we didn't insert the job to ddl table now.
-	// so no need to delete it.
-	if !job.LocalMode {
-		err = w.deleteDDLJob(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err = w.deleteDDLJob(job)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
@@ -505,12 +501,7 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	var t *meta.Meta
-	if variable.EnableFastCreateTable.Load() {
-		t = meta.NewMeta(txn, meta.WithUpdateTableName())
-	} else {
-		t = meta.NewMeta(txn)
-	}
+	t := meta.NewMeta(txn)
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
