@@ -259,7 +259,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 					}
 					continue
 				}
-				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount)
+				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
@@ -350,7 +350,11 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
+<<<<<<< HEAD
 func equalRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, b []byte, realtimeRowCount int64) (result float64) {
+=======
+func equalRowCountOnIndex(sctx context.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
+>>>>>>> 29458197ec3 (Planner: Estimate to recognize modifyCount when all TopN collected (#55077))
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
@@ -391,7 +395,11 @@ func equalRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, b []by
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	if histNDV <= 0 {
-		return 0
+		// If the table hasn't been modified, it's safe to return 0. Otherwise, the TopN could be stale - return 1.
+		if modifyCount == 0 {
+			return 0
+		}
+		return 1
 	}
 	return idx.Histogram.NotNullCount() / histNDV
 }
