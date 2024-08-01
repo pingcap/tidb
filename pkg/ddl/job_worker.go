@@ -82,9 +82,6 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
-	// loaclWorker is the worker who handles the operation in local TiDB.
-	// currently it only handle CreateTable job of fast create table enabled.
-	localWorker workerType = 2
 )
 
 // worker is used for handling DDL jobs.
@@ -94,7 +91,7 @@ type worker struct {
 	tp              workerType
 	addingDDLJobKey string
 	ddlJobCh        chan struct{}
-	// for local mode worker, it's ctx of 'ddl', else it's the ctx of 'job scheduler'.
+	// it's the ctx of 'job scheduler'.
 	ctx context.Context
 	wg  sync.WaitGroup
 
@@ -164,8 +161,6 @@ func (w *worker) typeStr() string {
 		str = "general"
 	case addIdxWorker:
 		str = "add index"
-	case localWorker:
-		str = "local worker"
 	default:
 		str = "unknown"
 	}
@@ -598,7 +593,7 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 }
 
 func (w *worker) checkBeforeCommit() error {
-	if !w.ddlCtx.isOwner() && w.tp != localWorker {
+	if !w.ddlCtx.isOwner() {
 		// Since this TiDB instance is not a DDL owner anymore,
 		// it should not commit any transaction.
 		w.sess.Rollback()
@@ -610,53 +605,6 @@ func (w *worker) checkBeforeCommit() error {
 		return err
 	}
 	return nil
-}
-
-// HandleLocalDDLJob handles local ddl job like fast create table.
-// Compare with normal ddl job:
-// 1. directly insert the job to history job table(incompatible with CDC).
-// 2. no need to wait schema version(only support create table now).
-// 3. no register mdl info(only support create table now).
-func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
-	txn, err := w.prepareTxn(job)
-	if err != nil {
-		return err
-	}
-
-	t := meta.NewMeta(txn, meta.WithUpdateTableName())
-	d.mu.RLock()
-	d.mu.hook.OnJobRunBefore(job)
-	d.mu.RUnlock()
-
-	_, _, err = w.runOneJobStep(d, t, job)
-	defer d.unlockSchemaVersion(job.ID)
-	if err != nil {
-		return err
-	}
-	// no need to rollback for fast create table now.
-	if job.IsCancelling() {
-		job.State = model.JobStateCancelled
-		job.Error = dbterror.ErrCancelledDDLJob
-	}
-	if job.IsCancelled() {
-		w.sess.Reset()
-		if err = w.handleJobDone(d, job, t); err != nil {
-			return err
-		}
-		// return job.Error to let caller know the job is cancelled.
-		return job.Error
-	}
-
-	d.mu.RLock()
-	d.mu.hook.OnJobRunAfter(job)
-	d.mu.RUnlock()
-
-	writeBinlog(d.binlogCli, txn, job)
-	// reset the SQL digest to make topsql work right.
-	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
-
-	job.State = model.JobStateSynced
-	return w.handleJobDone(d, job, t)
 }
 
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {

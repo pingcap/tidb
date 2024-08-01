@@ -162,8 +162,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	originalHook := dom.DDL().GetHook()
 
 	hook.OnJobRunBeforeExported = pauseFunc
-	var rf = resumeFunc
-	hook.OnJobUpdatedExported.Store(&rf)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", resumeFunc)
 
 	Logger.Debug("pauseResumeAndCancel: statement execute", zap.String("DDL Statement", stmtCase.stmt))
 	if stmtCase.isJobPausable {
@@ -203,6 +202,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 
 	// Should not affect the 'stmtCase.rollbackStmts'
 	dom.DDL().SetHook(originalHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	// Statement in `stmtCase` will be finished successfully all the way, need to roll it back.
 	for _, rollbackStmt := range stmtCase.rollbackStmts {

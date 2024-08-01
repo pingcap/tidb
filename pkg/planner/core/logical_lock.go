@@ -89,9 +89,9 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
+	var topN *logicalop.LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
+		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
 	}
 	if topN != nil {
 		p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)

@@ -156,7 +156,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				appendRemoveMaxOneRowTraceStep(m, opt)
 				return s.optimize(ctx, p, opt)
 			}
-		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
+		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
 			allConst := len(proj.Exprs) > 0
@@ -212,7 +212,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			appendRemoveProjTraceStep(apply, proj, opt)
 			return s.optimize(ctx, p, opt)
-		} else if li, ok := innerPlan.(*LogicalLimit); ok {
+		} else if li, ok := innerPlan.(*logicalop.LogicalLimit); ok {
 			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
 			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
 			// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
@@ -343,7 +343,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 						defaultValueMap := s.aggDefaultValueMap(agg)
 						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+							proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
 							proj.SetSchema(apply.Schema())
 							proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
 							for i, val := range defaultValueMap {
@@ -362,7 +362,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 				}
 			}
-		} else if sort, ok := innerPlan.(*LogicalSort); ok {
+		} else if sort, ok := innerPlan.(*logicalop.LogicalSort); ok {
 			// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
 			// the top level Sort has no effect on the subquery's result.
 			innerPlan = sort.Children()[0]
@@ -422,7 +422,7 @@ func appendRemoveMaxOneRowTraceStep(m *logicalop.LogicalMaxOneRow, opt *optimize
 	opt.AppendStepToCurrent(m.ID(), m.TP(), reason, action)
 }
 
-func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveLimitTraceStep(limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", limit.TP(), limit.ID())
 	}
@@ -432,7 +432,7 @@ func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *optimizetrace.LogicalO
 	opt.AppendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
 
-func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", proj.TP(), proj.ID())
 	}
@@ -442,7 +442,7 @@ func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *op
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is moved as %v_%v's parent", proj.TP(), proj.ID(), np.TP(), np.ID())
 	}
@@ -452,7 +452,7 @@ func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *Logical
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendRemoveSortTraceStep(sort *LogicalSort, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveSortTraceStep(sort *logicalop.LogicalSort, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", sort.TP(), sort.ID())
 	}
@@ -474,7 +474,7 @@ func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *Logical
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAddProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAddProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is added as %v_%v's parent", proj.TP(), proj.ID(), p.TP(), p.ID())
 	}

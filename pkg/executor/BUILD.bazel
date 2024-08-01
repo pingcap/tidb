@@ -154,6 +154,7 @@ go_library(
         "//pkg/planner/context",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/util",
         "//pkg/planner/util/coreusage",
         "//pkg/planner/util/fixcontrol",

@@ -240,7 +240,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		case *LogicalTableScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
-		case *LogicalProjection:
+		case *logicalop.LogicalProjection:
 			// Schema change from children to self.
 			schema := x.Schema()
 			for i, expr := range x.Exprs {
@@ -279,12 +279,12 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for _, corCols := range x.CorCols {
 				c.addPredicateColumn(&corCols.Column)
 			}
-		case *LogicalSort:
+		case *logicalop.LogicalSort:
 			// Assume statistics of all the columns in ByItems are needed.
 			for _, item := range x.ByItems {
 				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
 			}
-		case *LogicalTopN:
+		case *logicalop.LogicalTopN:
 			// Assume statistics of all the columns in ByItems are needed.
 			for _, item := range x.ByItems {
 				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})

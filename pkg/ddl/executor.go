@@ -10057,10 +10057,11 @@ func (e *executor) delJobDoneCh(jobID int64) {
 	e.ddlJobDoneChMap.Delete(jobID)
 }
 
-func (d *ddl) limitDDLJobs(ch chan *JobWrapper, handler func([]*JobWrapper)) {
+func (d *ddl) limitDDLJobs() {
 	defer util.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
 
 	jobWs := make([]*JobWrapper, 0, batchAddingJobs)
+	ch := d.limitJobCh
 	for {
 		select {
 		// the channel is never closed
@@ -10072,7 +10073,7 @@ func (d *ddl) limitDDLJobs(ch chan *JobWrapper, handler func([]*JobWrapper)) {
 			for i := 0; i < jobLen; i++ {
 				jobWs = append(jobWs, <-ch)
 			}
-			handler(jobWs)
+			d.addBatchDDLJobs(jobWs)
 		case <-d.ctx.Done():
 			return
 		}
@@ -10115,8 +10116,8 @@ func (e *executor) deliverJobTask(task *JobWrapper) {
 	e.limitJobCh <- task
 }
 
-// addBatchDDLJobsV1 gets global job IDs and puts the DDL jobs in the DDL queue.
-func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
+// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
+func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) {
 	startTime := time.Now()
 	var (
 		err   error
@@ -10134,7 +10135,7 @@ func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
 				jobWs = newWs
 			}
 		}
-		err = d.addBatchDDLJobs(jobWs)
+		err = d.addBatchDDLJobs2Table(jobWs)
 	} else {
 		err = d.addBatchDDLJobs2Queue(jobWs)
 	}
@@ -10156,24 +10157,6 @@ func (d *ddl) addBatchDDLJobsV1(jobWs []*JobWrapper) {
 			zap.String("jobs", jobs),
 			zap.Bool("table", toTable),
 			zap.Bool("fast_create", fastCreate))
-	}
-}
-
-// addBatchLocalDDLJobs gets global job IDs and delivery the DDL jobs to local TiDB
-func (d *ddl) addBatchLocalDDLJobs(jobWs []*JobWrapper) {
-	if newJobWs, err := mergeCreateTableJobs(jobWs); err == nil {
-		jobWs = newJobWs
-	}
-	err := d.addBatchDDLJobs(jobWs)
-	if err != nil {
-		for _, jobW := range jobWs {
-			jobW.NotifyResult(err)
-		}
-		logutil.DDLLogger().Error("add DDL jobs failed", zap.Bool("local_mode", true), zap.Error(err))
-	} else {
-		logutil.DDLLogger().Info("add DDL jobs",
-			zap.Bool("local_mode", true),
-			zap.Int("batch count", len(jobWs)))
 	}
 }
 
@@ -10234,8 +10217,8 @@ func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
 	return nil
 }
 
-// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL job table or local worker.
-func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
+// addBatchDDLJobs2Table gets global job IDs and puts the DDL jobs in the DDL job table.
+func (d *ddl) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	var err error
 
 	if len(jobWs) == 0 {
@@ -10270,7 +10253,6 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 		}
 		startTS = txn.StartTS()
 
-		// for localmode, we still need to check this variable if upgrading below v6.2.
 		if variable.DDLForce2Queue.Load() {
 			if err := d.checkFlashbackJobInQueue(t); err != nil {
 				return err
@@ -10304,7 +10286,6 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) error {
 
 		setJobStateToQueueing(job)
 
-		// currently doesn't support pause job in local mode.
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
 			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))

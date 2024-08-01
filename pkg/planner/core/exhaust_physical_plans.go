@@ -771,7 +771,7 @@ childLoop:
 		case *DataSource:
 			wrapper.ds = child
 			break childLoop
-		case *LogicalProjection, *LogicalSelection, *LogicalAggregation:
+		case *logicalop.LogicalProjection, *LogicalSelection, *LogicalAggregation:
 			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 				return nil
 			}
@@ -1128,7 +1128,7 @@ func constructInnerByZippedChildren(zippedChildren []base.LogicalPlan, child bas
 		switch x := zippedChildren[i].(type) {
 		case *LogicalUnionScan:
 			child = constructInnerUnionScan(x, child)
-		case *LogicalProjection:
+		case *logicalop.LogicalProjection:
 			child = constructInnerProj(x, child)
 		case *LogicalSelection:
 			child = constructInnerSel(x, child)
@@ -1160,7 +1160,7 @@ func constructInnerSel(sel *LogicalSelection, child base.PhysicalPlan) base.Phys
 	return physicalSel
 }
 
-func constructInnerProj(proj *LogicalProjection, child base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerProj(proj *logicalop.LogicalProjection, child base.PhysicalPlan) base.PhysicalPlan {
 	if proj == nil {
 		return child
 	}
@@ -2662,7 +2662,8 @@ func exhaustPhysicalPlans4LogicalExpand(p *LogicalExpand, prop *property.Physica
 	return physicalExpands, true, nil
 }
 
-func exhaustPhysicalPlans4Projection(p *LogicalProjection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalProjection)
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil, true, nil
@@ -2702,10 +2703,10 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
 	var meetThreshold bool
 	var preferPushDown *bool
 	switch lp := p.(type) {
-	case *LogicalTopN:
+	case *logicalop.LogicalTopN:
 		preferPushDown = &lp.PreferLimitToCop
 		meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
-	case *LogicalLimit:
+	case *logicalop.LogicalLimit:
 		preferPushDown = &lp.PreferLimitToCop
 		meetThreshold = true // always push Limit down in this case since it has no side effect
 	default:
@@ -2725,7 +2726,7 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
 	return false
 }
 
-func getPhysTopN(lt *LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
@@ -2747,7 +2748,7 @@ func getPhysTopN(lt *LogicalTopN, prop *property.PhysicalProperty) []base.Physic
 	return ret
 }
 
-func getPhysLimits(lt *LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil
@@ -2991,8 +2992,8 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			}
 			ret = ret && validDs
 
-			_, isTopN := p.Self().(*LogicalTopN)
-			_, isLimit := p.Self().(*LogicalLimit)
+			_, isTopN := p.Self().(*logicalop.LogicalTopN)
+			_, isLimit := p.Self().(*logicalop.LogicalLimit)
 			if (isTopN || isLimit) && indexMergeIsIntersection {
 				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
 			}
@@ -3009,12 +3010,12 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				return false
 			}
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
-		case *LogicalSort:
+		case *logicalop.LogicalSort:
 			if storeTp != kv.TiFlash {
 				return false
 			}
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
-		case *LogicalProjection:
+		case *logicalop.LogicalProjection:
 			if storeTp != kv.TiFlash {
 				return false
 			}
@@ -3033,7 +3034,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			}
 			ret = ret && c.CanPushToCop(storeTp)
 		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
-		case *LogicalLimit, *LogicalTopN:
+		case *logicalop.LogicalLimit, *logicalop.LogicalTopN:
 			return false
 		case *logicalop.LogicalSequence:
 			return storeTp == kv.TiFlash
@@ -3448,7 +3449,12 @@ func exhaustPhysicalPlans4LogicalSelection(p *LogicalSelection, prop *property.P
 	return ret, true, nil
 }
 
-func getLimitPhysicalPlans(p *LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalLimit(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalLimit)
+	return getLimitPhysicalPlans(p, prop)
+}
+
+func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.IsSortItemEmpty() {
 		return nil, true, nil
 	}
@@ -3544,12 +3550,41 @@ func exhaustPartitionUnionAllPhysicalPlans(p *LogicalPartitionUnionAll, prop *pr
 	return uas, flagHint, nil
 }
 
-func getPhysicalSort(ls *LogicalSort, prop *property.PhysicalProperty) *PhysicalSort {
+func exhaustPhysicalPlans4LogicalTopN(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	lt := lp.(*logicalop.LogicalTopN)
+	if MatchItems(prop, lt.ByItems) {
+		return append(getPhysTopN(lt, prop), getPhysLimits(lt, prop)...), true, nil
+	}
+	return nil, true, nil
+}
+
+func exhaustPhysicalPlans4LogicalSort(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	ls := lp.(*logicalop.LogicalSort)
+	if prop.TaskTp == property.RootTaskType {
+		if MatchItems(prop, ls.ByItems) {
+			ret := make([]base.PhysicalPlan, 0, 2)
+			ret = append(ret, getPhysicalSort(ls, prop))
+			ns := getNominalSort(ls, prop)
+			if ns != nil {
+				ret = append(ret, ns)
+			}
+			return ret, true, nil
+		}
+	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
+		if canPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
+			ps := getNominalSortSimple(ls, prop)
+			return []base.PhysicalPlan{ps}, true, nil
+		}
+	}
+	return nil, true, nil
+}
+
+func getPhysicalSort(ls *logicalop.LogicalSort, prop *property.PhysicalProperty) base.PhysicalPlan {
 	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
 	return ps
 }
 
-func getNominalSort(ls *LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+func getNominalSort(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
 	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
 	if !canPass {
 		return nil
@@ -3561,7 +3596,7 @@ func getNominalSort(ls *LogicalSort, reqProp *property.PhysicalProperty) *Nomina
 	return ps
 }
 
-func getNominalSortSimple(ls *LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+func getNominalSortSimple(ls *logicalop.LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
 	newProp := reqProp.CloneEssentialFields()
 	newProp.RejectSort = true
 	ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
