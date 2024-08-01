@@ -68,4 +68,4 @@ CREATE TABLE `tld47bc815` (
   UNIQUE KEY `idx_3` (`col_1`(5)),
   KEY `idx_4` (`col_1`(4))
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
-with cte_147 ( col_754 ) AS ( select format( t4a8656d1.col_74 , 1 ) as r0 from t4a8656d1 join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1 where JSON_OVERLAPS( t4a8656d1.col_73 , '[0.035131302371695955,0.8429698274329702,0.2506157132646911,0.29289756835712716]' ) group by t4a8656d1.col_74,t4a8656d1.col_73 having not( IsNull( JSON_OVERLAPS( '[0.47941091010360976,0.4906971499170084]' , t4a8656d1.col_73 ) ) ) ) ( select 1,col_754 from cte_147 where IsNull( cte_147.col_754 ) order by 1,2 );
+explain select 1, r0 as col_754 from (     select format(t4a8656d1.col_74, 1) as r0     from t4a8656d1     join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1     where JSON_OVERLAPS(t4a8656d1.col_73, '[0.035131302371695955]')     group by t4a8656d1.col_74, t4a8656d1.col_73 ) as subquery where IsNull(subquery.r0)
