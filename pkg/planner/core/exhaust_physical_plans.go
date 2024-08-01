@@ -1966,6 +1966,9 @@ func compareIndexJoinChoice(best, current *indexJoinPathResult) (curIsBetter boo
 	if len(current.chosenRanges.Range()) == 0 {
 		return false
 	}
+	if best == nil {
+		return true
+	}
 	// We choose the index by the NDV of the used columns, the larger the better.
 	// If NDVs are same, we choose index which uses more columns.
 	// Note that these 2 heuristic rules are too simple to cover all cases,
