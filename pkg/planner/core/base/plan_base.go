@@ -79,6 +79,11 @@ type Plan interface {
 	QueryBlockOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
+
+	// CloneForPlanCache clones this Plan for Plan Cache.
+	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag
+	// `plan-cache-shallow-clone:"true"` are allowed to be shallow cloned.
+	CloneForPlanCache(newCtx PlanContext) (cloned Plan, ok bool)
 }
 
 // PhysicalPlan is a tree of the physical operators.

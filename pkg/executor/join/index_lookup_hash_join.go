@@ -146,7 +146,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
+func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context, initBatchSize int) {
 	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
 	if e.stats != nil {
 		e.stats.concurrency = concurrency
@@ -164,7 +164,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	}
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	e.WorkerWg.Add(1)
-	ow := e.newOuterWorker(innerCh)
+	ow := e.newOuterWorker(innerCh, initBatchSize)
 	go util.WithRecovery(func() { ow.run(e.ctxWithCancel) }, e.finishJoinWorkers)
 
 	for i := 0; i < concurrency; i++ {
@@ -221,7 +221,7 @@ func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
 // Next implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.prepared {
-		e.startWorkers(ctx)
+		e.startWorkers(ctx, req.RequiredRows())
 		e.prepared = true
 	}
 	req.Reset()
@@ -411,14 +411,16 @@ func (*indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexHash
 	return false
 }
 
-func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask) *indexHashJoinOuterWorker {
+func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask, initBatchSize int) *indexHashJoinOuterWorker {
+	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	batchSize := min(initBatchSize, maxBatchSize)
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{
 			OuterCtx:         e.OuterCtx,
 			ctx:              e.Ctx(),
 			executor:         e.Children(0),
-			batchSize:        32,
-			maxBatchSize:     e.Ctx().GetSessionVars().IndexJoinBatchSize,
+			batchSize:        batchSize,
+			maxBatchSize:     maxBatchSize,
 			parentMemTracker: e.memTracker,
 			lookup:           &e.IndexLookUpJoin,
 		},
@@ -563,6 +565,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	select {
 	case joinResult.chk, ok = <-iw.joinChkResourceCh:
 	case <-ctx.Done():
+		joinResult.err = ctx.Err()
 		return joinResult, false
 	}
 	return joinResult, ok
@@ -783,7 +786,10 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 			select {
 			case iw.resultCh <- joinResult:
 			case <-ctx.Done():
+				joinResult.err = ctx.Err()
+				return false, joinResult
 			}
+			failpoint.InjectCall("joinMatchedInnerRow2Chunk")
 			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
 				return false, joinResult

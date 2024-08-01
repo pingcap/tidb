@@ -93,6 +93,14 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
+// Clone makes a copy of MPPPartitionColumn.
+func (partitionCol *MPPPartitionColumn) Clone() *MPPPartitionColumn {
+	return &MPPPartitionColumn{
+		Col:       partitionCol.Col.Clone().(*expression.Column),
+		CollateID: partitionCol.CollateID,
+	}
+}
+
 func (partitionCol *MPPPartitionColumn) hashCode() []byte {
 	hashcode := partitionCol.Col.HashCode()
 	if partitionCol.CollateID < 0 {

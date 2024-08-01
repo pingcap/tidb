@@ -169,7 +169,7 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 // Case 5: Trigger re-spill and exceed max spill round
 func TestInnerJoinSpillCorrectness(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().InitChunkSize = 32 
 	ctx.GetSessionVars().MaxChunkSize = 32
 	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
 

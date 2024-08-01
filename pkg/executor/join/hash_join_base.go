@@ -225,18 +225,20 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunksImpl(ctx context.C
 
 type probeWorkerBase struct {
 	WorkerID           uint
+	partitionMaskOffset int
 	probeChkResourceCh chan *probeChkResource
 	joinChkResourceCh  chan *chunk.Chunk
 	probeResultCh      chan *chunk.Chunk
 }
 
-func (worker *probeWorkerBase) initializeForProbe(probeChkResourceCh chan *probeChkResource, probeResultCh chan *chunk.Chunk, joinExec exec.Executor) {
+func (worker *probeWorkerBase) initializeForProbe(probeChkResourceCh chan *probeChkResource, probeResultCh chan *chunk.Chunk, joinExec exec.Executor, partitionMaskOffset int) {
 	// worker.joinChkResourceCh is for transmitting the reused join result chunks
 	// from the main thread to probe worker goroutines.
 	worker.joinChkResourceCh = make(chan *chunk.Chunk, 1)
 	worker.joinChkResourceCh <- exec.NewFirstChunk(joinExec)
 	worker.probeChkResourceCh = probeChkResourceCh
 	worker.probeResultCh = probeResultCh
+	worker.partitionMaskOffset = partitionMaskOffset
 }
 
 type buildWorkerBase struct {

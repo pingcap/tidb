@@ -59,13 +59,14 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 		BuildWorkers:          make([]*BuildWorkerV2, concurrency),
 		HashJoinCtxV2: &HashJoinCtxV2{
 			OtherCondition:  info.otherCondition,
-			PartitionNumber: 4,
+			partitionNumber: 4,
 		},
 	}
 	e.HashJoinCtxV2.SessCtx = info.ctx
 	e.HashJoinCtxV2.JoinType = info.joinType
 	e.HashJoinCtxV2.Concurrency = uint(concurrency)
 	e.HashJoinCtxV2.BuildFilter = info.conditions
+	e.HashJoinCtxV2.SetupPartitionInfo()
 	e.ChunkAllocPool = e.AllocPool
 	e.RightAsBuildSide = info.rightAsBuildSide
 

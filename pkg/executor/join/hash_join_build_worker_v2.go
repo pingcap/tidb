@@ -108,7 +108,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 			setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
 		}
 	}()
-	partitionNumber := w.HashJoinCtx.PartitionNumber
+	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
 	// TODO add random failpoint to slow worker here, 20-40ms, enable it at any case.
@@ -145,7 +145,7 @@ func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, fetcherAndWork
 	defer fetcherAndWorkerSyncer.Done()
 
 	start := time.Now()
-	err := w.builder.processOneRestoredChunk(chk, w.HashJoinCtx, int(w.WorkerID), w.HashJoinCtx.PartitionNumber)
+	err := w.builder.processOneRestoredChunk(chk, w.HashJoinCtx, int(w.WorkerID), int(w.HashJoinCtx.partitionNumber))
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syn
 	// 	}
 	// }()
 
-	partitionNumber := w.HashJoinCtx.PartitionNumber
+	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
 	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)

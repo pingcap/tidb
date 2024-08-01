@@ -32,6 +32,9 @@ type ProbeWorkerV2 struct {
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe ProbeV2
+
+	totalOutputRowNum int
+	spilledRowNum     int
 }
 
 func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
@@ -79,6 +82,7 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
+			w.totalOutputRowNum += joinResult.chk.NumRows()
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			waitTime += int64(time.Since(waitStart))
@@ -119,8 +123,6 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		}()
 	}
 
-	totalOutputRowNum := 0
-
 	var (
 		probeSideResult *chunk.Chunk
 	)
@@ -128,6 +130,17 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 	if !ok {
 		return
 	}
+
+	defer func() {
+		spilledInfo := w.JoinProbe.GetSpilledRowNum()
+		info := ""
+		for partID, rowNum := range spilledInfo {
+			info = fmt.Sprintf("%s [%d %d]", info, partID, rowNum)
+		}
+		log.Info(fmt.Sprintf("xzxdebug totalOutputRowNum: %d, spilled info: %s", w.totalOutputRowNum, info))
+
+		w.totalOutputRowNum = 0
+	}()
 
 	// Read and filter probeSideResult, and join the probeSideResult with the build side rows.
 	emptyProbeSideResult := &probeChkResource{
@@ -191,7 +204,7 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, joinResult.err)
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
 		if joinResult.chk != nil {
-			totalOutputRowNum += joinResult.chk.NumRows()
+			w.totalOutputRowNum += joinResult.chk.NumRows()
 		}
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
@@ -213,14 +226,14 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error 
 	// }
 
 	totalRestoredRowNum := 0
-	totalOutputRowNum := 0
 
 	defer func() {
 		if r := recover(); r != nil {
 			err := util.GetRecoverError(r)
 			errInfo := err.Error()
-			log.Info(errInfo)
+			log.Info(errInfo) // TODO remove it
 		}
+		log.Info(fmt.Sprintf("xzxdebug totalOutputRowNum: %d, restoredRowNum: %d", w.totalOutputRowNum, totalRestoredRowNum))
 	}()
 
 	ok, joinResult := w.getNewJoinResult()
@@ -275,7 +288,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error 
 		handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, joinResult.err)
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
 		if joinResult.chk != nil {
-			totalOutputRowNum += joinResult.chk.NumRows()
+			w.totalOutputRowNum += joinResult.chk.NumRows()
 		}
 
 		w.HashJoinCtx.joinResultCh <- joinResult

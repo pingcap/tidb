@@ -71,7 +71,7 @@ type ProbeV2 interface {
 	NeedScanRowTable() bool
 	// InitForScanRowTable do some pre-work before ScanRowTable, it must be called before ScanRowTable
 	InitForScanRowTable(inSpillMode bool)
-	GetSpilledRowNum() map[int]int
+	GetSpilledRowNum() map[int]int // TODO remove it
 }
 
 type offsetAndLength struct {
@@ -190,7 +190,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.matchedRowsHeaders = make([]uintptr, logicalRows)
 	}
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 	if j.ctx.ProbeFilter != nil {
@@ -235,8 +235,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
 	// spillTriggered can only be set in build stage, so it's ok to get it without lock
-	if j.ctx.spillHelper.isSpillTriggeredNoLock() && len(j.spillTmpChk) != j.ctx.PartitionNumber {
-		for i := 0; i < j.ctx.PartitionNumber; i++ {
+	if j.ctx.spillHelper.isSpillTriggeredNoLock() && len(j.spillTmpChk) != int(j.ctx.partitionNumber) {
+		for i := 0; i < int(j.ctx.partitionNumber); i++ {
 			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.probeSpillChkFieldTypes, spillChunkSize))
 		}
 	}
@@ -256,7 +256,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
 		hashValue := hash.Sum64()
-		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
+		partIndex := generatePartitionIndex(hashValue, j.ctx.partitionMaskOffset)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(hashValue))
 			j.spillTmpChk[partIndex].AppendBytes(1, j.serializedKeys[logicalRowIndex])
@@ -282,7 +282,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 	j.currentProbeRow = 0
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		for index := range j.hashValues[i] {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
 		}
@@ -329,7 +329,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.matchedRowsHeaders = make([]uintptr, logicalRows)
 	}
 
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 
@@ -358,7 +358,8 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		hash.Reset()
 		hash.Write(rehashBuf.Bytes())
 		newHashVal := hash.Sum64()
-		partIndex := newHashVal % uint64(j.ctx.PartitionNumber)
+		// partIndex := generatePartitionIndex(newHashVal, )
+		partIndex := newHashVal % uint64(j.ctx.partitionNumber)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(newHashVal))
 			j.spillTmpChk[partIndex].AppendBytes(1, serializedKeysCol.GetBytes(physicalRowIndex))
@@ -379,7 +380,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	}
 
 	j.currentProbeRow = 0
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		for index := range j.hashValues[i] {
 			logicalPos := j.hashValues[i][index].pos
 			physicalPos := j.usedRows[j.hashValues[i][index].pos]
@@ -395,7 +396,7 @@ func (j *baseJoinProbe) SpillRemainingProbeChunks() error {
 		return nil
 	}
 
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		if j.spillTmpChk[i].NumRows() > 0 {
 			rowNum := j.spillTmpChk[i].NumRows()
 
@@ -691,8 +692,8 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 	for i := 0; i < chunk.InitialCapacity; i++ {
 		base.selRows = append(base.selRows, i)
 	}
-	base.hashValues = make([][]posAndHashValue, ctx.PartitionNumber)
-	for i := 0; i < ctx.PartitionNumber; i++ {
+	base.hashValues = make([][]posAndHashValue, ctx.partitionNumber)
+	for i := 0; i < int(ctx.partitionNumber); i++ {
 		base.hashValues[i] = make([]posAndHashValue, 0, chunk.InitialCapacity)
 	}
 	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)
@@ -712,7 +713,9 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 	case core.InnerJoin:
 		return &innerJoinProbe{base}
 	case core.LeftOuterJoin:
-		return &leftOuterJoinProbe{baseJoinProbe: base}
+		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
+	case core.RightOuterJoin:
+		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
 	default:
 		panic("unsupported join type")
 	}

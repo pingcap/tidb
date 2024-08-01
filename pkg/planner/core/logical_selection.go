@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -58,7 +59,7 @@ func (p *LogicalSelection) ExplainInfo() string {
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
-		ResolveExprAndReplace(expr, replace)
+		ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 
@@ -125,7 +126,6 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 	if err != nil {
 		return nil, err
 	}
-	addConstOneForEmptyProjection(p.Children()[0])
 	return p, nil
 }
 
@@ -264,13 +264,13 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	}
 
 	// extract the not null attributes from selection conditions.
-	notnullColsUniqueIDs.UnionWith(extractNotNullFromConds(p.Conditions, p))
+	notnullColsUniqueIDs.UnionWith(ExtractNotNullFromConds(p.Conditions, p))
 
 	// extract the constant cols from selection conditions.
-	constUniqueIDs := extractConstantCols(p.Conditions, p.SCtx(), fds)
+	constUniqueIDs := ExtractConstantCols(p.Conditions, p.SCtx(), fds)
 
 	// extract equivalence cols.
-	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p.SCtx(), fds)
+	equivUniqueIDs := ExtractEquivalenceCols(p.Conditions, p.SCtx(), fds)
 
 	// apply operator's characteristic's FD setting.
 	fds.MakeNotNull(notnullColsUniqueIDs)

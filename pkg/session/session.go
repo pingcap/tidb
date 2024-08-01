@@ -416,9 +416,8 @@ func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 	t := time.Now()
 	colMap := make(map[model.TableItemID]time.Time, len(predicateColumns))
 	for _, col := range predicateColumns {
-		if col.IsIndex {
-			continue
-		}
+		// TODO: Remove this assertion once it has been confirmed to operate correctly over a period of time.
+		intest.Assert(!col.IsIndex, "predicate column should only be table column")
 		colMap[col] = t
 	}
 	s.statsCollector.UpdateColStatsUsage(colMap)
@@ -2412,10 +2411,15 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 		if err2 != nil {
 			logutil.BgLogger().Error("close detached record set failed", zap.Error(err2))
 		}
-		return nil, false, err
+		return nil, true, err
 	}
 
 	return crs, true, nil
+}
+
+// GetExecutor4Test exports the internal executor for test purpose.
+func (rs *execStmtResult) GetExecutor4Test() any {
+	return rs.RecordSet.(interface{ GetExecutor4Test() any }).GetExecutor4Test()
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -2535,7 +2539,7 @@ func (s *session) Close() {
 			time.Sleep(time.Duration(ds) * time.Millisecond)
 		}
 		lockedTables := s.GetAllTableLocks()
-		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
+		err := domain.GetDomain(s).DDLExecutor().UnlockTables(s, lockedTables)
 		if err != nil {
 			logutil.BgLogger().Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
 		}
@@ -2785,7 +2789,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 	}
 
 	if variable.EnableResourceControl.Load() && info.ResourceGroupName != "" {
-		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
+		s.sessionVars.SetResourceGroupName(info.ResourceGroupName)
 	}
 
 	if info.InSandBoxMode {
@@ -3317,6 +3321,32 @@ func InitMDLVariableForBootstrap(store kv.Storage) error {
 	return nil
 }
 
+// InitTiDBSchemaCacheSize initializes the tidb schema cache size.
+func InitTiDBSchemaCacheSize(store kv.Storage) error {
+	var (
+		isNull bool
+		size   uint64
+		err    error
+	)
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		size, isNull, err = t.GetSchemaCacheSize()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			size = variable.DefTiDBSchemaCacheSize
+			return t.SetSchemaCacheSize(size)
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	variable.SchemaCacheSize.Store(size)
+	return nil
+}
+
 // InitMDLVariableForUpgrade initializes the metadata lock variable.
 func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 	isNull := false
@@ -3374,6 +3404,18 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(store, createSessions4DistExecution)
 }
 
+// bootstrapSessionImpl bootstraps session and domain.
+// the process works as follows:
+// - if we haven't bootstrapped to the target version
+//   - create/init/start domain
+//   - bootstrap or upgrade, some variables will be initialized and stored to system
+//     table in the process, such as system time-zone
+//   - close domain
+//
+// - create/init another domain
+// - initialization global variables from system table that's required to use sessionCtx,
+// such as system time zone
+// - start domain and other routines.
 func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
@@ -3395,6 +3437,10 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		return nil, err
 	}
 	err = InitDDLJobTables(store, meta.BackfillTableVersion)
+	if err != nil {
+		return nil, err
+	}
+	err = InitTiDBSchemaCacheSize(store)
 	if err != nil {
 		return nil, err
 	}
@@ -3453,10 +3499,16 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		return nil, err
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
+
+	// only start the domain after we have initialized some global variables.
+	dom := domain.GetDomain(ses[0])
+	err = dom.Start()
+	if err != nil {
+		return nil, err
+	}
+
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ses[0])
-
-	dom := domain.GetDomain(ses[0])
 
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
@@ -3633,6 +3685,13 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	dom := domain.GetDomain(s)
+	err = dom.Start()
+	if err != nil {
+		// Bootstrap fail will cause program exit.
+		logutil.BgLogger().Fatal("start domain error", zap.Error(err))
+	}
+
 	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
@@ -3641,7 +3700,6 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
 
-	dom := domain.GetDomain(s)
 	dom.Close()
 	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()

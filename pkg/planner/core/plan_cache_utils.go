@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -330,11 +331,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	// this variable might affect the plan
-	if vars.ForeignKeyChecks {
-		hash = append(hash, '1')
-	} else {
-		hash = append(hash, '0')
-	}
+	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
@@ -386,7 +383,21 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			hash = codec.EncodeInt(hash, id)
 		}
 	}
+
+	// txn status
+	hash = append(hash, '|')
+	hash = append(hash, bool2Byte(vars.InTxn()))
+	hash = append(hash, bool2Byte(vars.IsAutocommit()))
+	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
+
 	return string(hash), binding, true, "", nil
+}
+
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
+	}
+	return '0'
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
@@ -407,8 +418,8 @@ func (v *PlanCacheValue) CloneForInstancePlanCache(ctx context.Context, newCtx b
 	if !ok {
 		return nil, false
 	}
-	clonedPlan, err := phyPlan.Clone(newCtx)
-	if err != nil {
+	clonedPlan, ok := phyPlan.CloneForPlanCache(newCtx)
+	if !ok {
 		return nil, false
 	}
 	if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
@@ -508,13 +519,6 @@ func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 // PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
 // Don't forget to reset this executor when the prior plan is invalid.
 type PointGetExecutorCache struct {
-	// Special (or tricky) optimization for PointGet Plan.
-	// Store the PointGet Plan in PlanCacheStmt directly to bypass the LRU Cache to gain some performance improvement.
-	// There is around 3% improvement, BenchmarkPreparedPointGet: 6450 ns/op --> 6250 ns/op.
-	pointPlan      base.Plan
-	pointPlanHints *hint.StmtHints
-	columnNames    types.NameSlice
-
 	ColumnInfos any
 	// Executor is only used for point get scene.
 	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
@@ -712,7 +716,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		}
 
 		// from text protocol, there must be a GetVar function
-		name := param.(*expression.ScalarFunction).GetArgs()[0].StringWithCtx(ectx)
+		name := param.(*expression.ScalarFunction).GetArgs()[0].StringWithCtx(ectx, errors.RedactLogDisable)
 		tp, ok := sctx.GetSessionVars().GetUserVarType(name)
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeNull)

@@ -16,6 +16,7 @@ package join
 
 import (
 	"bytes"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"slices"
@@ -23,6 +24,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -239,9 +241,9 @@ func (h *hashJoinSpillHelper) discardInDisks(inDisks [][]*chunk.DataInDiskByChun
 // TODO write a specific test for this function
 // TODO refine this function
 func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
-	partitionNum := h.hashJoinExec.PartitionNumber
+	partitionNum := h.hashJoinExec.partitionNumber
 	partitionsMemoryUsage := make([]int64, partitionNum)
-	for i := 0; i < partitionNum; i++ {
+	for i := 0; i < int(partitionNum); i++ {
 		partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(i)
 	}
 
@@ -326,8 +328,8 @@ func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, 
 
 func (h *hashJoinSpillHelper) spillSegmentsToDisk(workerID int, partID int, segments []*rowTableSegment) error {
 	if h.buildRowsInDisk[workerID] == nil {
-		h.buildRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
-		h.probeRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
+		h.buildRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.partitionNumber)
+		h.probeRowsInDisk[workerID] = make([]*chunk.DataInDiskByChunks, h.hashJoinExec.partitionNumber)
 	}
 
 	if h.buildRowsInDisk[workerID][partID] == nil {
@@ -402,11 +404,16 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 
 	h.setPartitionSpilled(partitionsNeedSpill)
 
-	if len(partitionsNeedSpill) == h.hashJoinExec.PartitionNumber {
+	if len(partitionsNeedSpill) == int(h.hashJoinExec.partitionNumber) {
 		h.allPartitionsSpilledForTest = true
 	}
 
 	h.spillTriggeredForTest = true
+	info := ""
+	for _, partID := range partitionsNeedSpill {
+		info = fmt.Sprintf("%s %d", info, partID)
+	}
+	log.Info(fmt.Sprintf("xzxdebug release mem: %d, spilled part: %s", totalReleasedMemory, info))
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
 	for i := 0; i < workerNum; i++ {
@@ -423,8 +430,7 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 				worker := h.hashJoinExec.BuildWorkers[workerID]
 				builder := worker.builder
 
-				startPosInRawData := builder.startPosInRawData[partID]
-				if len(startPosInRawData) > 0 {
+				if builder.rowNumberInCurrentRowTableSeg[partID] > 0 {
 					worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
 				}
 				spilledSegments := worker.getSegmentsInRowTable(partID)
@@ -444,7 +450,6 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 		return err
 	}
 	h.hashJoinExec.hashTableContext.memoryTracker.Consume(-totalReleasedMemory)
-
 	return nil
 }
 
@@ -509,10 +514,10 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 		return nil
 	}
 
-	partNum := h.hashJoinExec.PartitionNumber
+	partNum := h.hashJoinExec.partitionNumber
 	concurrency := int(h.hashJoinExec.Concurrency)
 
-	for i := 0; i < partNum; i++ {
+	for i := 0; i < int(partNum); i++ {
 		buildInDisks := make([]*chunk.DataInDiskByChunks, 0)
 		probeInDisks := make([]*chunk.DataInDiskByChunks, 0)
 		for j := 0; j < concurrency; j++ {
@@ -540,8 +545,8 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 }
 
 func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
-	if len(h.tmpSpillBuildSideChunks) < h.hashJoinExec.PartitionNumber {
-		for i := len(h.tmpSpillBuildSideChunks); i < h.hashJoinExec.PartitionNumber; i++ {
+	if len(h.tmpSpillBuildSideChunks) < int(h.hashJoinExec.partitionNumber) {
+		for i := len(h.tmpSpillBuildSideChunks); i < int(h.hashJoinExec.partitionNumber); i++ {
 			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}

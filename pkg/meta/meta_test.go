@@ -16,18 +16,25 @@ package meta_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -751,4 +758,164 @@ func TestName(t *testing.T) {
 
 	err = txn.Rollback()
 	require.NoError(t, err)
+}
+
+func TestIsTableInfoMustLoad(t *testing.T) {
+	tableInfo := &model.TableInfo{
+		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
+	}
+	b, err := json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		PlacementPolicyRef: &model.PolicyRefInfo{ID: 1},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		Partition: &model.PartitionInfo{Expr: "a"},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		Lock: &model.TableLockInfo{State: model.TableLockStatePreLock},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		ForeignKeys: []*model.FKInfo{{ID: 1}},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		TempTableType: model.TempTableGlobal,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		ID: 123,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+}
+
+func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
+	// The order matter!
+	// IsTableInfoMustLoad relies on the order of the json marshal result,
+	// or the internal of the json marshal in other words.
+	// This test cover the invariance, if Go std library changes, we can catch it.
+	tableInfo := &model.TableInfo{}
+	b, err := json.Marshal(tableInfo)
+	require.NoError(t, err)
+	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
+	require.Equal(t, string(b), expect)
+}
+
+func TestTableNameExtract(t *testing.T) {
+	var tbl model.TableInfo
+	tbl.Name = model.NewCIStr(`a`)
+	b, err := json.Marshal(tbl)
+	require.NoError(t, err)
+
+	nameLRegex := regexp.MustCompile(meta.NameExtractRegexp)
+	nameLMatch := nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, "a", nameLMatch[1])
+
+	tbl.Name = model.NewCIStr(`"a"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"a"`, meta.Unescape(nameLMatch[1]))
+
+	tbl.Name = model.NewCIStr(`""a"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `""a"`, meta.Unescape(nameLMatch[1]))
+
+	tbl.Name = model.NewCIStr(`"\"a"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"\"a"`, meta.Unescape(nameLMatch[1]))
+
+	tbl.Name = model.NewCIStr(`"\"啊"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
+}
+
+func BenchmarkIsTableInfoMustLoad(b *testing.B) {
+	benchCases := [][2]string{
+		{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
+		{"wide", `
+CREATE TABLE t (
+	c BIGINT PRIMARY KEY AUTO_RANDOM,
+	c2 TINYINT,
+	c3 BLOB,
+	c4 VARCHAR(255) DEFAULT 'ohsdfihusdfihusdfiuh',
+	c5 FLOAT,
+	c6 BIGINT UNSIGNED,
+	c7 DECIMAL(10, 2),
+	c8 CHAR(10),
+	c9 TEXT,
+	c10 DATE,
+	c11 TIME,
+	c12 TIMESTAMP,
+	c13 DATETIME,
+	INDEX idx(c2),
+	INDEX idx2(c4, c5),
+	INDEX idx3(c6, c2),
+    UNIQUE INDEX idx4(c12),
+    INDEX idx5((c + c2))
+);`},
+	}
+
+	for _, benchCase := range benchCases {
+		b.Run(benchCase[0], func(b *testing.B) {
+			benchIsTableInfoMustLoad(b, benchCase[1])
+		})
+	}
+}
+
+func benchIsTableInfoMustLoad(b *testing.B, sql string) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(b, err)
+	se := mock.NewContext()
+	tblInfo, err := ddl.MockTableInfo(se, stmt.(*ast.CreateTableStmt), 1)
+	require.NoError(b, err)
+	data, err := json.Marshal(tblInfo)
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		got := meta.IsTableInfoMustLoad(data)
+		intest.Assert(!got)
+	}
 }

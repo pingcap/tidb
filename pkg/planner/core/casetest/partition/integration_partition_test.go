@@ -82,7 +82,7 @@ func TestPartitionTableExplain(t *testing.T) {
 	tk.MustExec(`create table t2 (a int, b int)`)
 	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
 	tk.MustExec(`insert into t2 values (1,1),(2,2),(3,3)`)
-	tk.MustExec(`analyze table t, t2`)
+	tk.MustExec(`analyze table t, t2 all columns`)
 
 	var input []string
 	var output []struct {

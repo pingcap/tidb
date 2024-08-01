@@ -70,11 +70,8 @@ type rowTableSegment struct {
 	hashValues      []uint64 // the hash value of each rows
 	rowStartOffset  []uint64 // the start address of each row
 	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
-	finalized       bool
+	finalized       bool     // after finalized is set to true, no further modification is allowed
 }
-
-// This variable should be const, but we need to modify it for test
-var maxRowTableSegmentSize = int64(1024)
 
 func (rts *rowTableSegment) totalUsedBytes() int64 {
 	ret := int64(cap(rts.rawData))
@@ -118,13 +115,18 @@ func (rts *rowTableSegment) getRowPointer(index int) unsafe.Pointer {
 	return unsafe.Pointer(&rts.rawData[rts.rowStartOffset[index]])
 }
 
-func newRowTableSegment() *rowTableSegment {
+// This variable should be const, but we need to modify it for test
+var maxRowTableSegmentSize = int64(1024)
+
+// 64 MB
+const maxRowTableSegmentByteSize = 64 * 1024 * 1024
+
+func newRowTableSegment(rowSizeHint uint) *rowTableSegment {
 	return &rowTableSegment{
-		// TODO: @XuHuaiyu if joinKeyIsInlined, the cap of rawData can be calculated
 		rawData:         make([]byte, 0),
-		hashValues:      make([]uint64, 0, maxRowTableSegmentSize),
-		rowStartOffset:  make([]uint64, 0, maxRowTableSegmentSize),
-		validJoinKeyPos: make([]int, 0, maxRowTableSegmentSize),
+		hashValues:      make([]uint64, 0, rowSizeHint),
+		rowStartOffset:  make([]uint64, 0, rowSizeHint),
+		validJoinKeyPos: make([]int, 0, rowSizeHint),
 	}
 }
 
@@ -552,14 +554,12 @@ type rowTableBuilder struct {
 	selRows                   []int
 	usedRows                  []int
 	hashValue                 []uint64
+	firstSegRowSizeHint       uint
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector  []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
 
-	crrntSizeOfRowTable []int64
-	// store the start position of each row in the rawData,
-	// we'll use this temp array to get the address of each row at the end
-	startPosInRawData [][]uint64
+	rowNumberInCurrentRowTableSeg []int64
 
 	// When respilling a row, we need to recalculate the row's hash value.
 	// These are auxiliary utility for rehash.
@@ -567,17 +567,15 @@ type rowTableBuilder struct {
 	rehashBuf *bytes.Buffer
 }
 
-func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber int, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
+func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
 	builder := &rowTableBuilder{
-		buildKeyIndex:       buildKeyIndex,
-		buildKeyTypes:       buildKeyTypes,
-		crrntSizeOfRowTable: make([]int64, partitionNumber),
-		startPosInRawData:   make([][]uint64, partitionNumber),
-		hasNullableKey:      hasNullableKey,
-		hasFilter:           hasFilter,
-		keepFilteredRows:    keepFilteredRows,
+		buildKeyIndex:                 buildKeyIndex,
+		buildKeyTypes:                 buildKeyTypes,
+		rowNumberInCurrentRowTableSeg: make([]int64, partitionNumber),
+		hasNullableKey:                hasNullableKey,
+		hasFilter:                     hasFilter,
+		keepFilteredRows:              keepFilteredRows,
 	}
-	builder.initBuffer()
 	return builder
 }
 
@@ -600,26 +598,27 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionNumber uint64) {
+func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {
 	h := fnv.New64()
 	fakePartIndex := uint64(0)
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if (b.filterVector != nil && !b.filterVector[physicalRowIndex]) || (b.nullKeyVector != nil && b.nullKeyVector[physicalRowIndex]) {
 			b.hashValue[logicalRowIndex] = fakePartIndex
 			b.partIdxVector[logicalRowIndex] = int(fakePartIndex)
-			fakePartIndex = (fakePartIndex + 1) % partitionNumber
+			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
 			continue
 		}
 		h.Write(b.serializedKeyVectorBuffer[logicalRowIndex])
 		hash := h.Sum64()
 		b.hashValue[logicalRowIndex] = hash
-		b.partIdxVector[logicalRowIndex] = int(hash % partitionNumber)
+		b.partIdxVector[logicalRowIndex] = int(generatePartitionIndex(hash, partitionMaskOffset))
 		h.Reset()
 	}
 }
 
 func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *HashJoinCtxV2, workerID int) error {
 	b.ResetBuffer(chk)
+	b.firstSegRowSizeHint = max(uint(1), uint(float64(len(b.usedRows))/float64(hashJoinCtx.partitionNumber)*float64(1.2)))
 	var err error
 	if b.hasFilter {
 		b.filterVector, err = expression.VectorizedFilter(hashJoinCtx.SessCtx.GetExprCtx().GetEvalCtx(), hashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, hashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), b.filterVector)
@@ -643,13 +642,13 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
-	b.initHashValueAndPartIndexForOneChunk(uint64(hashJoinCtx.PartitionNumber))
+	b.initHashValueAndPartIndexForOneChunk(hashJoinCtx.partitionMaskOffset, hashJoinCtx.partitionNumber)
 
 	// 2. build rowtable
 	return b.appendToRowTable(chk, hashJoinCtx, workerID)
 }
 
-func (b *rowTableBuilder) regenerateHashValueAndPartIndex(hashValue uint64, partitionNum int) (uint64, int, error) {
+func (b *rowTableBuilder) regenerateHashValueAndPartIndex(hashValue uint64, partitionMaskOffset int) (uint64, int, error) {
 	b.rehashBuf.Reset()
 	err := binary.Write(b.rehashBuf, binary.LittleEndian, hashValue)
 	if err != nil {
@@ -659,7 +658,7 @@ func (b *rowTableBuilder) regenerateHashValueAndPartIndex(hashValue uint64, part
 	b.hash.Reset()
 	b.hash.Write(b.rehashBuf.Bytes())
 	newHashVal := b.hash.Sum64()
-	return newHashVal, int(newHashVal % uint64(partitionNum)), nil
+	return newHashVal, int(generatePartitionIndex(hashValue, partitionMaskOffset)), nil
 }
 
 func (b *rowTableBuilder) initRehashUtil() {
@@ -700,25 +699,25 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 
 		var seg *rowTableSegment
 		if hasValidJoinKey != 0 {
-			newHashValue, partID, err = b.regenerateHashValueAndPartIndex(uint64(oldHashValue), partitionNumber)
+			newHashValue, partID, err = b.regenerateHashValueAndPartIndex(uint64(oldHashValue), hashJoinCtx.partitionMaskOffset)
 			if err != nil {
 				return err
 			}
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true)
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, b.firstSegRowSizeHint)
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		} else {
 			partID = int(fakePartIndex)
 			newHashValue = fakePartIndex
 			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true)
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, b.firstSegRowSizeHint)
 		}
 
 		seg.hashValues = append(seg.hashValues, newHashValue)
-		b.startPosInRawData[partID] = append(b.startPosInRawData[partID], uint64(len(seg.rawData)))
+		b.rowNumberInCurrentRowTableSeg[partID]++
+		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
 		seg.rawData = append(seg.rawData, rowData...)
-		b.crrntSizeOfRowTable[partID]++
 
-		if b.crrntSizeOfRowTable[partID] >= maxRowTableSegmentSize {
+		if b.rowNumberInCurrentRowTableSeg[partID] >= maxRowTableSegmentSize || len(seg.rawData) >= maxRowTableSegmentByteSize {
 			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, b, true)
 		}
 	}
@@ -775,8 +774,7 @@ func newRowTable() *rowTable {
 
 func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashTableContext) {
 	for partID := 0; partID < int(htCtx.hashTable.partitionNumber); partID++ {
-		startPosInRawData := b.startPosInRawData[partID]
-		if len(startPosInRawData) > 0 {
+		if b.rowNumberInCurrentRowTableSeg[partID] > 0 {
 			htCtx.finalizeCurrentSeg(workerID, partID, b, true)
 		}
 	}
@@ -870,20 +868,24 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		if !hasValidKey && !b.keepFilteredRows {
 			continue
 		}
+		// need append the row to rowTable
 		var (
 			row     = chk.GetRow(logicalRowIndex)
 			partIdx = b.partIdxVector[logicalRowIndex]
 			seg     *rowTableSegment
 		)
-		if b.crrntSizeOfRowTable[partIdx] >= maxRowTableSegmentSize {
+		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, true, b.firstSegRowSizeHint)
+		// first check if current seg is full
+		if b.rowNumberInCurrentRowTableSeg[partIdx] >= maxRowTableSegmentSize || len(seg.rawData) >= maxRowTableSegmentByteSize {
+			// finalize current seg and create a new seg
 			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b, true)
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, true, b.firstSegRowSizeHint)
 		}
-		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, true)
 		if hasValidKey {
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
 		seg.hashValues = append(seg.hashValues, b.hashValue[logicalRowIndex])
-		b.startPosInRawData[partIdx] = append(b.startPosInRawData[partIdx], uint64(len(seg.rawData)))
+		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
 		rowLength := 0
 		// fill next_row_ptr field
 		rowLength += fillNextRowPtr(seg)
@@ -897,7 +899,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		if rowLength%8 != 0 {
 			seg.rawData = append(seg.rawData, fakeAddrPlaceHolder[:8-rowLength%8]...)
 		}
-		b.crrntSizeOfRowTable[partIdx]++
+		b.rowNumberInCurrentRowTableSeg[partIdx]++
 	}
 	return nil
 }

@@ -58,7 +58,7 @@ func TestStateSyncerSimple(t *testing.T) {
 	defer cancel()
 	ic := infoschema.NewCache(nil, 2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d := NewDDL(
+	d, _ := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
 		WithStore(store),

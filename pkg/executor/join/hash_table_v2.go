@@ -58,8 +58,8 @@ func getHashTableLength(table *rowTable) uint64 {
 	if table.validKeyCount() == 0 {
 		return 0
 	}
-	
-	return max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
+
+	return max(nextPowerOfTwo(table.validKeyCount()), uint64(32))
 }
 
 func getHashTableMemoryUsage(hashTableLength uint64) int64 {
@@ -81,9 +81,11 @@ func newSubTable(table *rowTable, tracker *memory.Tracker) *subTable {
 
 	hashTableLength := getHashTableLength(table)
 	if hashTableLength == 0 {
+		ret.hashTable = make([]uintptr, 1)
+		ret.posMask = 0	
 		return ret
 	}
-	
+
 	if tracker != nil {
 		tracker.Consume(getHashTableMemoryUsage(hashTableLength))
 	}

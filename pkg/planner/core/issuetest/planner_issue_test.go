@@ -75,7 +75,7 @@ func Test53726(t *testing.T) {
 			"  └─HashAgg_4 8000.00 cop[tikv]  group by:cast(test.t7.c, bigint(22) BINARY), cast(test.t7.c, decimal(10,0) BINARY), ",
 			"    └─TableFullScan_7 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
 
-	tk.MustExec("analyze table t7")
+	tk.MustExec("analyze table t7 all columns")
 	tk.MustQuery("select distinct cast(c as decimal), cast(c as signed) from t7").
 		Sort().
 		Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))

@@ -21,15 +21,13 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/assert"
@@ -37,43 +35,15 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestGetTableDataKeyRanges(t *testing.T) {
-	// case 1, empty flashbackIDs
-	keyRanges := ddl.GetTableDataKeyRanges([]int64{})
-	require.Len(t, keyRanges, 1)
-	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
-	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
-
-	// case 2, insert a execluded table ID
-	keyRanges = ddl.GetTableDataKeyRanges([]int64{3})
-	require.Len(t, keyRanges, 2)
-	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
-	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
-	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
-	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
-
-	// case 3, insert some execluded table ID
-	keyRanges = ddl.GetTableDataKeyRanges([]int64{3, 5, 9})
-	require.Len(t, keyRanges, 4)
-	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
-	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
-	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
-	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(5))
-	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
-	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
-	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
-	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
-}
-
 func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	originHook := dom.DDL().GetHook()
 	tk := testkit.NewTestKit(t, store)
 
 	injectSafeTS := oracle.GoTimeToTS(time.Now().Add(10 * time.Second))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS))
 
 	oldValue := map[string]any{
 		"merge-schedule-limit": 1,
@@ -91,6 +61,11 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 			closeValue, err := infosync.GetPDScheduleConfig(context.Background())
 			assert.NoError(t, err)
 			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
+		}
+	}
+	hook.OnJobRunAfterExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
+		if job.SchemaState == model.StateWriteReorganization {
 			// cancel flashback job
 			job.State = model.JobStateCancelled
 			job.Error = dbterror.ErrCancelledDDLJob
@@ -108,9 +83,6 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
 	require.EqualValues(t, finishValue["merge-schedule-limit"], 1)
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 }
 
 func TestAddDDLDuringFlashback(t *testing.T) {
