@@ -3,7 +3,9 @@
 package snapsplit_test
 
 import (
+	"bytes"
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -63,6 +65,9 @@ func TestSplitAndScatter(t *testing.T) {
 		require.NoError(t, err)
 		splitKeys = append(splitKeys, tmp.EndKey)
 	}
+	sort.Slice(splitKeys, func(i, j int) bool {
+		return bytes.Compare(splitKeys[i], splitKeys[j]) < 0
+	})
 	err := regionSplitter.ExecuteSplit(ctx, splitKeys)
 	require.NoError(t, err)
 	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
