@@ -2288,28 +2288,6 @@ func TestIssue48257(t *testing.T) {
 	))
 }
 
-<<<<<<< HEAD
-=======
-func TestIssue54213(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`use test`)
-	tk.MustExec(`CREATE TABLE tb (
-  object_id bigint(20),
-  a bigint(20) ,
-  b bigint(20) ,
-  c bigint(20) ,
-  PRIMARY KEY (object_id),
-  KEY ab (a,b))`)
-	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
-			"└─Limit_12 0.10 root  offset:0, count:100",
-			"  └─IndexReader_16 0.10 root  index:Limit_15",
-			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
-			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
-}
-
 func TestIssue54870(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2324,7 +2302,54 @@ key k(id, is_deleted))`)
 	tk.MustHavePlan(`select 1 from t where id=1 and is_deleted=true`, "IndexRangeScan")
 }
 
->>>>>>> f2abe99f30c (planner: push necessary predicates without virtual column down through UnionScan (#54985))
+func TestIssue53951(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE gholla_dummy1 (
+  id varchar(10) NOT NULL,
+  mark int,
+  deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
+  account_id varchar(10) NOT NULL,
+  metastore_id varchar(10) NOT NULL,
+  is_deleted tinyint(1) GENERATED ALWAYS AS ((deleted_at > _utf8mb4'1970-01-01 01:00:01.000')) VIRTUAL NOT NULL,
+  PRIMARY KEY (account_id,metastore_id,id),
+  KEY isDeleted_accountId_metastoreId (is_deleted,account_id,metastore_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE gholla_dummy2 (
+  id varchar(10) NOT NULL,
+  mark int,
+  deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
+  account_id varchar(10) NOT NULL,
+  metastore_id varchar(10) NOT NULL,
+  is_deleted tinyint(1) GENERATED ALWAYS AS ((deleted_at > _utf8mb4'1970-01-01 01:00:01.000')) VIRTUAL NOT NULL,
+  PRIMARY KEY (account_id,metastore_id,id),
+  KEY isDeleted_accountId_metastoreId (is_deleted,account_id,metastore_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; `)
+	tk.MustExec(`INSERT INTO gholla_dummy1 (id,mark,deleted_at,account_id,metastore_id) VALUES ('ABC', 1, '1970-01-01 01:00:01.000', 'ABC', 'ABC');`)
+	tk.MustExec(`INSERT INTO gholla_dummy2 (id,mark,deleted_at,account_id,metastore_id) VALUES ('ABC', 1, '1970-01-01 01:00:01.000', 'ABC', 'ABC');`)
+	tk.MustExec(`start transaction;`)
+	tk.MustExec(`update gholla_dummy2 set deleted_at = NOW(), mark=2 where account_id = 'ABC' and metastore_id = 'ABC' and id = 'ABC';`)
+	tk.MustQuery(`select
+  /*+ INL_JOIN(g1, g2) */
+  g1.account_id,
+  g2.mark
+from
+  gholla_dummy1 g1 FORCE INDEX(isDeleted_accountId_metastoreId)
+STRAIGHT_JOIN
+  gholla_dummy2 g2 FORCE INDEX (PRIMARY)
+ON
+  g1.account_id = g2.account_id AND
+  g1.metastore_id = g2.metastore_id AND
+  g1.id = g2.id
+WHERE
+  g1.account_id = 'ABC' AND
+  g1.metastore_id = 'ABC' AND
+  g1.is_deleted = FALSE AND
+  g2.is_deleted = FALSE;`).Check(testkit.Rows()) // empty result, no error
+	tk.MustExec(`rollback`)
+}
+
 func TestIssue52472(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
