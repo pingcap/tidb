@@ -85,7 +85,6 @@ func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, u
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields
 // tables with range.
 func SortAndValidateFileRanges(
-	ctx context.Context,
 	createdTables []*CreatedTable,
 	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
@@ -112,6 +111,7 @@ func SortAndValidateFileRanges(
 		lastFilesGroup        []TableIDWithFiles = nil
 	)
 
+	// Notice that TiDB does not split partition even if the config `split-table` is on.
 	for _, table := range createdTables {
 		files := fileOfTable[table.OldTable.Info.ID]
 		if partitions := table.OldTable.Info.Partition; partitions != nil {
@@ -206,7 +206,8 @@ func SortAndValidateFileRanges(
 
 		// If the config split-table/split-region-on-table is on, it skip merging ranges over tables.
 		if splitOnTable {
-			// Besides, if there only one split key for the table, is skip splitting the key.
+			// Besides, ignore the table's last key that might be chosen as a split key, because there
+			// is already a table split key.
 			lastKey = nil
 			if lastFilesGroup != nil {
 				tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
@@ -225,7 +226,7 @@ func SortAndValidateFileRanges(
 	return sortedSplitKeys, tableIDWithFilesGroup, nil
 }
 
-func (client *SnapClient) RestoreTables(
+func (rc *SnapClient) RestoreTables(
 	ctx context.Context,
 	placementRuleManager PlacementRuleManager,
 	createdTables []*CreatedTable,
@@ -235,24 +236,31 @@ func (client *SnapClient) RestoreTables(
 	splitOnTable bool,
 	updateCh glue.Progress,
 ) error {
-	placementRuleManager.SetPlacementRule(ctx, createdTables)
-	defer placementRuleManager.ResetPlacementRules(ctx)
+	if err := placementRuleManager.SetPlacementRule(ctx, createdTables); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err := placementRuleManager.ResetPlacementRules(ctx)
+		if err != nil {
+			log.Warn("failed to reset placement rules", zap.Error(err))
+		}
+	}()
 
 	start := time.Now()
-	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(ctx, createdTables, allFiles, checkpointSetWithTableID, splitSizeBytes, splitKeyCount, splitOnTable, updateCh)
+	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(createdTables, allFiles, checkpointSetWithTableID, splitSizeBytes, splitKeyCount, splitOnTable, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("Merge ranges", zap.Duration("take", time.Since(start)))
 	start = time.Now()
 
-	if err = client.SplitRanges(ctx, sortedSplitKeys, updateCh, false); err != nil {
+	if err = rc.SplitRanges(ctx, sortedSplitKeys, updateCh, false); err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("Split regions", zap.Duration("take", time.Since(start)))
 	start = time.Now()
 
-	if err = client.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh); err != nil {
+	if err = rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh); err != nil {
 		return errors.Trace(err)
 	}
 	elapsed := time.Since(start)

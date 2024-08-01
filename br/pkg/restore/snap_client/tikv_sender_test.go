@@ -15,10 +15,16 @@
 package snapclient_test
 
 import (
+	"fmt"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
@@ -59,4 +65,169 @@ func TestMapTableToFiles(t *testing.T) {
 	require.Equal(t, filesOfTable1, result[1])
 	require.Equal(t, filesOfTable2, result[2])
 	require.Equal(t, 2, hintSplitKeyCount)
+}
+
+type MockUpdateCh struct {
+	glue.Progress
+}
+
+func (m MockUpdateCh) IncBy(cnt int64) {}
+
+func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64, downstreamID func(upstream int64) int64) []*snapclient.CreatedTable {
+	createdTables := make([]*snapclient.CreatedTable, 0, len(upstreamTableIDs))
+	triggerID := 0
+	for _, upstreamTableID := range upstreamTableIDs {
+		downstreamTableID := downstreamID(upstreamTableID)
+		createdTable := &snapclient.CreatedTable{
+			Table: &model.TableInfo{
+				ID:   downstreamTableID,
+				Name: model.NewCIStr(fmt.Sprintf("tbl-%d", upstreamTableID)),
+				Indices: []*model.IndexInfo{
+					{Name: model.NewCIStr("idx1"), ID: 1},
+					{Name: model.NewCIStr("idx2"), ID: 2},
+					{Name: model.NewCIStr("idx3"), ID: 3},
+				},
+			},
+			OldTable: &metautil.Table{
+				DB: &model.DBInfo{Name: model.NewCIStr("test")},
+				Info: &model.TableInfo{
+					ID: upstreamTableID,
+					Indices: []*model.IndexInfo{
+						{Name: model.NewCIStr("idx1"), ID: 1},
+						{Name: model.NewCIStr("idx2"), ID: 2},
+						{Name: model.NewCIStr("idx3"), ID: 3},
+					},
+				},
+			},
+		}
+		partitionIDs, exists := upstreamPartitionIDs[upstreamTableID]
+		if exists {
+			triggerID += 1
+			downDefs := make([]model.PartitionDefinition, 0, len(partitionIDs))
+			upDefs := make([]model.PartitionDefinition, 0, len(partitionIDs))
+			for _, partitionID := range partitionIDs {
+				downDefs = append(downDefs, model.PartitionDefinition{
+					Name: model.NewCIStr(fmt.Sprintf("p_%d", partitionID)),
+					ID:   downstreamID(partitionID),
+				})
+				upDefs = append(upDefs, model.PartitionDefinition{
+					Name: model.NewCIStr(fmt.Sprintf("p_%d", partitionID)),
+					ID:   partitionID,
+				})
+			}
+			createdTable.OldTable.Info.Partition = &model.PartitionInfo{
+				Definitions: upDefs,
+			}
+			createdTable.Table.Partition = &model.PartitionInfo{
+				Definitions: downDefs,
+			}
+		}
+		// generate rewrite rules
+		createdTable.RewriteRule = restoreutils.GetRewriteRules(createdTable.Table, createdTable.OldTable.Info, 0, true)
+		createdTables = append(createdTables, createdTable)
+	}
+
+	require.Equal(t, len(upstreamPartitionIDs), triggerID)
+	return createdTables
+}
+
+func file(tableID int64, startRow, endRow int, totalKvs, totalBytes uint64, cf string) *backuppb.File {
+	return &backuppb.File{
+		Name:       fmt.Sprintf("file_%d_%d_%s.sst", tableID, startRow, cf),
+		StartKey:   tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(startRow)),
+		EndKey:     tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(endRow)),
+		TotalKvs:   totalKvs,
+		TotalBytes: totalBytes,
+		Cf:         cf,
+	}
+}
+
+func key(tableID int64, row int) []byte {
+	return tablecodec.EncodeRowKeyWithHandle(downstreamID(tableID), kv.IntHandle(row))
+}
+
+func files(logicalTableID, physicalTableID int64, startRows []int, cfs []string) snapclient.TableIDWithFiles {
+	files := make([]*backuppb.File, 0, len(startRows))
+	for i, startRow := range startRows {
+		files = append(files, &backuppb.File{Name: fmt.Sprintf("file_%d_%d_%s.sst", physicalTableID, startRow, cfs[i])})
+	}
+	return snapclient.TableIDWithFiles{
+		TableID: downstreamID(logicalTableID),
+		Files:   files,
+	}
+}
+
+func downstreamID(upstream int64) int64 { return upstream + 1000 }
+
+func TestSortAndValidateFileRanges(t *testing.T) {
+	updateCh := MockUpdateCh{}
+
+	d := restoreutils.DefaultCFName
+	w := restoreutils.WriteCFName
+	cases := []struct {
+		// created tables
+		upstreamTableIDs     []int64
+		upstreamPartitionIDs map[int64][]int64
+
+		// files
+		files []*backuppb.File
+
+		// checkpoint set
+		checkpointSetWithTableID map[int64]map[string]struct{}
+
+		// config
+		splitSizeBytes uint64
+		splitKeyCount  uint64
+		splitOnTable   bool
+
+		// expected result
+		splitKeys              [][]byte
+		tableIDWithFilesGroups [][]snapclient.TableIDWithFiles
+	}{
+		{ // large sst, split-on-table, no checkpoint
+			upstreamTableIDs:     []int64{100, 200, 300},
+			upstreamPartitionIDs: map[int64][]int64{100: {101, 102, 103}, 200: {201, 202, 203}, 300: {301, 302, 303}},
+			files: []*backuppb.File{
+				file(100, 1, 2, 100, 100, w), file(100, 1, 2, 100, 100, d),
+				file(102, 1, 2, 100, 100, w),
+				file(202, 1, 2, 100, 100, w), file(202, 1, 2, 100, 100, d),
+				file(202, 2, 3, 100, 100, w), file(202, 2, 3, 100, 100, d),
+				file(302, 1, 2, 100, 100, w),
+			},
+			checkpointSetWithTableID: nil,
+			splitSizeBytes:           80,
+			splitKeyCount:            80,
+			splitOnTable:             true,
+			splitKeys: [][]byte{
+				key(100, 2) /*split table key*/, key(202, 2), /*split table key*/
+			},
+			tableIDWithFilesGroups: [][]snapclient.TableIDWithFiles{
+				{files(100, 100, []int{1, 1}, []string{w, d})},
+				{files(100, 102, []int{1}, []string{w})},
+				{files(200, 202, []int{1, 1}, []string{w, d})},
+				{files(200, 202, []int{2, 2}, []string{w, d})},
+				{files(300, 302, []int{1}, []string{w})},
+			},
+		},
+	}
+
+	for _, cs := range cases {
+		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
+		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, updateCh)
+		require.NoError(t, err)
+		require.Equal(t, cs.splitKeys, splitKeys)
+		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))
+		for i, expectFilesGroup := range cs.tableIDWithFilesGroups {
+			actualFilesGroup := tableIDWithFilesGroups[i]
+			require.Equal(t, len(expectFilesGroup), len(actualFilesGroup))
+			for j, expectFiles := range expectFilesGroup {
+				actualFiles := actualFilesGroup[j]
+				require.Equal(t, expectFiles.TableID, actualFiles.TableID)
+				for k, expectFile := range expectFiles.Files {
+					actualFile := actualFiles.Files[k]
+					require.Equal(t, expectFile.Name, actualFile.Name)
+				}
+			}
+		}
+	}
 }

@@ -93,6 +93,13 @@ type RangeStats struct {
 	Count uint64
 }
 
+// Less impls btree.Item.
+func (rg *RangeStats) Less(than btree.Item) bool {
+	// rg.StartKey < than.StartKey
+	ta := than.(*RangeStats)
+	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
+}
+
 type RangeStatsTree struct {
 	*btree.BTree
 }
