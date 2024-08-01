@@ -234,6 +234,18 @@ func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestIssue53872(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table test(id int, col int)`)
+	tk.MustExec(`prepare stmt from "select id, ? as col1 from test where col=? group by id,col1"`)
+	tk.MustExec(`set @a=100, @b=100`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // no error
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+}
+
 func TestIssue38269(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
