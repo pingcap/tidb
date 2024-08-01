@@ -87,8 +87,8 @@ func (s *partitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 			children := make([]base.LogicalPlan, 0, len(ua.Children()))
 			for _, child := range ua.Children() {
 				us := LogicalUnionScan{
-					conditions: p.conditions,
-					handleCols: p.handleCols,
+					Conditions: p.Conditions,
+					HandleCols: p.HandleCols,
 				}.Init(ua.SCtx(), ua.QueryBlockOffset())
 				us.SetChildren(child)
 				children = append(children, us)
@@ -490,7 +490,9 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 			})
 			continue
 		}
-		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
+
+		ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.StringWithCtx(ectx, errors.RedactLogDisable)))
 	}
 	return names, nil
 }
@@ -508,7 +510,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	tableDual.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TableDual/Static partition pruning mode")
 	tableDual.SetSchema(ds.Schema())
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
@@ -1800,7 +1802,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
+		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		tableDual.SetSchema(ds.Schema())
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil

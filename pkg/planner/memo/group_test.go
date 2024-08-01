@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -32,7 +33,7 @@ import (
 )
 
 func TestNewGroup(t *testing.T) {
-	p := &plannercore.LogicalLimit{}
+	p := &logicalop.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, expression.NewSchema())
 
@@ -43,7 +44,7 @@ func TestNewGroup(t *testing.T) {
 }
 
 func TestGroupInsert(t *testing.T) {
-	p := &plannercore.LogicalLimit{}
+	p := &logicalop.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, expression.NewSchema())
 	require.False(t, g.Insert(expr))
@@ -52,7 +53,7 @@ func TestGroupInsert(t *testing.T) {
 }
 
 func TestGroupDelete(t *testing.T) {
-	p := &plannercore.LogicalLimit{}
+	p := &logicalop.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, expression.NewSchema())
 	require.Equal(t, 1, g.Equivalents.Len())
@@ -72,7 +73,7 @@ func TestGroupDeleteAll(t *testing.T) {
 	}()
 	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0))
 	g := NewGroupWithSchema(expr, expression.NewSchema())
-	require.True(t, g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))))
+	require.True(t, g.Insert(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0))))
 	require.True(t, g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))))
 	require.Equal(t, 3, g.Equivalents.Len())
 	require.NotNil(t, g.GetFirstElem(pattern.OperandProjection))
@@ -85,7 +86,7 @@ func TestGroupDeleteAll(t *testing.T) {
 }
 
 func TestGroupExists(t *testing.T) {
-	p := &plannercore.LogicalLimit{}
+	p := &logicalop.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, expression.NewSchema())
 	require.True(t, g.Exists(expr))
@@ -133,7 +134,7 @@ func TestGroupFingerPrint(t *testing.T) {
 	require.Equal(t, 2, group1.Equivalents.Len())
 
 	// Insert a GroupExpr with different ExprNode.
-	limit := plannercore.LogicalLimit{}.Init(proj.SCtx(), 0)
+	limit := logicalop.LogicalLimit{}.Init(proj.SCtx(), 0)
 	newGroupExpr3 := NewGroupExpr(limit)
 	newGroupExpr3.SetChildren(oldGroupExpr.Children[0])
 	group1.Insert(newGroupExpr3)
@@ -161,9 +162,9 @@ func TestGroupGetFirstElem(t *testing.T) {
 		do.StatsHandle().Close()
 	}()
 	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
-	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))
+	expr1 := NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0))
 	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
-	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))
+	expr3 := NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0))
 	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
 
 	g := NewGroupWithSchema(expr0, expression.NewSchema())
@@ -190,7 +191,7 @@ func (impl *fakeImpl) GetCostLimit(float64, ...Implementation) float64 { return 
 
 func TestGetInsertGroupImpl(t *testing.T) {
 	ctx := plannercore.MockContext()
-	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)), expression.NewSchema())
+	g := NewGroupWithSchema(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0)), expression.NewSchema())
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -212,9 +213,9 @@ func TestFirstElemAfterDelete(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	oldExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 10}.Init(ctx, 0))
+	oldExpr := NewGroupExpr(logicalop.LogicalLimit{Count: 10}.Init(ctx, 0))
 	g := NewGroupWithSchema(oldExpr, expression.NewSchema())
-	newExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 20}.Init(ctx, 0))
+	newExpr := NewGroupExpr(logicalop.LogicalLimit{Count: 20}.Init(ctx, 0))
 	g.Insert(newExpr)
 	require.NotNil(t, g.GetFirstElem(pattern.OperandLimit))
 	require.Equal(t, oldExpr, g.GetFirstElem(pattern.OperandLimit).Value)
@@ -269,7 +270,7 @@ func TestBuildKeyInfo(t *testing.T) {
 	require.Len(t, newGroup1.Prop.Schema.Keys, 1)
 
 	// case 4: build maxOneRow for new Group
-	newLimit := plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)
+	newLimit := logicalop.LogicalLimit{Count: 1}.Init(ctx, 0)
 	newExpr2 := NewGroupExpr(newLimit)
 	newExpr2.SetChildren(group2)
 	newGroup2 := NewGroupWithSchema(newExpr2, group2.Prop.Schema)

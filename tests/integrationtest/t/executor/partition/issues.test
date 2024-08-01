@@ -216,8 +216,8 @@ CREATE TABLE `t` ( `txn_account_id` varchar(24), `account_id` varchar(32), `brok
 INSERT INTO `c` (serial_id, txt_account_id, capital_sub_class, occur_trade_date, occur_amount, broker) VALUES ('2022111700196920','04482786','CUST','2022-11-17',-2.01,'0009');
 INSERT INTO `t` VALUES ('04482786','1142927','0009');
 set tidb_partition_prune_mode='dynamic';
-analyze table c;
-analyze table t;
+analyze table c all columns;
+analyze table t all columns;
 explain select
     /*+ inl_join(c) */
     c.occur_amount
@@ -318,7 +318,7 @@ CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 PARTITION BY HASH (`col_29`) PARTITIONS 7;
 INSERT INTO `t` VALUES (-1), (11), (-128), (39), (-46), (38), (-102), (-99), (-87), (-127), (-89), (43), (108), (59), (0), (24), (101), (37), (-103), (90), (-95), (-44), (123), (124), (-123), (-52), (-49), (-98), (-104), (-68), (2), (-24), (67), (89), (1), (-65), (36), (-109), (41), (5), (98), (-63), (-14), (127), (-6), (121), (14), (-122);
-analyze table t;
+analyze table t all columns;
 
 explain select * from t where col_29 between -2 and -1;
 --sorted_result
@@ -342,3 +342,18 @@ create table issue52198 (a int, b int, primary key (b)) partition by hash(b) par
 insert into issue52198 values (1,1);
 select space(1), b from issue52198 where b in (1);
 drop table issue52198;
+
+# TestIssues54667
+drop table if exists t;
+set tidb_partition_prune_mode=static;
+CREATE TABLE t (
+ a text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+ b mediumint(8) unsigned NOT NULL DEFAULT '11075363',
+ c tinyblob NOT NULL,
+ PRIMARY KEY (b) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY KEY (b) PARTITIONS 7;
+insert into t values ('a' ,6970066, 'a');
+update t set c = 'AH6' where b in ( 7691699 ,11807884 ,10523838 ,15662349 ,6970066 );
+drop table t;
+set tidb_partition_prune_mode=default;

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -86,14 +87,14 @@ func (la *LogicalAggregation) ExplainInfo() string {
 func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
 		for _, aggExpr := range agg.Args {
-			ResolveExprAndReplace(aggExpr, replace)
+			ruleutil.ResolveExprAndReplace(aggExpr, replace)
 		}
 		for _, orderExpr := range agg.OrderByItems {
-			ResolveExprAndReplace(orderExpr.Expr, replace)
+			ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
 		}
 	}
 	for _, gbyItem := range la.GroupByItems {
-		ResolveExprAndReplace(gbyItem, replace)
+		ruleutil.ResolveExprAndReplace(gbyItem, replace)
 	}
 }
 
@@ -191,16 +192,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	// update children[0]
 	child = la.Children()[0]
-	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
-	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
-	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
-	// the last rule. So we specially handle this case here.
-	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
-		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
-			childOfChild := childProjection.Children()[0]
-			la.SetChildren(childOfChild)
-		}
-	}
 	return la, nil
 }
 
@@ -593,7 +584,7 @@ func (la *LogicalAggregation) DistinctArgsMeetsProperty() bool {
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.HasDistinct {
 			for _, distinctArg := range aggFunc.Args {
-				if !expression.Contains(la.GroupByItems, distinctArg) {
+				if !expression.Contains(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems, distinctArg) {
 					return false
 				}
 			}

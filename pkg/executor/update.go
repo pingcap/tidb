@@ -339,7 +339,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func (*UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
+func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -351,7 +351,10 @@ func (*UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
 	if types.ErrOverflow.Equal(err) {
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
-
+	if types.ErrTruncatedWrongVal.Equal(err) && col != nil && col.ColumnInfo != nil && col.ColumnInfo.GetType() == mysql.TypeTimestamp {
+		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+		return errors.AddStack(ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err))
+	}
 	return err
 }
 
@@ -364,7 +367,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		}
 		con := assign.Expr.(*expression.Constant)
 		val, err := con.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), emptyRow)
-		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -372,7 +375,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -399,7 +402,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -420,7 +423,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 			continue
 		}
 		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
-		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -428,7 +431,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
 		}

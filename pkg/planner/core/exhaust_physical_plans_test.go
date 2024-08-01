@@ -195,8 +195,16 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.Schema(), testCtx.joinColNames)
 	require.NoError(t, err)
 	joinNode.OtherConditions = others
-	helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
-	_, err = helper.analyzeLookUpFilters(testCtx.path, dataSourceNode, testCase.innerKeys, testCase.innerKeys, testCase.rebuildMode)
+	helper := &indexJoinBuildHelper{
+		sctx:                  ctx,
+		joinOtherConditions:   others,
+		lastColManager:        nil,
+		outerJoinKeys:         testCase.innerKeys,
+		innerJoinKeys:         testCase.innerKeys,
+		innerStats:            dataSourceNode.StatsInfo(),
+		innerSchema:           dataSourceNode.Schema(),
+		innerPushedConditions: dataSourceNode.PushedDownConds}
+	_, err = helper.analyzeLookUpFilters(testCtx.path, testCase.rebuildMode)
 	if helper.chosenRanges == nil {
 		helper.chosenRanges = ranger.Ranges{}
 	}
@@ -204,10 +212,11 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	if testCase.rebuildMode {
 		require.Equal(t, testCase.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), msgAndArgs)
 	} else {
-		require.Equal(t, testCase.accesses, fmt.Sprintf("%v", helper.chosenAccess), msgAndArgs)
+		ectx := ctx.GetExprCtx().GetEvalCtx()
+		require.Equal(t, testCase.accesses, expression.StringifyExpressionsWithCtx(ectx, helper.chosenAccess), msgAndArgs)
 		require.Equal(t, testCase.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), msgAndArgs)
 		require.Equal(t, testCase.idxOff2KeyOff, fmt.Sprintf("%v", helper.idxOff2KeyOff), msgAndArgs)
-		require.Equal(t, testCase.remained, fmt.Sprintf("%v", helper.chosenRemained), msgAndArgs)
+		require.Equal(t, testCase.remained, expression.StringifyExpressionsWithCtx(ectx, helper.chosenRemained), msgAndArgs)
 		require.Equal(t, testCase.compareFilters, fmt.Sprintf("%v", helper.lastColManager), msgAndArgs)
 	}
 	return helper

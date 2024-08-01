@@ -111,6 +111,11 @@ error = '''
 tikv cluster ID mismatch
 '''
 
+["BR:KV:ErrKVDiskFull"]
+error = '''
+disk is full
+'''
+
 ["BR:KV:ErrKVDownloadFailed"]
 error = '''
 download sst failed
@@ -2864,6 +2869,11 @@ Unknown resource group '%-.192s'
 ["schema:8250"]
 error = '''
 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
+'''
+
+["schema:8257"]
+error = '''
+Cannot set resource group for a role
 '''
 
 ["server:1040"]

@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -39,7 +40,7 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
@@ -79,7 +80,7 @@ func BenchmarkGenerateIndexKV(b *testing.B) {
 	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -107,7 +108,7 @@ func DebugTraceReceivedCommand(s base.PlanContext, cmd byte, stmtNode ast.StmtNo
 		execInfo.BinaryParamsInfo = make([]binaryParamInfo, len(binaryParams))
 		for i, param := range binaryParams {
 			execInfo.BinaryParamsInfo[i].Type = param.GetType(s.GetExprCtx().GetEvalCtx()).String()
-			execInfo.BinaryParamsInfo[i].Value = param.String()
+			execInfo.BinaryParamsInfo[i].Value = param.StringWithCtx(s.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable)
 		}
 	}
 }
@@ -235,18 +236,18 @@ type accessPathForDebugTrace struct {
 	CountAfterIndex  float64
 }
 
-func convertAccessPathForDebugTrace(path *util.AccessPath, out *accessPathForDebugTrace) {
+func convertAccessPathForDebugTrace(ctx expression.EvalContext, path *util.AccessPath, out *accessPathForDebugTrace) {
 	if path.Index != nil {
 		out.IndexName = path.Index.Name.O
 	}
-	out.AccessConditions = expression.ExprsToStringsForDisplay(path.AccessConds)
-	out.IndexFilters = expression.ExprsToStringsForDisplay(path.IndexFilters)
-	out.TableFilters = expression.ExprsToStringsForDisplay(path.TableFilters)
+	out.AccessConditions = expression.ExprsToStringsForDisplay(ctx, path.AccessConds)
+	out.IndexFilters = expression.ExprsToStringsForDisplay(ctx, path.IndexFilters)
+	out.TableFilters = expression.ExprsToStringsForDisplay(ctx, path.TableFilters)
 	out.CountAfterAccess = path.CountAfterAccess
 	out.CountAfterIndex = path.CountAfterIndex
 	out.PartialPaths = make([]accessPathForDebugTrace, len(path.PartialIndexPaths))
 	for i, partialPath := range path.PartialIndexPaths {
-		convertAccessPathForDebugTrace(partialPath, &out.PartialPaths[i])
+		convertAccessPathForDebugTrace(ctx, partialPath, &out.PartialPaths[i])
 	}
 }
 
@@ -254,7 +255,7 @@ func debugTraceAccessPaths(s base.PlanContext, paths []*util.AccessPath) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := make([]accessPathForDebugTrace, len(paths))
 	for i, partialPath := range paths {
-		convertAccessPathForDebugTrace(partialPath, &traceInfo[i])
+		convertAccessPathForDebugTrace(s.GetExprCtx().GetEvalCtx(), partialPath, &traceInfo[i])
 	}
 	root.AppendStepWithNameToCurrentContext(traceInfo, "Access paths")
 }

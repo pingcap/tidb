@@ -115,6 +115,7 @@ Projection_4	8000.00	root		Column#5, Column#10
   └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
 select engine, DATA_LENGTH from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 engine	DATA_LENGTH
+InnoDB	8
 explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 id	estRows	task	access object	operator info
 Projection_4	8000.00	root		Column#5, Column#10
@@ -130,3 +131,31 @@ MemTableScan_5	10000.00	root	table:TABLES	table_name:["T4","t4"], table_schema:[
 select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 engine	DATA_LENGTH
 InnoDB	8
+create table pt1(a int primary key, b int) partition by hash(a) partitions 4;
+create table pt2(a int primary key, b int) partition by hash(a) partitions 4;
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME
+pt1	p0
+pt1	p1
+pt1	p2
+pt1	p3
+pt2	p0
+pt2	p1
+pt2	p2
+pt2	p3
+t4	NULL
+t5	NULL
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt1' and table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME
+pt1	p0
+pt1	p1
+pt1	p2
+pt1	p3
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt2' and table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME
+pt2	p0
+pt2	p1
+pt2	p2
+pt2	p3
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt0' and table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME

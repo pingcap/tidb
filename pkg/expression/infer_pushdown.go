@@ -127,12 +127,12 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 			if expr.GetType(ctx.EvalCtx()).GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
-			warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType(ctx.EvalCtx()).GetType()) + "'.")
+			warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType(ctx.EvalCtx()).GetType()) + "'.")
 			ctx.AppendWarning(warnErr)
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType(ctx.EvalCtx()).IsDecimalValid() {
-				warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetFlen()) + "','" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetDecimal()) + "').")
+				warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetFlen()) + "','" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetDecimal()) + "').")
 				ctx.AppendWarning(warnErr)
 				return false
 			}

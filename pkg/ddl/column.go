@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -752,6 +752,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
+		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		updateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)
@@ -763,7 +764,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		tbl, err := getTable((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), dbInfo.ID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1383,7 +1384,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		newColumnIDs = append(newColumnIDs, colID)
 		newRow = append(newRow, val)
 	}
-	rd := &w.tblCtx.GetSessionVars().RowEncoder
+	rd := w.tblCtx.GetRowEncodingConfig().RowEncoder
 	ec := w.exprCtx.GetEvalCtx().ErrCtx()
 	var checksum rowcodec.Checksum
 	if w.checksumNeeded {
@@ -1671,7 +1672,17 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	return nil
 }
 
-type asAutoIDRequirement ddlCtx
+func (d *ddlCtx) getAutoIDRequirement() autoid.Requirement {
+	return &asAutoIDRequirement{
+		store:     d.store,
+		autoidCli: d.autoidCli,
+	}
+}
+
+type asAutoIDRequirement struct {
+	store     kv.Storage
+	autoidCli *autoid.ClientDiscover
+}
 
 var _ autoid.Requirement = &asAutoIDRequirement{}
 
@@ -1692,7 +1703,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	if !needMigrateFromAutoIncToAutoRand {
 		return nil
 	}
-	autoRandAlloc := autoid.NewAllocatorsFromTblInfo((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.getAutoIDRequirement(), dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
 	if autoRandAlloc == nil {
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)

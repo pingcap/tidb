@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1200,6 +1200,10 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 			// Last partition!
 			break
 		}
+		// The last loop still not reach the max value, return error.
+		if i == mysql.PartitionCountLimit-1 {
+			return errors.Trace(dbterror.ErrTooManyPartitions)
+		}
 	}
 	if len(tbInfo.Partition.Definitions)+len(partDefs) > mysql.PartitionCountLimit {
 		return errors.Trace(dbterror.ErrTooManyPartitions)
@@ -2093,7 +2097,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 		physicalTableIDs = getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, oldTblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), job.SchemaID, oldTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2291,7 +2295,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		physicalTableIDs := oldIDs
 		oldTblInfo := getTableInfoWithOriginalPartitions(tblInfo, oldIDs, newIDs)
 
-		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, oldTblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), job.SchemaID, oldTblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2609,11 +2613,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	if withValidation {
-		ntbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, nt)
+		ntbl, err := getTable(d.getAutoIDRequirement(), job.SchemaID, nt)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ptbl, err := getTable((*asAutoIDRequirement)(d), ptSchemaID, pt)
+		ptbl, err := getTable(d.getAutoIDRequirement(), ptSchemaID, pt)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2646,7 +2650,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// Recreate non-partition table meta info,
 	// by first delete it with the old table id
-	err = t.DropTableOrView(job.SchemaID, job.SchemaName, nt.ID, nt.Name.L)
+	err = t.DropTableOrView(job.SchemaID, nt.ID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2663,7 +2667,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	err = t.CreateTableOrView(job.SchemaID, job.SchemaName, nt)
+	err = t.CreateTableOrView(job.SchemaID, nt)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -3098,7 +3102,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
-		tbl, err2 := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
+		tbl, err2 := getTable(d.getAutoIDRequirement(), job.SchemaID, tblInfo)
 		if err2 != nil {
 			return ver, errors.Trace(err2)
 		}
@@ -3213,7 +3217,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			err = t.DropTableOrView(job.SchemaID, job.SchemaName, tblInfo.ID, tblInfo.Name.L)
+			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -3236,7 +3240,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				return ver, errors.Trace(err)
 			}
 			// TODO: Add failpoint here?
-			err = t.CreateTableOrView(job.SchemaID, job.SchemaName, tblInfo)
+			err = t.CreateTableOrView(job.SchemaID, tblInfo)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -3526,15 +3530,16 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				// Non-clustered table / not unique _tidb_rowid for the whole table
 				// Generate new _tidb_rowid if exists.
 				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
-				stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
-				if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
+				if reserved, ok := w.tblCtx.GetReservedRowIDAlloc(); ok && reserved.Exhausted() {
 					// TODO: Which autoid allocator to use?
 					ids := uint64(max(1, w.batchCnt-len(w.rowRecords)))
 					// Keep using the original table's allocator
-					stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
+					var baseRowID, maxRowID int64
+					baseRowID, maxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
 					if err != nil {
 						return false, errors.Trace(err)
 					}
+					reserved.Reset(baseRowID, maxRowID)
 				}
 				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 				if err != nil {

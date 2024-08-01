@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -115,27 +114,3 @@ func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childre
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
-
-// GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
-	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.SetStats(stats)
-	reader.SetSchema(schema)
-	reader.childrenReqProps = props
-	return reader
-}
-
-// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.PlanPartInfo = PhysPlanPartInfo{
-		PruningConds:   sg.Source.AllConds,
-		PartitionNames: sg.Source.PartitionNames,
-		Columns:        sg.Source.TblCols,
-		ColumnNames:    sg.Source.OutputNames(),
-	}
-	reader.SetStats(stats)
-	reader.SetSchema(schema)
-	reader.childrenReqProps = props
-	return reader
-}

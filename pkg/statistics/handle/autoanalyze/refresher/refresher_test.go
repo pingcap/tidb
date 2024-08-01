@@ -15,6 +15,7 @@
 package refresher_test
 
 import (
+	"context"
 	"math"
 	"sort"
 	"testing"
@@ -22,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -31,9 +31,9 @@ import (
 )
 
 func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -60,14 +60,14 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	tk.MustExec("update mysql.global_variables set variable_value = '0' where variable_name = 'tidb_auto_analyze_ratio'")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Analyze those tables first.
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	// Insert more data into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
 	r.RebuildTableAnalysisJobQueue()
@@ -83,9 +83,9 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 }
 
 func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -103,9 +103,9 @@ func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
 }
 
 func TestIgnoreNilOrPseudoStatsOfNonPartitionedTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -123,9 +123,9 @@ func TestIgnoreNilOrPseudoStatsOfNonPartitionedTable(t *testing.T) {
 }
 
 func TestIgnoreTinyTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 10
+	statistics.AutoAnalyzeMinCnt = 10
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -137,19 +137,19 @@ func TestIgnoreTinyTable(t *testing.T) {
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Analyze those tables first.
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Make sure table stats are not pseudo.
-	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
 	require.False(t, tblStats1.Pseudo)
-	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -159,7 +159,7 @@ func TestIgnoreTinyTable(t *testing.T) {
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13)")
 	tk.MustExec("insert into t2 values (4, 4)")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
 	r.RebuildTableAnalysisJobQueue()
@@ -167,9 +167,9 @@ func TestIgnoreTinyTable(t *testing.T) {
 }
 
 func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -181,17 +181,17 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Analyze those tables first.
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Insert more data into t1 and t2, but more data is inserted into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13)")
 	tk.MustExec("insert into t2 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
 	r.RebuildTableAnalysisJobQueue()
@@ -199,16 +199,16 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	// Analyze t1 first.
 	require.True(t, r.PickOneTableAndAnalyzeByPriority())
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// The table is analyzed.
-	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
 	require.Equal(t, int64(0), tblStats1.ModifyCount)
 	require.Equal(t, int64(12), tblStats1.RealtimeCount)
 	// t2 is not analyzed.
-	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -240,7 +240,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
@@ -257,7 +257,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 		},
 	}
 	r.Jobs.Push(job1)
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	job2 := &priorityqueue.NonPartitionedTableAnalysisJob{
 		TableID:     tbl2.Meta().ID,
@@ -321,11 +321,11 @@ func insertFailedJobForPartitionWithStartTime(
 }
 
 func TestRebuildTableAnalysisJobQueue(t *testing.T) {
-	old := exec.AutoAnalyzeMinCnt
+	old := statistics.AutoAnalyzeMinCnt
 	defer func() {
-		exec.AutoAnalyzeMinCnt = old
+		statistics.AutoAnalyzeMinCnt = old
 	}()
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -334,7 +334,7 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	handle := dom.StatsHandle()
 	require.Nil(t, handle.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t1")
-	require.Nil(t, handle.Update(dom.InfoSchema()))
+	require.Nil(t, handle.Update(context.Background(), dom.InfoSchema()))
 
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
@@ -346,7 +346,7 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	// Insert more data into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6)")
 	require.Nil(t, handle.DumpStatsDeltaToKV(true))
-	require.Nil(t, handle.Update(dom.InfoSchema()))
+	require.Nil(t, handle.Update(context.Background(), dom.InfoSchema()))
 	err = r.RebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
 	require.Equal(t, 1, r.Jobs.Len())
@@ -398,7 +398,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Test Table not analyzed",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, unanalyzedColumns, unanalyzedIndices),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, unanalyzedColumns, unanalyzedIndices),
 				ColAndIdxExistenceMap: bothUnanalyzedMap,
 			},
 			autoAnalyzeRatio: 0.5,
@@ -407,7 +407,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Based on change percentage",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, (exec.AutoAnalyzeMinCnt+1)*2, analyzedColumns, analyzedIndices),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, analyzedColumns, analyzedIndices),
 				ColAndIdxExistenceMap: bothAnalyzedMap,
 				LastAnalyzeVersion:    1,
 			},
@@ -567,7 +567,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 					},
 					ColAndIdxExistenceMap: unanalyzedMap,
 				},
@@ -577,7 +577,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 					},
 					ColAndIdxExistenceMap: unanalyzedMap,
 				},
@@ -623,7 +623,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   1,
 					Name: "p0",
 				}: {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, (exec.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -645,7 +645,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   2,
 					Name: "p1",
 				}: {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -705,7 +705,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   1,
 					Name: "p0",
 				}: {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -727,7 +727,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   2,
 					Name: "p1",
 				}: {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -816,14 +816,14 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 			ID:   1,
 			Name: "p0",
 		}: {
-			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
+			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 		},
 		{
 			ID:   2,
 			Name: "p1",
 		}: {
-			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
+			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
 				2: {
 					StatsVer: 2,
 				},

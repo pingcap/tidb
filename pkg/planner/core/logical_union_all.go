@@ -114,14 +114,14 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
+	var topN *logicalop.LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
+		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
 	}
 	for i, child := range p.Children() {
-		var newTopN *LogicalTopN
+		var newTopN *logicalop.LogicalTopN
 		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
+			newTopN = logicalop.LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
 			for _, by := range topN.ByItems {
 				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}

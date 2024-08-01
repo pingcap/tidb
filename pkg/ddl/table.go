@@ -24,10 +24,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -58,12 +58,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 	tbInfo := job.Args[0].(*model.TableInfo)
 
 	tbInfo.State = model.StateNone
-	var err error
-	if variable.EnableFastCreateTable.Load() {
-		err = checkTableNotExistsByName(d, t, schemaID, job.SchemaName, tbInfo.Name.L)
-	} else {
-		err = checkTableNotExists(d, schemaID, tbInfo.Name.L)
-	}
+	err := checkTableNotExists(d, schemaID, tbInfo.Name.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -292,7 +287,7 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
-	return t.CreateTableOrView(schemaID, job.SchemaName, tbInfo)
+	return t.CreateTableOrView(schemaID, tbInfo)
 }
 
 func repairTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
@@ -343,7 +338,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
 		if oldTableID > 0 && orReplace {
-			err = t.DropTableOrView(schemaID, job.SchemaName, oldTableID, tbInfo.Name.L)
+			err = t.DropTableOrView(schemaID, oldTableID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -406,11 +401,11 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			return ver, errors.Trace(err)
 		}
 		if tblInfo.IsSequence() {
-			if err = t.DropSequence(job.SchemaID, job.SchemaName, job.TableID, job.TableName); err != nil {
+			if err = t.DropSequence(job.SchemaID, job.TableID); err != nil {
 				return ver, errors.Trace(err)
 			}
 		} else {
-			if err = t.DropTableOrView(job.SchemaID, job.SchemaName, job.TableID, job.TableName); err != nil {
+			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
 				return ver, errors.Trace(err)
 			}
 			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
@@ -511,13 +506,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
 		}
 
-		// Clear all placement when recover
-		err = clearTablePlacementAndBundles(tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -575,10 +563,15 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	err = clearTablePlacementAndBundles(w.ctx, recoverInfo.TableInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tableInfo := recoverInfo.TableInfo.Clone()
 	tableInfo.State = model.StatePublic
 	tableInfo.UpdateTS = t.StartTS
-	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, recoverInfo.OldSchemaName, tableInfo, recoverInfo.AutoIDs)
+	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, tableInfo, recoverInfo.AutoIDs)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -601,7 +594,10 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	return ver, nil
 }
 
-func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
+func clearTablePlacementAndBundles(ctx context.Context, tblInfo *model.TableInfo) error {
+	failpoint.Inject("mockClearTablePlacementAndBundlesErr", func() {
+		failpoint.Return(errors.New("mock error for clearTablePlacementAndBundles"))
+	})
 	var bundles []*placement.Bundle
 	if tblInfo.PlacementPolicyRef != nil {
 		tblInfo.PlacementPolicyRef = nil
@@ -622,7 +618,7 @@ func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
 		return nil
 	}
 
-	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+	return infosync.PutRuleBundlesWithDefaultRetry(ctx, bundles)
 }
 
 // mockRecoverTableCommitErrOnce uses to make sure
@@ -756,7 +752,7 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	if err != nil {
 		return ver, err
 	}
-	err = t.DropTableOrView(schemaID, job.SchemaName, tblInfo.ID, tblInfo.Name.L)
+	err = t.DropTableOrView(schemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -853,7 +849,7 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	err = t.CreateTableOrView(schemaID, job.SchemaName, tblInfo)
+	err = t.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -918,7 +914,7 @@ func onRebaseAutoID(d *ddlCtx, _ kv.Storage, t *meta.Meta, job *model.Job, tp au
 		return ver, errors.Trace(err)
 	}
 
-	tbl, err := getTable((*asAutoIDRequirement)(d), schemaID, tblInfo)
+	tbl, err := getTable(d.getAutoIDRequirement(), schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1000,7 +996,7 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	if shardRowIDBits < tblInfo.ShardRowIDBits {
 		tblInfo.ShardRowIDBits = shardRowIDBits
 	} else {
-		tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
+		tbl, err := getTable(d.getAutoIDRequirement(), job.SchemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1130,7 +1126,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 }
 
 func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, _ error) {
-	err := t.DropTableOrView(oldSchemaID, oldSchemaName.L, tblInfo.ID, tblInfo.Name.L)
+	err := t.DropTableOrView(oldSchemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1165,7 +1161,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 	}
 
 	tblInfo.Name = *tableName
-	err = t.CreateTableOrView(newSchemaID, job.SchemaName, tblInfo)
+	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1529,19 +1525,6 @@ func checkTableNotExists(d *ddlCtx, schemaID int64, tableName string) error {
 	return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 }
 
-func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaName, tableName string) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
-	is := d.infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
-	}
-	return t.CheckTableNameNotExists(t.TableNameKey(schemaName, tableName))
-}
-
 func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
 	if len(constraints) == 0 {
 		return nil
@@ -1609,7 +1592,7 @@ func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableNa
 	if !ok {
 		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	tbl, err := is.TableByName(schema.Name, model.NewCIStr(tableName))
+	tbl, err := is.TableByName(context.Background(), schema.Name, model.NewCIStr(tableName))
 	if err != nil {
 		return 0, err
 	}

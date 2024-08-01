@@ -15,6 +15,7 @@
 package priorityqueue_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -77,7 +78,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	// Before analyze the partition.
 	handle := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
@@ -86,7 +87,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
@@ -111,7 +112,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Before analyze indexes.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
@@ -120,7 +121,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)

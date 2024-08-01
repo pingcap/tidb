@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -569,7 +571,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (base.Plan, erro
 func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (base.Plan, error) {
 	privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	if _, ok := v.Value.(*ast.DefaultExpr); ok {
 		return nil, errors.New("Unknown DEFAULT for SET CONFIG")
 	}
@@ -607,7 +609,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (bas
 
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, error) {
 	var p base.LogicalPlan
-	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
+	dual := logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 	dual.SetSchema(expression.NewSchema())
 	p = dual
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
@@ -687,7 +689,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 			}
 			// The mocked plan need one output for the complex cases.
 			// See the following IF branch.
-			mockTablePlan := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
+			mockTablePlan := logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 			var err error
 			var possiblePlan base.LogicalPlan
 			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
@@ -695,7 +697,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 				return nil, err
 			}
 			// It's possible that the subquery of the SET_VAR is a complex one so we need to get the result by evaluating the plan.
-			if _, ok := possiblePlan.(*LogicalTableDual); !ok {
+			if _, ok := possiblePlan.(*logicalop.LogicalTableDual); !ok {
 				physicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, possiblePlan)
 				if err != nil {
 					return nil, err
@@ -1108,12 +1110,25 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 
 	// consider hypo-indexes
-	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes // session level hypo-indexes
 	if ctx.GetSessionVars().StmtCtx.InExplainStmt && hypoIndexes != nil {
 		originalTableName := tblInfo.Name.L
 		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][originalTableName] != nil {
 			for _, index := range hypoIndexes[dbName.L][originalTableName] {
 				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			}
+		}
+	}
+	if len(ctx.GetSessionVars().StmtCtx.HintedHypoIndexes) > 0 { // statement-level hypo-indexes from hints
+		if !ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("can only use HYPO_INDEX hint in explain-statements"))
+		} else {
+			hintedHypoIndexes := ctx.GetSessionVars().StmtCtx.HintedHypoIndexes
+			originalTableName := tblInfo.Name.L
+			if hintedHypoIndexes[dbName.L] != nil && hintedHypoIndexes[dbName.L][originalTableName] != nil {
+				for _, index := range hintedHypoIndexes[dbName.L][originalTableName] {
+					publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+				}
 			}
 		}
 	}
@@ -1384,7 +1399,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		p.setSchemaAndNames(buildShowDDLFields())
 		ret = p
 	case ast.AdminShowDDLJobs:
-		p := LogicalShowDDLJobs{JobNumber: as.JobNumber}.Init(b.ctx)
+		p := logicalop.LogicalShowDDLJobs{JobNumber: as.JobNumber}.Init(b.ctx)
 		p.SetSchemaAndNames(buildShowDDLJobsFields())
 		for _, col := range p.Schema().Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -3156,8 +3171,8 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
-	p := LogicalShow{
-		ShowContents: ShowContents{
+	p := logicalop.LogicalShow{
+		ShowContents: logicalop.ShowContents{
 			Tp:                    show.Tp,
 			CountWarningsOrErrors: show.CountWarningsOrErrors,
 			DBName:                show.DBName,
@@ -3193,7 +3208,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
-		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}
@@ -3253,7 +3268,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	case ast.ShowRegions:
-		tableInfo, err := b.is.TableByName(show.Table.Schema, show.Table.Name)
+		tableInfo, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -3314,7 +3329,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
 		b.curClause = orderByClause
 		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
-		sort := LogicalSort{
+		sort := logicalop.LogicalSort{
 			ByItems: []*util.ByItems{{Expr: orderByCol}},
 		}.Init(b.ctx, b.getSelectOffset())
 		sort.SetChildren(np)
@@ -3391,7 +3406,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CONNECTION_ADMIN"}, false, err)
 					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
-			} else if raw.ConnectionID == domain.GetDomain(b.ctx).GetAutoAnalyzeProcID() {
+			} else if handleutil.GlobalAutoAnalyzeProcessList.Contains(raw.ConnectionID) {
 				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
 				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CONNECTION_ADMIN"}, false, err)
@@ -3730,7 +3745,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, extraPriv, tn.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
 	}
 
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
 	mockTablePlan.SetOutputNames(insertPlan.tableColNames)
 
@@ -3865,7 +3880,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 	return affectedValuesCols, nil
 }
 
-func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
+func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *logicalop.LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
 	if col.Hidden {
 		return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 	}
@@ -3900,12 +3915,12 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 		// subquery in insert values should not reference upper scope
 		usingPlan := mockTablePlan
 		if _, ok := expr.(*ast.SubqueryExpr); ok {
-			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+			usingPlan = logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
 		var np base.LogicalPlan
 		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
 		if np != nil {
-			if _, ok := np.(*LogicalTableDual); !ok {
+			if _, ok := np.(*logicalop.LogicalTableDual); !ok {
 				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
 				// This is a TODO and we will support it later.
 				return nil, errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
@@ -3927,7 +3942,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 	return outExpr, nil
 }
 
-func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *logicalop.LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
@@ -4118,7 +4133,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (base.Plan, error) {
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
 		err     error
 		options = make([]*LoadDataOpt, 0, len(ld.Options))
@@ -4188,7 +4203,7 @@ var (
 )
 
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (base.Plan, error) {
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
 		err              error
 		options          = make([]*LoadDataOpt, 0, len(ld.Options))
@@ -4293,7 +4308,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, err2
 		}
 	} else {
-		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
+		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes, []uint{})
 		p.setSchemaAndNames(outputSchema, outputFields)
 	}
 	return p, nil
@@ -4374,7 +4389,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Pla
 	if indexInfo == nil {
 		return nil, plannererrors.ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
@@ -4489,7 +4504,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.Lo
 func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
 	tblInfo := node.Table.TableInfo
 	handleColInfos := buildHandleColumnInfos(tblInfo)
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
@@ -4560,7 +4575,7 @@ const (
 )
 
 func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.ColumnInfo, rowIdx int,
-	b *PlanBuilder, mockTablePlan *LogicalTableDual) ([]types.Datum, error) {
+	b *PlanBuilder, mockTablePlan *logicalop.LogicalTableDual) ([]types.Datum, error) {
 	if len(valueList) != len(handleColInfos) {
 		var err error
 		switch rowIdx {
@@ -5144,6 +5159,8 @@ func buildShowWarningsSchema() (*expression.Schema, types.NameSlice) {
 func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *expression.Schema, outputNames []*types.FieldName) {
 	var names []string
 	var ftypes []byte
+	var flags []uint
+
 	switch s.Tp {
 	case ast.ShowBinlogStatus:
 		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
@@ -5202,9 +5219,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowVariables, ast.ShowStatus:
 		names = []string{"Variable_name", "Value"}
 	case ast.ShowCollation:
-		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
+		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen", "Pad_attribute"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
+		flags = []uint{0, 0, mysql.UnsignedFlag | mysql.NotNullFlag, 0, 0, 0, 0}
 	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		if isSequence {
 			names = []string{"Sequence", "Create Sequence"}
@@ -5326,10 +5344,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = importIntoSchemaNames
 		ftypes = importIntoSchemaFTypes
 	}
-	return convert2OutputSchemasAndNames(names, ftypes)
+	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }
 
-func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expression.Schema, outputNames []*types.FieldName) {
+func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) (schema *expression.Schema, outputNames []*types.FieldName) {
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	outputNames = make([]*types.FieldName, 0, len(names))
 	for i := range names {
@@ -5347,6 +5365,9 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expre
 		charset, collate := types.DefaultCharsetForType(tp)
 		fieldType.SetCharset(charset)
 		fieldType.SetCollate(collate)
+		if len(flags) > 0 {
+			fieldType.SetFlag(flags[i])
+		}
 		col.RetType = fieldType
 		schema.Append(col)
 	}

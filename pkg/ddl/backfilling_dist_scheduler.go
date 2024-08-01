@@ -248,7 +248,7 @@ func generateNonPartitionPlan(
 	useCloud bool,
 	instanceCnt int,
 ) (metas [][]byte, err error) {
-	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
+	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -271,6 +271,7 @@ func generateNonPartitionPlan(
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := d.store.(helper.Storage).GetRegionCache()
 		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
+
 		if err != nil {
 			return false, err
 		}
@@ -329,6 +330,9 @@ func generateNonPartitionPlan(
 }
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	var regionBatch int
 	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {

@@ -88,3 +88,44 @@ var GetHashAggs func(la base.LogicalPlan, prop *property.PhysicalProperty) []bas
 // util func pointer.
 var PruneByItems func(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (
 	byItems []*util.ByItems, parentUsedCols []*expression.Column)
+
+// ExhaustPhysicalPlans4LogicalMaxOneRow will be called by LogicalMaxOneRow in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalMaxOneRow func(p base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// FindBestTask4LogicalCTETable will be called by LogicalCTETable in logicalOp pkg.
+var FindBestTask4LogicalCTETable func(lp base.LogicalPlan, prop *property.PhysicalProperty, _ *base.PlanCounterTp,
+	_ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error)
+
+// FindBestTask4LogicalMemTable will be called by LogicalMemTable in logicalOp pkg.
+var FindBestTask4LogicalMemTable func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task,
+	cntPlan int64, err error)
+
+// FindBestTask4LogicalShow will be called by LogicalShow in logicalOp pkg.
+var FindBestTask4LogicalShow func(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	_ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
+
+// FindBestTask4LogicalShowDDLJobs will be called by LogicalShowDDLJobs in logicalOp pkg.
+var FindBestTask4LogicalShowDDLJobs func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
+
+// ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// FindBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
+var FindBestTask4LogicalTableDual func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
+
+// ExhaustPhysicalPlans4LogicalSort will be called by LogicalSort in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalSort func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalTopN will be called by LogicalTopN in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalTopN func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalLimit will be called by LogicalLimit in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalLimit func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)

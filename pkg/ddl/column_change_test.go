@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func TestColumnAdd(t *testing.T) {
 	)
 	first := true
 	var jobID int64
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -79,9 +80,7 @@ func TestColumnAdd(t *testing.T) {
 			publicTable = tbl
 			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(tc.Clone())
+	})
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
 	v := getSchemaVer(t, tk.Session())
@@ -94,7 +93,7 @@ func TestColumnAdd(t *testing.T) {
 			dropCol = tbl.VisibleCols()[2]
 		}
 	}
-	onJobUpdatedExportedFunc2 := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.NotStarted() {
 			return
 		}
@@ -105,8 +104,7 @@ func TestColumnAdd(t *testing.T) {
 				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
+	})
 	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
@@ -115,7 +113,7 @@ func TestColumnAdd(t *testing.T) {
 
 	// Add column not default.
 	first = true
-	onJobUpdatedExportedFunc3 := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID = job.ID
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -133,9 +131,7 @@ func TestColumnAdd(t *testing.T) {
 			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), types.MakeDatums(10, 10))
 			require.NoError(t, err)
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc3)
-	d.SetHook(tc)
+	})
 	tk.MustExec("alter table t add column c3 int")
 	testCheckJobDone(t, store, jobID, true)
 }
