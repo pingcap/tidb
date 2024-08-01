@@ -18,12 +18,16 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -60,6 +64,82 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, err
 	}
 	return tbInfo, nil
+}
+
+// CheckTableInfoValidWithStmt exposes checkTableInfoValidWithStmt to SchemaTracker. Maybe one day we can delete it.
+func CheckTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
+	return checkTableInfoValidWithStmt(ctx, tbInfo, s)
+}
+
+func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
+	// All of these rely on the AST structure of expressions, which were
+	// lost in the model (got serialized into strings).
+	if err := checkGeneratedColumn(ctx, s.Table.Schema, tbInfo.Name, s.Cols); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check if table has a primary key if required.
+	if !ctx.GetSessionVars().InRestrictedSQL && ctx.GetSessionVars().PrimaryKeyRequired && len(tbInfo.GetPkName().String()) == 0 {
+		return infoschema.ErrTableWithoutPrimaryKey
+	}
+	if tbInfo.Partition != nil {
+		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+		if s.Partition != nil {
+			if err := checkPartitionFuncType(ctx, s.Partition.Expr, s.Table.Schema.O, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	if tbInfo.TTLInfo != nil {
+		if err := checkTTLInfoValid(ctx, s.Table.Schema, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+// checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
+// table info comes from untrusted source and performs further checks such as
+// name length and column count.
+// (checkTableInfoValid is also used in repairing objects which don't perform
+// these checks. Perhaps the two functions should be merged together regardless?)
+func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
+	if err := checkTooLongTable(tbInfo.Name); err != nil {
+		return err
+	}
+
+	if err := checkDuplicateColumn(tbInfo.Columns); err != nil {
+		return err
+	}
+	if err := checkTooLongColumns(tbInfo.Columns); err != nil {
+		return err
+	}
+	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkTooManyIndexes(tbInfo.Indices); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
+		return errors.Trace(err)
+	}
+
+	// FIXME: perform checkConstraintNames
+	if err := checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate); err != nil {
+		return errors.Trace(err)
+	}
+
+	oldState := tbInfo.State
+	tbInfo.State = model.StatePublic
+	err := checkTableInfoValid(tbInfo)
+	tbInfo.State = oldState
+	return err
 }
 
 // BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
@@ -668,6 +748,114 @@ func BuildTableInfo(
 
 	err = addIndexForForeignKey(ctx, tbInfo)
 	return tbInfo, err
+}
+
+func precheckBuildHiddenColumnInfo(
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexName model.CIStr,
+) error {
+	for i, idxPart := range indexPartSpecifications {
+		if idxPart.Expr == nil {
+			continue
+		}
+		name := fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i)
+		if utf8.RuneCountInString(name) > mysql.MaxColumnNameLength {
+			// TODO: Refine the error message.
+			return dbterror.ErrTooLongIdent.GenWithStackByArgs("hidden column")
+		}
+		// TODO: Refine the error message.
+		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func buildHiddenColumnInfoWithCheck(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+	if err := precheckBuildHiddenColumnInfo(indexPartSpecifications, indexName); err != nil {
+		return nil, err
+	}
+	return BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, tblInfo, existCols)
+}
+
+// BuildHiddenColumnInfo builds hidden column info.
+func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
+	for i, idxPart := range indexPartSpecifications {
+		if idxPart.Expr == nil {
+			continue
+		}
+		idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i))}
+		// Check whether the hidden columns have existed.
+		col := table.FindCol(existCols, idxPart.Column.Name.L)
+		if col != nil {
+			// TODO: Use expression index related error.
+			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.String())
+		}
+		idxPart.Length = types.UnspecifiedLength
+		// The index part is an expression, prepare a hidden column for it.
+
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		sb.Reset()
+		err := idxPart.Expr.Restore(restoreCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		expr, err := expression.BuildSimpleExpr(ctx.GetExprCtx(), idxPart.Expr,
+			expression.WithTableInfo(ctx.GetSessionVars().CurrentDB, tblInfo),
+			expression.WithAllowCastArray(true),
+		)
+		if err != nil {
+			// TODO: refine the error message.
+			return nil, err
+		}
+		if _, ok := expr.(*expression.Column); ok {
+			return nil, dbterror.ErrFunctionalIndexOnField
+		}
+
+		colInfo := &model.ColumnInfo{
+			Name:                idxPart.Column.Name,
+			GeneratedExprString: sb.String(),
+			GeneratedStored:     false,
+			Version:             model.CurrLatestColumnInfoVersion,
+			Dependences:         make(map[string]struct{}),
+			Hidden:              true,
+			FieldType:           *expr.GetType(ctx.GetExprCtx().GetEvalCtx()),
+		}
+		// Reset some flag, it may be caused by wrong type infer. But it's not easy to fix them all, so reset them here for safety.
+		colInfo.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.AutoIncrementFlag)
+
+		if colInfo.GetType() == mysql.TypeDatetime || colInfo.GetType() == mysql.TypeDate || colInfo.GetType() == mysql.TypeTimestamp || colInfo.GetType() == mysql.TypeDuration {
+			if colInfo.FieldType.GetDecimal() == types.UnspecifiedLength {
+				colInfo.FieldType.SetDecimal(types.MaxFsp)
+			}
+		}
+		// For an array, the collation is set to "binary". The collation has no effect on the array itself (as it's usually
+		// regarded as a JSON), but will influence how TiKV handles the index value.
+		if colInfo.FieldType.IsArray() {
+			colInfo.SetCharset("binary")
+			colInfo.SetCollate("binary")
+		}
+		checkDependencies := make(map[string]struct{})
+		for _, colName := range FindColumnNamesInExpr(idxPart.Expr) {
+			colInfo.Dependences[colName.Name.L] = struct{}{}
+			checkDependencies[colName.Name.L] = struct{}{}
+		}
+		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+			if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		idxPart.Expr = nil
+		hiddenCols = append(hiddenCols, colInfo)
+	}
+	return hiddenCols, nil
 }
 
 // addIndexForForeignKey uses to auto create an index for the foreign key if the table doesn't have any index cover the

@@ -607,6 +607,23 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 	return newShardBits, nil
 }
 
+func isClusteredPKColumn(col *table.Column, tblInfo *model.TableInfo) bool {
+	switch {
+	case tblInfo.PKIsHandle:
+		return mysql.HasPriKeyFlag(col.GetFlag())
+	case tblInfo.IsCommonHandle:
+		pk := tables.FindPrimaryIndex(tblInfo)
+		for _, c := range pk.Columns {
+			if c.Name.L == col.Name.L {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func rangeBitsIsChanged(oldBits, newBits uint64) bool {
 	if oldBits == 0 {
 		oldBits = autoid.AutoRandomRangeBitsDefault
