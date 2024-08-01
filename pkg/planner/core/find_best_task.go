@@ -1644,19 +1644,12 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		if partPath.IsTablePath() {
 			scan = ds.convertToPartialTableScan(prop, partPath, candidate.isMatchProp, byItems)
 		} else {
-<<<<<<< HEAD
-			scan = ds.convertToPartialIndexScan(prop, partPath, candidate.isMatchProp, byItems)
-=======
 			var remainingFilters []expression.Expression
-			scan, remainingFilters, err = ds.convertToPartialIndexScan(cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
-			if err != nil {
-				return base.InvalidTask, err
-			}
+			scan, remainingFilters = ds.convertToPartialIndexScan(prop, partPath, candidate.isMatchProp, byItems)
 			if prop.TaskTp != property.RootTaskType && len(remainingFilters) > 0 {
-				return base.InvalidTask, nil
+				return invalidTask, nil
 			}
 			globalRemainingFilters = append(globalRemainingFilters, remainingFilters...)
->>>>>>> 1277c728362 (*: fix query reports ScalarFunction is not supported in batch mode (#55074))
 		}
 		scans = append(scans, scan)
 	}
@@ -1668,13 +1661,8 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if err != nil {
 		return invalidTask, err
 	}
-<<<<<<< HEAD
-	if prop.TaskTp != property.RootTaskType && len(remainingFilters) > 0 {
-		return invalidTask, nil
-=======
 	if prop.TaskTp != property.RootTaskType && len(remainingFilters2) > 0 {
-		return base.InvalidTask, nil
->>>>>>> 1277c728362 (*: fix query reports ScalarFunction is not supported in batch mode (#55074))
+		return invalidTask, nil
 	}
 	globalRemainingFilters = append(globalRemainingFilters, remainingFilters2...)
 	cop.keepOrder = candidate.isMatchProp
@@ -1707,11 +1695,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	return task, nil
 }
 
-<<<<<<< HEAD
-func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (indexPlan PhysicalPlan) {
-=======
-func (ds *DataSource) convertToPartialIndexScan(physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
->>>>>>> 1277c728362 (*: fix query reports ScalarFunction is not supported in batch mode (#55074))
+func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (indexPlan PhysicalPlan, remainingFilter []expression.Expression) {
 	is := ds.getOriginalPhysicalIndexScan(prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
@@ -1722,17 +1706,7 @@ func (ds *DataSource) convertToPartialIndexScan(physPlanPartInfo *PhysPlanPartIn
 		// Add sort items for index scan for merge-sort operation between partitions.
 		is.ByItems = byItems
 	}
-<<<<<<< HEAD
-=======
 
-	// Add a `Selection` for `IndexScan` with global index.
-	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
-	indexConds, err := is.addSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
-	if err != nil {
-		return nil, nil, err
-	}
-
->>>>>>> 1277c728362 (*: fix query reports ScalarFunction is not supported in batch mode (#55074))
 	if len(indexConds) > 0 {
 		pushedFilters, remainingFilter := extractFiltersForIndexMerge(GetPushDownCtx(ds.SCtx()), indexConds)
 		var selectivity float64
@@ -1747,16 +1721,10 @@ func (ds *DataSource) convertToPartialIndexScan(physPlanPartInfo *PhysPlanPartIn
 		}
 		indexPlan := PhysicalSelection{Conditions: pushedFilters}.Init(is.SCtx(), stats, ds.QueryBlockOffset())
 		indexPlan.SetChildren(is)
-<<<<<<< HEAD
-		return indexPlan
+		return indexPlan, remainingFilter
 	}
 	indexPlan = is
-	return indexPlan
-=======
-		return indexPlan, remainingFilter, nil
-	}
-	return is, nil, nil
->>>>>>> 1277c728362 (*: fix query reports ScalarFunction is not supported in batch mode (#55074))
+	return indexPlan, nil
 }
 
 func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
