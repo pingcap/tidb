@@ -2324,11 +2324,11 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (year in
 		decimalLen = len(dvPre)
 		if decimalLen >= 6 {
 			// MySQL rounds down to 1e-6.
-			if dv, tmpErr = strconv.ParseInt(dvPre[0:6], 10, 64); tmpErr != nil && err == nil {
+			if dv, tmpErr = strconv.ParseInt(dvPre[0:6], 10, 64); tmpErr != nil {
 				err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, tmpErr = strconv.ParseInt(dvPre+"000000"[:6-decimalLen], 10, 64); tmpErr != nil && err == nil {
+			if dv, tmpErr = strconv.ParseInt(dvPre+"000000"[:6-decimalLen], 10, 64); tmpErr != nil {
 				err = ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
