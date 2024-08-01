@@ -314,9 +314,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
-		/* if enableV2 == isV2  { */
 		return is, true, 0, nil, nil
-		// }
 	}
 
 	var oldIsV2 bool
@@ -584,7 +582,6 @@ func (do *Domain) tryLoadSchemaDiffs(builder *infoschema.Builder, m *meta.Meta, 
 		}
 	})
 
-	// builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).
 	err := builder.InitWithOldInfoSchema(do.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)

@@ -1015,12 +1015,11 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		dirtyDB:      make(map[string]bool),
 		factory:      factory,
 		infoData:     infoData,
-		enableV2: useV2,
+		enableV2:     useV2,
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
 	if schemaCacheSize > 0 {
 		infoData.tableCache.SetCapacity(schemaCacheSize)
-		// builder.enableV2 = true
 	}
 	return builder
 }
