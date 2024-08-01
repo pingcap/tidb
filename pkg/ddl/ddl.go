@@ -844,6 +844,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			logutil.DDLLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+		d.reorgCtx.setOwnerTS(time.Now().Unix())
 		d.runningJobs.clear()
 	})
 
