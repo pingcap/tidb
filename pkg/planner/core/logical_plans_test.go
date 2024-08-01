@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -780,7 +781,7 @@ func TestAllocID(t *testing.T) {
 func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch v := p.(type) {
-	case *DataSource, *LogicalUnionAll, *LogicalLimit:
+	case *DataSource, *LogicalUnionAll, *logicalop.LogicalLimit:
 		testdata.OnRecord(func() {
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
@@ -802,7 +803,7 @@ func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string,
 func checkOrderByItems(p base.LogicalPlan, t *testing.T, colList *[]string, comment string) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch p := p.(type) {
-	case *LogicalSort:
+	case *logicalop.LogicalSort:
 		testdata.OnRecord(func() {
 			*colList = make([]string, len(p.ByItems))
 		})
@@ -1994,7 +1995,7 @@ func TestSkylinePruning(t *testing.T) {
 			switch v := lp.(type) {
 			case *DataSource:
 				ds = v
-			case *LogicalSort:
+			case *logicalop.LogicalSort:
 				byItems = v.ByItems
 				lp = lp.Children()[0]
 			case *LogicalProjection:

@@ -46,7 +46,7 @@ import (
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func TestShowCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -74,9 +74,8 @@ func TestShowCreateTable(t *testing.T) {
 			"CREATE TABLE `t2` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL,\n  `c` varchar(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"},
 	}
 	prevState := model.StateNone
-	callback := &callback.TestDDLCallback{}
 	currTestCaseOffset := 0
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -110,12 +109,7 @@ func TestShowCreateTable(t *testing.T) {
 			}
 			terror.Log(result.Close())
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	d.SetHook(callback)
+	})
 	for _, tc := range testCases {
 		tk.MustExec(tc.sql)
 		require.NoError(t, checkErr)
@@ -124,7 +118,7 @@ func TestShowCreateTable(t *testing.T) {
 
 // TestDropNotNullColumn is used to test issue #8654.
 func TestDropNotNullColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -143,11 +137,8 @@ func TestDropNotNullColumn(t *testing.T) {
 	tk1.MustExec("use test")
 
 	var checkErr error
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	callback := &callback.TestDDLCallback{}
 	sqlNum := 0
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -165,9 +156,7 @@ func TestDropNotNullColumn(t *testing.T) {
 				_, checkErr = tk1.Exec("insert into t4 set id = 5")
 			}
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(callback)
+	})
 	tk.MustExec("alter table t drop column a")
 	require.NoError(t, checkErr)
 	sqlNum++
@@ -182,12 +171,12 @@ func TestDropNotNullColumn(t *testing.T) {
 	sqlNum++
 	tk.MustExec("alter table t4 drop column e")
 	require.NoError(t, checkErr)
-	d.SetHook(originalCallback)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	tk.MustExec("drop table t, t1, t2, t3")
 }
 
 func TestTwoStates(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -227,13 +216,12 @@ func TestTwoStates(t *testing.T) {
 		key(c1, c2))`)
 	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
 
-	callback := &callback.TestDDLCallback{}
 	prevState := model.StateNone
 	require.NoError(t, testInfo.parseSQLs(parser.New()))
 
 	times := 0
 	var checkErr error
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
 			return
 		}
@@ -280,12 +268,7 @@ func TestTwoStates(t *testing.T) {
 				checkErr = err
 			}
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	d.SetHook(callback)
+	})
 	tk.MustExec(alterTableSQL)
 	require.NoError(t, testInfo.compileSQL(4))
 	require.NoError(t, testInfo.execSQL(4))
@@ -812,7 +795,7 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		callback.OnJobUpdatedExported.Store(&cbFunc)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc)
 	} else {
 		callback.OnJobRunBeforeExported = cbFunc
 	}
@@ -845,17 +828,16 @@ func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
 }
 
 func TestShowIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec(`create table t(c1 int primary key nonclustered, c2 int)`)
 
-	callback := &callback.TestDDLCallback{}
 	prevState := model.StateNone
 	showIndexSQL := `show index from t`
 	var checkErr error
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -873,11 +855,7 @@ func TestShowIndex(t *testing.T) {
 				checkErr = fmt.Errorf("need %v, but got %v", need, got)
 			}
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	d.SetHook(callback)
+	})
 	alterTableSQL := `alter table t add index c2(c2)`
 	tk.MustExec(alterTableSQL)
 	require.NoError(t, checkErr)
@@ -886,7 +864,7 @@ func TestShowIndex(t *testing.T) {
 		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO",
 		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES <nil> NO",
 	))
-	d.SetHook(originalCallback)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	tk.MustExec(`create table tr(
 		id int, name varchar(50),
@@ -1412,7 +1390,7 @@ func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	f(err1, err2)
 }
 
-func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql string) {
+func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, sql string) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
 	tk2 := testkit.NewTestKit(t, store)
@@ -1421,19 +1399,14 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Dom
 	var err2, err3 error
 	var wg util.WaitGroupWrapper
 
-	callback := &callback.TestDDLCallback{}
 	once := sync.Once{}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		// sleep a while, let other job enqueue.
 		once.Do(func() {
 			time.Sleep(time.Millisecond * 10)
 		})
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	d.SetHook(callback)
+	})
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	wg.Run(func() {
 		err2 = tk1.ExecToErr(sql)
 	})
@@ -1447,58 +1420,58 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Dom
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
 func TestCreateTableIfNotExists(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	dbChangeTestParallelExecSQL(t, store, dom, "create table if not exists test_not_exists(a int)")
+	dbChangeTestParallelExecSQL(t, store, "create table if not exists test_not_exists(a int)")
 }
 
 // TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
 func TestCreateDBIfNotExists(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	dbChangeTestParallelExecSQL(t, store, dom, "create database if not exists test_not_exists")
+	dbChangeTestParallelExecSQL(t, store, "create database if not exists test_not_exists")
 }
 
 // TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
 func TestDDLIfNotExists(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec("create table if not exists test_not_exists(a int)")
 	// ADD COLUMN
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add column if not exists b int")
+	dbChangeTestParallelExecSQL(t, store, "alter table test_not_exists add column if not exists b int")
 	// ADD COLUMNS
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
+	dbChangeTestParallelExecSQL(t, store, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
 	// ADD INDEX
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add index if not exists idx_b (b)")
+	dbChangeTestParallelExecSQL(t, store, "alter table test_not_exists add index if not exists idx_b (b)")
 	// CREATE INDEX
-	dbChangeTestParallelExecSQL(t, store, dom, "create index if not exists idx_b on test_not_exists (b)")
+	dbChangeTestParallelExecSQL(t, store, "create index if not exists idx_b on test_not_exists (b)")
 }
 
 // TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
 func TestDDLIfExists(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec("create table if not exists test_exists (a int key, b int)")
 	// DROP COLUMNS
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop column if exists c, drop column if exists d")
+	dbChangeTestParallelExecSQL(t, store, "alter table test_exists drop column if exists c, drop column if exists d")
 	// DROP COLUMN
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop column if exists b") // only `a` exists now
+	dbChangeTestParallelExecSQL(t, store, "alter table test_exists drop column if exists b") // only `a` exists now
 	// CHANGE COLUMN
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists change column if exists a c int") // only, `c` exists now
+	dbChangeTestParallelExecSQL(t, store, "alter table test_exists change column if exists a c int") // only, `c` exists now
 	// MODIFY COLUMN
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists modify column if exists a bigint")
+	dbChangeTestParallelExecSQL(t, store, "alter table test_exists modify column if exists a bigint")
 	// DROP INDEX
 	tk.MustExec("alter table test_exists add index idx_c (c)")
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop index if exists idx_c")
+	dbChangeTestParallelExecSQL(t, store, "alter table test_exists drop index if exists idx_c")
 	// DROP PARTITION (ADD PARTITION tested in TestParallelAlterAddPartition)
 	tk.MustExec("create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))")
-	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists_2 drop partition if exists p1")
+	dbChangeTestParallelExecSQL(t, store, "alter table test_exists_2 drop partition if exists p1")
 }
 
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
@@ -1622,7 +1595,7 @@ func TestWriteReorgForColumnTypeChange(t *testing.T) {
 }
 
 func TestCreateExpressionIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1640,11 +1613,7 @@ func TestCreateExpressionIndex(t *testing.T) {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1678,10 +1647,8 @@ func TestCreateExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (10, 10), (0, 11), (0, 11)
 		}
-	}
+	})
 
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(callback)
 	tk.MustExec("alter table t add index idx((b+1))")
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
@@ -1697,7 +1664,7 @@ func TestCreateExpressionIndex(t *testing.T) {
 }
 
 func TestCreateUniqueExpressionIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1712,11 +1679,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1796,9 +1759,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 7), (8, 8), (13, 9), (11, 10), (0, 11)
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(callback)
+	})
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
@@ -1806,7 +1767,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 }
 
 func TestDropExpressionIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1820,11 +1781,7 @@ func TestDropExpressionIndex(t *testing.T) {
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
 	var checkErr error
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1854,9 +1811,7 @@ func TestDropExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (0, 11)
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(callback)
+	})
 	tk.MustExec("alter table t drop index idx")
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")

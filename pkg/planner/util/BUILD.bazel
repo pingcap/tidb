@@ -4,6 +4,7 @@ go_library(
     name = "util",
     srcs = [
         "byitem.go",
+        "explain_misc.go",
         "expression.go",
         "handle_cols.go",
         "misc.go",

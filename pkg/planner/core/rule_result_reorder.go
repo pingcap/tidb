@@ -57,7 +57,7 @@ func (rs *resultReorder) completeSort(lp base.LogicalPlan) bool {
 			return true
 		}
 		return rs.completeSort(lp.Children()[0])
-	} else if sort, ok := lp.(*LogicalSort); ok {
+	} else if sort, ok := lp.(*logicalop.LogicalSort); ok {
 		cols := sort.Schema().Columns // sort results by all output columns
 		if handleCol := rs.extractHandleCol(sort.Children()[0]); handleCol != nil {
 			cols = []*expression.Column{handleCol} // sort results by the handle column if we can get it
@@ -93,7 +93,7 @@ func (rs *resultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 	for _, col := range cols {
 		byItems = append(byItems, &util.ByItems{Expr: col})
 	}
-	sort := LogicalSort{
+	sort := logicalop.LogicalSort{
 		ByItems: byItems,
 	}.Init(lp.SCtx(), lp.QueryBlockOffset())
 	sort.SetChildren(lp)
@@ -102,7 +102,7 @@ func (rs *resultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 
 func (*resultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 	switch lp.(type) {
-	case *LogicalSelection, *LogicalProjection, *LogicalLimit, *logicalop.LogicalTableDual:
+	case *LogicalSelection, *LogicalProjection, *logicalop.LogicalLimit, *logicalop.LogicalTableDual:
 		return true
 	}
 	return false
@@ -111,7 +111,7 @@ func (*resultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 // extractHandleCols does the best effort to get the handle column.
 func (rs *resultReorder) extractHandleCol(lp base.LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
-	case *LogicalSelection, *LogicalLimit:
+	case *LogicalSelection, *logicalop.LogicalLimit:
 		handleCol := rs.extractHandleCol(lp.Children()[0])
 		if handleCol == nil {
 			return nil // fail to extract handle column from the child, just return nil.

@@ -376,7 +376,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 
 	createGlobalTemporaryTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			err := m.CreateTableOrView(db.ID, db.Name.L, &model.TableInfo{
+			err := m.CreateTableOrView(db.ID, &model.TableInfo{
 				ID:            tblID,
 				TempTableType: model.TempTableGlobal,
 				State:         model.StatePublic,
@@ -389,7 +389,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 
 	createNormalTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			err := m.CreateTableOrView(db.ID, db.Name.L, &model.TableInfo{
+			err := m.CreateTableOrView(db.ID, &model.TableInfo{
 				ID:    tblID,
 				State: model.StatePublic,
 			})
@@ -401,7 +401,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 
 	dropTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			err := m.DropTableOrView(db.ID, db.Name.L, tblID, "")
+			err := m.DropTableOrView(db.ID, tblID)
 			require.NoError(t, err)
 			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, SchemaID: db.ID, TableID: tblID, Version: 1})
 			require.NoError(t, err)
@@ -410,10 +410,10 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 
 	truncateGlobalTemporaryTableChange := func(tblID, newTblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			err := m.DropTableOrView(db.ID, db.Name.L, tblID, "")
+			err := m.DropTableOrView(db.ID, tblID)
 			require.NoError(t, err)
 
-			err = m.CreateTableOrView(db.ID, db.Name.L, &model.TableInfo{
+			err = m.CreateTableOrView(db.ID, &model.TableInfo{
 				ID:            newTblID,
 				TempTableType: model.TempTableGlobal,
 				State:         model.StatePublic,
