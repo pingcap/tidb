@@ -637,9 +637,8 @@ type FullBackupStorageConfig struct {
 
 type InitSchemaConfig struct {
 	// required
-	IsNewTask      bool
-	HasFullRestore bool
-	TableFilter    filter.Filter
+	IsNewTask   bool
+	TableFilter filter.Filter
 
 	// optional
 	TiFlashRecorder   *tiflashrec.TiFlashRecorder
@@ -673,7 +672,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
+	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		needConstructIdMap = true
 		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
