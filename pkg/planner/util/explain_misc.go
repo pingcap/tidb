@@ -25,7 +25,8 @@ func ExplainByItems(ctx expression.EvalContext, buffer *bytes.Buffer, byItems []
 }
 
 // ExplainPartitionBy produce text for p.PartitionBy. Common for window functions and TopN.
-func ExplainPartitionBy(ctx expression.EvalContext, buffer *bytes.Buffer, partitionBy []property.SortItem, normalized bool) *bytes.Buffer {
+func ExplainPartitionBy(ctx expression.EvalContext, buffer *bytes.Buffer,
+	partitionBy []property.SortItem, normalized bool) *bytes.Buffer {
 	if len(partitionBy) > 0 {
 		buffer.WriteString("partition by ")
 		for i, item := range partitionBy {
