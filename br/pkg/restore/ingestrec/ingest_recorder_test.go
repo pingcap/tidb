@@ -162,7 +162,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			},
 			State: model.StatePublic,
 		}
-		err = m.CreateTableOrView(1, dbInfo.Name.L, tblInfo)
+		err = m.CreateTableOrView(1, tblInfo)
 		require.NoError(t, err)
 	})
 	dom, err := session.GetDomain(store)
@@ -357,7 +357,7 @@ func TestIndexesKind(t *testing.T) {
 			},
 			State: model.StatePublic,
 		}
-		err = m.CreateTableOrView(1, dbInfo.Name.L, tblInfo)
+		err = m.CreateTableOrView(1, tblInfo)
 		require.NoError(t, err)
 	})
 	dom, err := session.GetDomain(store)
@@ -454,7 +454,7 @@ func TestRewriteTableID(t *testing.T) {
 			},
 			State: model.StatePublic,
 		}
-		err = m.CreateTableOrView(1, dbInfo.Name.L, tblInfo)
+		err = m.CreateTableOrView(1, tblInfo)
 		require.NoError(t, err)
 	})
 	dom, err := session.GetDomain(store)
