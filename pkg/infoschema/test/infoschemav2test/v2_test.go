@@ -428,3 +428,48 @@ func TestIssue54926(t *testing.T) {
 	require.Equal(t, time2TS, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
 }
+
+func TestIssue55114(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	time1 := time.Now()
+	// time1TS := oracle.GoTimeToTS(time1)
+	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	time.Sleep(50*time.Millisecond)
+	tk.MustExec("create table t (id int)")
+	fmt.Println("before .. version ==", schemaVer1)
+
+	go func() {
+		for {
+			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+			dom.Reload()
+			tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+			dom.Reload()
+		}
+	}()
+
+	go func() {
+		for {
+			tk2.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
+			time.Sleep(10*time.Millisecond)
+		}
+	}()
+
+	for i:=0; i<1000; i++ {
+		time.Sleep(100 * time.Millisecond)
+		v := dom.InfoSchema().SchemaMetaVersion()
+		fmt.Println("v ===", v)
+		require.NotEqual(t, v, schemaVer1)
+	}
+}

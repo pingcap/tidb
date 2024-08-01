@@ -19,6 +19,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -127,7 +128,8 @@ func TestMisc(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 0)
@@ -249,7 +251,8 @@ func TestBundles(t *testing.T) {
 
 	schemaName := model.NewCIStr("testDB")
 	tableName := model.NewCIStr("test")
-	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.Equal(t, 2, len(is.AllSchemas()))
