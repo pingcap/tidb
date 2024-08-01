@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -324,7 +325,9 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 	for {
 		err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
 		if err != nil {
+			log.Info("xzxdebug here1")
 			errCh <- errors.Trace(err)
+			log.Info("xzxdebug here2")
 			return
 		}
 

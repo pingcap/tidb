@@ -314,7 +314,8 @@ func getPartitionMaskOffset(partitionNumber uint) int {
 
 // SetupPartitionInfo set up partitionNumber and partitionMaskOffset based on concurrency
 func (hCtx *HashJoinCtxV2) SetupPartitionInfo() {
-	hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency)
+	// hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency) // TODO uncomment it
+	hCtx.partitionNumber = 2
 	hCtx.partitionMaskOffset = getPartitionMaskOffset(hCtx.partitionNumber)
 }
 

@@ -658,7 +658,7 @@ func (b *rowTableBuilder) regenerateHashValueAndPartIndex(hashValue uint64, part
 	b.hash.Reset()
 	b.hash.Write(b.rehashBuf.Bytes())
 	newHashVal := b.hash.Sum64()
-	return newHashVal, int(generatePartitionIndex(hashValue, partitionMaskOffset)), nil
+	return newHashVal, int(generatePartitionIndex(newHashVal, partitionMaskOffset)), nil
 }
 
 func (b *rowTableBuilder) initRehashUtil() {

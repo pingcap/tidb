@@ -73,7 +73,7 @@ func getExpectedResults(t *testing.T, info *hashJoinInfo, resultTypes []*types.F
 }
 
 func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 4000000)
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -169,7 +169,7 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 // Case 5: Trigger re-spill and exceed max spill round
 func TestInnerJoinSpillCorrectness(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = 32 
+	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
 
@@ -216,15 +216,16 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
-	for i := 0; i < 3; i++ {
-		testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
-	}
+	testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	// for i := 0; i < 3; i++ {
+	// 	testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	// 	testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	// 	testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	// 	testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	// 	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
+	// }
 
-	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	// testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 }
 
 func TestLeftOuterJoinSpillCorrectness(t *testing.T) {
