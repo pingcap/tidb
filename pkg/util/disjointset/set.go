@@ -78,10 +78,8 @@ func (s *Set[T]) FindRoot(a T) int {
 	return s.findRootOriginalVal(a)
 }
 
+// FindVal finds the value of the set corresponding to the index.
 func (s *Set[T]) FindVal(idx int) (T, bool) {
-	if v, ok := s.idx2Val[s.findRootInternal(idx)]; ok {
-		return v, true
-	} else {
-		return v, false
-	}
+	v, ok := s.idx2Val[s.findRootInternal(idx)]
+	return v, ok
 }

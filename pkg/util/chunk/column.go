@@ -677,9 +677,6 @@ func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
 }
 
 func (c *Column) getNameValue(rowID int) (string, uint64) {
-	if rowID+1 >= len(c.offsets) {
-		fmt.Println(1)
-	}
 	start, end := c.offsets[rowID], c.offsets[rowID+1]
 	if start == end {
 		return "", 0
