@@ -99,6 +99,9 @@ func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		constraintInfoInMeta.State = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 	case model.StateWriteReorganization:
+		if d.lease > 0 {
+			delayForAsyncCommit()
+		}
 		err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta)
 		if err != nil {
 			if dbterror.ErrCheckConstraintIsViolated.Equal(err) {
@@ -243,6 +246,9 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 			constraintInfo.State = model.StateWriteOnly
 			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 		case model.StateWriteOnly:
+			if d.lease > 0 {
+				delayForAsyncCommit()
+			}
 			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo)
 			if err != nil {
 				if dbterror.ErrCheckConstraintIsViolated.Equal(err) {
