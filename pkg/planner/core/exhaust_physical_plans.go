@@ -789,7 +789,8 @@ childLoop:
 	return wrapper
 }
 
-func getIndexJoinBuildHelper(p *LogicalJoin, ds *DataSource, innerJoinKeys []*expression.Column, checkPathValid func(path *util.AccessPath) bool, outerJoinKeys []*expression.Column) (*indexJoinBuildHelper, []int) {
+func getIndexJoinBuildHelper(p *LogicalJoin, ds *DataSource, innerJoinKeys []*expression.Column,
+	checkPathValid func(path *util.AccessPath) bool, outerJoinKeys []*expression.Column) (*indexJoinPathResult, []int) {
 	helper := &indexJoinBuildHelper{
 		sctx:                  p.SCtx(),
 		joinOtherConditions:   p.OtherConditions,
@@ -799,30 +800,35 @@ func getIndexJoinBuildHelper(p *LogicalJoin, ds *DataSource, innerJoinKeys []*ex
 		innerSchema:           ds.Schema(),
 		innerStats:            ds.StatsInfo(),
 	}
+	var bestResult *indexJoinPathResult
 	for _, path := range ds.PossibleAccessPaths {
 		if checkPathValid(path) {
-			emptyRange, err := helper.analyzeLookUpFilters(path, false)
+			result, emptyRange, err := helper.analyzeIndexJoinPath(path, false)
 			if emptyRange {
 				return nil, nil
 			}
 			if err != nil {
 				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
+				continue
+			}
+			if compareIndexJoinChoice(bestResult, result) {
+				bestResult = result
 			}
 		}
 	}
-	if helper.chosenPath == nil {
+	if bestResult == nil || bestResult.chosenPath == nil {
 		return nil, nil
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
-	for idxOff, keyOff := range helper.idxOff2KeyOff {
+	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
 		if keyOff != -1 {
 			keyOff2IdxOff[keyOff] = idxOff
 		}
 	}
-	return helper, keyOff2IdxOff
+	return bestResult, keyOff2IdxOff
 }
 
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
@@ -849,22 +855,22 @@ func buildIndexJoinInner2TableScan(
 	newOuterJoinKeys := make([]*expression.Column, 0)
 	var ranges ranger.MutableRanges = ranger.Ranges{}
 	var innerTask, innerTask2 base.Task
-	var helper *indexJoinBuildHelper
+	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
-		helper, keyOff2IdxOff = getIndexJoinBuildHelper(p, ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath }, outerJoinKeys)
-		if helper == nil {
+		indexJoinResult, keyOff2IdxOff = getIndexJoinBuildHelper(p, ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath }, outerJoinKeys)
+		if indexJoinResult == nil {
 			return nil
 		}
-		rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols)
-		innerTask = constructInnerTableScanTask(p, wrapper, helper.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		rangeInfo := buildRangeDecidedByInformation(p.SCtx(), outerJoinKeys, indexJoinResult)
+		innerTask = constructInnerTableScanTask(p, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, wrapper, helper.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
-		ranges = helper.chosenRanges
+		ranges = indexJoinResult.chosenRanges
 	} else {
 		pkMatched := false
 		pkCol := ds.getPKIsHandleCol()
@@ -909,9 +915,9 @@ func buildIndexJoinInner2TableScan(
 		path       *util.AccessPath
 		lastColMng *ColWithCmpFuncManager
 	)
-	if helper != nil {
-		path = helper.chosenPath
-		lastColMng = helper.lastColManager
+	if indexJoinResult != nil {
+		path = indexJoinResult.chosenPath
+		lastColMng = indexJoinResult.lastColManager
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
@@ -948,45 +954,57 @@ func buildIndexJoinInner2IndexScan(
 		}
 		return false
 	}
-	helper, keyOff2IdxOff := getIndexJoinBuildHelper(p, ds, innerJoinKeys, indexValid, outerJoinKeys)
-	if helper == nil {
+	indexJoinResult, keyOff2IdxOff := getIndexJoinBuildHelper(p, ds, innerJoinKeys, indexValid, outerJoinKeys)
+	if indexJoinResult == nil {
 		return nil
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols)
+	rangeInfo := buildRangeDecidedByInformation(p.SCtx(), outerJoinKeys, indexJoinResult)
 	maxOneRow := false
-	if helper.chosenPath.Index.Unique && helper.usedColsLen == len(helper.chosenPath.FullIdxCols) {
-		l := len(helper.chosenAccess)
+	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
+		l := len(indexJoinResult.chosenAccess)
 		if l == 0 {
 			maxOneRow = true
 		} else {
-			sf, ok := helper.chosenAccess[l-1].(*expression.ScalarFunction)
+			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
 			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
 		}
 	}
-	innerTask := constructInnerIndexScanTask(p, wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, helper.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
+	innerTask := constructInnerIndexScanTask(p, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
+			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager))
 		}
 	})
 	if innerTask != nil {
-		joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager, true)...)
+		joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager, true)...)
 		// We can reuse the `innerTask` here since index nested loop hash join
 		// do not need the inner child to promise the order.
-		joins = append(joins, constructIndexHashJoin(p, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		joins = append(joins, constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
 	}
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if !wrapper.hasDitryWrite {
-		innerTask2 := constructInnerIndexScanTask(p, wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, helper.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+		innerTask2 := constructInnerIndexScanTask(p, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
 		if innerTask2 != nil {
-			joins = append(joins, constructIndexMergeJoin(p, prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+			joins = append(joins, constructIndexMergeJoin(p, prop, outerIdx, innerTask2, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
 		}
 	}
 	return joins
+}
+
+// indexJoinPathResult records necessary information if we build IndexJoin on this chosen access path (or index).
+type indexJoinPathResult struct {
+	chosenPath     *util.AccessPath        // the chosen access path (or index)
+	chosenAccess   []expression.Expression // expressions used to access this index
+	chosenRemained []expression.Expression // remaining expressions after accessing this index
+	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
+	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
+	usedColsNDV    float64                 // the estimated NDV of the used columns on this index, the NDV of `t1(a, b)`
+	idxOff2KeyOff  []int
+	lastColManager *ColWithCmpFuncManager
 }
 
 type indexJoinBuildHelper struct {
@@ -1000,15 +1018,6 @@ type indexJoinBuildHelper struct {
 	innerStats            *property.StatsInfo
 
 	// below is mutable fields
-	usedColsLen    int
-	usedColsNDV    float64
-	chosenAccess   []expression.Expression
-	chosenRemained []expression.Expression
-	idxOff2KeyOff  []int
-	lastColManager *ColWithCmpFuncManager
-	chosenRanges   ranger.MutableRanges
-	chosenPath     *util.AccessPath
-
 	curPossibleUsedKeys []*expression.Column
 	curNotUsedIndexCols []*expression.Column
 	curNotUsedColLens   []int
@@ -1016,10 +1025,10 @@ type indexJoinBuildHelper struct {
 	curIdxOff2KeyOff []int
 }
 
-func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column) string {
+func buildRangeDecidedByInformation(sctx context.PlanContext, outerJoinKeys []*expression.Column, ijResult *indexJoinPathResult) string {
 	buffer := bytes.NewBufferString("[")
 	isFirst := true
-	for idxOff, keyOff := range ijHelper.idxOff2KeyOff {
+	for idxOff, keyOff := range ijResult.idxOff2KeyOff {
 		if keyOff == -1 {
 			continue
 		}
@@ -1028,12 +1037,12 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], ijHelper.outerJoinKeys[keyOff])
+		fmt.Fprintf(buffer, "eq(%v, %v)", ijResult.chosenPath.IdxCols[idxOff], outerJoinKeys[keyOff])
 	}
-	ectx := ijHelper.sctx.GetExprCtx().GetEvalCtx()
+	ectx := sctx.GetExprCtx().GetEvalCtx()
 	// It is to build the range info which is used in explain. It is necessary to redact the range info.
 	redact := ectx.GetTiDBRedactLog()
-	for _, access := range ijHelper.chosenAccess {
+	for _, access := range ijResult.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
@@ -1771,7 +1780,8 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expres
 }
 
 type mutableIndexJoinRange struct {
-	ranges ranger.Ranges
+	ranges    ranger.Ranges
+	rangeInfo string
 
 	buildHelper *indexJoinBuildHelper
 	path        *util.AccessPath
@@ -1782,19 +1792,20 @@ func (mr *mutableIndexJoinRange) Range() ranger.Ranges {
 }
 
 func (mr *mutableIndexJoinRange) Rebuild() error {
-	empty, err := mr.buildHelper.analyzeLookUpFilters(mr.path, true)
+	result, empty, err := mr.buildHelper.analyzeIndexJoinPath(mr.path, true)
 	if err != nil {
 		return err
 	}
 	if empty { // empty ranges are dangerous for plan-cache, it's better to optimize the whole plan again in this case
 		return errors.New("failed to rebuild range: empty range")
 	}
-	newRanges := mr.buildHelper.chosenRanges.Range()
+	newRanges := result.chosenRanges.Range()
 	if len(mr.ranges) != len(newRanges) || (len(mr.ranges) > 0 && mr.ranges[0].Width() != newRanges[0].Width()) {
 		// some access conditions cannot be used to calculate the range after parameters change, return an error in this case for safety.
 		return errors.New("failed to rebuild range: range width changed")
 	}
-	mr.ranges = mr.buildHelper.chosenRanges.Range()
+	mr.rangeInfo = buildRangeDecidedByInformation(mr.buildHelper.sctx, mr.buildHelper.outerJoinKeys, result)
+	mr.ranges = result.chosenRanges.Range()
 	return nil
 }
 
@@ -1831,22 +1842,22 @@ func (ijHelper *indexJoinBuildHelper) updateByTemplateRangeResult(tempRangeRes *
 	return
 }
 
-func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, rebuildMode bool) (emptyRange bool, err error) {
+func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath, rebuildMode bool) (result *indexJoinPathResult, emptyRange bool, err error) {
 	if len(path.IdxCols) == 0 {
-		return false, nil
+		return nil, false, nil
 	}
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
 	ijHelper.resetContextForIndex(path.IdxCols, path.IdxColLens)
 	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := ijHelper.findUsefulEqAndInFilters()
 	if emptyRange {
-		return true, nil
+		return nil, true, nil
 	}
 	var remainedEqAndIn []expression.Expression
 	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.IdxCols, notKeyEqAndIn)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
 	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
 	if matchedKeyCnt <= 0 && len(ijHelper.innerJoinKeys) > 0 {
-		return false, nil
+		return nil, false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
 	remained = ranger.AppendConditionsIfNotExist(ijHelper.sctx.GetExprCtx().GetEvalCtx(), remained, remainedEqAndIn)
@@ -1854,7 +1865,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
 	// A more strict check is applied later.
 	if lastColPos <= 0 {
-		return false, nil
+		return nil, false, nil
 	}
 	rangeMaxSize := ijHelper.sctx.GetSessionVars().RangeMaxSize
 	if rebuildMode {
@@ -1867,17 +1878,17 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1. And t2 has index(a, b).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
-			return false, nil
+			return nil, false, nil
 		}
 		remained = append(remained, rangeFilterCandidates...)
 		tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false, rangeMaxSize)
 		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
-			return tempRangeRes.emptyRange, tempRangeRes.err
+			return nil, tempRangeRes.emptyRange, tempRangeRes.err
 		}
 		lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
 		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
-		return false, nil
+		ret := ijHelper.constructIndexJoinResult(mutableRange, path, accesses, remained, nil, lastColPos)
+		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
 	lastColManager := &ColWithCmpFuncManager{
@@ -1892,7 +1903,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
-			return false, nil
+			return nil, false, nil
 		}
 		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.sctx.GetRangerCtx(), rangeFilterCandidates, lastPossibleCol)
 		var nextColRange []*ranger.Range
@@ -1901,7 +1912,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 			var colRemained2 []expression.Expression
 			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, ijHelper.sctx.GetRangerCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize)
 			if err != nil {
-				return false, err
+				return nil, false, err
 			}
 			if len(colRemained2) > 0 {
 				colRemained = append(colRemained, colRemained2...)
@@ -1910,7 +1921,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		}
 		tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false, rangeMaxSize)
 		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
-			return tempRangeRes.emptyRange, tempRangeRes.err
+			return nil, tempRangeRes.emptyRange, tempRangeRes.err
 		}
 		lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
 		// update accesses and remained by colAccesses and colRemained.
@@ -1925,12 +1936,12 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 			remained = append(remained, colAccesses...)
 		}
 		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
-		return false, nil
+		ret := ijHelper.constructIndexJoinResult(mutableRange, path, accesses, remained, nil, lastColPos)
+		return ret, false, nil
 	}
 	tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
 	if tempRangeRes.err != nil || tempRangeRes.emptyRange {
-		return tempRangeRes.emptyRange, tempRangeRes.err
+		return nil, tempRangeRes.emptyRange, tempRangeRes.err
 	}
 	lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
 
@@ -1940,33 +1951,23 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		lastColPos = lastColPos + 1
 	} else {
 		if tempRangeRes.keyCntInRange <= 0 {
-			return false, nil
+			return nil, false, nil
 		}
 		lastColManager = nil
 	}
 	mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-	ijHelper.updateBestChoice(mutableRange, path, accesses, remained, lastColManager, lastColPos, rebuildMode)
-	return false, nil
+	ret := ijHelper.constructIndexJoinResult(mutableRange, path, accesses, remained, lastColManager, lastColPos)
+	return ret, false, nil
 }
 
-func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges ranger.MutableRanges, path *util.AccessPath, accesses,
-	remained []expression.Expression, lastColManager *ColWithCmpFuncManager, usedColsLen int, rebuildMode bool) {
-	if rebuildMode { // rebuild the range for plan-cache, update the chosenRanges anyway
-		ijHelper.chosenPath = path
-		ijHelper.chosenRanges = ranges
-		ijHelper.chosenAccess = accesses
-		ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
-		return
-	}
-
+func compareIndexJoinChoice(best, current *indexJoinPathResult) (curIsBetter bool) {
 	// Notice that there may be the cases like `t1.a = t2.a and b > 2 and b < 1`, so ranges can be nil though the conditions are valid.
 	// Obviously when the range is nil, we don't need index join.
-	if len(ranges.Range()) == 0 {
-		return
+	if current == nil || len(current.chosenRanges.Range()) == 0 {
+		return false
 	}
-	var innerNDV float64
-	if stats := ijHelper.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], ijHelper.innerSchema, stats)
+	if best == nil {
+		return true
 	}
 	// We choose the index by the NDV of the used columns, the larger the better.
 	// If NDVs are same, we choose index which uses more columns.
@@ -1974,17 +1975,30 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges ranger.MutableRang
 	// since the NDV of outer join keys are not considered, and the detached access conditions
 	// may contain expressions like `t1.a > t2.a`. It's pretty hard to evaluate the join selectivity
 	// of these non-column-equal conditions, so I prefer to keep these heuristic rules simple at least for now.
-	if innerNDV < ijHelper.usedColsNDV || (innerNDV == ijHelper.usedColsNDV && usedColsLen <= ijHelper.usedColsLen) {
-		return
+	if current.usedColsNDV < best.usedColsNDV || (current.usedColsNDV == best.usedColsNDV && current.usedColsLen <= best.usedColsLen) {
+		return false
 	}
-	ijHelper.chosenPath = path
-	ijHelper.usedColsLen = len(ranges.Range()[0].LowVal)
-	ijHelper.usedColsNDV = innerNDV
-	ijHelper.chosenRanges = ranges
-	ijHelper.chosenAccess = accesses
-	ijHelper.chosenRemained = remained
-	ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
-	ijHelper.lastColManager = lastColManager
+	return true
+}
+
+func (ijHelper *indexJoinBuildHelper) constructIndexJoinResult(ranges ranger.MutableRanges, path *util.AccessPath, accesses,
+	remained []expression.Expression, lastColManager *ColWithCmpFuncManager, usedColsLen int) *indexJoinPathResult {
+	var innerNDV float64
+	if stats := ijHelper.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], ijHelper.innerSchema, stats)
+	}
+	idxOff2KeyOff := make([]int, len(ijHelper.curIdxOff2KeyOff))
+	copy(idxOff2KeyOff, ijHelper.curIdxOff2KeyOff)
+	return &indexJoinPathResult{
+		chosenPath:     path,
+		usedColsLen:    len(ranges.Range()[0].LowVal),
+		usedColsNDV:    innerNDV,
+		chosenRanges:   ranges,
+		chosenAccess:   accesses,
+		chosenRemained: remained,
+		idxOff2KeyOff:  idxOff2KeyOff,
+		lastColManager: lastColManager,
+	}
 }
 
 type templateRangeResult struct {
