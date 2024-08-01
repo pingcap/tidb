@@ -76,7 +76,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	tikv "github.com/tikv/client-go/v2/kv"
@@ -944,27 +943,6 @@ func ResolveCharsetCollation(sessVars *variable.SessionVars, charsetOpts ...ast.
 	return chs, coll, nil
 }
 
-func checkDuplicateColumn(cols []*model.ColumnInfo) error {
-	colNames := set.StringSet{}
-	for _, col := range cols {
-		colName := col.Name
-		if colNames.Exist(colName.L) {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(colName.O)
-		}
-		colNames.Insert(colName.L)
-	}
-	return nil
-}
-
-func containsColumnOption(colDef *ast.ColumnDef, opTp ast.ColumnOptionType) bool {
-	for _, option := range colDef.Options {
-		if option.Tp == opTp {
-			return true
-		}
-	}
-	return false
-}
-
 // IsAutoRandomColumnID returns true if the given column ID belongs to an auto_random column.
 func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
 	if !tblInfo.ContainsAutoRandomBits() {
@@ -981,136 +959,6 @@ func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
 		return tblInfo.Columns[offset].ID == colID
 	}
 	return false
-}
-
-func checkGeneratedColumn(ctx sessionctx.Context, schemaName model.CIStr, tableName model.CIStr, colDefs []*ast.ColumnDef) error {
-	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
-	var exists bool
-	var autoIncrementColumn string
-	for i, colDef := range colDefs {
-		for _, option := range colDef.Options {
-			if option.Tp == ast.ColumnOptionGenerated {
-				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
-			exists, autoIncrementColumn = true, colDef.Name.Name.L
-		}
-		generated, depCols, err := findDependedColumnNames(schemaName, tableName, colDef)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !generated {
-			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
-				position:  i,
-				generated: false,
-			}
-		} else {
-			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
-				position:    i,
-				generated:   true,
-				dependences: depCols,
-			}
-		}
-	}
-
-	// Check whether the generated column refers to any auto-increment columns
-	if exists {
-		if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
-			for colName, generated := range colName2Generation {
-				if _, found := generated.dependences[autoIncrementColumn]; found {
-					return dbterror.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
-				}
-			}
-		}
-	}
-
-	for _, colDef := range colDefs {
-		colName := colDef.Name.Name.L
-		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func checkTooLongColumns(cols []*model.ColumnInfo) error {
-	for _, col := range cols {
-		if err := checkTooLongColumn(col.Name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
-	if uint32(len(colDefs)) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
-		return dbterror.ErrTooManyFields
-	}
-	return nil
-}
-
-func checkTooManyIndexes(idxDefs []*model.IndexInfo) error {
-	if len(idxDefs) > config.GetGlobalConfig().IndexLimit {
-		return dbterror.ErrTooManyKeys.GenWithStackByArgs(config.GetGlobalConfig().IndexLimit)
-	}
-	return nil
-}
-
-// checkColumnsAttributes checks attributes for multiple columns.
-func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
-	for _, colDef := range colDefs {
-		if err := checkColumnAttributes(colDef.Name.O, &colDef.FieldType); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func checkColumnFieldLength(col *table.Column) error {
-	if col.GetType() == mysql.TypeVarchar {
-		if err := types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, col.GetCharset()); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return nil
-}
-
-// checkColumnAttributes check attributes for single column.
-func checkColumnAttributes(colName string, tp *types.FieldType) error {
-	switch tp.GetType() {
-	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
-		if tp.GetFlen() < tp.GetDecimal() {
-			return types.ErrMBiggerThanD.GenWithStackByArgs(colName)
-		}
-	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
-		if tp.GetDecimal() != types.UnspecifiedFsp && (tp.GetDecimal() < types.MinFsp || tp.GetDecimal() > types.MaxFsp) {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetDecimal(), colName, types.MaxFsp)
-		}
-	}
-	return nil
-}
-
-func checkDuplicateConstraint(namesMap map[string]bool, name string, constraintType ast.ConstraintType) error {
-	if name == "" {
-		return nil
-	}
-	nameLower := strings.ToLower(name)
-	if namesMap[nameLower] {
-		switch constraintType {
-		case ast.ConstraintForeignKey:
-			return dbterror.ErrFkDupName.GenWithStackByArgs(name)
-		case ast.ConstraintCheck:
-			return dbterror.ErrCheckConstraintDupName.GenWithStackByArgs(name)
-		default:
-			return dbterror.ErrDupKeyName.GenWithStackByArgs(name)
-		}
-	}
-	namesMap[nameLower] = true
-	return nil
 }
 
 func setEmptyCheckConstraintName(tableLowerName string, namesMap map[string]bool, constrs []*ast.Constraint) {
@@ -1131,69 +979,6 @@ func setEmptyCheckConstraintName(tableLowerName string, namesMap map[string]bool
 			constr.Name = constrName
 		}
 	}
-}
-
-func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
-	if constr.Name == "" && len(constr.Keys) > 0 {
-		var colName string
-		for _, keyPart := range constr.Keys {
-			if keyPart.Expr != nil {
-				colName = "expression_index"
-			}
-		}
-		if colName == "" {
-			colName = constr.Keys[0].Column.Name.O
-		}
-		constrName := colName
-		i := 2
-		if strings.EqualFold(constrName, mysql.PrimaryKeyName) {
-			constrName = fmt.Sprintf("%s_%d", constrName, 2)
-			i = 3
-		}
-		for namesMap[constrName] {
-			// We loop forever until we find constrName that haven't been used.
-			constrName = fmt.Sprintf("%s_%d", colName, i)
-			i++
-		}
-		constr.Name = constrName
-		namesMap[constrName] = true
-	}
-}
-
-func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) error {
-	constrNames := map[string]bool{}
-	fkNames := map[string]bool{}
-
-	// Check not empty constraint name whether is duplicated.
-	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintForeignKey {
-			err := checkDuplicateConstraint(fkNames, constr.Name, constr.Tp)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			err := checkDuplicateConstraint(constrNames, constr.Name, constr.Tp)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	// Set empty constraint names.
-	checkConstraints := make([]*ast.Constraint, 0, len(constraints))
-	for _, constr := range constraints {
-		if constr.Tp != ast.ConstraintForeignKey {
-			setEmptyConstraintName(constrNames, constr)
-		}
-		if constr.Tp == ast.ConstraintCheck {
-			checkConstraints = append(checkConstraints, constr)
-		}
-	}
-	// Set check constraint name under its order.
-	if len(checkConstraints) > 0 {
-		setEmptyCheckConstraintName(tableName.L, constrNames, checkConstraints)
-	}
-	return nil
 }
 
 // checkInvisibleIndexOnPK check if primary key is invisible index.

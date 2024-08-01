@@ -956,6 +956,16 @@ func checkDefaultValue(ctx exprctx.BuildContext, c *table.Column, hasDefaultValu
 	return nil
 }
 
+func checkColumnFieldLength(col *table.Column) error {
+	if col.GetType() == mysql.TypeVarchar {
+		if err := types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, col.GetCharset()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 // checkPriKeyConstraint check all parts of a PRIMARY KEY must be NOT NULL
 func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool, outPriKeyConstraint *ast.Constraint) error {
 	// Primary key should not be null.
