@@ -532,9 +532,7 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	// later if the job is not cancelled.
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(d, t, job)
 
-	d.mu.RLock()
-	d.mu.hook.OnJobRunAfter(job)
-	d.mu.RUnlock()
+	failpoint.InjectCall("onJobRunAfter", job)
 
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
@@ -646,10 +644,6 @@ func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 		// return job.Error to let caller know the job is cancelled.
 		return job.Error
 	}
-
-	d.mu.RLock()
-	d.mu.hook.OnJobRunAfter(job)
-	d.mu.RUnlock()
 
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.

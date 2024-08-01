@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -415,7 +415,7 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 }
 
 func TestAddIndexBackfillLostUpdate(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
@@ -427,12 +427,8 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use addindexlit;")
 
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	hook := &callback.TestDDLCallback{}
 	var runDML bool
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
@@ -445,7 +441,7 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 			// tmp: [1 -> h1]
 			runDML = true
 		}
-	}
+	})
 	ddl.MockDMLExecutionStateBeforeImport = func() {
 		_, err := tk1.Exec("update t set b = 2 where id = 1;")
 		assert.NoError(t, err)
@@ -467,12 +463,10 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 		_, err = tk1.Exec("commit;")
 		assert.NoError(t, err)
 	}
-	d.SetHook(hook)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeImport", "1*return"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeImport", "1*return")
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeImport"))
 }
 
 func TestAddIndexIngestFailures(t *testing.T) {
