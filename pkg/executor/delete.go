@@ -169,6 +169,8 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 
 // fixHandlePosInfoForMultiDelete fixes the position info by the current execution logic.
 // We will cut the mixed row into single table row, so the handle position info should be fixed.
+//   e.g. The multi-delete case is [t1.a, t1.b, t2.a, t2.b] and There's a index [t2.b].
+//        The idxCols is [3]. And we should fix it to [1].
 func (e *DeleteExec) fixHandlePosInfoForMultiDelete() {
 	for i := range e.tblColPosInfos {
 		info := e.tblColPosInfos[i]

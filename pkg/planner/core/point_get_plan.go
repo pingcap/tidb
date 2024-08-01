@@ -2133,7 +2133,7 @@ func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, 
 	schema.Append(handleCol)
 	newOutputNames := pointget.OutputNames().Shallow()
 	tableAliasName := tbl.Name
-	if pointget.Schema().Len() > 0 {
+	if schema.Len() > 0 {
 		tableAliasName = pointget.OutputNames()[0].TblName
 	}
 	newOutputNames = append(newOutputNames, &types.FieldName{
