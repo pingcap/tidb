@@ -22,6 +22,7 @@ package disjointset
 type Set[T comparable] struct {
 	parent  []int
 	val2Idx map[T]int
+	idx2Val map[int]T
 	tailIdx int
 }
 
@@ -30,6 +31,7 @@ func NewSet[T comparable](size int) *Set[T] {
 	return &Set[T]{
 		parent:  make([]int, 0, size),
 		val2Idx: make(map[T]int, size),
+		idx2Val: make(map[int]T, size),
 		tailIdx: 0,
 	}
 }
@@ -40,6 +42,7 @@ func (s *Set[T]) findRootOriginalVal(a T) int {
 		s.parent = append(s.parent, s.tailIdx)
 		s.val2Idx[a] = s.tailIdx
 		s.tailIdx++
+		s.idx2Val[s.tailIdx-1] = a
 		return s.tailIdx - 1
 	}
 	return s.findRootInternal(idx)
@@ -73,4 +76,12 @@ func (s *Set[T]) Union(a, b T) {
 func (s *Set[T]) FindRoot(a T) int {
 	// if a is not in the set, assign a new index to it.
 	return s.findRootOriginalVal(a)
+}
+
+func (s *Set[T]) FindVal(idx int) (T, bool) {
+	if v, ok := s.idx2Val[s.findRootInternal(idx)]; ok {
+		return v, true
+	} else {
+		return v, false
+	}
 }

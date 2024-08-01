@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type columnEvaluator struct {
@@ -120,10 +121,13 @@ func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputId
 	// Merge inputIdxToOutputIdxes based on the detected column references.
 	newInputIdxToOutputIdxes := make(map[int][]int, len(inputIdxToOutputIdxes))
 	for inputIdx := range inputIdxToOutputIdxes {
+		// Root idx is internal offset, not the right column index.
 		originalRootIdx := originalDJSet.FindRoot(inputIdx)
-		mergedOutputIdxes := newInputIdxToOutputIdxes[originalRootIdx]
+		originalVal, ok := originalDJSet.FindVal(originalRootIdx)
+		intest.Assert(ok)
+		mergedOutputIdxes := newInputIdxToOutputIdxes[originalVal]
 		mergedOutputIdxes = append(mergedOutputIdxes, inputIdxToOutputIdxes[inputIdx]...)
-		newInputIdxToOutputIdxes[originalRootIdx] = mergedOutputIdxes
+		newInputIdxToOutputIdxes[originalVal] = mergedOutputIdxes
 	}
 	e.mergedInputIdxToOutputIdxes = newInputIdxToOutputIdxes
 }
