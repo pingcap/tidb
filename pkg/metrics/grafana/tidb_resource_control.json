@@ -227,7 +227,7 @@
               "hide": false,
               "legendFormat": "{{resource_group}}-read",
               "range": true,
-              "refId": "C"
+              "refId": "A"
             },
             {
               "editorMode": "code",
@@ -235,7 +235,7 @@
               "hide": false,
               "legendFormat": "{{resource_group}}-write",
               "range": true,
-              "refId": "C"
+              "refId": "B"
             }
           ],
           "thresholds": [],
