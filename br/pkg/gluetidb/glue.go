@@ -184,7 +184,7 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 }
 
 func (Glue) GetClient() glue.GlueClient {
-	return glue.ClientBr
+	return glue.ClientCLP
 }
 
 // GetSessionCtx implements glue.Glue
