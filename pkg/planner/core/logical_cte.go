@@ -153,9 +153,9 @@ func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
+	var topN *logicalop.LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
+		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
 	}
 	if topN != nil {
 		return topN.AttachChild(p, opt)

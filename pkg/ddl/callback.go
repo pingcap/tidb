@@ -32,8 +32,6 @@ type Callback interface {
 	OnJobRunBefore(job *model.Job)
 	// OnJobRunAfter is called after running job.
 	OnJobRunAfter(job *model.Job)
-	// OnJobUpdated is called after the running job is updated.
-	OnJobUpdated(job *model.Job)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -47,11 +45,6 @@ func (*BaseCallback) OnJobRunBefore(_ *model.Job) {
 
 // OnJobRunAfter implements Callback.OnJobRunAfter interface.
 func (*BaseCallback) OnJobRunAfter(_ *model.Job) {
-	// Nothing to do.
-}
-
-// OnJobUpdated implements Callback.OnJobUpdated interface.
-func (*BaseCallback) OnJobUpdated(_ *model.Job) {
 	// Nothing to do.
 }
 

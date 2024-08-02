@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -305,7 +306,7 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 // It's good because the insert / update logic will cast the related column to changing column rather than use
 // origin default value directly.
 func TestChangingColOriginDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -319,14 +320,12 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2)")
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
-	originalHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
 	)
 	i := 0
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -371,11 +370,9 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			}
 			i++
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
-	dom.DDL().SetHook(originalHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
