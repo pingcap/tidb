@@ -19,16 +19,16 @@ import (
 )
 
 // taggedPtr is a struct to save unsafe.Pointer with tagged value
-// the value of unsafe.Pointer is actually an uint64 and in most 
+// the value of unsafe.Pointer is actually an uint64 and in most
 // cases, the n MSB in unsafe.Pointer is all zeros, which means we
 // can save information in the n-MSB of a unsafe.Pointer.
-// for example, if the 16 MSB in unsafe.Pointer is all zeros, 
+// for example, if the 16 MSB in unsafe.Pointer is all zeros,
 // then the value of unsafe.Pointer is like 0x0000xxxxxxxxxxxx
 // we can save up to 16 bit information inside the unsafe.Pointer
 // Assuming the tagged value is 0x1010, then the taggedPtr will
 // be 0x1010xxxxxxxxxxxx
 // However, we can not save the tagged value into unsafe.Pointer
-// directly since go gc will check the validation of unsafe.Pointer, 
+// directly since go gc will check the validation of unsafe.Pointer,
 // so in implementation, we save both the tagged value and the unsafe.Pointer
 // into an uintptr.
 type taggedPtr uintptr

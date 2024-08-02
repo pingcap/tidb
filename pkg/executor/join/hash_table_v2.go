@@ -20,14 +20,14 @@ import (
 )
 
 type subTable struct {
-	rowData          *rowTable
+	rowData *rowTable
 	// the taggedPtr is used to save the row address, during hash join build stage
-	// it will convert the chunk data into row format, each row there is an unsafe.Pointer 
-	// pointing the start address of the row. The unsafe.Pointer will be converted to 
+	// it will convert the chunk data into row format, each row there is an unsafe.Pointer
+	// pointing the start address of the row. The unsafe.Pointer will be converted to
 	// taggedPtr and saved in hashTable.
 	// Generally speaking it is unsafe or even illegal in go to save unsafe.Pointer
-	// into uintptr, and later convert uintptr back to unsafe.Pointer since after save 
-	// the value of unsafe.Pointer into uintptr, it has no pointer semantics, and may 
+	// into uintptr, and later convert uintptr back to unsafe.Pointer since after save
+	// the value of unsafe.Pointer into uintptr, it has no pointer semantics, and may
 	// become invalid after GC. But it is ok to do this in hash join so far because
 	// 1. the check of heapObjectsCanMove makes sure that if the object is in heap, the address will not be changed after GC
 	// 2. row address only points to a valid address in `rowTableSegment.rawData`. `rawData` is a slice in `rowTableSegment`, and it will be used by multiple goroutines,
@@ -42,7 +42,7 @@ func (st *subTable) lookup(hashValue uint64, tagHelper *tagPtrHelper) taggedPtr 
 	ret := st.hashTable[hashValue&st.posMask]
 	hashTagValue := tagHelper.getTaggedValueFromHashValue(hashValue)
 	rowTagValue := tagHelper.getTaggedValueFromTaggedPtr(taggedPtr(ret))
-	if rowTagValue & hashTagValue != hashTagValue {
+	if rowTagValue&hashTagValue != hashTagValue {
 		// if tag value not match, the key will not be matched
 		return 0
 	}

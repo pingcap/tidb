@@ -106,9 +106,9 @@ type baseJoinProbe struct {
 	selRows  []int
 	usedRows []int
 	// matchedRowsHeaders, serializedKeys is indexed by logical row index
-	matchedRowsHeaders []taggedPtr // the start address of each matched rows
-	matchedRowsHashValue []uint64 // the start address of each matched rows
-	serializedKeys     [][]byte  // used for save serialized keys
+	matchedRowsHeaders   []taggedPtr // the start address of each matched rows
+	matchedRowsHashValue []uint64    // the start address of each matched rows
+	serializedKeys       [][]byte    // used for save serialized keys
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector                  []bool              // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector                 []bool              // nullKeyVector[i] = true if any of the key is null

@@ -162,7 +162,7 @@ func getNextRowAddress(rowStart unsafe.Pointer, tagHelper *tagPtrHelper, hashVal
 	ret := *(*taggedPtr)(rowStart)
 	hashTagValue := tagHelper.getTaggedValueFromHashValue(hashValue)
 	rowTagValue := tagHelper.getTaggedValueFromTaggedPtr(ret)
-	if rowTagValue & hashTagValue != hashTagValue {
+	if rowTagValue&hashTagValue != hashTagValue {
 		return 0
 	}
 	return ret

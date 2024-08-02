@@ -62,7 +62,7 @@ type hashTableContext struct {
 	// its own rowTable
 	rowTables     [][]*rowTable
 	hashTable     *hashTableV2
-	tagHelper *tagPtrHelper
+	tagHelper     *tagPtrHelper
 	memoryTracker *memory.Tracker
 }
 
@@ -107,7 +107,7 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.finalized = true
-	seg.taggedBits = min(getTaggedBitsFromUnsafePointer(seg.getRowPointer(0)), getTaggedBitsFromUnsafePointer(seg.getRowPointer(len(seg.rowStartOffset) - 1)))
+	seg.taggedBits = min(getTaggedBitsFromUnsafePointer(seg.getRowPointer(0)), getTaggedBitsFromUnsafePointer(seg.getRowPointer(len(seg.rowStartOffset)-1)))
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
 
