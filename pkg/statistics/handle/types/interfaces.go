@@ -124,8 +124,8 @@ type StatsAnalyze interface {
 	// StartAnalyzeJob updates the job status to `running` and sets the start time.
 	StartAnalyzeJob(job *statistics.AnalyzeJob)
 
-	//// UpdateAnalyzeJob updates the current progress of the analyze job.
-	//UpdateAnalyzeJob(job *statistics.AnalyzeJob, rowCount int) error
+	// UpdateAnalyzeJob updates the current progress of the analyze job.
+	UpdateAnalyzeJob(job *statistics.AnalyzeJob, rowCount int64)
 	//
 	//// FinishAnalyzeJob updates the job status to `finished`, sets the end time, and updates the job info.
 	//FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason string) error

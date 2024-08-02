@@ -2084,7 +2084,7 @@ func TestAnalyzeJob(t *testing.T) {
 		lastDumpTime := time.Now().Add(-10 * time.Second)
 		job.Progress.SetLastDumpTime(lastDumpTime)
 		const smallCount int64 = 100
-		executor.UpdateAnalyzeJob(se, job, smallCount)
+		statsHandle.UpdateAnalyzeJob(job, smallCount)
 		// Delta count doesn't reach threshold so we don't dump it to mysql.analyze_jobs
 		require.Equal(t, smallCount, job.Progress.GetDeltaCount())
 		require.Equal(t, lastDumpTime, job.Progress.GetLastDumpTime())
@@ -2092,7 +2092,7 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, "0", rows[0][4])
 
 		const largeCount int64 = 15000000
-		executor.UpdateAnalyzeJob(se, job, largeCount)
+		statsHandle.UpdateAnalyzeJob(job, largeCount)
 		// Delta count reaches threshold so we dump it to mysql.analyze_jobs and update last dump time.
 		require.Equal(t, int64(0), job.Progress.GetDeltaCount())
 		require.True(t, job.Progress.GetLastDumpTime().After(lastDumpTime))
@@ -2100,7 +2100,7 @@ func TestAnalyzeJob(t *testing.T) {
 		rows = tk.MustQuery("show analyze status").Rows()
 		require.Equal(t, strconv.FormatInt(smallCount+largeCount, 10), rows[0][4])
 
-		executor.UpdateAnalyzeJob(se, job, largeCount)
+		statsHandle.UpdateAnalyzeJob(job, largeCount)
 		// We have just updated mysql.analyze_jobs in the previous step so we don't update it until 5 second passes or the analyze job is over.
 		require.Equal(t, largeCount, job.Progress.GetDeltaCount())
 		require.Equal(t, lastDumpTime, job.Progress.GetLastDumpTime())

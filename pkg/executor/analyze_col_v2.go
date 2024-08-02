@@ -629,6 +629,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	for i := 0; i < l; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
 		data, ok := <-taskCh
 		if !ok {
@@ -650,7 +651,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		// Update processed rows.
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
-		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
+		statsHandle.UpdateAnalyzeJob(e.job, subCollector.Base().Count)
 
 		// Print collect log.
 		oldRetCollectorSize := retCollector.Base().MemSize

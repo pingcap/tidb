@@ -77,6 +77,13 @@ func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
 	})
 }
 
+func (sa *statsAnalyze) UpdateAnalyzeJob(job *statistics.AnalyzeJob, rowCount int64) {
+	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		updateAnalyzeJob(sctx, job, rowCount)
+		return nil
+	})
+}
+
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
@@ -721,12 +728,36 @@ func startAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
 	_, _, err := statsutil.ExecRows(sctx, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
+		statslogutil.StatsLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
 	}
 	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("StartAnalyzeJob",
 				zap.Time("start_time", job.StartTime),
+				zap.Uint64("job id", *job.ID),
+			)
+		}
+	})
+}
+
+// updateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
+func updateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
+	if job == nil || job.ID == nil {
+		return
+	}
+	delta := job.Progress.Update(rowCount)
+	if delta == 0 {
+		return
+	}
+	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
+	_, _, err := statsutil.ExecRows(sctx, sql, delta, *job.ID)
+	if err != nil {
+		statslogutil.StatsLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
+	}
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("UpdateAnalyzeJob",
+				zap.Int64("increase processed_rows", delta),
 				zap.Uint64("job id", *job.ID),
 			)
 		}

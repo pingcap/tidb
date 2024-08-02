@@ -569,32 +569,6 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 }
 
-// UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
-func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
-	if job == nil || job.ID == nil {
-		return
-	}
-	delta := job.Progress.Update(rowCount)
-	if delta == 0 {
-		return
-	}
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("UpdateAnalyzeJob",
-				zap.Int64("increase processed_rows", delta),
-				zap.Uint64("job id", *job.ID),
-			)
-		}
-	})
-}
-
 // FinishAnalyzeMergeJob finishes analyze merge job
 func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
 	if job == nil || job.ID == nil {
