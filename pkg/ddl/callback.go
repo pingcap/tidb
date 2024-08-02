@@ -30,8 +30,6 @@ import (
 type Callback interface {
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)
-	// OnJobRunAfter is called after running job.
-	OnJobRunAfter(job *model.Job)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -40,11 +38,6 @@ type BaseCallback struct {
 
 // OnJobRunBefore implements Callback.OnJobRunBefore interface.
 func (*BaseCallback) OnJobRunBefore(_ *model.Job) {
-	// Nothing to do.
-}
-
-// OnJobRunAfter implements Callback.OnJobRunAfter interface.
-func (*BaseCallback) OnJobRunAfter(_ *model.Job) {
 	// Nothing to do.
 }
 

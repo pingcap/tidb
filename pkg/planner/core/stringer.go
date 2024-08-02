@@ -336,7 +336,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.SelectPlan != nil {
 			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
 		}
-	case *LogicalWindow:
+	case *logicalop.LogicalWindow:
 		buffer := bytes.NewBufferString("")
 		formatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
 		str = fmt.Sprintf("Window(%s)", buffer.String())

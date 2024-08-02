@@ -115,7 +115,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandIndexScan
 	case *logicalop.LogicalShow:
 		return OperandShow
-	case *plannercore.LogicalWindow:
+	case *logicalop.LogicalWindow:
 		return OperandWindow
 	default:
 		return OperandUnsupported

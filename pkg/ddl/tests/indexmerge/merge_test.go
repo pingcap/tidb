@@ -769,7 +769,7 @@ func TestAddIndexMultipleDelete(t *testing.T) {
 }
 
 func TestAddIndexDuplicateAndWriteConflict(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -779,12 +779,8 @@ func TestAddIndexDuplicateAndWriteConflict(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
 	var runCancel bool
-	callback.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if t.Failed() || runCancel {
 			return
 		}
@@ -798,8 +794,7 @@ func TestAddIndexDuplicateAndWriteConflict(t *testing.T) {
 			assert.NoError(t, err)
 			runCancel = true
 		}
-	}
-	d.SetHook(callback)
+	})
 
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrCancelledDDLJob)
 	tk.MustExec("admin check table t;")
@@ -807,7 +802,7 @@ func TestAddIndexDuplicateAndWriteConflict(t *testing.T) {
 }
 
 func TestAddIndexUpdateUntouchedValues(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -817,12 +812,8 @@ func TestAddIndexUpdateUntouchedValues(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
 	var runDML bool
-	callback.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
@@ -839,8 +830,7 @@ func TestAddIndexUpdateUntouchedValues(t *testing.T) {
 			assert.NoError(t, err)
 			runDML = true
 		}
-	}
-	d.SetHook(callback)
+	})
 
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 	tk.MustExec("admin check table t;")

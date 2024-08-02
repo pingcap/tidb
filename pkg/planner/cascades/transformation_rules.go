@@ -684,7 +684,7 @@ func NewRulePushSelDownWindow() Transformation {
 // 3. just keep unchanged.
 func (*PushSelDownWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	window := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	window := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalWindow)
 	windowSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
@@ -2542,9 +2542,9 @@ func NewRuleMergeAdjacentWindow() Transformation {
 
 // Match implements Transformation interface.
 func (*MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
-	curWinPlan := expr.GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	curWinPlan := expr.GetExpr().ExprNode.(*logicalop.LogicalWindow)
 	nextGroupExpr := expr.Children[0].GetExpr()
-	nextWinPlan := nextGroupExpr.ExprNode.(*plannercore.LogicalWindow)
+	nextWinPlan := nextGroupExpr.ExprNode.(*logicalop.LogicalWindow)
 	nextGroupChildren := nextGroupExpr.Children
 	ctx := expr.GetExpr().ExprNode.SCtx()
 
@@ -2582,14 +2582,14 @@ func (*MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule will transform `window -> window -> x` to `window -> x`
 func (*MergeAdjacentWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	curWinPlan := old.GetExpr().ExprNode.(*plannercore.LogicalWindow)
-	nextWinPlan := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	curWinPlan := old.GetExpr().ExprNode.(*logicalop.LogicalWindow)
+	nextWinPlan := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalWindow)
 	ctx := old.GetExpr().ExprNode.SCtx()
 
 	newWindowFuncs := make([]*aggregation.WindowFuncDesc, 0, len(curWinPlan.WindowFuncDescs)+len(nextWinPlan.WindowFuncDescs))
 	newWindowFuncs = append(newWindowFuncs, curWinPlan.WindowFuncDescs...)
 	newWindowFuncs = append(newWindowFuncs, nextWinPlan.WindowFuncDescs...)
-	newWindowPlan := plannercore.LogicalWindow{
+	newWindowPlan := logicalop.LogicalWindow{
 		WindowFuncDescs: newWindowFuncs,
 		PartitionBy:     curWinPlan.PartitionBy,
 		OrderBy:         curWinPlan.OrderBy,

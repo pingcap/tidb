@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -42,7 +43,7 @@ func appendDerivedTopNTrace(topN base.LogicalPlan, opt *optimizetrace.LogicalOpt
 
 // checkPartitionBy mainly checks if partition by of window function is a prefix of
 // data order (clustered index) of the data source. TiFlash is allowed only for empty partition by.
-func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
+func checkPartitionBy(p *logicalop.LogicalWindow, d *DataSource) bool {
 	// No window partition by. We are OK.
 	if len(p.PartitionBy) == 0 {
 		return true
@@ -75,7 +76,7 @@ func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
 */
 func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	// Check if child is window function.
-	child, isLogicalWindow := p.Children()[0].(*LogicalWindow)
+	child, isLogicalWindow := p.Children()[0].(*logicalop.LogicalWindow)
 	if !isLogicalWindow {
 		return false, 0
 	}
