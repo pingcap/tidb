@@ -1321,8 +1321,8 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 		return base * uint64(ratio*10) / 10
 	}
 
-	// The preserve rate for tikv is quite accurate, while rate for tiflash is a 
-	// number calculated from tpcc testing with variable data sizes.  1.4 is a 
+	// The preserve rate for tikv is quite accurate, while rate for tiflash is a
+	// number calculated from tpcc testing with variable data sizes.  1.4 is a
 	// relative conservative value.
 	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
 	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
