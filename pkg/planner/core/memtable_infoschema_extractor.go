@@ -161,6 +161,8 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 }
 
 // Filter use the col predicates to filter records.
+// Return true if the underlying row does not match predicate,
+// then it should be filtered and not shown in the result.
 func (e *InfoSchemaBaseExtractor) Filter(colName string, val string) bool {
 	if e.SkipRequest {
 		return true
