@@ -418,7 +418,7 @@ func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessi
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
-			if ok && ex.Filter("table_name", table.Name.L) {
+			if ex.Filter("table_name", table.Name.L) {
 				continue
 			}
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
@@ -1186,7 +1186,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				} else {
 					// needs to update needed partitions for partition table.
 					for _, pi := range table.GetPartitionInfo().Definitions {
-						if ok && ex.Filter("partition_name", pi.Name.L) {
+						if ex.Filter("partition_name", pi.Name.L) {
 							continue
 						}
 						err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
@@ -1235,7 +1235,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				rows = append(rows, record)
 			} else {
 				for i, pi := range table.GetPartitionInfo().Definitions {
-					if ok && ex.Filter("partition_name", pi.Name.L) {
+					if ex.Filter("partition_name", pi.Name.L) {
 						continue
 					}
 					rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
