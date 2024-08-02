@@ -300,6 +300,46 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 }
 
 // CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalIndexJoin)
+	*cloned = *op
+	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.basePhysicalJoin = *basePlan
+	innerPlan, ok := op.innerPlan.CloneForPlanCache(newCtx)
+	if !ok {
+		return nil, false
+	}
+	cloned.innerPlan = innerPlan.(base.PhysicalPlan)
+	cloned.Ranges = op.Ranges.CloneForPlanCache()
+	cloned.KeyOff2IdxOff = make([]int, len(op.KeyOff2IdxOff))
+	copy(cloned.KeyOff2IdxOff, op.KeyOff2IdxOff)
+	cloned.IdxColLens = make([]int, len(op.IdxColLens))
+	copy(cloned.IdxColLens, op.IdxColLens)
+	if op.CompareFilters != nil {
+		cloned.CompareFilters = op.CompareFilters.Copy()
+	}
+	cloned.OuterHashKeys = util.CloneColumns(op.OuterHashKeys)
+	cloned.InnerHashKeys = util.CloneColumns(op.InnerHashKeys)
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalIndexHashJoin)
+	*cloned = *op
+	inlj, ok := op.PhysicalIndexJoin.CloneForPlanCache(newCtx)
+	if !ok {
+		return nil, false
+	}
+	cloned.PhysicalIndexJoin = *inlj.(*PhysicalIndexJoin)
+	cloned.self = cloned
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexLookUpReader)
 	*cloned = *op

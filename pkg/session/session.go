@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"math"
 	"math/rand"
 	"runtime/pprof"
@@ -3611,7 +3612,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 
 	// init the instance plan cache
 	// TODO: introduce 2 new variable to control these 2 mem limits.
-	dom.InitInstancePlanCache(1000000, 1000000)
+	dom.InitInstancePlanCache(int64(10*size.MB), int64(10*size.MB))
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze

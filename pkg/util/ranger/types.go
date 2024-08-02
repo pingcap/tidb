@@ -38,6 +38,8 @@ type MutableRanges interface {
 	Range() Ranges
 	// Rebuild rebuilds the underlying ranges again.
 	Rebuild(sctx context.PlanContext) error
+	// CloneForPlanCache clones the MutableRanges for plan cache.
+	CloneForPlanCache() MutableRanges
 }
 
 // Ranges implements the MutableRanges interface for range array.
@@ -51,6 +53,18 @@ func (rs Ranges) Range() Ranges {
 // Rebuild rebuilds this range.
 func (Ranges) Rebuild(context.PlanContext) error {
 	return nil
+}
+
+// CloneForPlanCache clones the MutableRanges for plan cache.
+func (rs Ranges) CloneForPlanCache() MutableRanges {
+	if rs == nil {
+		return nil
+	}
+	cloned := make([]*Range, 0, len(rs))
+	for _, r := range rs {
+		cloned = append(cloned, r.Clone())
+	}
+	return Ranges(cloned)
 }
 
 // MemUsage gets the memory usage of ranges.
