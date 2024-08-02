@@ -17,6 +17,7 @@ package handle
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -110,7 +111,7 @@ func NewHandle(
 	_, /* ctx, keep it for feature usage */
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	pool util.SessionPool,
+	pool utils.SessionPool,
 	tracker sysproctrack.Tracker,
 	autoAnalyzeProcIDGetter func() uint64,
 	releaseAutoAnalyzeProcID func(uint64),

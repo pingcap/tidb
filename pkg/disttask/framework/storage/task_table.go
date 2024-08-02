@@ -21,10 +21,10 @@ import (
 	"sync/atomic"
 
 	"github.com/docker/go-units"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -99,12 +99,7 @@ type TaskHandle interface {
 
 // TaskManager is the manager of task and subtask.
 type TaskManager struct {
-	sePool sessionPool
-}
-
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(resource pools.Resource)
+	sePool utils.SessionPool
 }
 
 var _ SessionExecutor = &TaskManager{}
@@ -117,7 +112,7 @@ var (
 )
 
 // NewTaskManager creates a new task manager.
-func NewTaskManager(sePool sessionPool) *TaskManager {
+func NewTaskManager(sePool utils.SessionPool) *TaskManager {
 	return &TaskManager{
 		sePool: sePool,
 	}

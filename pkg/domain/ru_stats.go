@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -46,7 +47,7 @@ type RUStatsWriter struct {
 	RMClient  pd.ResourceManagerClient
 	InfoCache *infoschema.InfoCache
 	store     kv.Storage
-	sessPool  *sessionPool
+	sessPool  utils.SessionPool
 	// current time, cache it here to make unit test easier.
 	StartTime time.Time
 }

@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -38,11 +39,11 @@ const (
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
-	pool util.SessionPool
+	pool utils.SessionPool
 }
 
 // NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool util.SessionPool) types.StatsLock {
+func NewStatsLock(pool utils.SessionPool) types.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 

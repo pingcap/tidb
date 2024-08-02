@@ -16,6 +16,7 @@ go_library(
     deps = [
         "//pkg/bindinfo/internal/logutil",
         "//pkg/bindinfo/norm",
+        "//pkg/domain/utils",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser",
@@ -41,7 +42,6 @@ go_library(
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/stringutil",
         "//pkg/util/table-filter",
-        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_golang_x_sync//singleflight",

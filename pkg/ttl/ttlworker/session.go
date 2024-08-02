@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -55,12 +55,7 @@ var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 	return s
 }
 
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
-func getSession(pool sessionPool) (session.Session, error) {
+func getSession(pool utils.SessionPool) (session.Session, error) {
 	resource, err := pool.Get()
 	if err != nil {
 		return nil, err

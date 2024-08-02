@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package utils
 
 import (
 	"testing"
@@ -24,7 +24,7 @@ import (
 
 func TestSessionPool(t *testing.T) {
 	f := func() (pools.Resource, error) { return &testResource{}, nil }
-	pool := newSessionPool(1, f)
+	pool := NewSessionPool(1, f)
 	tr, err := pool.Get()
 	require.NoError(t, err)
 	tr1, err := pool.Get()

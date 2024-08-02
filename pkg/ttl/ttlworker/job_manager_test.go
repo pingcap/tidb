@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -143,7 +144,7 @@ var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statis
 type TTLJob = ttlJob
 
 // GetSessionForTest is used for test
-func GetSessionForTest(pool sessionPool) (session.Session, error) {
+func GetSessionForTest(pool utils.SessionPool) (session.Session, error) {
 	return getSession(pool)
 }
 
@@ -207,10 +208,6 @@ func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) 
 
 func (j *ttlJob) ID() string {
 	return j.id
-}
-
-func newMockTTLJob(tbl *cache.PhysicalTable, status cache.JobStatus) *ttlJob {
-	return &ttlJob{tbl: tbl, status: status}
 }
 
 func TestReadyForLockHBTimeoutJobTables(t *testing.T) {

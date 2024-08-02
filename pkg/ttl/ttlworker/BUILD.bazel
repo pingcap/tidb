@@ -17,6 +17,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ttl/ttlworker",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/domain/utils",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/metrics",
@@ -40,7 +41,6 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "//pkg/util/timeutil",
-        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//tikv",
@@ -73,6 +73,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/domain",
+        "//pkg/domain/utils",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/kv",
