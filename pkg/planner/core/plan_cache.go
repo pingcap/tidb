@@ -184,6 +184,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	sessVars := sctx.GetSessionVars()
+	sessVars.EnableInstancePlanCache = true
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
 	if isNonPrepared {
