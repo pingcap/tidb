@@ -136,7 +136,9 @@ func TestExistedTables(t *testing.T) {
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
 	tk.MustExec("create table foo(pk int primary key auto_increment, v varchar(255));")
+	tk.MustExec("create table baa(pk int primary key auto_increment, v varchar(255));")
 	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
+	tk.MustExec("insert into baa(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
 	backupQuery := fmt.Sprintf("BACKUP DATABASE `test` TO 'local://%s'", sqlTmp)
 	tk.MustQuery(backupQuery)
 	restoreQuery := fmt.Sprintf("RESTORE DATABASE `test` FROM 'local://%s'", sqlTmp)
@@ -144,5 +146,4 @@ func TestExistedTables(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
 	require.ErrorContains(t, err, "table already exists")
-	tk.MustExec("drop table `foo`;")
 }
