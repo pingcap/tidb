@@ -184,7 +184,7 @@ func (e *InfoSchemaBaseExtractor) Filter(colName string, val string) bool {
 	return false
 }
 
-// ListTables lists related schemas from predicate.
+// ListSchemas lists related schemas from predicate.
 // If no schema found in predicate, it return all schemas.
 func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
 	return e.listSchemas(is, _TableSchema)
@@ -277,7 +277,7 @@ type InfoSchemaSchemataExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
-// ListTables lists related schemas from predicate.
+// ListSchemas lists related schemas from predicate.
 // If no schema found in predicate, it return all schemas.
 func (e *InfoSchemaSchemataExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
 	return e.listSchemas(is, _SChemaName)
