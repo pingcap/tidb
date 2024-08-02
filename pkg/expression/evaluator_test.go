@@ -694,7 +694,7 @@ func TestMergeInputIdxToOutputIdxes(t *testing.T) {
 	require.Equal(t, output.Column(2), output.Column(3))
 	require.Equal(t, output.GetRow(0).GetInt64(0), int64(99))
 
-	require.Equal(t, len(columnEval.mergedInputIdxToOutputIdxes), 1)
-	slices.Sort(columnEval.mergedInputIdxToOutputIdxes[0])
-	require.Equal(t, columnEval.mergedInputIdxToOutputIdxes[0], []int{0, 1, 2, 3})
+	require.Equal(t, len(*columnEval.mergedInputIdxToOutputIdxes.Load()), 1)
+	slices.Sort((*columnEval.mergedInputIdxToOutputIdxes.Load())[0])
+	require.Equal(t, (*columnEval.mergedInputIdxToOutputIdxes.Load())[0], []int{0, 1, 2, 3})
 }

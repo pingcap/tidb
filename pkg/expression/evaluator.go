@@ -19,12 +19,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"sync/atomic"
 )
 
 type columnEvaluator struct {
 	inputIdxToOutputIdxes map[int][]int
 	// mergedInputIdxToOutputIdxes is only determined in runtime when saw the input chunk.
-	mergedInputIdxToOutputIdxes map[int][]int
+	mergedInputIdxToOutputIdxes atomic.Pointer[map[int][]int]
 }
 
 // run evaluates "Column" expressions.
@@ -33,10 +34,10 @@ type columnEvaluator struct {
 //	since it will change the content of the input Chunk.
 func (e *columnEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) error {
 	// mergedInputIdxToOutputIdxes only can be determined in runtime when we saw the input chunk structure.
-	if e.mergedInputIdxToOutputIdxes == nil {
+	if e.mergedInputIdxToOutputIdxes.Load() == nil {
 		e.mergeInputIdxToOutputIdxes(input, e.inputIdxToOutputIdxes)
 	}
-	for inputIdx, outputIdxes := range e.mergedInputIdxToOutputIdxes {
+	for inputIdx, outputIdxes := range *e.mergedInputIdxToOutputIdxes.Load() {
 		if err := output.SwapColumn(outputIdxes[0], input, inputIdx); err != nil {
 			return err
 		}
@@ -129,7 +130,9 @@ func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputId
 		mergedOutputIdxes = append(mergedOutputIdxes, inputIdxToOutputIdxes[inputIdx]...)
 		newInputIdxToOutputIdxes[originalVal] = mergedOutputIdxes
 	}
-	e.mergedInputIdxToOutputIdxes = newInputIdxToOutputIdxes
+	// Update the merged inputIdxToOutputIdxes automatically.
+	// Once failed, it means other worker has done this job at meantime.
+	e.mergedInputIdxToOutputIdxes.CompareAndSwap(nil, &newInputIdxToOutputIdxes)
 }
 
 type defaultEvaluator struct {
