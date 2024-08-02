@@ -30,7 +30,6 @@ go_library(
         "logical_index_scan.go",
         "logical_initialize.go",
         "logical_join.go",
-        "logical_lock.go",
         "logical_partition_union_all.go",
         "logical_plan_builder.go",
         "logical_plans.go",
