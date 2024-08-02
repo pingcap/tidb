@@ -211,7 +211,13 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 		for _, partID := range spilledPartition {
 			totalReleasedMemoryUsage += partitionsMemoryUsage[partID]
 		}
-		htc.memoryTracker.Consume(-totalReleasedMemoryUsage)
+
+		// Though some partitions have been spilled or are empty, their hash tables are still be created
+		// because probe rows in these partitions may access their hash tables.
+		// We need to consider these memory usage.
+		totalDefaultMemUsage := int64(minimalHashTableLen * len(spilledPartition))
+
+		htc.memoryTracker.Consume(totalDefaultMemUsage - totalReleasedMemoryUsage)
 	}
 	return rowTables, nil
 }
@@ -231,11 +237,20 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 		}
 	}
 
+	// info := "xzxdebug row distribution: "
+	// for partID, table := range rowTables {
+	// 	rowNum := table.getTotalRowNum()
+	// 	info = fmt.Sprintf("%s [%d %d]", info, partID, rowNum)
+	// }
+	// log.Info(info)
+
 	var err error
 	rowTables, err = htc.tryToSpill(rowTables, spillHelper)
 	if err != nil {
 		return 0, err
 	}
+
+	before := htc.memoryTracker.BytesConsumed()
 
 	for i := 0; i < partitionNumber; i++ {
 		// No tracker needs to be passed as memory has been consumed in `tryToSpill`
@@ -248,6 +263,8 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 	for _, table := range htc.hashTable.tables {
 		totalSegmentCnt += table.getSegmentNum()
 	}
+
+	log.Info(fmt.Sprintf("xzxdebug memory usage before: %d, after: %d", before, htc.memoryTracker.BytesConsumed()))
 
 	return totalSegmentCnt, nil
 }
@@ -314,8 +331,7 @@ func getPartitionMaskOffset(partitionNumber uint) int {
 
 // SetupPartitionInfo set up partitionNumber and partitionMaskOffset based on concurrency
 func (hCtx *HashJoinCtxV2) SetupPartitionInfo() {
-	// hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency) // TODO uncomment it
-	hCtx.partitionNumber = 2
+	hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency)
 	hCtx.partitionMaskOffset = getPartitionMaskOffset(hCtx.partitionNumber)
 }
 
@@ -335,13 +351,18 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 }
 
 func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
+	before := hCtx.memTracker.BytesConsumed()
 	memoryUsage := hCtx.hashTableContext.getAllSegmentsMemoryUsageInRowTable()
 	hCtx.hashTableContext.clearAllSegmentsInRowTable()
 	hCtx.memTracker.Consume(-memoryUsage)
+	mem1 := memoryUsage
 
 	memoryUsage = hCtx.hashTableContext.getAllMemoryUsageInHashTable()
 	hCtx.hashTableContext.clearHashTable()
 	hCtx.memTracker.Consume(-memoryUsage)
+	mem2 := memoryUsage
+	after := hCtx.memTracker.BytesConsumed()
+	log.Info(fmt.Sprintf("xzxdebug mem1: %d, mem2: %d, before: %d, after: %d", mem1, mem2, before, after))
 }
 
 // ProbeSideTupleFetcherV2 reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -573,8 +594,11 @@ func (e *HashJoinV2Exec) startProbeWorkersForRestore(wg *sync.WaitGroup) {
 }
 
 func (e *HashJoinV2Exec) restoreAndProbe(pfAndFWSync chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) {
+	before := e.memTracker.BytesConsumed()
 	e.startProbeWorkersForRestore(fetcherAndWorkerSyncer)
 	fetcherAndWorkerSyncer.Wait()
+	after := e.memTracker.BytesConsumed()
+	log.Info(fmt.Sprintf("xzxdebug probe before: %d, after: %d", before, after))
 	pfAndFWSync <- struct{}{}
 }
 
@@ -842,6 +866,17 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 		return false, err
 	}
 
+	var mem0 int64
+	var mem1 int64
+	var mem2 int64
+	var mem3 int64
+	var mem4 int64
+
+	defer func() {
+		log.Info(fmt.Sprintf("xzxdebug mem0: %d, mem1: %d, mem2: %d, mem3: %d, mem4: %d", mem0, mem1, mem2, mem3, mem4))
+	}()
+	mem0 = e.hashTableContext.memoryTracker.BytesConsumed()
+
 	isBalanced := e.checkBalance(totalSegmentCnt)
 	segStep := max(1, totalSegmentCnt/int(e.Concurrency))
 	subTables := e.HashJoinCtxV2.hashTableContext.hashTable.tables
@@ -849,6 +884,8 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 		return &buildTask{partitionIdx: partIdx, segStartIdx: segStartIdx, segEndIdx: segEndIdx}
 	}
 	failpoint.Inject("createTasksPanic", nil)
+
+	mem1 = e.memTracker.BytesConsumed()
 
 	if isBalanced {
 		for partIdx, subTable := range subTables {
@@ -868,12 +905,16 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 		return true, nil
 	}
 
+	mem2 = e.memTracker.BytesConsumed()
+
 	partitionStartIndex := make([]int, len(subTables))
 	partitionSegmentLength := make([]int, len(subTables))
 	for i := 0; i < len(subTables); i++ {
 		partitionStartIndex[i] = 0
 		partitionSegmentLength[i] = len(subTables[i].rowData.segments)
 	}
+
+	mem3 = e.memTracker.BytesConsumed()
 
 	for {
 		hasNewTask := false
@@ -898,6 +939,8 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 			break
 		}
 	}
+
+	mem4 = e.memTracker.BytesConsumed()
 
 	return true, nil
 }

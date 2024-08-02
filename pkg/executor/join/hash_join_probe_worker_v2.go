@@ -20,8 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -33,6 +31,7 @@ type ProbeWorkerV2 struct {
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe ProbeV2
 
+	// TODO delete them
 	totalOutputRowNum int
 	spilledRowNum     int
 }
@@ -137,7 +136,6 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		for partID, rowNum := range spilledInfo {
 			info = fmt.Sprintf("%s [%d %d]", info, partID, rowNum)
 		}
-		log.Info(fmt.Sprintf("xzxdebug totalOutputRowNum: %d, spilled info: %s", w.totalOutputRowNum, info))
 
 		w.totalOutputRowNum = 0
 	}()
@@ -225,17 +223,6 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error 
 	// 	}()
 	// }
 
-	totalRestoredRowNum := 0
-
-	defer func() {
-		if r := recover(); r != nil {
-			err := util.GetRecoverError(r)
-			errInfo := err.Error()
-			log.Info(errInfo) // TODO remove it
-		}
-		log.Info(fmt.Sprintf("xzxdebug totalOutputRowNum: %d, restoredRowNum: %d", w.totalOutputRowNum, totalRestoredRowNum))
-	}()
-
 	ok, joinResult := w.getNewJoinResult()
 	if !ok {
 		return nil
@@ -264,8 +251,6 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error 
 		if err != nil {
 			return err
 		}
-
-		totalRestoredRowNum += chk.NumRows()
 
 		start := time.Now()
 		waitTime := int64(0)

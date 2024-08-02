@@ -904,6 +904,14 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 	return nil
 }
 
+func (rt *rowTable) getTotalRowNum() int {
+	totalRowNum := 0
+	for _, seg := range rt.segments {
+		totalRowNum += seg.getRowNum()
+	}
+	return totalRowNum
+}
+
 func (rt *rowTable) merge(other *rowTable) {
 	rt.segments = append(rt.segments, other.segments...)
 }

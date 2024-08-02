@@ -48,7 +48,6 @@ type hashJoinSpillHelper struct {
 	buildSpillChkFieldTypes []*types.FieldType
 	probeFieldTypes         []*types.FieldType
 	tmpSpillBuildSideChunks []*chunk.Chunk
-	tmpSpillProbeSideChunks []*chunk.Chunk
 
 	// When respilling a row, we need to recalculate the row's hash value.
 	// These are auxiliary utility for rehash.
@@ -116,10 +115,6 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 func (h *hashJoinSpillHelper) close() {
 	for _, chk := range h.tmpSpillBuildSideChunks {
 		chk.Destroy(spillChunkSize, h.buildSpillChkFieldTypes)
-	}
-
-	for _, chk := range h.tmpSpillProbeSideChunks {
-		chk.Destroy(spillChunkSize, h.probeFieldTypes)
 	}
 
 	for _, inDisks := range h.buildRowsInDisk {
@@ -545,8 +540,8 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 }
 
 func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
-	if len(h.tmpSpillBuildSideChunks) < int(h.hashJoinExec.partitionNumber) {
-		for i := len(h.tmpSpillBuildSideChunks); i < int(h.hashJoinExec.partitionNumber); i++ {
+	if len(h.tmpSpillBuildSideChunks) < int(h.hashJoinExec.Concurrency) {
+		for i := len(h.tmpSpillBuildSideChunks); i < int(h.hashJoinExec.Concurrency); i++ {
 			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}

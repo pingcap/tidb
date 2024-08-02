@@ -15,12 +15,15 @@
 package join
 
 import (
+	"fmt"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/serialization"
 )
+
+const minimalHashTableLen = 32
 
 type subTable struct {
 	rowData          *rowTable
@@ -31,6 +34,9 @@ type subTable struct {
 }
 
 func (st *subTable) lookup(hashValue uint64) uintptr {
+	if len(st.hashTable) == 0 || st.posMask == 0 {
+		fmt.Sprintln("123")
+	}
 	return st.hashTable[hashValue&st.posMask]
 }
 
@@ -55,11 +61,7 @@ func nextPowerOfTwo(value uint64) uint64 {
 }
 
 func getHashTableLength(table *rowTable) uint64 {
-	if table.validKeyCount() == 0 {
-		return 0
-	}
-
-	return max(nextPowerOfTwo(table.validKeyCount()), uint64(32))
+	return max(nextPowerOfTwo(table.validKeyCount()), uint64(minimalHashTableLen))
 }
 
 func getHashTableMemoryUsage(hashTableLength uint64) int64 {
@@ -80,12 +82,6 @@ func newSubTable(table *rowTable, tracker *memory.Tracker) *subTable {
 	}
 
 	hashTableLength := getHashTableLength(table)
-	if hashTableLength == 0 {
-		ret.hashTable = make([]uintptr, 1)
-		ret.posMask = 0	
-		return ret
-	}
-
 	if tracker != nil {
 		tracker.Consume(getHashTableMemoryUsage(hashTableLength))
 	}
