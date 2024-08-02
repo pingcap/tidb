@@ -240,11 +240,12 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 	meta := j.ctx.hashTableMeta
 	startProbeRow := j.currentProbeRow
 	hasOtherCondition := j.ctx.hasOtherCondition()
+	tagHelper := j.ctx.hashTableContext.tagHelper
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			// hash value match
-			candidateRow := *(*unsafe.Pointer)(unsafe.Pointer(&j.matchedRowsHeaders[j.currentProbeRow]))
+			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
 				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(j.currentProbeRow, candidateRow), joinedChk, 0, hasOtherCondition)
@@ -256,7 +257,7 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 			} else {
 				j.probeCollision++
 			}
-			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
+			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
 			// it could be
 			// 1. no match when lookup the hash table
@@ -295,11 +296,12 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 func (j *outerJoinProbe) probeForOuterSideBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	hasOtherCondition := j.ctx.hasOtherCondition()
+	tagHelper := j.ctx.hashTableContext.tagHelper
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			// hash value match
-			candidateRow := *(*unsafe.Pointer)(unsafe.Pointer(&j.matchedRowsHeaders[j.currentProbeRow]))
+			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
 				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(j.currentProbeRow, candidateRow), joinedChk, 0, hasOtherCondition)
@@ -312,7 +314,7 @@ func (j *outerJoinProbe) probeForOuterSideBuild(chk, joinedChk *chunk.Chunk, rem
 			} else {
 				j.probeCollision++
 			}
-			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
+			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 		} else {
 			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
