@@ -1304,6 +1304,8 @@ func (c *valuesFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		sig = &builtinValuesDurationSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETJson:
 		sig = &builtinValuesJSONSig{baseBuiltinFunc: bf, offset: c.offset}
+	case types.ETVectorFloat32:
+		sig = &builtinValuesVectorFloat32Sig{baseBuiltinFunc: bf, offset: c.offset}
 	default:
 		return nil, errors.Errorf("%s is not supported for VALUES()", c.tp.EvalType())
 	}
@@ -1593,6 +1595,43 @@ func (b *builtinValuesJSONSig) evalJSON(ctx EvalContext, _ chunk.Row) (types.Bin
 		return row.GetJSON(b.offset), false, nil
 	}
 	return types.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
+type builtinValuesVectorFloat32Sig struct {
+	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
+
+	offset int
+}
+
+func (b *builtinValuesVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinValuesVectorFloat32Sig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinValuesVectorFloat32Sig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
+// evalVectorFloat32 evals a builtinValuesVectorFloat32Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, _ chunk.Row) (types.VectorFloat32, bool, error) {
+	sessionvar, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return types.VectorFloat32{}, true, err
+	}
+	row := sessionvar.CurrInsertValues
+	if row.IsEmpty() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return types.ZeroVectorFloat32, true, nil
+		}
+		return row.GetVectorFloat32(b.offset), false, nil
+	}
+	return types.ZeroVectorFloat32, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type bitCountFunctionClass struct {
