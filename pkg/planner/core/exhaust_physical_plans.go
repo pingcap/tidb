@@ -16,6 +16,10 @@ package core
 
 import (
 	"fmt"
+	"math"
+	"slices"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -40,9 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"math"
-	"slices"
-	"strings"
 )
 
 func exhaustPhysicalPlans4LogicalUnionScan(p *LogicalUnionScan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
