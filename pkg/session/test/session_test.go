@@ -410,11 +410,11 @@ func TestStmtHints(t *testing.T) {
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 
-	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(3 MB) */ * from t1;")
+	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(1 MB) */ * from t1;")
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3126]Hint MEMORY_QUOTA(`3145728`) is ignored as conflicting/duplicated.")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3126]Hint MEMORY_QUOTA(`1048576`) is ignored as conflicting/duplicated.")
 
 	// Test NO_INDEX_MERGE hint
 	tk.Session().GetSessionVars().SetEnableIndexMerge(true)
