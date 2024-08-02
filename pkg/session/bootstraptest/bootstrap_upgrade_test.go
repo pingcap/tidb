@@ -435,6 +435,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	// Make sure upgrade is successful.
 	startUpgrade(store)
 	dom.Close()
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
