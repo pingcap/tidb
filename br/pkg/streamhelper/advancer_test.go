@@ -776,7 +776,7 @@ func TestOwnershipLost(t *testing.T) {
 	c.splitAndScatter(manyRegions(0, 10240)...)
 	installSubscribeSupport(c)
 	ctx, cancel := context.WithCancel(context.Background())
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.OnStart(ctx)
 	adv.OnBecomeOwner(ctx)
@@ -797,7 +797,7 @@ func TestSubscriptionPanic(t *testing.T) {
 	c.splitAndScatter(manyRegions(0, 20)...)
 	installSubscribeSupport(c)
 	ctx, cancel := context.WithCancel(context.Background())
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.OnStart(ctx)
 	adv.OnBecomeOwner(ctx)
