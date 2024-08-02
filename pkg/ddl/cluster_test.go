@@ -63,14 +63,14 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
 		}
 	}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
 			// cancel flashback job
 			job.State = model.JobStateCancelled
 			job.Error = dbterror.ErrCancelledDDLJob
 		}
-	}
+	})
 	dom.DDL().SetHook(hook)
 
 	time.Sleep(10 * time.Millisecond)
@@ -79,6 +79,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)), errno.ErrCancelledDDLJob)
 	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
