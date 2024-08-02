@@ -31,7 +31,6 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/cardinality",
-        "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/baseimpl",
         "//pkg/planner/core/rule/util",

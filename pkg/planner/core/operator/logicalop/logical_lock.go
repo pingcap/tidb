@@ -17,7 +17,6 @@ package logicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -54,7 +53,7 @@ func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	var err error
-	if !core.IsSelectForUpdateLockType(p.Lock.LockType) {
+	if !IsSelectForUpdateLockType(p.Lock.LockType) {
 		// when use .baseLogicalPlan to call the PruneColumns, it means current plan itself has
 		// nothing to pruning or plan change, so they resort to its children's column pruning logic.
 		// so for the returned logical plan here, p is definitely determined, we just need to collect
@@ -142,3 +141,14 @@ func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
+
+// IsSelectForUpdateLockType checks if the select lock type is for update type.
+func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
+	if lockType == ast.SelectLockForUpdate ||
+		lockType == ast.SelectLockForShare ||
+		lockType == ast.SelectLockForUpdateNoWait ||
+		lockType == ast.SelectLockForUpdateWaitN {
+		return true
+	}
+	return false
+}
