@@ -875,6 +875,9 @@ uuid
 uuid_short
 uuid_to_bin
 validate_password_strength
+vec_as_text
+vec_dims
+vec_from_text
 version
 vitess_hash
 week

@@ -175,6 +175,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlEnum:
 		tp = tipb.ExprType_MysqlEnum
 		val = codec.EncodeUint(nil, d.GetUint64())
+	case types.KindVectorFloat32:
+		tp = tipb.ExprType_TiDBVectorFloat32
+		val = d.GetVectorFloat32().ZeroCopySerialize()
 	default:
 		return tp, nil, false
 	}

@@ -635,6 +635,11 @@ func TestDMLStmt(t *testing.T) {
 		{"CREATE VIEW v AS (TABLE t)", true, "CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS (TABLE `t`)"},
 		{"SELECT * FROM t1 WHERE a IN (TABLE t2)", true, "SELECT * FROM `t1` WHERE `a` IN (TABLE `t2`)"},
 
+		// vector type
+		{"CREATE TABLE foo (v VECTOR)", true, "CREATE TABLE `foo` (`v` VECTOR<FLOAT>)"},
+		{"CREATE TABLE foo (v VECTOR<FLOAT>)", true, "CREATE TABLE `foo` (`v` VECTOR<FLOAT>)"},
+		{"CREATE TABLE foo (v VECTOR<DOUBLE>)", false, ""},
+
 		// values statement
 		{"VALUES ROW(1)", true, "VALUES ROW(1)"},
 		{"VALUES ROW()", true, "VALUES ROW()"},
@@ -7556,10 +7561,8 @@ func TestCompatTypes(t *testing.T) {
 
 func TestVector(t *testing.T) {
 	table := []testCase{
-		{"CREATE TABLE t (a VECTOR)", true, "CREATE TABLE `t` (`a` VECTOR)"},
-		{"CREATE TABLE t (a VECTOR<FLOAT>)", true, "CREATE TABLE `t` (`a` VECTOR)"},
-		{"CREATE TABLE t (a VECTOR(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
-		{"CREATE TABLE t (a VECTOR<FLOAT>(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
+		{"CREATE TABLE t (a VECTOR)", true, "CREATE TABLE `t` (`a` VECTOR<FLOAT>)"},
+		{"CREATE TABLE t (a VECTOR<FLOAT>)", true, "CREATE TABLE `t` (`a` VECTOR<FLOAT>)"},
 		{"CREATE TABLE t (a VECTOR<INT>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},
