@@ -4179,8 +4179,19 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:WvieJ92fqYkFiQKnDh2jUOc/kuGH0vyoZaNrEzcUqSY=",
         version = "v2.0.8-0.20241101091624-f01fc67ccc98",
+=======
+        sha256 = "7e51e3bb9f1bea4b712c6fe7b4e24887b9a3d18e103f451d5f2d09f944015252",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240801083730-f8e321f39dd5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240801083730-f8e321f39dd5.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240801083730-f8e321f39dd5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240801083730-f8e321f39dd5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240801083730-f8e321f39dd5.zip",
+        ],
+>>>>>>> d9b517b26f3 (*: Update client-go to fix fair locking panic when executing a query after OOM kill in a transaction (#55137))
     )
     go_repository(
         name = "com_github_tikv_pd",
