@@ -16,7 +16,7 @@ import (
 type GlueClient int
 
 const (
-	ClientBr GlueClient = iota
+	ClientCLP GlueClient = iota
 	ClientSql
 )
 
