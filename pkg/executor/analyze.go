@@ -165,7 +165,7 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
-		err = e.handleGlobalStats(globalStatsMap)
+		err = e.handleGlobalStats(statsHandle, globalStatsMap)
 		if err != nil {
 			return err
 		}
@@ -490,6 +490,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -513,7 +514,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			break
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
-		StartAnalyzeJob(e.Ctx(), task.job)
+		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
 			select {
@@ -566,30 +567,6 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if err != nil {
 		logutil.BgLogger().Error("failed to insert analyze job", zap.Error(err))
 	}
-}
-
-// StartAnalyzeJob marks the state of the analyze job as running and sets the start time.
-func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
-	if job == nil || job.ID == nil {
-		return
-	}
-	job.StartTime = time.Now()
-	job.Progress.SetLastDumpTime(job.StartTime)
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("StartAnalyzeJob",
-				zap.Time("start_time", job.StartTime),
-				zap.Uint64("job id", *job.ID),
-			)
-		}
-	})
 }
 
 // UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.

@@ -70,6 +70,13 @@ func (sa *statsAnalyze) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance st
 	})
 }
 
+func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
+	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		startAnalyzeJob(sctx, job)
+		return nil
+	})
+}
+
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
@@ -702,4 +709,26 @@ func insertAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, insta
 		}
 	})
 	return nil
+}
+
+// startAnalyzeJob marks the state of the analyze job as running and sets the start time.
+func startAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
+	if job == nil || job.ID == nil {
+		return
+	}
+	job.StartTime = time.Now()
+	job.Progress.SetLastDumpTime(job.StartTime)
+	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
+	_, _, err := statsutil.ExecRows(sctx, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
+	}
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("StartAnalyzeJob",
+				zap.Time("start_time", job.StartTime),
+				zap.Uint64("job id", *job.ID),
+			)
+		}
+	})
 }

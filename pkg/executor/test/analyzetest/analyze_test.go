@@ -2063,8 +2063,8 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, addr, rows[0][9])
 		connID := strconv.FormatUint(tk.Session().GetSessionVars().ConnectionID, 10)
 		require.Equal(t, connID, rows[0][10])
-
-		executor.StartAnalyzeJob(se, job)
+		statsHandle := domain.GetDomain(tk.Session()).StatsHandle()
+		statsHandle.StartAnalyzeJob(job)
 		ctx := context.WithValue(context.Background(), executor.AnalyzeProgressTest, 100)
 		rows = tk.MustQueryWithContext(ctx, "show analyze status").Rows()
 		checkTime := func(val any) {
