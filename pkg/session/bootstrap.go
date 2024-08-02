@@ -63,6 +63,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var bootstrapOwnerKey = "/tidb/distributeLock/"
+
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	// WARNING: There are some limitations on altering the schema of mysql.user table.
@@ -1345,6 +1347,35 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
+func acquireLock(s sessiontypes.Session) bool {
+	cli := domain.GetDomain(s).GetEtcdClient()
+	// The lock is used to make sure only one TiDB server is bootstrapping the system.
+	etcdSession, err := concurrency.NewSession(cli)
+	if err != nil {
+		return false
+	}
+	mu := concurrency.NewMutex(etcdSession, bootstrapOwnerKey)
+	err = mu.Lock(context.Background())
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+func releaseLock(s sessiontypes.Session) {
+	cli := domain.GetDomain(s).GetEtcdClient()
+	etcdSession, err := concurrency.NewSession(cli)
+	if err != nil {
+		return
+	}
+	mu := concurrency.NewMutex(etcdSession, bootstrapOwnerKey)
+	err = mu.Unlock(context.Background())
+	if err != nil {
+		logutil.BgLogger().Error("release lock failed", zap.Error(err))
+		return
+	}
+}
+
 func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
 	dom := domain.GetDomain(s)
 	for !dom.DDL().OwnerManager().IsOwner() {
@@ -1420,12 +1451,19 @@ func upgrade(s sessiontypes.Session) {
 		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
 	}
 
-	ver, err := getBootstrapVersion(s)
-	terror.MustNil(err)
-	if ver >= currentBootstrapVersion {
-		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		return
+	var ver int64
+	for {
+		acquireLock(s)
+		ver, err = getBootstrapVersion(s)
+		terror.MustNil(err)
+		if ver >= currentBootstrapVersion {
+			// It is already bootstrapped/upgraded by a higher version TiDB server.
+			releaseLock(s)
+			return
+		}
+		break
 	}
+	defer releaseLock(s)
 
 	checkDistTask(s, ver)
 	printClusterState(s, ver)
