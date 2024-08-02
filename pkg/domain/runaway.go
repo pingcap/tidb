@@ -69,7 +69,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	})
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := model.NewCIStr(tableName)
-	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
+	tbl, err := do.InfoSchema().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -216,7 +216,7 @@ func (do *Domain) GetRunawayWatchList() []*resourcegroup.QuarantineRecord {
 	return do.runawayManager.GetWatchList()
 }
 
-// TryToUpdateRunawayWatch is used to to update watch list including
+// TryToUpdateRunawayWatch is used to update watch list including
 // creation and deletion by manual trigger.
 func (do *Domain) TryToUpdateRunawayWatch() error {
 	return do.updateNewAndDoneWatch()

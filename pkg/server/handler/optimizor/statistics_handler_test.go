@@ -15,6 +15,7 @@
 package optimizor_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -67,7 +68,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	statsHandler := optimizor.NewStatsHandler(dom)
 
 	prepareData(t, client, statsHandler)
-	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	err = dom.GetHistoricalStatsWorker().DumpHistoricalStats(tableInfo.Meta().ID, dom.StatsHandle())
 	require.NoError(t, err)
@@ -159,7 +160,7 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 }
 
 func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServerClient, handler *optimizor.StatsHandler) {
@@ -196,12 +197,12 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	}()
 	h := statHandle.Domain().StatsHandle()
 	tk := testkit.NewDBTestKit(t, db)
-	tk.MustExec("create table test2(a int) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
+	tk.MustExec("create table test2(a int, index idx(a)) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
 	tk.MustExec("insert into test2 (a) values (1)")
 	tk.MustExec("analyze table test2")
 	is := statHandle.Domain().InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 }
 
 func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerClient) {

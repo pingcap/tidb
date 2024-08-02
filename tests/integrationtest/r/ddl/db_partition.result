@@ -73,7 +73,7 @@ partition p7bB values less than ("bB"),
 partition p8bb values less than ("bb"),
 partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba");
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = "AA" collate utf8mb4_general_ci;
 id	estRows	task	access object	operator info
 TableReader	16.00	root	partition:all	data:Selection
@@ -174,7 +174,7 @@ partition p4 values less than ("B"),
 partition p5 values less than ("bb"),
 partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ");
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
 id	estRows	task	access object	operator info
 TableReader	4.00	root	partition:p2	data:Selection
@@ -588,7 +588,7 @@ PARTITION BY LIST COLUMNS(`a`)
  PARTITION `p1` VALUES IN ('1',NULL,DEFAULT),
  PARTITION `p2` VALUES IN ('2','7','10'))
 insert into t values (1, "1"), (2, "2"), (3,'3'), (null, null), (4, "4"), (11, "11");
-analyze table t;
+analyze table t all columns;
 select * from t partition(p0);
 b	a
 4	4
@@ -2021,7 +2021,7 @@ create table t (a char(10) collate utf8mb4_general_ci) partition by list columns
 Error 1495 (HY000): Multiple definition of same constant in list partitioning
 create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));
 insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');
-analyze table t11;
+analyze table t11 all columns;
 select * from t11 order by a;
 a
 A

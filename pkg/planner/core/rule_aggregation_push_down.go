@@ -19,11 +19,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
@@ -512,9 +514,9 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 					if join.JoinType == LeftOuterJoin {
-						resetNotNullFlag(join.Schema(), lChild.Schema().Len(), join.Schema().Len())
+						util.ResetNotNullFlag(join.Schema(), lChild.Schema().Len(), join.Schema().Len())
 					} else if join.JoinType == RightOuterJoin {
-						resetNotNullFlag(join.Schema(), 0, lChild.Schema().Len())
+						util.ResetNotNullFlag(join.Schema(), 0, lChild.Schema().Len())
 					}
 					buildKeyInfo(join)
 					// count(a) -> ifnull(col#x, 0, 1) in rewriteExpr of agg function, since col#x is already the final
@@ -551,7 +553,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 						buildKeyInfo(join)
 					}
 				}
-			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
+			} else if proj, ok1 := child.(*logicalop.LogicalProjection); ok1 {
 				// push aggregation across projection
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
@@ -694,7 +696,7 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.StringWithCtx(evalCtx))
+			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are decomposable with join")
 		return buffer.String()
@@ -712,7 +714,7 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
-func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := agg.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is eliminated, and %v_%v's functions changed into[", proj.TP(), proj.ID(), agg.TP(), agg.ID()))
@@ -720,7 +722,7 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *Logical
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.StringWithCtx(evalCtx))
+			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -739,7 +741,7 @@ func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalA
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.StringWithCtx(evalCtx))
+			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are decomposable with %v_%v", union.TP(), union.ID())
 		return buffer.String()

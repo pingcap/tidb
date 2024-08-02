@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -33,8 +34,8 @@ func (pdss *pushDownSequenceSolver) optimize(_ context.Context, lp base.LogicalP
 	return pdss.recursiveOptimize(nil, lp), planChanged, nil
 }
 
-func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *LogicalSequence, lp base.LogicalPlan) base.LogicalPlan {
-	_, ok := lp.(*LogicalSequence)
+func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *logicalop.LogicalSequence, lp base.LogicalPlan) base.LogicalPlan {
+	_, ok := lp.(*logicalop.LogicalSequence)
 	if !ok && pushedSequence == nil {
 		newChildren := make([]base.LogicalPlan, 0, len(lp.Children()))
 		for _, child := range lp.Children() {
@@ -44,9 +45,9 @@ func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *LogicalSeq
 		return lp
 	}
 	switch x := lp.(type) {
-	case *LogicalSequence:
+	case *logicalop.LogicalSequence:
 		if pushedSequence == nil {
-			pushedSequence = LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
+			pushedSequence = logicalop.LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
 			pushedSequence.SetChildren(lp.Children()...)
 			return pdss.recursiveOptimize(pushedSequence, lp.Children()[len(lp.Children())-1])
 		}
@@ -55,7 +56,7 @@ func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *LogicalSeq
 		allCTEs := make([]base.LogicalPlan, 0, childLen+pushedSequence.ChildLen()-2)
 		allCTEs = append(allCTEs, pushedSequence.Children()[:pushedSequence.ChildLen()-1]...)
 		allCTEs = append(allCTEs, x.Children()[:childLen-1]...)
-		pushedSequence = LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
+		pushedSequence = logicalop.LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
 		pushedSequence.SetChildren(append(allCTEs, mainQuery)...)
 		return pdss.recursiveOptimize(pushedSequence, mainQuery)
 	case *DataSource, *LogicalAggregation, *LogicalCTE:

@@ -32,9 +32,9 @@ import (
 type LogicalUnionScan struct {
 	logicalop.BaseLogicalPlan
 
-	conditions []expression.Expression
+	Conditions []expression.Expression
 
-	handleCols util.HandleCols
+	HandleCols util.HandleCols
 }
 
 // Init initializes LogicalUnionScan.
@@ -49,8 +49,8 @@ func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnion
 func (p *LogicalUnionScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "conds:%s",
-		expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.conditions))
-	fmt.Fprintf(buffer, ", handle:%s", p.handleCols)
+		expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
+	fmt.Fprintf(buffer, ", handle:%s", p.HandleCols)
 	return buffer.String()
 }
 
@@ -62,29 +62,36 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	if expression.ContainVirtualColumn(predicates) {
-		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
-		// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
-		return predicates, p
+	var predicatesWithVCol, predicatesWithoutVCol []expression.Expression
+	// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
+	// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
+	for _, expr := range predicates {
+		if expression.ContainVirtualColumn([]expression.Expression{expr}) {
+			predicatesWithVCol = append(predicatesWithVCol, expr)
+		} else {
+			predicatesWithoutVCol = append(predicatesWithoutVCol, expr)
+		}
 	}
+	predicates = predicatesWithoutVCol
 	retainedPredicates, _ := p.Children()[0].PredicatePushDown(predicates, opt)
-	p.conditions = make([]expression.Expression, 0, len(predicates))
-	p.conditions = append(p.conditions, predicates...)
+	p.Conditions = make([]expression.Expression, 0, len(predicates))
+	p.Conditions = append(p.Conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
+	retainedPredicates = append(retainedPredicates, predicatesWithVCol...)
 	return retainedPredicates, p
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.handleCols.NumCols(); i++ {
-		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
+	for i := 0; i < p.HandleCols.NumCols(); i++ {
+		parentUsedCols = append(parentUsedCols, p.HandleCols.GetCol(i))
 	}
 	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraPhysTblID {
 			parentUsedCols = append(parentUsedCols, col)
 		}
 	}
-	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.Conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)

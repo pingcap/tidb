@@ -21,6 +21,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/planner/context",
         "//pkg/planner/util/fixcontrol",
         "//pkg/sessionctx/stmtctx",
         "//pkg/types",

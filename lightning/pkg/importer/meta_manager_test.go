@@ -81,7 +81,7 @@ func newTableRestore(t *testing.T,
 		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
-		return m.CreateTableOrView(dbInfo.ID, db, ti.Core)
+		return m.CreateTableOrView(dbInfo.ID, ti.Core)
 	})
 	require.NoError(t, err)
 

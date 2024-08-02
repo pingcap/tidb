@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -36,7 +37,7 @@ func appendItemPruneTraceStep(p base.LogicalPlan, itemType string, prunedObjects
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx()))
+			buffer.WriteString(item.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 		}
 		buffer.WriteString("] have been pruned")
 		return buffer.String()

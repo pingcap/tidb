@@ -207,8 +207,8 @@ func cancelSuccess(rs *testkit.Result) bool {
 
 func TestCancel(t *testing.T) {
 	var enterCnt, exitCnt atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDelivery2Worker", func(job *model.Job) { enterCnt.Add(1) })
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) { exitCnt.Add(1) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) { exitCnt.Add(1) })
 	waitDDLWorkerExited := func() {
 		require.Eventually(t, func() bool {
 			return enterCnt.Load() == exitCnt.Load()
@@ -272,14 +272,14 @@ func TestCancel(t *testing.T) {
 
 	resetHook := func(h *callback.TestDDLCallback) {
 		h.OnJobRunBeforeExported = nil
-		h.OnJobUpdatedExported.Store(nil)
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 		dom.DDL().SetHook(h.Clone())
 	}
 	registerHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
 		if onJobRunBefore {
 			h.OnJobRunBeforeExported = hookFunc
 		} else {
-			h.OnJobUpdatedExported.Store(&hookFunc)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hookFunc)
 		}
 		dom.DDL().SetHook(h.Clone())
 	}

@@ -250,11 +250,11 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	// 4. Try to select some data from this table by ID, it would trigger an async load.
 	tk.MustExec("set tidb_opt_objective='determinate';")
 	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	checkTableIDInItems(t, table.Meta().ID)
 }
