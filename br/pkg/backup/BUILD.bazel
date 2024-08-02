@@ -69,11 +69,7 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 8,
-=======
-    shard_count = 11,
->>>>>>> eac80126da8 (backup: use history iterator to scan ddl jobs (#54100))
+    shard_count = 9,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",
