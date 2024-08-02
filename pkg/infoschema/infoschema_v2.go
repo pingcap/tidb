@@ -1045,10 +1045,10 @@ func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tb
 
 		// table is not public
 		if tblInfo.State != model.StatePublic {
-			return nil, errors.Trace(errors.New(
-				fmt.Sprintf(
-					"Table is not public: (Schema ID %d) (Table ID %d)",
-					dbID, tblID)))
+			return nil, errors.Trace(ErrTableNotExists.FastGenByArgs(
+				fmt.Sprintf("(Schema ID %d)", dbID),
+				fmt.Sprintf("(Table ID %d)", tblID),
+			))
 		}
 
 		ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
