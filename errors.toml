@@ -293,7 +293,7 @@ failed to write and ingest
 
 ["BR:Restore:ErrTablesAlreadyExisted"]
 error = '''
-tables already existed in restored cluster
+tables already existed in target cluster
 '''
 
 ["BR:Restore:ErrUnsupportedSysTable"]
