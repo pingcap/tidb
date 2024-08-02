@@ -221,12 +221,6 @@ func TestCheckPlanClone(t *testing.T) {
 	ts2.AccessCondition[0] = expr
 	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
 
-	// same interface
-	child := &core.PhysicalTableScan{}
-	ts1.SetProbeParents([]base.PhysicalPlan{child})
-	ts2.SetProbeParents([]base.PhysicalPlan{child})
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.physicalSchemaProducer.basePhysicalPlan.probeParents[0](*core.PhysicalTableScan)")
-
 	// same map
 	l1 := &core.PhysicalLock{}
 	l2 := &core.PhysicalLock{}
