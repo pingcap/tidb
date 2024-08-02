@@ -384,7 +384,7 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	}
 	switch x := p.(type) {
 	case *LogicalLock, *logicalop.LogicalLimit, *logicalop.LogicalSort, *LogicalSelection,
-		*LogicalApply, *logicalop.LogicalProjection, *LogicalWindow, *LogicalAggregation:
+		*LogicalApply, *logicalop.LogicalProjection, *logicalop.LogicalWindow, *LogicalAggregation:
 		return childMaxOneRow[0]
 	case *logicalop.LogicalMaxOneRow:
 		return true

@@ -39,7 +39,7 @@ var (
 	_ base.LogicalPlan = &logicalop.LogicalSort{}
 	_ base.LogicalPlan = &LogicalLock{}
 	_ base.LogicalPlan = &logicalop.LogicalLimit{}
-	_ base.LogicalPlan = &LogicalWindow{}
+	_ base.LogicalPlan = &logicalop.LogicalWindow{}
 	_ base.LogicalPlan = &LogicalExpand{}
 	_ base.LogicalPlan = &LogicalUnionScan{}
 	_ base.LogicalPlan = &logicalop.LogicalMemTable{}

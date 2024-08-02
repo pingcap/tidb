@@ -2183,7 +2183,7 @@ func disableAggPushDownToCop(p base.LogicalPlan) {
 	}
 }
 
-func tryToGetMppWindows(lw *LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if !prop.IsSortItemAllForPartition() {
 		return nil
 	}
@@ -2280,7 +2280,8 @@ func tryToGetMppWindows(lw *LogicalWindow, prop *property.PhysicalProperty) []ba
 	return []base.PhysicalPlan{window}
 }
 
-func exhaustLogicalWindowPhysicalPlans(lw *LogicalWindow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustLogicalWindowPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	lw := lp.(*logicalop.LogicalWindow)
 	windows := make([]base.PhysicalPlan, 0, 2)
 
 	canPushToTiFlash := lw.CanPushToCop(kv.TiFlash)
@@ -2366,7 +2367,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
 		case *logicalop.LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
-		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
+		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *logicalop.LogicalWindow:
 			if storeTp != kv.TiFlash {
 				return false
 			}
