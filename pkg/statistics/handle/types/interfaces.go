@@ -126,9 +126,9 @@ type StatsAnalyze interface {
 
 	// UpdateAnalyzeJob updates the current progress of the analyze job.
 	UpdateAnalyzeJob(job *statistics.AnalyzeJob, rowCount int64)
-	//
-	//// FinishAnalyzeJob updates the job status to `finished`, sets the end time, and updates the job info.
-	//FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason string) error
+
+	// FinishAnalyzeJob updates the job status to `finished`, sets the end time, and updates the job info.
+	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
 
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error

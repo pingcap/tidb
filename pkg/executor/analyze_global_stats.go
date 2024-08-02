@@ -76,7 +76,7 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 				}
 				return err
 			}()
-			FinishAnalyzeMergeJob(e.Ctx(), job, mergeStatsErr)
+			statsHandle.FinishAnalyzeJob(job, mergeStatsErr, statistics.GlobalStatsMergeJob)
 		}
 	}
 

@@ -473,6 +473,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
 	var err error
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for panicCnt < statsConcurrncy {
 		results, ok := <-resultsCh
 		if !ok {
@@ -480,13 +481,13 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		}
 		if results.Err != nil {
 			err = results.Err
-			FinishAnalyzeJob(e.ctx, results.Job, err)
+			statsHandle.FinishAnalyzeJob(results.Job, err, statistics.TableAnalysisJob)
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			}
 			continue
 		}
-		FinishAnalyzeJob(e.ctx, results.Job, nil)
+		statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
 		totalResult.results[results.Ars[0].Hist[0].ID] = results
 	}
 	if err != nil {

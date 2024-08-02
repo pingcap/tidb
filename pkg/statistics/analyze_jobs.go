@@ -31,6 +31,13 @@ const (
 	AnalyzeFailed = "failed"
 )
 
+type JobType int
+
+const (
+	TableAnalysisJob JobType = iota + 1
+	GlobalStatsMergeJob
+)
+
 const (
 	// maxDelta is the threshold of delta count. If the delta count reaches this threshold, it will be dumped into
 	// mysql.analyze_jobs.

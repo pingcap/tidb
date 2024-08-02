@@ -84,6 +84,13 @@ func (sa *statsAnalyze) UpdateAnalyzeJob(job *statistics.AnalyzeJob, rowCount in
 	})
 }
 
+func (sa *statsAnalyze) FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType) {
+	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		finishAnalyzeJob(sctx, job, failReason, analyzeType)
+		return nil
+	})
+}
+
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
@@ -760,6 +767,66 @@ func updateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCo
 				zap.Int64("increase processed_rows", delta),
 				zap.Uint64("job id", *job.ID),
 			)
+		}
+	})
+}
+
+// finishAnalyzeJob finishes an analyze or merge job
+func finishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error, analyzeType statistics.JobType) {
+	if job == nil || job.ID == nil {
+		return
+	}
+
+	job.EndTime = time.Now()
+	var sql string
+	var args []any
+
+	if analyzeErr != nil {
+		failReason := analyzeErr.Error()
+		const textMaxLength = 65535
+		if len(failReason) > textMaxLength {
+			failReason = failReason[:textMaxLength]
+		}
+
+		if analyzeType == statistics.TableAnalysisJob {
+			sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
+			args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
+		} else {
+			sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
+			args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
+		}
+	} else {
+		if analyzeType == statistics.TableAnalysisJob {
+			sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
+			args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+		} else {
+			sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
+			args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+		}
+	}
+
+	_, _, err := statsutil.ExecRows(sctx, sql, args...)
+	if err != nil {
+		state := statistics.AnalyzeFinished
+		if analyzeErr != nil {
+			state = statistics.AnalyzeFailed
+		}
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
+	}
+
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logger := logutil.BgLogger().With(
+				zap.Time("end_time", job.EndTime),
+				zap.Uint64("job id", *job.ID),
+			)
+			if analyzeType == statistics.TableAnalysisJob {
+				logger = logger.With(zap.Int64("increase processed_rows", job.Progress.GetDeltaCount()))
+			}
+			if analyzeErr != nil {
+				logger = logger.With(zap.Error(analyzeErr))
+			}
+			logger.Info("FinishAnalyzeJob")
 		}
 	})
 }
