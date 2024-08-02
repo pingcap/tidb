@@ -110,8 +110,8 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	var err error
 	tableID := &tbInfo.ID
 	if scatterRegionByClusterLevel {
-		// tableID is used to scatter region by group, the group divided by tableID.
-		// tableID = nil indicate all regions belong to same group.
+		// Scatter region base on group, the group divided by table ID in PD.
+		// When `tableID` is nil, PD will scatter region in all stores instead of group.
 		tableID = nil
 	}
 	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter, tableID)
@@ -126,11 +126,10 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 // SplitRecordRegion is to split region in store by table prefix.
 func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTableID, tableID int64, scatter, scatterRegionByClusterLevel bool) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(physicalTableID)
-	var tmpTableID *int64
-	*tmpTableID = tableID
+	tmpTableID := &tableID
 	if scatterRegionByClusterLevel {
-		// tmpTableID is used to scatter region by group, the group divided by tableID.
-		// tmpTableID = nil indicate all regions belong to same group.
+		// Scatter region base on group, the group divided by table ID in PD.
+		// When `tmpTableID` is nil, PD will scatter region in all stores instead of group.
 		tmpTableID = nil
 	}
 	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter, tmpTableID)
@@ -152,8 +151,8 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 	}
 	tableID := &tblInfo.ID
 	if scatterRegionByClusterLevel {
-		// tableID is used to scatter region by group, the group divided by tableID.
-		// tableID = nil indicate all regions belong to same group.
+		// Scatter region base on group, the group divided by table ID in PD.
+		// When `tableID` is nil, PD will scatter region in all stores instead of group.
 		tableID = nil
 	}
 	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, tableID)
