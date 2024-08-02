@@ -69,3 +69,14 @@ select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt2' and table_schema = 'infoschema__infoschema';
 -- sorted_result
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt0' and table_schema = 'infoschema__infoschema';
+
+# TestFilterKeyColumnUsageTable
+create database if not exists db1;
+create table db1.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
+create table db1.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);
+create database if not exists db2;
+create table db2.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
+create table db2.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);
+select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema = 'db1' order by TABLE_NAME;
+drop database db1;
+drop database db2;
