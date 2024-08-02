@@ -35,13 +35,13 @@ import (
 )
 
 var (
-	_TableSchema      = "table_schema"
-	_TableName        = "table_name"
-	_TIDBTableID      = "tidb_table_id"
-	_PartitionName    = "partition_name"
-	_TIDBPPartitionID = "tidb_partition_id"
-	_IndexName        = "index_name"
-	_SChemaName       = "schema_name"
+	_TableSchema     = "table_schema"
+	_TableName       = "table_name"
+	_TIDBTableID     = "tidb_table_id"
+	_PartitionName   = "partition_name"
+	_TIDBPartitionID = "tidb_partition_id"
+	_IndexName       = "index_name"
+	_SchemaName      = "schema_name"
 )
 
 var extractableColumns = map[string][]string{
@@ -53,7 +53,7 @@ var extractableColumns = map[string][]string{
 	// See infoschema.partitionsCols for full columns.
 	// Used by InfoSchemaPartitionsExtractor and setDataFromPartitions.
 	infoschema.TablePartitions: {
-		_TableSchema, _TableName, _TIDBPPartitionID,
+		_TableSchema, _TableName, _TIDBPartitionID,
 		_PartitionName,
 	},
 	// See infoschema.statisticsCols for full columns.
@@ -65,7 +65,7 @@ var extractableColumns = map[string][]string{
 	// See infoschema.schemataCols for full columns.
 	// Used by InfoSchemaSchemataExtractor and setDataFromSchemata.
 	infoschema.TableSchemata: {
-		_SChemaName,
+		_SchemaName,
 	},
 }
 
@@ -253,7 +253,7 @@ func (e *InfoSchemaPartitionsExtractor) ListTables(
 	schema model.CIStr,
 ) ([]*model.TableInfo, error) {
 	tableNames := e.getSchemaObjectNames(_TableName)
-	partIDs := e.getSchemaObjectNames(_TIDBPPartitionID)
+	partIDs := e.getSchemaObjectNames(_TIDBPartitionID)
 	if len(tableNames)+len(partIDs) == 0 {
 		return is.SchemaTableInfos(ctx, schema)
 	}
@@ -280,7 +280,7 @@ type InfoSchemaSchemataExtractor struct {
 // ListSchemas lists related schemas from predicate.
 // If no schema found in predicate, it return all schemas.
 func (e *InfoSchemaSchemataExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
-	return e.listSchemas(is, _SChemaName)
+	return e.listSchemas(is, _SchemaName)
 }
 
 func (e *InfoSchemaBaseExtractor) listSchemas(is infoschema.InfoSchema, schemaCol string) []model.CIStr {
