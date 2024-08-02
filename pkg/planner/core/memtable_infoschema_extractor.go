@@ -35,37 +35,37 @@ import (
 )
 
 var (
-	_TABLE_SCHEMA      = "table_schema"
-	_TABLE_NAME        = "table_name"
-	_TIDB_TABLE_ID     = "tidb_table_id"
-	_PARTITION_NAME    = "partition_name"
-	_TIDB_PARTITION_ID = "tidb_partition_id"
-	_INDEX_NAME        = "index_name"
-	_SCHEMA_NAME       = "schema_name"
+	_TableSchema      = "table_schema"
+	_TableName        = "table_name"
+	_TIDBTableID      = "tidb_table_id"
+	_PartitionName    = "partition_name"
+	_TIDBPPartitionID = "tidb_partition_id"
+	_IndexName        = "index_name"
+	_SChemaName       = "schema_name"
 )
 
 var extractableColumns = map[string][]string{
 	// See infoschema.tablesCols for full columns.
 	// Used by InfoSchemaTablesExtractor and setDataFromTables.
 	infoschema.TableTables: {
-		_TABLE_SCHEMA, _TABLE_NAME, _TIDB_TABLE_ID,
+		_TableSchema, _TableName, _TIDBTableID,
 	},
 	// See infoschema.partitionsCols for full columns.
 	// Used by InfoSchemaPartitionsExtractor and setDataFromPartitions.
 	infoschema.TablePartitions: {
-		_TABLE_SCHEMA, _TABLE_NAME, _TIDB_PARTITION_ID,
-		_PARTITION_NAME,
+		_TableSchema, _TableName, _TIDBPPartitionID,
+		_PartitionName,
 	},
 	// See infoschema.statisticsCols for full columns.
 	// Used by InfoSchemaStatisticsExtractor and setDataForStatistics.
 	infoschema.TableStatistics: {
-		_TABLE_SCHEMA, _TABLE_NAME,
-		_INDEX_NAME,
+		_TableSchema, _TableName,
+		_IndexName,
 	},
 	// See infoschema.schemataCols for full columns.
 	// Used by InfoSchemaSchemataExtractor and setDataFromSchemata.
 	infoschema.TableSchemata: {
-		_SCHEMA_NAME,
+		_SChemaName,
 	},
 }
 
@@ -79,7 +79,7 @@ type InfoSchemaBaseExtractor struct {
 	colNames []string
 }
 
-func (e *InfoSchemaBaseExtractor) InitExtractableColNames(systableName string) {
+func (e *InfoSchemaBaseExtractor) initExtractableColNames(systableName string) {
 	cols, ok := extractableColumns[systableName]
 	if ok {
 		e.colNames = cols
@@ -184,16 +184,20 @@ func (e *InfoSchemaBaseExtractor) Filter(colName string, val string) bool {
 	return false
 }
 
+// ListTables lists related schemas from predicate.
+// If no schema found in predicate, it return all schemas.
 func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
-	return e.listSchemas(is, _TABLE_SCHEMA)
+	return e.listSchemas(is, _TableSchema)
 }
 
+// ListTables lists related tables from predicate.
+// If no table is found in predicate, it return all tables.
 func (e *InfoSchemaBaseExtractor) ListTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
 	schema model.CIStr,
 ) ([]*model.TableInfo, error) {
-	tableNames := e.getSchemaObjectNames(_TABLE_NAME)
+	tableNames := e.getSchemaObjectNames(_TableName)
 	if len(tableNames) == 0 {
 		return is.SchemaTableInfos(ctx, schema)
 	}
@@ -211,15 +215,15 @@ type InfoSchemaTablesExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
-// ListTables tries to list related tables from predicate.
-// If there is no tables specified in predicate, all tables will be listed.
+// ListTables lists related tables from predicate.
+// If no table is found in predicate, it return all tables.
 func (e *InfoSchemaTablesExtractor) ListTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
 	schema model.CIStr,
 ) ([]*model.TableInfo, error) {
-	tableNames := e.getSchemaObjectNames(_TABLE_NAME)
-	tableIDs := e.getSchemaObjectNames(_TIDB_TABLE_ID)
+	tableNames := e.getSchemaObjectNames(_TableName)
+	tableIDs := e.getSchemaObjectNames(_TIDBTableID)
 	if len(tableNames)+len(tableIDs) == 0 {
 		return is.SchemaTableInfos(ctx, schema)
 	}
@@ -236,20 +240,20 @@ func (e *InfoSchemaTablesExtractor) ListTables(
 	return maps.Values(tables), nil
 }
 
-// InfoSchemaTablesExtractor is the predicate extractor for information_schema.partitions.
+// InfoSchemaPartitionsExtractor is the predicate extractor for information_schema.partitions.
 type InfoSchemaPartitionsExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
-// ListTables tries to list related tables from predicate.
-// If there is no tables specified in predicate, all tables will be listed.
+// ListTables lists related tables from predicate.
+// If no table is found in predicate, it return all tables.
 func (e *InfoSchemaPartitionsExtractor) ListTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
 	schema model.CIStr,
 ) ([]*model.TableInfo, error) {
-	tableNames := e.getSchemaObjectNames(_TABLE_NAME)
-	partIDs := e.getSchemaObjectNames(_TIDB_PARTITION_ID)
+	tableNames := e.getSchemaObjectNames(_TableName)
+	partIDs := e.getSchemaObjectNames(_TIDBPPartitionID)
 	if len(tableNames)+len(partIDs) == 0 {
 		return is.SchemaTableInfos(ctx, schema)
 	}
@@ -259,20 +263,24 @@ func (e *InfoSchemaPartitionsExtractor) ListTables(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	findByPartIDAndAppendToTableMap(ctx, is, schema, partIDs, tables)
+	findByPartIDAndAppendToTableMap(is, schema, partIDs, tables)
 	return maps.Values(tables), nil
 }
 
+// InfoSchemaStatisticsExtractor is the predicate extractor for  information_schema.statistics.
 type InfoSchemaStatisticsExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
+// InfoSchemaSchemataExtractor is the predicate extractor for information_schema.schemata.
 type InfoSchemaSchemataExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
+// ListTables lists related schemas from predicate.
+// If no schema found in predicate, it return all schemas.
 func (e *InfoSchemaSchemataExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
-	return e.listSchemas(is, _SCHEMA_NAME)
+	return e.listSchemas(is, _SChemaName)
 }
 
 func (e *InfoSchemaBaseExtractor) listSchemas(is infoschema.InfoSchema, schemaCol string) []model.CIStr {
@@ -340,7 +348,6 @@ func findIDAndAppendToTableMap(
 }
 
 func findByPartIDAndAppendToTableMap(
-	ctx context.Context,
 	is infoschema.InfoSchema,
 	schema model.CIStr,
 	partIDs []model.CIStr,
