@@ -561,6 +561,22 @@ func TestVectorFunctions(t *testing.T) {
 	tk.MustQuery(`SELECT VEC_L2_NORM('[0,1]');`).Check(testkit.Rows("1"))
 }
 
+func TestVectorMiscFunctions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
+
+	tk.MustExec("CREATE TABLE a(pk INT PRIMARY KEY, c VECTOR(3), time INT);")
+	tk.MustExec("INSERT INTO a VALUES (1, '[1,2,3]', 5);")
+	tk.MustQuery(`SELECT * FROM a;`).Check(testkit.Rows("1 [1,2,3] 5"))
+	tk.MustExec("INSERT INTO a VALUES (1, '[1,1,1]', 10) ON DUPLICATE KEY UPDATE time=VALUES(time), c=VALUES(c);")
+	tk.MustQuery(`SELECT * FROM a;`).Check(testkit.Rows("1 [1,1,1] 10"))
+	tk.MustExec("INSERT INTO a VALUES (1, '[1,5,7]', 15) ON DUPLICATE KEY UPDATE time=VEC_DIMS(c), c=VALUES(c)+VALUES(c);")
+	tk.MustQuery(`SELECT * FROM a;`).Check(testkit.Rows("1 [2,10,14] 3"))
+}
+
 func TestGetLock(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
