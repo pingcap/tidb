@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -237,8 +237,8 @@ func (p *aggWindowProcessor) resetPartialResult() {
 type rowFrameWindowProcessor struct {
 	windowFuncs    []aggfuncs.AggFunc
 	partialResults []aggfuncs.PartialResult
-	start          *core.FrameBound
-	end            *core.FrameBound
+	start          *logicalop.FrameBound
+	end            *logicalop.FrameBound
 	curRowIdx      uint64
 }
 
@@ -379,8 +379,8 @@ func (p *rowFrameWindowProcessor) resetPartialResult() {
 type rangeFrameWindowProcessor struct {
 	windowFuncs     []aggfuncs.AggFunc
 	partialResults  []aggfuncs.PartialResult
-	start           *core.FrameBound
-	end             *core.FrameBound
+	start           *logicalop.FrameBound
+	end             *logicalop.FrameBound
 	curRowIdx       uint64
 	lastStartOffset uint64
 	lastEndOffset   uint64

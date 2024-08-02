@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 	"slices"
 	"strconv"
@@ -4961,11 +4962,11 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 		exec.windowFuncs = windowFuncs
 		exec.partialResults = partialResults
 		if v.Frame == nil {
-			exec.start = &plannercore.FrameBound{
+			exec.start = &logicalop.FrameBound{
 				Type:      ast.Preceding,
 				UnBounded: true,
 			}
-			exec.end = &plannercore.FrameBound{
+			exec.end = &logicalop.FrameBound{
 				Type:      ast.Following,
 				UnBounded: true,
 			}
