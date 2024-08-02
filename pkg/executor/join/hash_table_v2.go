@@ -85,17 +85,17 @@ func (st *subTable) updateHashValue(hashValue uint64, rowAddress unsafe.Pointer,
 	tagValue := tagHelper.getTaggedValueFromHashValue(hashValue) | tagHelper.getTaggedValueFromTaggedPtr(prev)
 	taggedAddress := tagHelper.toTaggedPtr(tagValue, rowAddress)
 	st.hashTable[pos] = taggedAddress
-	setNextRowAddress(st.hashTable[pos], prev, tagHelper)
+	setNextRowAddress(taggedAddress, prev, tagHelper)
 }
 
 func (st *subTable) atomicUpdateHashValue(hashValue uint64, rowAddress unsafe.Pointer, tagHelper *tagPtrHelper) {
 	pos := hashValue & st.posMask
 	for {
-		prev := taggedPtr(atomic.LoadUintptr((*uintptr)(unsafe.Pointer(&(st.hashTable[pos])))))
+		prev := taggedPtr(atomic.LoadUintptr((*uintptr)(unsafe.Pointer(&st.hashTable[pos]))))
 		tagValue := tagHelper.getTaggedValueFromHashValue(hashValue) | tagHelper.getTaggedValueFromTaggedPtr(prev)
 		taggedAddress := tagHelper.toTaggedPtr(tagValue, rowAddress)
 		if atomic.CompareAndSwapUintptr((*uintptr)(unsafe.Pointer(&st.hashTable[pos])), uintptr(prev), uintptr(taggedAddress)) {
-			setNextRowAddress(st.hashTable[pos], prev, tagHelper)
+			setNextRowAddress(taggedAddress, prev, tagHelper)
 			break
 		}
 	}
