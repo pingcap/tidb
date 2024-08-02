@@ -54,13 +54,24 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
-	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+var memLimiter *membuf.Limiter
+
+func init() {
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		// Set limit to i
+		memTotal = 10000000000
+	}
+	memLimiter = membuf.NewLimiter(int(memTotal * 4 / 5))
+}
 
 // TableImporter is a helper struct to import a table.
 type TableImporter struct {
@@ -673,13 +684,6 @@ func (tr *TableImporter) preprocessEngine(
 		indexStatus backend.ChunkFlushStatus
 		chunkCp     *checkpoints.ChunkCheckpoint
 	}
-
-	memInfo, err := mem.VirtualMemory()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// set the total memory limit for lightning to 80% of the total memory
-	memLimiter := membuf.NewLimiter(int(memInfo.Total * 4 / 5))
 
 	// chunks that are finished writing, but checkpoints are not finished due to flush not finished.
 	var checkFlushLock sync.Mutex
