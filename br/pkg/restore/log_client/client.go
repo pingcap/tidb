@@ -646,15 +646,17 @@ type InitSchemaConfig struct {
 	FullBackupStorage *FullBackupStorageConfig
 }
 
+const UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
+
 func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	ctx context.Context,
 	cfg *InitSchemaConfig,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
 	if cfg.FullBackupStorage == nil {
-		envVal, ok := os.LookupEnv("UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL")
-		if ok && envVal == "1" {
-			log.Info("the environment variable UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL is activite, skip loading the base schemas.")
+		envVal, ok := os.LookupEnv(UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL)
+		if ok && len(envVal) > 0 {
+			log.Info(fmt.Sprintf("the environment variable %s is active, skip loading the base schemas.", UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL))
 			return dbReplaces, nil
 		}
 		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
