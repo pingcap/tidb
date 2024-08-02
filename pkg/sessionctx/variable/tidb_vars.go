@@ -1096,8 +1096,6 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
-	// TiDBEnableVectorType has been Deprecated. Not used anymore.
-	TiDBEnableVectorType = "tidb_enable_vector_type"
 	// AuthenticationLDAPSASLAuthMethodName defines the authentication method used by LDAP SASL authentication plugin
 	AuthenticationLDAPSASLAuthMethodName = "authentication_ldap_sasl_auth_method_name"
 	// AuthenticationLDAPSASLCAPath defines the ca certificate to verify LDAP connection in LDAP SASL authentication plugin
