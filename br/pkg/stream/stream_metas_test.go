@@ -2334,22 +2334,23 @@ func TestTruncate3(t *testing.T) {
 	for i, cs := range cases {
 		for j, ts := range cs.testParams {
 			for _, until := range ts.until {
-				t.Logf("case %d, param %d, until %d", i, j, until)
-				metas := StreamMetadataSet{
-					Helper:                    NewMetadataHelper(),
-					MetadataDownloadBatchSize: 128,
-				}
-				err := generateFiles(ctx, s, cs.metas, tmpDir)
-				require.NoError(t, err)
-				shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
-				require.NoError(t, err)
-				require.Equal(t, shiftUntilTS, ts.shiftUntilTS(until))
-				n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, func(num int64) {})
-				require.Equal(t, len(n), 0)
-				require.NoError(t, err)
+				t.Run(fmt.Sprintf("case %d, param %d, until %d", i, j, until), func(t *testing.T) {
+					metas := StreamMetadataSet{
+						Helper:                    NewMetadataHelper(),
+						MetadataDownloadBatchSize: 128,
+					}
+					err := generateFiles(ctx, s, cs.metas, tmpDir)
+					require.NoError(t, err)
+					shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
+					require.NoError(t, err)
+					require.Equal(t, shiftUntilTS, ts.shiftUntilTS(until))
+					n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, func(num int64) {})
+					require.Equal(t, len(n), 0)
+					require.NoError(t, err)
 
-				// check the result
-				checkFiles(ctx, s, ts.restMetadata, t)
+					// check the result
+					checkFiles(ctx, s, ts.restMetadata, t)
+				})
 			}
 		}
 	}
