@@ -81,7 +81,7 @@ func (*baseAvgDecimal) ResetPartialResult(pr PartialResult) {
 	p.count = int64(0)
 }
 
-func (e *baseAvgDecimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseAvgDecimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDecimal)(pr)
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
@@ -89,7 +89,7 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Part
 	}
 	decimalCount := types.NewDecFromInt(p.count)
 	finalResult := new(types.MyDecimal)
-	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
 	if err != nil {
 		return err
 	}
@@ -277,7 +277,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx AggFuncUpdateCont
 	return memDelta, nil
 }
 
-func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
@@ -285,7 +285,7 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ AggFuncUpdateCon
 	}
 	decimalCount := types.NewDecFromInt(p.count)
 	finalResult := new(types.MyDecimal)
-	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
 	if err != nil {
 		return err
 	}

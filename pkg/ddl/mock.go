@@ -146,6 +146,10 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int6
 	}
 }
 
+// SyncJobSchemaVerLoop implements SchemaSyncer.SyncJobSchemaVerLoop interface.
+func (*MockSchemaSyncer) SyncJobSchemaVerLoop(context.Context) {
+}
+
 // Close implements SchemaSyncer.Close interface.
 func (*MockSchemaSyncer) Close() {}
 

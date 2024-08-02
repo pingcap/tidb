@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -63,6 +63,9 @@ type UnionScanExec struct {
 	// used with dynamic prune mode
 	// < 0 if not used.
 	physTblIDIdx int
+
+	// partitionIDMap are only required by union scan with global index.
+	partitionIDMap map[int64]struct{}
 
 	keepOrder bool
 	compareExec
@@ -155,7 +158,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx, mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -172,7 +175,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.Ctx(), us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
@@ -291,7 +294,7 @@ type compareExec struct {
 	usedIndex []int
 	desc      bool
 	// handleCols is the handle's position of the below scan plan.
-	handleCols plannercore.HandleCols
+	handleCols plannerutil.HandleCols
 }
 
 func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {

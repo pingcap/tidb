@@ -16,9 +16,12 @@ package copr
 
 import (
 	"github.com/pingcap/errors"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	// make sure mock.MockInfoschema is initialized to make sure the test pass
+	_ "github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -35,9 +38,10 @@ type CopContext interface {
 type CopContextBase struct {
 	TableInfo      *model.TableInfo
 	PrimaryKeyInfo *model.IndexInfo
-	SessionContext sessionctx.Context
-
-	RequestSource string
+	ExprCtx        exprctx.BuildContext
+	DistSQLCtx     *distsqlctx.DistSQLContext
+	PushDownFlags  uint64
+	RequestSource  string
 
 	ColumnInfos []*model.ColumnInfo
 	FieldTypes  []*types.FieldType
@@ -66,9 +70,11 @@ type CopContextMultiIndex struct {
 
 // NewCopContextBase creates a CopContextBase.
 func NewCopContextBase(
+	exprCtx exprctx.BuildContext,
+	distSQLCtx *distsqlctx.DistSQLContext,
+	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	idxCols []*model.IndexColumn,
-	sessCtx sessionctx.Context,
 	requestSource string,
 ) (*CopContextBase, error) {
 	var err error
@@ -115,18 +121,20 @@ func NewCopContextBase(
 		handleIDs = []int64{extra.ID}
 	}
 
-	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx,
+	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(exprCtx,
 		model.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
 	if err != nil {
 		return nil, err
 	}
 	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
-	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
+	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(exprCtx.GetEvalCtx(), expColInfos)
 
 	return &CopContextBase{
 		TableInfo:                   tblInfo,
 		PrimaryKeyInfo:              primaryIdx,
-		SessionContext:              sessCtx,
+		ExprCtx:                     exprCtx,
+		DistSQLCtx:                  distSQLCtx,
+		PushDownFlags:               pushDownFlags,
 		RequestSource:               requestSource,
 		ColumnInfos:                 colInfos,
 		FieldTypes:                  fieldTps,
@@ -139,25 +147,29 @@ func NewCopContextBase(
 
 // NewCopContext creates a CopContext.
 func NewCopContext(
+	exprCtx exprctx.BuildContext,
+	distSQLCtx *distsqlctx.DistSQLContext,
+	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
-	sessCtx sessionctx.Context,
 	requestSource string,
 ) (CopContext, error) {
 	if len(allIdxInfo) == 1 {
-		return NewCopContextSingleIndex(tblInfo, allIdxInfo[0], sessCtx, requestSource)
+		return NewCopContextSingleIndex(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxInfo[0], requestSource)
 	}
-	return NewCopContextMultiIndex(tblInfo, allIdxInfo, sessCtx, requestSource)
+	return NewCopContextMultiIndex(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource)
 }
 
 // NewCopContextSingleIndex creates a CopContextSingleIndex.
 func NewCopContextSingleIndex(
+	exprCtx exprctx.BuildContext,
+	distSQLCtx *distsqlctx.DistSQLContext,
+	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
-	sessCtx sessionctx.Context,
 	requestSource string,
 ) (*CopContextSingleIndex, error) {
-	base, err := NewCopContextBase(tblInfo, idxInfo.Columns, sessCtx, requestSource)
+	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tblInfo, idxInfo.Columns, requestSource)
 	if err != nil {
 		return nil, err
 	}
@@ -186,9 +198,11 @@ func (c *CopContextSingleIndex) IndexInfo(_ int64) *model.IndexInfo {
 
 // NewCopContextMultiIndex creates a CopContextMultiIndex.
 func NewCopContextMultiIndex(
+	exprCtx exprctx.BuildContext,
+	distSQLCtx *distsqlctx.DistSQLContext,
+	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
-	sessCtx sessionctx.Context,
 	requestSource string,
 ) (*CopContextMultiIndex, error) {
 	approxColLen := 0
@@ -206,7 +220,7 @@ func NewCopContextMultiIndex(
 		}
 	}
 
-	base, err := NewCopContextBase(tblInfo, allIdxCols, sessCtx, requestSource)
+	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxCols, requestSource)
 	if err != nil {
 		return nil, err
 	}
@@ -305,13 +319,13 @@ func resolveIndicesForHandle(cols []*expression.Column, handleIDs []int64) []int
 	return offsets
 }
 
-func collectVirtualColumnOffsetsAndTypes(cols []*expression.Column) ([]int, []*types.FieldType) {
+func collectVirtualColumnOffsetsAndTypes(ctx expression.EvalContext, cols []*expression.Column) ([]int, []*types.FieldType) {
 	var offsets []int
 	var fts []*types.FieldType
 	for i, col := range cols {
 		if col.VirtualExpr != nil {
 			offsets = append(offsets, i)
-			fts = append(fts, col.GetType())
+			fts = append(fts, col.GetType(ctx))
 		}
 	}
 	return offsets, fts

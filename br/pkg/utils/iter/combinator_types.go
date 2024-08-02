@@ -5,13 +5,13 @@ package iter
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )
 
 type chunkMappingCfg struct {
 	chunkSize uint
-	quota     *utils.WorkerPool
+	quota     *util.WorkerPool
 }
 
 type chunkMapping[T, R any] struct {

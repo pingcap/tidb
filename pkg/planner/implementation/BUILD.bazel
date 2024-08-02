@@ -17,6 +17,8 @@ go_library(
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/cost",
         "//pkg/planner/memo",
         "//pkg/statistics",
     ],

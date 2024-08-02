@@ -541,6 +541,7 @@ select * from t2;
 select * from t2;
 drop table t2;
 drop database issue_27532;
+set autocommit = DEFAULT;
 
 
 # TestIssue37508
@@ -565,7 +566,7 @@ drop table t1;
 # TestRangeColumnsMultiColumn
 create database RangeColumnsMulti;
 use RangeColumnsMulti;
--- error 1064
+-- error 1566
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p0 values less than (NULL,NULL,NULL));
 -- error 1654
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483649,'0000-00-00',""));
@@ -868,4 +869,19 @@ disconnect conn1;
 
 use planner__core__integration_partition;
 set tidb_enable_list_partition = DEFAULT;
+
+
+# TestForbidPartitionTableGeneratePointGetPlanWithTidbRowid
+drop table if exists t;
+create table t(id int) PARTITION BY HASH(id) partitions 5;
+insert into t values(0),(0);
+analyze table t;
+explain select *,_tidb_rowid from t where _tidb_rowid=1;
+select *,_tidb_rowid from t where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
+
 

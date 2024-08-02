@@ -24,12 +24,15 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -187,6 +190,9 @@ type Table interface {
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
 
+	// WritableConstraint returns constraints of the table in writable states.
+	WritableConstraint() []*Constraint
+
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
 	// IndexPrefix returns the index key prefix.
@@ -214,12 +220,23 @@ type Table interface {
 	GetPartitionedTable() PartitionedTable
 }
 
+func getIncrementAndOffset(vars *variable.SessionVars) (int, int) {
+	increment := vars.AutoIncrementIncrement
+	offset := vars.AutoIncrementOffset
+	// When the value of auto_increment_offset is greater than that of auto_increment_increment,
+	// the value of auto_increment_offset is ignored.
+	// Ref https://dev.mysql.com/doc/refman/8.0/en/replication-options-source.html
+	if offset > increment {
+		offset = 1
+	}
+	return increment, offset
+}
+
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
 func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
 	defer r.End()
-	increment := sctx.GetSessionVars().AutoIncrementIncrement
-	offset := sctx.GetSessionVars().AutoIncrementOffset
+	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
 	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
@@ -230,18 +247,17 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
-func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
-	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
-	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
+	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
+	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
 	if err != nil {
 		return min, max, err
 	}
 	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
 	// signed and unsigned value can be unified as the unsigned handle.
-	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset)))
-	return nr, increment, nil
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment1), uint64(offset)))
+	return nr, int64(increment1), nil
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
@@ -257,11 +273,12 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(expression.BuildContext, []types.Datum) (PhysicalTable, error)
+	GetPartitionByRow(expression.EvalContext, []types.Datum) (PhysicalTable, error)
+	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
-	CheckForExchangePartition(ctx expression.BuildContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
+	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -290,4 +307,27 @@ type CachedTable interface {
 	// 'exit' is a channel to tell the keep alive goroutine to exit.
 	// The result is sent to the 'wg' channel.
 	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
+}
+
+// CheckRowConstraint verify row check constraints.
+func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowToCheck chunk.Row) error {
+	for _, constraint := range constraints {
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
+		if err != nil {
+			return err
+		}
+		if ok == 0 && !isNull {
+			return ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
+		}
+	}
+	return nil
+}
+
+// CheckRowConstraintWithDatum verify row check constraints.
+// It is the same with `CheckRowConstraint` but receives a slice of `types.Datum` instead of `chunk.Row`.
+func CheckRowConstraintWithDatum(ctx exprctx.EvalContext, constraints []*Constraint, row []types.Datum) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	return CheckRowConstraint(ctx, constraints, chunk.MutRowFromDatums(row).ToRow())
 }

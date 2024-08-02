@@ -152,7 +152,7 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
-	Update(is infoschema.InfoSchema) error
+	Update(ctx context.Context, is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
@@ -258,10 +258,6 @@ type StatsReadWriter interface {
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
-	// UpdateStatsMetaDelta updates the count and modify_count for the given table in mysql.stats_meta.
-	// It will add the delta to the original count and modify_count. The delta can be positive or negative.
-	UpdateStatsMetaDelta(tableID int64, count, delta int64) (err error)
-
 	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
 	LoadNeededHistograms() (err error)
 
@@ -274,6 +270,9 @@ type StatsReadWriter interface {
 
 	// SaveTableStatsToStorage saves the stats of a table to storage.
 	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+
+	// SaveMetaToStorage saves the stats meta of a table to storage.
+	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
 
 	// InsertColStats2KV inserts columns stats to kv.
 	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
@@ -367,24 +366,44 @@ type StatsReadWriter interface {
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	ToTimeout   time.Time
-	ResultCh    chan stmtctx.StatsLoadResult
-	TableItemID model.TableItemID
+	ToTimeout time.Time
+	ResultCh  chan stmtctx.StatsLoadResult
+	Item      model.StatsLoadItem
+	Retry     int
 }
 
 // StatsLoad is used to load stats concurrently
+// TODO(hawkingrei): Our implementation of loading statistics is flawed.
+// Currently, we enqueue tasks that require loading statistics into a channel,
+// from which workers retrieve tasks to process. Then, using the singleflight mechanism,
+// we filter out duplicate tasks. However, the issue with this approach is that it does
+// not filter out all duplicate tasks, but only the duplicates within the number of workers.
+// Such an implementation is not reasonable.
+//
+// We should first filter all tasks through singleflight as shown in the diagram, and then use workers to load stats.
+//
+// ┌─────────▼──────────▼─────────────▼──────────────▼────────────────▼────────────────────┐
+// │                                                                                       │
+// │                                       singleflight                                    │
+// │                                                                                       │
+// └───────────────────────────────────────────────────────────────────────────────────────┘
+//
+//		            │                │
+//	   ┌────────────▼──────┐ ┌───────▼───────────┐
+//	   │                   │ │                   │
+//	   │  syncload worker  │ │  syncload worker  │
+//	   │                   │ │                   │
+//	   └───────────────────┘ └───────────────────┘
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
-	SubCtxs        []sessionctx.Context
 	sync.Mutex
 }
 
 // StatsSyncLoad implement the sync-load feature.
 type StatsSyncLoad interface {
 	// SendLoadRequests sends load requests to the channel.
-	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error
 
 	// SyncWaitStatsLoad will wait for the load requests to finish.
 	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error
@@ -397,21 +416,25 @@ type StatsSyncLoad interface {
 
 	// HandleOneTask will handle one task.
 	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+}
 
-	// SetSubCtxs sets the sessionctx which is used to run queries background.
-	// TODO: use SessionPool instead.
-	SetSubCtxs(idx int, sctx sessionctx.Context)
+// GlobalStatsInfo represents the contextual information pertaining to global statistics.
+type GlobalStatsInfo struct {
+	HistIDs []int64
+	// When the `isIndex == 0`, HistIDs will be the column IDs.
+	// Otherwise, HistIDs will only contain the index ID.
+	IsIndex      int
+	StatsVersion int
 }
 
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
-	MergePartitionStats2GlobalStatsByTableID(sctx sessionctx.Context,
+	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+		info *GlobalStatsInfo,
 		physicalID int64,
-		isIndex bool,
-		histIDs []int64,
-	) (globalStats any, err error)
+	) (err error)
 }
 
 // DDL is used to handle ddl events.

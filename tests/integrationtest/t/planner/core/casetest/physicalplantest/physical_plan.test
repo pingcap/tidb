@@ -97,12 +97,12 @@ insert into t1 values (1), (5), (10), (25), (40), (60), (100);
 insert into t2 values (1), (5), (10), (25), (40), (60), (100);
 insert into t3 values (1), (5), (10), (25), (40), (60), (100);
 insert into t4 values (1), (5), (10), (25), (40), (60), (100);
-analyze table tc;
-analyze table te;
-analyze table t1;
-analyze table t2;
-analyze table t3;
-analyze table t4;
+analyze table tc all columns;
+analyze table te all columns;
+analyze table t1 all columns;
+analyze table t2 all columns;
+analyze table t3 all columns;
+analyze table t4 all columns;
 create definer='root'@'localhost' view v as select * from tc;
 explain format = 'brief' with cte as (select /*+ MERGE() */ * from tc where tc.a < 60) select * from cte where cte.a <18;
 show warnings;
@@ -992,3 +992,17 @@ set tidb_cost_model_version=DEFAULT;
 explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1;
 show warnings;
 
+# TestIndexMergeIssue52947
+CREATE TABLE `tbl_43` (
+  `col_304` binary(207) NOT NULL DEFAULT 'eIenHx\0\0\0\0\0\0\0\0\0\0\0\0',
+  PRIMARY KEY (`col_304`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `idx_259` (`col_304`(5)),
+  UNIQUE KEY `idx_260` (`col_304`(2)),
+  KEY `idx_261` (`col_304`),
+  UNIQUE KEY `idx_262` (`col_304`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+insert into tbl_43 values("BCmuENPHzSOIMJLPB"),("LDOdXZYpOR"),("R"),("TloTqcHhdgpwvMsSoJ"),("UajN"),("mAwLZbiyq"),("swLIoWa");
+explain format = 'brief' select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
+select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
+explain format = 'brief' select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
+select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;

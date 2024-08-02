@@ -132,8 +132,8 @@ t2	CREATE TABLE `t2` (
   `b` int(11) DEFAULT NULL,
   KEY `fk_1` (`a`),
   KEY `fk_2` (`b`),
-  CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `ddl__foreign_key`.`t1` (`id`),
-  CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `ddl__foreign_key`.`t1` (`id`)
+  CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`),
+  CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `t1` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t2;
 create table t2 (a int, b int, index idx0(a,b), index idx1(a), index idx2(b));

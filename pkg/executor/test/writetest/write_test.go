@@ -21,10 +21,10 @@ import (
 	"io"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
@@ -339,7 +339,7 @@ func TestReplaceLog(t *testing.T) {
 	is := domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("testLog")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("b")
@@ -370,7 +370,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 
 	ctx := mock.NewContext()
 	ctx.Store = store
-	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,

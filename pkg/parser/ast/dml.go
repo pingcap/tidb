@@ -743,6 +743,28 @@ func (n *SelectField) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+func (n *SelectField) Match(col *ColumnNameExpr, ignoreAsName bool) bool {
+	// if col specify a table name, resolve from table source directly.
+	if col.Name.Table.L == "" {
+		if n.AsName.L == "" || ignoreAsName {
+			if curCol, isCol := n.Expr.(*ColumnNameExpr); isCol {
+				return curCol.Name.Name.L == col.Name.Name.L
+			} else if _, isFunc := n.Expr.(*FuncCallExpr); isFunc {
+				// Fix issue 7331
+				// If there are some function calls in SelectField, we check if
+				// ColumnNameExpr in GroupByClause matches one of these function calls.
+				// Example: select concat(k1,k2) from t group by `concat(k1,k2)`,
+				// `concat(k1,k2)` matches with function call concat(k1, k2).
+				return strings.ToLower(n.Text()) == col.Name.Name.L
+			}
+			// a expression without as name can't be matched.
+			return false
+		}
+		return n.AsName.L == col.Name.Name.L
+	}
+	return false
+}
+
 // FieldList represents field list in select statement.
 type FieldList struct {
 	node

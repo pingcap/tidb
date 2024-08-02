@@ -15,11 +15,25 @@
 package logutil
 
 import (
+	"time"
+
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // StatsLogger with category "stats" is used to log statistic related messages.
+// Do not use it to log the message that is not related to statistics.
 func StatsLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("category", "stats"))
+}
+
+var (
+	sampleLoggerFactory = logutil.SampleLoggerFactory(5*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
+)
+
+// SingletonStatsSamplerLogger with category "stats" is used to log statistic related messages.
+// It is used to sample the log to avoid too many logs.
+// Do not use it to log the message that is not related to statistics.
+func SingletonStatsSamplerLogger() *zap.Logger {
+	return sampleLoggerFactory()
 }

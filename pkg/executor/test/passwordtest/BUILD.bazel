@@ -8,7 +8,7 @@ go_test(
         "password_management_test.go",
     ],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/domain",
         "//pkg/errno",

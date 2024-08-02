@@ -159,7 +159,6 @@ func NewPdController(
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
 		pd.WithCustomTimeoutOption(60*time.Second),
-		pd.WithMaxErrorRetry(3),
 	)
 	if err != nil {
 		log.Error("fail to create pd client", zap.Error(err))
@@ -191,6 +190,15 @@ func NewPdController(
 		// gracefully shutdown will stick at resuming schedulers.
 		schedulerPauseCh: make(chan struct{}, 1),
 	}, nil
+}
+
+func NewPdControllerWithPDClient(pdClient pd.Client, pdHTTPCli pdhttp.Client, v *semver.Version) *PdController {
+	return &PdController{
+		pdClient:         pdClient,
+		pdHTTPCli:        pdHTTPCli,
+		version:          v,
+		schedulerPauseCh: make(chan struct{}, 1),
+	}
 }
 
 func parseVersion(versionStr string) *semver.Version {

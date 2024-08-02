@@ -38,7 +38,7 @@ func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string
 // if the record exists, update the cpu_count and role.
 func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
 	cpuCount := cpu.GetCPUCount()
-	_, err := sqlexec.ExecSQL(ctx, se, `
+	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
 		on duplicate key
@@ -79,35 +79,9 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 
 		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
 		deleteSQL.WriteString(")")
-		_, err := sqlexec.ExecSQL(ctx, se, deleteSQL.String())
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), deleteSQL.String())
 		return err
 	})
-}
-
-// GetManagedNodes implements scheduler.TaskManager interface.
-func (mgr *TaskManager) GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error) {
-	var nodes []proto.ManagedNode
-	err := mgr.WithNewSession(func(se sessionctx.Context) error {
-		var err2 error
-		nodes, err2 = mgr.getManagedNodesWithSession(ctx, se)
-		return err2
-	})
-	return nodes, err
-}
-
-func (mgr *TaskManager) getManagedNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
-	nodes, err := mgr.getAllNodesWithSession(ctx, se)
-	if err != nil {
-		return nil, err
-	}
-	nodeMap := make(map[string][]proto.ManagedNode, 2)
-	for _, node := range nodes {
-		nodeMap[node.Role] = append(nodeMap[node.Role], node)
-	}
-	if len(nodeMap["background"]) == 0 {
-		return nodeMap[""], nil
-	}
-	return nodeMap["background"], nil
 }
 
 // GetAllNodes gets nodes in dist_framework_meta.
@@ -122,7 +96,7 @@ func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, e
 }
 
 func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
-	rs, err := sqlexec.ExecSQL(ctx, se, `
+	rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		select host, role, cpu_count
 		from mysql.dist_framework_meta
 		order by host`)
@@ -168,21 +142,21 @@ func (mgr *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int
 	return slots, nil
 }
 
-// GetCPUCountOfManagedNode gets the cpu count of managed node.
-func (mgr *TaskManager) GetCPUCountOfManagedNode(ctx context.Context) (int, error) {
+// GetCPUCountOfNode gets the cpu count of node.
+func (mgr *TaskManager) GetCPUCountOfNode(ctx context.Context) (int, error) {
 	var cnt int
 	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		cnt, err2 = mgr.getCPUCountOfManagedNode(ctx, se)
+		cnt, err2 = mgr.getCPUCountOfNode(ctx, se)
 		return err2
 	})
 	return cnt, err
 }
 
-// getCPUCountOfManagedNode gets the cpu count of managed node.
-// returns error when there's no managed node or no node has valid cpu count.
-func (mgr *TaskManager) getCPUCountOfManagedNode(ctx context.Context, se sessionctx.Context) (int, error) {
-	nodes, err := mgr.getManagedNodesWithSession(ctx, se)
+// getCPUCountOfNode gets the cpu count of managed node.
+// returns error when there's no node or no node has valid cpu count.
+func (mgr *TaskManager) getCPUCountOfNode(ctx context.Context, se sessionctx.Context) (int, error) {
+	nodes, err := mgr.getAllNodesWithSession(ctx, se)
 	if err != nil {
 		return 0, err
 	}

@@ -29,17 +29,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	litlog "github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -49,22 +48,19 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	kvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -102,6 +98,7 @@ const (
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
+	forceMergeStep      = "__force_merge_step"
 )
 
 var (
@@ -124,6 +121,7 @@ var (
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
+		forceMergeStep:              false,
 		cloudStorageURIOption:       true,
 		disablePrecheckOption:       false,
 	}
@@ -171,13 +169,8 @@ func (t DataSourceType) String() string {
 }
 
 var (
-	// GetKVStore returns a kv.Storage.
-	// kv encoder of physical mode needs it.
-	GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
 	// NewClientWithContext returns a kv.Client.
 	NewClientWithContext = pd.NewClientWithContext
-	// NewPDHttpClient returns a pdhttp.Client.
-	NewPDHttpClient = pdhttp.NewClient
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
@@ -258,6 +251,8 @@ type Plan struct {
 	IsRaftKV2 bool
 	// total data file size in bytes.
 	TotalFileSize int64
+	// used in tests to force enable merge-step when using global sort.
+	ForceMergeStep bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -363,7 +358,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	}
 
 	return &Plan{
-		DBName: plan.Table.Schema.O,
+		DBName: plan.Table.Schema.L,
 		DBID:   plan.Table.DBInfo.ID,
 
 		Path:                 plan.Path,
@@ -407,7 +402,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	p := &Plan{
 		TableInfo:        tbl.Meta(),
 		DesiredTableInfo: tbl.Meta(),
-		DBName:           plan.Table.Schema.O,
+		DBName:           plan.Table.Schema.L,
 		DBID:             plan.Table.DBInfo.ID,
 
 		Path:           plan.Path,
@@ -431,16 +426,6 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		return nil, err
 	}
 	return p, nil
-}
-
-// InitTiKVConfigs initializes some TiKV related configs.
-func (p *Plan) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
-	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
-	if err != nil {
-		return err
-	}
-	p.IsRaftKV2 = isRaftKV2
-	return nil
 }
 
 // ASTArgsFromPlan creates ASTArgs from plan.
@@ -505,6 +490,16 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		return nil, err
 	}
 	return c, nil
+}
+
+// InitTiKVConfigs initializes some TiKV related configs.
+func (e *LoadDataController) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
+	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
+	if err != nil {
+		return err
+	}
+	e.Plan.IsRaftKV2 = isRaftKV2
+	return nil
 }
 
 func (e *LoadDataController) checkFieldParams() error {
@@ -595,10 +590,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
-		if opt.Value.GetType().GetType() != mysql.TypeVarString {
+		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalString(seCtx, chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -606,10 +601,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
 		// current parser takes integer and bool as mysql.TypeLonglong
-		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalInt(seCtx, chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -750,6 +745,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	if _, ok := specifiedOptions[disablePrecheckOption]; ok {
 		p.DisablePrecheck = true
 	}
+	if _, ok := specifiedOptions[forceMergeStep]; ok {
+		p.ForceMergeStep = true
+	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.
 	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
@@ -758,6 +756,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	// will NOT cross file chunk.
 	if p.SplitFile && p.IgnoreLines > 1 {
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
+	}
+
+	if p.SplitFile && len(p.LinesTerminatedBy) == 0 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("lines_terminated_by, should not be empty when use split_file")
 	}
 
 	p.adjustOptions(targetNodeCPUCnt)
@@ -807,9 +809,13 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		setClause = sb.String()
 	}
 	optionMap := make(map[string]any, len(plan.Options))
+	var evalCtx expression.EvalContext
+	if plan.SCtx() != nil {
+		evalCtx = plan.SCtx().GetExprCtx().GetEvalCtx()
+	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.String()
+			val := opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1047,7 +1053,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileNameKey = strings.Trim(u.Path, "/")
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
+	_, err2 = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), "")
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			"Glob pattern error: "+err2.Error())
@@ -1060,7 +1066,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	s := e.dataStore
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
-	idx := strings.IndexByte(fileNameKey, '*')
+	// check glob pattern is present in filename.
+	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
@@ -1095,7 +1102,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// when import from server disk, all entries in parent directory should have READ
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
-		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
+		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
@@ -1272,23 +1279,23 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 }
 
 // IsLocalSort returns true if we sort data on local disk.
-func (e *LoadDataController) IsLocalSort() bool {
-	return e.Plan.CloudStorageURI == ""
+func (p *Plan) IsLocalSort() bool {
+	return p.CloudStorageURI == ""
 }
 
 // IsGlobalSort returns true if we sort data on global storage.
-func (e *LoadDataController) IsGlobalSort() bool {
-	return !e.IsLocalSort()
+func (p *Plan) IsGlobalSort() bool {
+	return !p.IsLocalSort()
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []stmtctx.SQLWarn, error) {
+func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []contextutil.SQLWarn, error) {
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
-	allWarnings := []stmtctx.SQLWarn{}
+	allWarnings := []contextutil.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
 		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
@@ -1304,16 +1311,10 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 }
 
 func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// when using global sort, write&ingest step buffers KV data in memory,
 	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
 	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
 	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	// The real concurrency used is adjusted in external engine later.
-	// when using local sort, use the default value as lightning.
-	if e.IsGlobalSort() {
-		return e.ThreadCnt * 2
-	}
-	return config.DefaultRangeConcurrency * 2
+	return e.ThreadCnt * 2
 }
 
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
@@ -1358,35 +1359,11 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 	return DataSourceTypeFile
 }
 
-// JobImportParam is the param of the job import.
-type JobImportParam struct {
-	Job      *Job
-	Group    *errgroup.Group
-	GroupCtx context.Context
-	// should be closed in the end of the job.
-	Done chan struct{}
-
-	Progress *Progress
-}
-
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
 	Affected   uint64
-	Warnings   []stmtctx.SQLWarn
-	ColSizeMap map[int64]int64
-}
-
-// JobImporter is the interface for importing a job.
-type JobImporter interface {
-	// Param returns the param of the job import.
-	Param() *JobImportParam
-	// Import imports the job.
-	// import should run in routines using param.Group, when import finished, it should close param.Done.
-	// during import, we should use param.GroupCtx, so this method has no context param.
-	Import()
-	// Result returns the result of the job import.
-	Result() JobImportResult
-	io.Closer
+	Warnings   []contextutil.SQLWarn
+	ColSizeMap variable.DeltaColsMap
 }
 
 // GetMsgFromBRError get msg from BR error.
@@ -1426,7 +1403,7 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	if serverDiskImport || !variable.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}
-	return handle.GetCPUCountOfManagedNode(ctx)
+	return handle.GetCPUCountOfNode(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

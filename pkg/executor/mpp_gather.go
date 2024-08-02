@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -56,7 +57,7 @@ func getMPPQueryTS(ctx sessionctx.Context) uint64 {
 	return mppQueryInfo.QueryTS.Load()
 }
 
-func collectPlanIDs(plan plannercore.PhysicalPlan, ids []int) []int {
+func collectPlanIDs(plan base.PhysicalPlan, ids []int) []int {
 	ids = append(ids, plan.ID())
 	for _, child := range plan.Children() {
 		ids = collectPlanIDs(child, ids)
@@ -68,7 +69,7 @@ func collectPlanIDs(plan plannercore.PhysicalPlan, ids []int) []int {
 type MPPGather struct {
 	exec.BaseExecutor
 	is           infoschema.InfoSchema
-	originalPlan plannercore.PhysicalPlan
+	originalPlan base.PhysicalPlan
 	startTS      uint64
 	mppQueryID   kv.MPPQueryID
 	respIter     distsql.SelectResult
@@ -104,7 +105,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 	e.kvRanges = e.mppExec.KVRanges
-	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), e.mppExec)
+	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx().GetDistSQLCtx(), e.RetFieldTypes(), planIDs, e.ID(), e.mppExec)
 	return nil
 }
 
@@ -121,7 +122,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	return table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk)
+	return table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), chk)
 }
 
 // Close and release the used resources.

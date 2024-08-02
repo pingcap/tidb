@@ -121,9 +121,8 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
 	logFields = append(logFields, execDetail.ToZapFields()...)
-	if copTaskInfo := info.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
-		logFields = append(logFields, copTaskInfo.ToZapFields()...)
-	}
+	copTaskInfo := info.StmtCtx.CopTasksDetails()
+	logFields = append(logFields, copTaskInfo.ToZapFields()...)
 	if statsInfo := info.StatsInfo(info.Plan); len(statsInfo) > 0 {
 		var buf strings.Builder
 		firstComma := false
@@ -170,15 +169,14 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
-		if info.RedactSQL {
-			sql = parser.Normalize(sql)
-		}
+		sql = parser.Normalize(sql, info.RedactSQL)
 	}
 	if len(sql) > logSQLLen && needTruncateSQL {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 	logFields = append(logFields, zap.String("session_alias", info.SessionAlias))
+	logFields = append(logFields, zap.Uint64("affected rows", info.StmtCtx.AffectedRows()))
 	return logFields
 }
 

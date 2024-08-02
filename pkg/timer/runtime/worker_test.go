@@ -106,7 +106,7 @@ func prepareTimer(t *testing.T, cli api.TimerClient) *api.TimerRecord {
 	require.Equal(t, "1m", timer.SchedPolicyExpr)
 	require.Equal(t, "h1", timer.HookClass)
 	require.True(t, timer.Enable)
-	require.Equal(t, watermark, timer.Watermark)
+	require.Equal(t, watermark.Unix(), timer.Watermark.Unix())
 	require.Equal(t, []byte("summary1"), timer.SummaryData)
 	require.True(t, !timer.CreateTime.Before(now))
 	require.True(t, !timer.CreateTime.After(time.Now()))

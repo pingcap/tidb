@@ -23,20 +23,20 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey string, testContext *testutil.TestContext) {
-	submitTaskAndCheckSuccess(ctx, t, taskKey, testContext, map[proto.Step]int{
+	submitTaskAndCheckSuccess(ctx, t, taskKey, "", testContext, map[proto.Step]int{
 		proto.StepOne: 10,
 		proto.StepTwo: 5,
 	})
 }
 
 func TestHANodeRandomShutdown(t *testing.T) {
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
 	c := testutil.NewDXFContextWithRandomNodes(t, 4, 15)
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
 
@@ -44,7 +44,7 @@ func TestHANodeRandomShutdown(t *testing.T) {
 	keepCount := int(math.Min(float64(c.NodeCount()-1), float64(c.Rand.Intn(10)+1)))
 	nodeNeedDown := c.GetRandNodeIDs(c.NodeCount() - keepCount)
 	t.Logf("started %d nodes, and we keep %d nodes, nodes that need shutdown: %v", c.NodeCount(), keepCount, nodeNeedDown)
-	taskexecutor.MockTiDBDown = func(execID string, _ *proto.Task) bool {
+	taskexecutor.MockTiDBDown = func(execID string, _ *proto.TaskBase) bool {
 		if _, ok := nodeNeedDown[execID]; ok {
 			c.AsyncShutdown(execID)
 			return true
@@ -55,7 +55,7 @@ func TestHANodeRandomShutdown(t *testing.T) {
 }
 
 func TestHARandomShutdownInDifferentStep(t *testing.T) {
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
 	c := testutil.NewDXFContextWithRandomNodes(t, 6, 15)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
@@ -64,7 +64,7 @@ func TestHARandomShutdownInDifferentStep(t *testing.T) {
 	nodeNeedDownAtStepTwo := c.GetRandNodeIDs(c.NodeCount()/2 - 1)
 	t.Logf("started %d nodes, shutdown nodes at step 1: %v, shutdown nodes at step 2: %v",
 		c.NodeCount(), nodeNeedDownAtStepOne, nodeNeedDownAtStepTwo)
-	taskexecutor.MockTiDBDown = func(execID string, task *proto.Task) bool {
+	taskexecutor.MockTiDBDown = func(execID string, task *proto.TaskBase) bool {
 		var targetNodes map[string]struct{}
 		switch task.Step {
 		case proto.StepOne:

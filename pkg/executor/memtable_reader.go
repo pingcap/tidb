@@ -204,6 +204,12 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
 				case "tiproxy":
 					url = fmt.Sprintf("%s://%s/api/admin/config?format=json", util.InternalHTTPSchema(), statusAddr)
+				case "ticdc":
+					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
+				case "tso":
+					url = fmt.Sprintf("%s://%s/tso/api/v1/config", util.InternalHTTPSchema(), statusAddr)
+				case "scheduling":
+					url = fmt.Sprintf("%s://%s/scheduling/api/v1/config", util.InternalHTTPSchema(), statusAddr)
 				default:
 					ch <- result{err: errors.Errorf("currently we do not support get config from node type: %s(%s)", typ, address)}
 					return
@@ -784,9 +790,8 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 	tz := sctx.GetSessionVars().Location()
-	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas()
-	schemas := tikvHelper.FilterMemDBs(allSchemas)
-	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	tables := tikvHelper.GetTablesInfoWithKeyRange(is, tikvHelper.FilterMemDBs)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)
 		rows, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, tables, tz)

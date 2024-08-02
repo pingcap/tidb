@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package store_test
 
 import (
 	"context"
@@ -65,7 +65,7 @@ func TestStoreErr(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values(1,0)")
@@ -101,7 +101,7 @@ func TestStoreSwitchPeer(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values(1,0)")

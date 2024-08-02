@@ -18,19 +18,19 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 )
 
 // TaskMeta is the task of IMPORT INTO.
 // All the field should be serializable.
 type TaskMeta struct {
-	// IMPORT INTO job id.
+	// IMPORT INTO job id, see mysql.tidb_import_jobs.
 	JobID  int64
 	Plan   importer.Plan
 	Stmt   string
@@ -88,6 +88,7 @@ type WriteIngestStepMeta struct {
 	StatFiles             []string `json:"stat-files"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys"`
 	RangeSplitSize        int64    `json:"range-split-size"`
+	TS                    uint64   `json:"ts"`
 
 	Result Result
 }

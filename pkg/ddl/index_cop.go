@@ -24,15 +24,16 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/distsql"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -107,15 +108,21 @@ func (c *copReqSender) run() {
 	}
 	se := sess.NewSession(sessCtx)
 	defer p.sessPool.Put(sessCtx)
+	var (
+		task *reorgBackfillTask
+		ok   bool
+	)
+
 	for {
-		if util.HasCancelled(c.ctx) {
+		select {
+		case <-c.ctx.Done():
 			return
+		case task, ok = <-p.tasksCh:
 		}
-		task, ok := <-p.tasksCh
 		if !ok {
 			return
 		}
-		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
+		if p.checkpointMgr != nil && p.checkpointMgr.IsKeyProcessed(task.endKey) {
 			logutil.Logger(p.ctx).Info("checkpoint detected, skip a cop-request task",
 				zap.Int("task ID", task.id),
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
@@ -131,7 +138,7 @@ func (c *copReqSender) run() {
 
 func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
-		zap.Int("id", task.id), zap.String("task", task.String()))
+		zap.Int("id", task.id), zap.Stringer("task", task))
 
 	return wrapInBeginRollback(se, func(startTS uint64) error {
 		rs, err := buildTableScan(p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
@@ -157,7 +164,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				return err
 			}
 			if p.checkpointMgr != nil {
-				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
+				p.checkpointMgr.UpdateTotalKeys(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
 			rate := float64(srcChk.MemoryUsage()) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()
@@ -174,7 +181,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 }
 
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
-	err := se.Begin()
+	err := se.Begin(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -263,7 +270,7 @@ func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
 }
 
 func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
-	dagPB, err := buildDAGPB(c.SessionContext, c.TableInfo, c.ColumnInfos)
+	dagPB, err := buildDAGPB(c.ExprCtx, c.DistSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos)
 	if err != nil {
 		return nil, err
 	}
@@ -274,8 +281,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 		SetStartTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
-		SetFromSessionVars(c.SessionContext.GetSessionVars()).
-		SetFromInfoSchema(c.SessionContext.GetDomainInfoSchema()).
+		SetFromSessionVars(c.DistSQLCtx).
 		SetConcurrency(1).
 		Build()
 	kvReq.RequestSource.RequestSourceInternal = true
@@ -284,7 +290,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 	if err != nil {
 		return nil, err
 	}
-	return distsql.Select(ctx, c.SessionContext, kvReq, c.FieldTypes)
+	return distsql.Select(ctx, c.DistSQLCtx, kvReq, c.FieldTypes)
 }
 
 func fetchTableScanResult(
@@ -302,7 +308,7 @@ func fetchTableScanResult(
 	}
 	err = table.FillVirtualColumnValue(
 		copCtx.VirtualColumnsFieldTypes, copCtx.VirtualColumnsOutputOffsets,
-		copCtx.ExprColumnInfos, copCtx.ColumnInfos, copCtx.SessionContext, chk)
+		copCtx.ExprColumnInfos, copCtx.ColumnInfos, copCtx.ExprCtx, chk)
 	return false, err
 }
 
@@ -340,44 +346,43 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 	return dtToRestored
 }
 
-func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
+func buildDAGPB(exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
-	sc := sCtx.GetSessionVars().StmtCtx
-	dagReq.Flags = sc.PushDownFlags()
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(exprCtx.GetEvalCtx().Location())
+	dagReq.Flags = pushDownFlags
 	for i := range colInfos {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	execPB, err := constructTableScanPB(sCtx, tblInfo, colInfos)
+	execPB, err := constructTableScanPB(exprCtx, tblInfo, colInfos)
 	if err != nil {
 		return nil, err
 	}
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	distsql.SetEncodeType(sCtx, dagReq)
+	distsql.SetEncodeType(distSQLCtx, dagReq)
 	return dagReq, nil
 }
 
-func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
+func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
 	tblScan.TableId = tblInfo.ID
-	err := tables.SetPBColumnsDefaultValue(sCtx, tblScan.Columns, colInfos)
+	err := tables.SetPBColumnsDefaultValue(ctx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
+func extractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
 	for i, offset := range offsets {
 		c := expCols[offset]
-		row.DatumWithBuffer(offset, c.GetType(), &buf[i])
+		row.DatumWithBuffer(offset, c.GetType(ctx), &buf[i])
 	}
 	return buf
 }
 
 func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
-	pkInfo *model.IndexInfo, stmtCtx *stmtctx.StatementContext) (kv.Handle, error) {
+	pkInfo *model.IndexInfo, loc *time.Location, errCtx errctx.Context) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
-		handleBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, pkDts...)
-		err = stmtCtx.HandleError(err)
+		handleBytes, err := codec.EncodeKey(loc, nil, pkDts...)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, err
 		}

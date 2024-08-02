@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/testutil",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/ddl/logutil",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/parser/model",
@@ -15,7 +16,6 @@ go_library(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/types",
-        "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",

@@ -50,9 +50,7 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	// Figure out regional variations
-	settings := &Misspell{
-		Locale: "",
-	}
+	settings := &Misspell{}
 
 	if len(settings.IgnoreWords) != 0 {
 		r.RemoveRule(settings.IgnoreWords)

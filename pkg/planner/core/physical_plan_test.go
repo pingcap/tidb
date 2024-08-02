@@ -20,7 +20,9 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -29,9 +31,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -220,7 +223,7 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -228,7 +231,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("explain select a, sum(b) from t group by a, c")
@@ -269,13 +272,13 @@ func TestMPPHintsWithBinding(t *testing.T) {
 }
 
 func TestJoinHintCompatibilityWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("select * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
@@ -302,7 +305,7 @@ func TestJoinHintCompatibilityWithVariable(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
@@ -391,7 +394,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		require.Equal(t, tt.plan, core.ToString(p), comment)
-		root, ok := p.(core.PhysicalPlan)
+		root, ok := p.(base.PhysicalPlan)
 		if !ok {
 			continue
 		}
@@ -399,7 +402,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 	}
 }
 
-func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
+func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 	if p, ok := root.(*core.PhysicalTableReader); ok {
 		if p.TablePlans != nil {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
@@ -440,13 +443,13 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 }
 
 func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int, client_type tinyint, client_no char(18), taxpayer_no varchar(50), status tinyint, update_time datetime)")
 	tk.MustExec("alter table t1 set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t1")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("create table t2 (id int, company_no char(18), name varchar(200), tax_registry_no varchar(30))")
 	tk.MustExec("insert into t1(id, taxpayer_no, client_no, client_type, status, update_time) values (1, 'TAX001', 'Z9005', 1, 1, '2024-02-18 10:00:00'), (2, 'TAX002', 'Z9005', 1, 0, '2024-02-18 09:00:00'), (3, 'TAX003', 'Z9005', 2, 1, '2024-02-18 08:00:00'), (4, 'TAX004', 'Z9006', 1, 1, '2024-02-18 12:00:00')")
@@ -456,36 +459,56 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	tk.MustExec(sql)
 	info := tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	p, ok := info.Plan.(core.Plan)
+	p, ok := info.Plan.(base.Plan)
 	require.True(t, ok)
 
-	var findTableScan func(p core.Plan) *core.PhysicalTableScan
-	findTableScan = func(p core.Plan) *core.PhysicalTableScan {
+	var findSelection func(p base.Plan) *core.PhysicalSelection
+	findSelection = func(p base.Plan) *core.PhysicalSelection {
 		if p == nil {
 			return nil
 		}
 		switch v := p.(type) {
-		case *core.PhysicalTableScan:
-			if v.Table.Name.L == "t1" {
-				return v
+		case *core.PhysicalSelection:
+			if len(v.Children()) == 1 {
+				if ts, ok := v.Children()[0].(*core.PhysicalTableScan); ok && ts.Table.Name.L == "t1" {
+					return v
+				}
 			}
 			return nil
 		case *core.PhysicalTableReader:
-			return findTableScan(v.TablePlans[0])
+			for _, child := range v.TablePlans {
+				if sel := findSelection(child); sel != nil {
+					return sel
+				}
+			}
+			return nil
 		default:
-			physicayPlan := p.(core.PhysicalPlan)
+			physicayPlan := p.(base.PhysicalPlan)
 			for _, child := range physicayPlan.Children() {
-				if ts := findTableScan(child); ts != nil {
-					return ts
+				if sel := findSelection(child); sel != nil {
+					return sel
 				}
 			}
 			return nil
 		}
 	}
-	ts := findTableScan(p)
+	sel := findSelection(p)
+	require.NotNil(t, sel)
+	ts := sel.Children()[0].(*core.PhysicalTableScan)
 	require.NotNil(t, ts)
+	// manually push down the condition `client_no = c.company_no`
+	var selected expression.Expression
+	for _, cond := range sel.Conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.Function.PbCode() == tipb.ScalarFuncSig_EQString {
+			selected = cond
+			break
+		}
+	}
+	if selected != nil {
+		core.PushedDown(sel, ts, []expression.Expression{selected}, 0.1)
+	}
 
-	pb, err := ts.ToPB(tk.Session(), kv.TiFlash)
+	pb, err := ts.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	// make sure the pushed down filter condition is correct
 	require.Equal(t, 1, len(pb.TblScan.PushedDownFilterConditions))
@@ -493,5 +516,5 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	// make sure the correlated columns are extracted correctly
 	correlated := ts.ExtractCorrelatedCols()
 	require.Equal(t, 1, len(correlated))
-	require.Equal(t, "test.t2.company_no", correlated[0].String())
+	require.Equal(t, "test.t2.company_no", correlated[0].StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 }

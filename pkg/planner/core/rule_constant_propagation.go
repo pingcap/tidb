@@ -19,6 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // constantPropagationSolver can support constant propagated cross-query block.
@@ -50,10 +52,10 @@ type constantPropagationSolver struct {
 // which is mainly implemented in the interface "constantPropagation" of LogicalPlan.
 // Currently only the Logical Join implements this function. (Used for the subquery in FROM List)
 // In the future, the Logical Apply will implements this function. (Used for the subquery in WHERE or SELECT list)
-func (cp *constantPropagationSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (cp *constantPropagationSolver) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	// constant propagation root plan
-	newRoot := p.constantPropagation(nil, 0, opt)
+	newRoot := p.ConstantPropagation(nil, 0, opt)
 
 	// recursive optimize
 	for i, children := range p.Children() {
@@ -67,13 +69,13 @@ func (cp *constantPropagationSolver) optimize(_ context.Context, p LogicalPlan, 
 }
 
 // execOptimize optimize constant propagation exclude root plan node
-func (cp *constantPropagationSolver) execOptimize(currentPlan LogicalPlan, parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) {
+func (cp *constantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) {
 	if parentPlan == nil {
 		// Attention: The function 'execOptimize' could not handle the root plan, so the parent plan could not be nil.
 		return
 	}
 	// constant propagation
-	currentPlan.constantPropagation(parentPlan, currentChildIdx, opt)
+	currentPlan.ConstantPropagation(parentPlan, currentChildIdx, opt)
 	// recursive optimize
 	for i, children := range currentPlan.Children() {
 		cp.execOptimize(children, currentPlan, i, opt)
@@ -84,151 +86,10 @@ func (*constantPropagationSolver) name() string {
 	return "constant_propagation"
 }
 
-func (*baseLogicalPlan) constantPropagation(_ LogicalPlan, _ int, _ *logicalOptimizeOp) (newRoot LogicalPlan) {
-	// Only LogicalJoin can apply constant propagation
-	// Other Logical plan do nothing
-	return nil
-}
-
-// Implemented the logic of constant propagation in From List
-// Query: select * from t, (select a, b from s where s.a>1) tmp where tmp.a=t.a
-// Origin logical plan:
-/*
-            +----------------+
-            |  LogicalJoin   |
-            +-------^--------+
-                    |
-      +-------------+--------------+
-      |                            |
-+-----+------+              +------+------+
-| Projection |              | TableScan   |
-+-----^------+              +-------------+
-      |
-      |
-+-----+------+
-| Selection  |
-|   s.a>1    |
-+------------+
-*/
-//  1. 'pullUpConstantPredicates': Call this function until find selection and pull up the constant predicate layer by layer
-//     LogicalSelection: find the s.a>1
-//     LogicalProjection: get the s.a>1 and pull up it, changed to tmp.a>1
-//  2. 'addCandidateSelection': Add selection above of LogicalJoin,
-//     put all predicates pulled up from the lower layer into the current new selection.
-//     LogicalSelection: tmp.a >1
-//
-// Optimized plan:
-/*
-            +----------------+
-            |  Selection     |
-            |    tmp.a>1     |
-            +-------^--------+
-                    |
-            +-------+--------+
-            |  LogicalJoin   |
-            +-------^--------+
-                    |
-      +-------------+--------------+
-      |                            |
-+-----+------+              +------+------+
-| Projection |              | TableScan   |
-+-----^------+              +-------------+
-      |
-      |
-+-----+------+
-| Selection  |
-|   s.a>1    |
-+------------+
-*/
-// Return nil if the root of plan has not been changed
-// Return new root if the root of plan is changed to selection
-func (logicalJoin *LogicalJoin) constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
-	// step1: get constant predicate from left or right according to the JoinType
-	var getConstantPredicateFromLeft bool
-	var getConstantPredicateFromRight bool
-	switch logicalJoin.JoinType {
-	case LeftOuterJoin:
-		getConstantPredicateFromLeft = true
-	case RightOuterJoin:
-		getConstantPredicateFromRight = true
-	case InnerJoin:
-		getConstantPredicateFromLeft = true
-		getConstantPredicateFromRight = true
-	default:
-		return
-	}
-	var candidateConstantPredicates []expression.Expression
-	if getConstantPredicateFromLeft {
-		candidateConstantPredicates = logicalJoin.children[0].pullUpConstantPredicates()
-	}
-	if getConstantPredicateFromRight {
-		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.children[1].pullUpConstantPredicates()...)
-	}
-	if len(candidateConstantPredicates) == 0 {
-		return
-	}
-
-	// step2: add selection above of LogicalJoin
-	return addCandidateSelection(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
-}
-
-func (*baseLogicalPlan) pullUpConstantPredicates() []expression.Expression {
-	// Only LogicalProjection and LogicalSelection can get constant predicates
-	// Other Logical plan return nil
-	return nil
-}
-
-func (selection *LogicalSelection) pullUpConstantPredicates() []expression.Expression {
-	var result []expression.Expression
-	for _, candidatePredicate := range selection.Conditions {
-		// the candidate predicate should be a constant and compare predicate
-		match := validCompareConstantPredicate(candidatePredicate)
-		if match {
-			result = append(result, candidatePredicate)
-		}
-	}
-	return result
-}
-
-func (projection *LogicalProjection) pullUpConstantPredicates() []expression.Expression {
-	// projection has no column expr
-	if !canProjectionBeEliminatedLoose(projection) {
-		return nil
-	}
-	candidateConstantPredicates := projection.children[0].pullUpConstantPredicates()
-	// replace predicate by projection expr
-	// candidate predicate : a=1
-	// projection: a as a'
-	// result predicate : a'=1
-	replace := make(map[string]*expression.Column)
-	for i, expr := range projection.Exprs {
-		replace[string(expr.HashCode())] = projection.Schema().Columns[i]
-	}
-	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
-	for _, predicate := range candidateConstantPredicates {
-		// The column of predicate must exist in projection exprs
-		columns := expression.ExtractColumns(predicate)
-		// The number of columns in candidate predicate must be 1.
-		if len(columns) != 1 {
-			continue
-		}
-		if replace[string(columns[0].HashCode())] == nil {
-			// The column of predicate will not appear on the upper level
-			// This means that this predicate does not apply to the constant propagation optimization rule
-			// For example: select * from t, (select b from s where s.a=1) tmp where t.b=s.b
-			continue
-		}
-		clonePredicate := predicate.Clone()
-		ResolveExprAndReplace(clonePredicate, replace)
-		result = append(result, clonePredicate)
-	}
-	return result
-}
-
 // validComparePredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
 // return param1: return true, if the predicate is a compare constant predicate.
 // return param2: return the column side of predicate.
-func validCompareConstantPredicate(candidatePredicate expression.Expression) bool {
+func validCompareConstantPredicate(ctx expression.EvalContext, candidatePredicate expression.Expression) bool {
 	scalarFunction, ok := candidatePredicate.(*expression.ScalarFunction)
 	if !ok {
 		return false
@@ -238,48 +99,12 @@ func validCompareConstantPredicate(candidatePredicate expression.Expression) boo
 		scalarFunction.FuncName.L != ast.EQ {
 		return false
 	}
-	column, _ := expression.ValidCompareConstantPredicateHelper(scalarFunction, true)
+	column, _ := expression.ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
 	if column == nil {
-		column, _ = expression.ValidCompareConstantPredicateHelper(scalarFunction, false)
+		column, _ = expression.ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
 	}
 	if column == nil {
 		return false
 	}
 	return true
-}
-
-// Add a new selection between parent plan and current plan with candidate predicates
-/*
-+-------------+                                    +-------------+
-| parentPlan  |                                    | parentPlan  |
-+-----^-------+                                    +-----^-------+
-      |           --addCandidateSelection--->            |
-+-----+-------+                              +-----------+--------------+
-| currentPlan |                              |        selection         |
-+-------------+                              |   candidate predicate    |
-                                             +-----------^--------------+
-                                                         |
-                                                         |
-                                                    +----+--------+
-                                                    | currentPlan |
-                                                    +-------------+
-*/
-// If the currentPlan at the top of query plan, return new root plan (selection)
-// Else return nil
-func addCandidateSelection(currentPlan LogicalPlan, currentChildIdx int, parentPlan LogicalPlan,
-	candidatePredicates []expression.Expression, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
-	// generate a new selection for candidatePredicates
-	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.QueryBlockOffset())
-	// add selection above of p
-	if parentPlan == nil {
-		newRoot = selection
-	} else {
-		parentPlan.SetChild(currentChildIdx, selection)
-	}
-	selection.SetChildren(currentPlan)
-	appendAddSelectionTraceStep(parentPlan, currentPlan, selection, opt)
-	if parentPlan == nil {
-		return newRoot
-	}
-	return nil
 }

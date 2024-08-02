@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -269,7 +270,8 @@ func TestRowFormatWithChecksums(t *testing.T) {
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	require.NoError(t, err)
 	// row value with checksums
-	require.Equal(t, []byte{0x80, 0x2, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x8, 0x52, 0x78, 0xc9, 0x28, 0x52, 0x78, 0xc9, 0x28}, data.Info.Writes[0].ShortValue)
+	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x1, 0xea, 0xb0, 0x41, 0x20}
+	require.Equal(t, expected, data.Info.Writes[0].ShortValue)
 	tk.MustExec("drop table if exists t")
 }
 
@@ -292,7 +294,8 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	require.NoError(t, err)
 	// checksum skipped and with a null col vv
-	require.Equal(t, []byte{0x80, 0x0, 0x3, 0x0, 0x1, 0x0, 0x1, 0x2, 0x4, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33}, data.Info.Writes[0].ShortValue)
+	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x1, 0x0, 0x1, 0x2, 0x4, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x1, 0xa8, 0x88, 0x6f, 0xc8}
+	require.Equal(t, expected, data.Info.Writes[0].ShortValue)
 	tk.MustExec("drop table if exists t")
 }
 
@@ -303,7 +306,7 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 // It's good because the insert / update logic will cast the related column to changing column rather than use
 // origin default value directly.
 func TestChangingColOriginDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -317,14 +320,12 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2)")
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
-	originalHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
 	)
 	i := 0
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -369,11 +370,9 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			}
 			i++
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
-	dom.DDL().SetHook(originalHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
@@ -487,6 +486,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
+	var firstJobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -495,34 +495,58 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			return
 		}
 
+		if firstJobID == 0 {
+			firstJobID = job.ID
+		}
 		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
 			tbl := external.GetTableByName(t, tk, "test", "t")
 			if len(tbl.WritableCols()) != 4 {
-				errMsg := fmt.Sprintf("cols len:%v", len(tbl.WritableCols()))
+				errMsg := fmt.Sprintf("job ID:%d, cols len:%v", job.ID, len(tbl.WritableCols()))
 				checkErr = errors.New("assert the writable column number error" + errMsg)
 				return
 			}
-			originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-			expectVal := "0000-00-00 00:00:00"
-			if originalDV != expectVal {
-				errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
-				checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-				return
+			// modify column x
+			if job.ID == firstJobID {
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := "0000-00-00 00:00:00"
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
+					return
+				}
+				// The cast value will be inserted into changing column too.
+				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
+				if err != nil {
+					checkErr = err
+					return
+				}
 			}
-			// The casted value will be inserted into changing column too.
-			_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
-			if err != nil {
-				checkErr = err
-				return
+			// modify column b
+			if job.ID == firstJobID+1 {
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := ""
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
+					return
+				}
+				// The cast value will be inserted into changing column too.
+				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE a = '1'")
+				if err != nil {
+					checkErr = err
+					return
+				}
 			}
 		}
 	}
 
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
+	tk.MustExec("insert into t(a) value('1')")
+	tk.MustExec("alter table t modify column b varchar(256) default (REPLACE(UPPER(UUID()), '-', ''));")
 	dom.DDL().SetHook(originalHook)
 	require.NoError(t, checkErr)
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("18apf -729850476163 3771-02-28 13:00:11"))
 	tk.MustExec("drop table if exists t")
 }
 

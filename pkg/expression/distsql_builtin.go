@@ -16,13 +16,11 @@ package expression
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -43,11 +41,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	if err != nil {
 		return nil, err
 	}
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
 		f = &builtinCastIntAsIntSig{newBaseBuiltinCastFunc(base, false)}
@@ -502,12 +496,12 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_BitCount:
 		f = &builtinBitCountSig{base}
 	case tipb.ScalarFuncSig_GetParamString:
-		f = &builtinGetParamStringSig{base}
+		f = &builtinGetParamStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GetVar:
-		f = &builtinGetStringVarSig{base}
+		f = &builtinGetStringVarSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_RowSig:
 	case tipb.ScalarFuncSig_SetVar:
-		f = &builtinSetStringVarSig{base}
+		f = &builtinSetStringVarSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesDecimal:
 	// 	f = &builtinValuesDecimalSig{base}
 	// case tipb.ScalarFuncSig_ValuesDuration:
@@ -601,29 +595,29 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_Database:
 		f = &builtinDatabaseSig{base}
 	case tipb.ScalarFuncSig_FoundRows:
-		f = &builtinFoundRowsSig{base}
+		f = &builtinFoundRowsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CurrentUser:
-		f = &builtinCurrentUserSig{base}
+		f = &builtinCurrentUserSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_User:
-		f = &builtinUserSig{base}
+		f = &builtinUserSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ConnectionID:
-		f = &builtinConnectionIDSig{base}
+		f = &builtinConnectionIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LastInsertID:
-		f = &builtinLastInsertIDSig{base}
+		f = &builtinLastInsertIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LastInsertIDWithID:
-		f = &builtinLastInsertIDWithIDSig{base}
+		f = &builtinLastInsertIDWithIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Version:
 		f = &builtinVersionSig{base}
 	case tipb.ScalarFuncSig_TiDBVersion:
 		f = &builtinTiDBVersionSig{base}
 	case tipb.ScalarFuncSig_RowCount:
-		f = &builtinRowCountSig{base}
+		f = &builtinRowCountSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Sleep:
-		f = &builtinSleepSig{base}
+		f = &builtinSleepSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Lock:
-		f = &builtinLockSig{base}
+		f = &builtinLockSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ReleaseLock:
-		f = &builtinReleaseLockSig{base}
+		f = &builtinReleaseLockSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DecimalAnyValue:
 		f = &builtinDecimalAnyValueSig{base}
 	case tipb.ScalarFuncSig_DurationAnyValue:
@@ -700,7 +694,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinJSONArrayAppendSig{base}
 	case tipb.ScalarFuncSig_JsonArrayInsertSig:
 		f = &builtinJSONArrayInsertSig{base}
-	// case tipb.ScalarFuncSig_JsonMergePatchSig:
+	case tipb.ScalarFuncSig_JsonMergePatchSig:
+		f = &builtinJSONMergePatchSig{base}
 	case tipb.ScalarFuncSig_JsonMergePreserveSig:
 		f = &builtinJSONMergeSig{base}
 	case tipb.ScalarFuncSig_JsonContainsPathSig:
@@ -1079,7 +1074,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_ToBinary:
 		f = &builtinInternalToBinarySig{base}
 	case tipb.ScalarFuncSig_FromBinary:
-		f = &builtinInternalFromBinarySig{base}
+		// TODO: set the `cannotConvertStringAsWarning` accordingly
+		f = &builtinInternalFromBinarySig{base, false}
 
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
@@ -1119,7 +1115,7 @@ func PBToExprs(ctx BuildContext, pbExprs []*tipb.Expr, fieldTps []*types.FieldTy
 
 // PBToExpr converts pb structure to expression.
 func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expression, error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	evalCtx := ctx.GetEvalCtx()
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)
@@ -1148,7 +1144,7 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 	case tipb.ExprType_MysqlDuration:
 		return convertDuration(expr.Val)
 	case tipb.ExprType_MysqlTime:
-		return convertTime(expr.Val, expr.FieldType, sc.TimeZone())
+		return convertTime(expr.Val, expr.FieldType, evalCtx.Location())
 	case tipb.ExprType_MysqlJson:
 		return convertJSON(expr.Val)
 	case tipb.ExprType_MysqlEnum:

@@ -17,6 +17,7 @@ package optimizor_test
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -97,7 +98,7 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-
+	<-server.RunInGoTestChan
 	client.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(srv.StatusListenerAddr())
 	client.WaitUntilServerOnline()
@@ -190,7 +191,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	var dbName, tableName string
 	var modifyCount, count int64
 	var other any
-	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count, &other)
 	require.NoError(t, err)
 	require.Equal(t, "planReplayer", dbName)
 	require.Equal(t, "t", tableName)
@@ -434,13 +435,15 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 
 	// time1, ts1: before everything starts
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
 	time1 := time.Now()
 	ts1 := oracle.GoTimeToTS(time1)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a))")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 

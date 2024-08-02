@@ -68,6 +68,8 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+	// Marker is a special log redact behavior
+	Marker = "MARKER"
 
 	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
 	// even if the performance might be slowed down.
@@ -140,10 +142,10 @@ type SysVar struct {
 	SetSession func(*SessionVars, string) error
 	// SetGlobal is called after validation
 	SetGlobal func(context.Context, *SessionVars, string) error
-	// IsHintUpdatableVerfied indicate whether we've confirmed that SET_VAR() hint is worked for this hint.
-	IsHintUpdatableVerfied bool
+	// IsHintUpdatableVerified indicate whether we've confirmed that SET_VAR() hint is worked for this hint.
+	IsHintUpdatableVerified bool
 	// Deprecated: Hidden previously meant that the variable still responds to SET but doesn't show up in SHOW VARIABLES
-	// However, this feature is no longer used. All variables are visble.
+	// However, this feature is no longer used. All variables are visible.
 	Hidden bool
 	// Aliases is a list of sysvars that should also be updated when this sysvar is updated.
 	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)
@@ -211,9 +213,6 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 		ok  bool
 		val string
 	)
-	if val, ok = s.stmtVars[sv.Name]; ok {
-		return val, nil
-	}
 	if val, ok = s.systems[sv.Name]; !ok {
 		return val, errors.New("sysvar has not yet loaded")
 	}

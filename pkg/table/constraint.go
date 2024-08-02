@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -81,7 +80,7 @@ func ToConstraint(constraintInfo *model.ConstraintInfo, tblInfo *model.TableInfo
 	}, nil
 }
 
-func buildConstraintExpression(ctx sessionctx.Context, exprString string, db string, tblInfo *model.TableInfo) (expression.Expression, error) {
+func buildConstraintExpression(ctx expression.BuildContext, exprString string, db string, tblInfo *model.TableInfo) (expression.Expression, error) {
 	expr, err := expression.ParseSimpleExpr(ctx, exprString, expression.WithTableInfo(db, tblInfo))
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
@@ -234,12 +233,12 @@ func hasSpecifiedCol(cols []model.CIStr, col model.CIStr) bool {
 }
 
 // IfCheckConstraintExprBoolType checks whether the check expression is bool type
-func IfCheckConstraintExprBoolType(info *model.ConstraintInfo, tableInfo *model.TableInfo) error {
+func IfCheckConstraintExprBoolType(ctx expression.EvalContext, info *model.ConstraintInfo, tableInfo *model.TableInfo) error {
 	cons, err := ToConstraint(info, tableInfo)
 	if err != nil {
 		return err
 	}
-	if !mysql.HasIsBooleanFlag(cons.ConstraintExpr.GetType().GetFlag()) {
+	if !mysql.HasIsBooleanFlag(cons.ConstraintExpr.GetType(ctx).GetFlag()) {
 		return dbterror.ErrNonBooleanExprForCheckConstraint.GenWithStackByArgs(cons.Name)
 	}
 	return nil

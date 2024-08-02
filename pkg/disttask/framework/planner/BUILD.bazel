@@ -9,8 +9,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/planner",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
+        "//pkg/kv",
         "//pkg/sessionctx",
     ],
 )

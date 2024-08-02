@@ -1,0 +1,20 @@
+[lightning]
+task-info-schema-name = 'lightning_task_info'
+
+[tikv-importer]
+backend = 'local'
+add-index-by-sql = false
+parallel-import = true
+
+[conflict]
+strategy = "replace"
+precheck-conflict-before-import= true
+
+[checkpoint]
+enable = false
+
+[mydumper]
+batch-size = 1
+
+[mydumper.csv]
+header = true

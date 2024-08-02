@@ -276,7 +276,7 @@ func TestCollectCopRuntimeStats(t *testing.T) {
 	rows := tk.MustQuery("explain analyze select * from t1").Rows()
 	require.Len(t, rows, 2)
 	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*rpc_num: .*, .*regionMiss:.*", explain)
+	require.Regexp(t, ".*num_rpc:.*, .*regionMiss:.*", explain)
 	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreRespResult"))
 }
 
@@ -361,9 +361,9 @@ func TestCoprocessorOOMTiCase(t *testing.T) {
 }
 
 func TestIssue21441(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/issue21441", `return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/union/issue21441", `return`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue21441"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/union/issue21441"))
 	}()
 
 	store := testkit.CreateMockStore(t)
@@ -591,7 +591,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
 
 	// Test for stale read.
 	tk.MustExec("set @a=now(6);")
@@ -599,7 +599,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
 
 	// Test for tikv_client_read_timeout session variable.
 	tk.MustExec("set @@tikv_client_read_timeout=1;")
@@ -619,7 +619,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
 
 	// Test for stale read.
 	tk.MustExec("set @a=now(6);")
@@ -627,7 +627,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
 }
 
 func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
@@ -698,4 +698,22 @@ func TestHandleForeignKeyCascadePanic(t *testing.T) {
 	}()
 	err := tk.ExecToErr("replace into t1 values (1, 2);")
 	require.ErrorContains(t, err, "handleForeignKeyCascadeError")
+}
+
+func TestBuildProjectionForIndexJoinPanic(t *testing.T) {
+	// Test no goroutine leak.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int, b varchar(8));")
+	tk.MustExec("insert into t1 values(1,'1');")
+	tk.MustExec("create table t2(a int , b varchar(8) GENERATED ALWAYS AS (c) VIRTUAL, c varchar(8), PRIMARY KEY (a));")
+	tk.MustExec("insert into t2(a) values(1);")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/buildProjectionForIndexJoinPanic", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/buildProjectionForIndexJoinPanic"))
+	}()
+	err := tk.QueryToErr("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a;")
+	require.ErrorContains(t, err, "buildProjectionForIndexJoinPanic")
 }

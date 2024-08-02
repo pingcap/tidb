@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "logutil",
     srcs = [
+        "general_logger.go",
         "hex.go",
         "log.go",
         "slow_query_logger.go",
@@ -18,6 +19,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//tikv",
+        "@org_golang_x_net//http/httpproxy",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//buffer",
         "@org_uber_go_zap//zapcore",

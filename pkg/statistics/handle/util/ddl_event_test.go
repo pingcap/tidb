@@ -24,7 +24,8 @@ import (
 func TestEventString(t *testing.T) {
 	// Create an Event object
 	e := &DDLEvent{
-		tp: model.ActionAddColumn,
+		tp:       model.ActionAddColumn,
+		schemaID: 1,
 		tableInfo: &model.TableInfo{
 			ID:   1,
 			Name: model.NewCIStr("Table1"),
@@ -55,7 +56,7 @@ func TestEventString(t *testing.T) {
 	result := e.String()
 
 	// Check the result
-	expected := "(Event Type: add column, Table ID: 1, Table Name: Table1, " +
+	expected := "(Event Type: add column, Schema ID: 1, Table ID: 1, Table Name: Table1, " +
 		"Partition IDs: [2 3], Old Table ID: 4, Old Table Name: Table2, " +
 		"Old Partition IDs: [5 6], Column ID: 7, Column Name: Column1, " +
 		"Column ID: 8, Column Name: Column2"

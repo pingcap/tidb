@@ -24,24 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
-)
-
-var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
-var errFailToAddChunk = errors.New("fail to add chunk")
-
-// It should be const, but we need to modify it for test.
-var spillChunkSize = 1024
-
-// signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
-const signalCheckpointForSort uint = 10240
-
-const (
-	notSpilled = iota
-	inSpilling
-	spillTriggered
 )
 
 type sortPartition struct {
@@ -110,7 +93,7 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 	return retVal
 }
 
-func (s *sortPartition) close() error {
+func (s *sortPartition) close() {
 	s.syncLock.Lock()
 	defer s.syncLock.Unlock()
 	s.closed = true
@@ -118,23 +101,6 @@ func (s *sortPartition) close() error {
 		s.inDisk.Close()
 	}
 	s.getMemTracker().ReplaceBytesUsed(0)
-	return nil
-}
-
-func (s *sortPartition) reloadCursor() (bool, error) {
-	spilledChkNum := s.inDisk.NumChunks()
-	restoredChkID := s.cursor.getChkID() + 1
-	if restoredChkID >= spilledChkNum {
-		// All data has been consumed
-		return false, nil
-	}
-
-	chk, err := s.inDisk.GetChunk(restoredChkID)
-	if err != nil {
-		return false, err
-	}
-	s.cursor.setChunk(chk, restoredChkID)
-	return true, nil
 }
 
 // Return false if the spill is triggered in this partition.
@@ -236,7 +202,7 @@ func (s *sortPartition) spillToDiskImpl() (err error) {
 }
 
 // We can only call this function under the protection of `syncLock`.
-func (s *sortPartition) spillToDisk(tracker *memory.Tracker) error {
+func (s *sortPartition) spillToDisk() error {
 	s.syncLock.Lock()
 	defer s.syncLock.Unlock()
 	if s.isSpillTriggered() {
@@ -252,9 +218,6 @@ func (s *sortPartition) spillToDisk(tracker *memory.Tracker) error {
 	defer s.cond.Broadcast()
 	defer s.setSpillTriggered()
 
-	logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-		zap.Int64("consumed", tracker.BytesConsumed()), zap.Int64("quota", tracker.GetBytesLimit()))
-
 	err = s.spillToDiskImpl()
 	return err
 }
@@ -265,7 +228,7 @@ func (s *sortPartition) getNextSortedRow() (chunk.Row, error) {
 	if s.isSpillTriggered() {
 		row := s.cursor.next()
 		if row.IsEmpty() {
-			success, err := s.reloadCursor()
+			success, err := reloadCursor(s.cursor, s.inDisk)
 			if err != nil {
 				return chunk.Row{}, err
 			}

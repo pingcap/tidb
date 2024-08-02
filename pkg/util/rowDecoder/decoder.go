@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -81,7 +81,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx exprctx.BuildContext, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
 		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
@@ -138,7 +138,7 @@ func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
 // In the function, we only decode the existed column in the row and fill the default value.
 // For changing column, we shouldn't cast it here, because we will do a unified cast operation latter.
 // For generated column, we didn't cast it here too, because the eval process will depend on the changing column.
-func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx exprctx.BuildContext, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
 		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
@@ -174,7 +174,7 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 
 // EvalRemainedExprColumnMap is used by ddl column-type-change first column reorg stage.
 // It is always called after DecodeTheExistedColumnMap to finish the generated column evaluation.
-func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx exprctx.BuildContext, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	keys := make([]int, 0, len(rd.colMap))
 	ids := make(map[int]int, len(rd.colMap))
 	for k, col := range rd.colMap {
@@ -188,11 +188,11 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, row map[
 			continue
 		}
 		// Eval the column value
-		val, err := col.GenExpr.Eval(ctx, rd.mutRow.ToRow())
+		val, err := col.GenExpr.Eval(ctx.GetEvalCtx(), rd.mutRow.ToRow())
 		if err != nil {
 			return nil, err
 		}
-		val, err = table.CastValue(ctx, *val.Clone(), col.Col.ColumnInfo, false, true)
+		val, err = table.CastColumnValue(ctx, *val.Clone(), col.Col.ColumnInfo, false, true)
 		if err != nil {
 			return nil, err
 		}

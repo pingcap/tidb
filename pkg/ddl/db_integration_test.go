@@ -24,12 +24,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode"
 
 	"github.com/pingcap/errors"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -42,14 +42,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -73,7 +74,7 @@ func TestCreateTableIfNotExistsLike(t *testing.T) {
 	require.GreaterOrEqual(t, len(warnings), 1)
 	lastWarn := warnings[len(warnings)-1]
 	require.Truef(t, terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), "err %v", lastWarn.Err)
-	require.Equal(t, stmtctx.WarnLevelNote, lastWarn.Level)
+	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
 
 	// Test duplicate create-table without `LIKE` clause
 	tk.MustExec("create table if not exists ct(b bigint, c varchar(60));")
@@ -373,7 +374,7 @@ func TestTableDDLWithTimeType(t *testing.T) {
 }
 
 func TestUpdateMultipleTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int)")
@@ -383,17 +384,13 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	d := dom.DDL()
-	hook := &callback.TestDDLCallback{Do: dom}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
 			tk2.MustQuery("select * from t2").Check(testkit.Rows("1 10", "2 10"))
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(hook)
+	})
 
 	tk.MustExec("alter table t1 add column c3 bigint default 9")
 
@@ -812,7 +809,7 @@ func TestZeroFillCreateTable(t *testing.T) {
 	tk.MustExec("drop table if exists abc;")
 	tk.MustExec("create table abc(y year, z tinyint(10) zerofill, primary key(y));")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("abc"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("abc"))
 	require.NoError(t, err)
 	var yearCol, zCol *model.ColumnInfo
 	for _, col := range tbl.Meta().Columns {
@@ -1028,7 +1025,7 @@ func TestResolveCharset(t *testing.T) {
 	tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
 	require.NoError(t, err)
 	require.Equal(t, "latin1", tbl.Cols()[0].GetCharset())
 	tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
@@ -1038,14 +1035,14 @@ func TestResolveCharset(t *testing.T) {
 	tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
 
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
 	require.NoError(t, err)
 	require.Equal(t, "latin1", tbl.Cols()[0].GetCharset())
 	require.Equal(t, "latin1", tbl.Meta().Charset)
 
 	tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
 	require.NoError(t, err)
 	require.Equal(t, "binary", tbl.Cols()[0].GetCharset())
 	require.Equal(t, "binary", tbl.Meta().Charset)
@@ -1134,7 +1131,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colA := tblInfo.Columns[0]
@@ -1144,7 +1141,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set b = 'b', c = 'bb'")
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colA = tblInfo.Columns[0]
@@ -1154,7 +1151,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set c = 'cc'")
 	tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[2]
@@ -1164,7 +1161,7 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("insert into test_alter_column set a = 123")
 	tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_alter_column"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
@@ -1173,7 +1170,10 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
-	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
+	tk.MustGetErrCode("insert into test_alter_column set a = DEFAULT, b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
+	tk.MustGetErrCode("insert into test_alter_column values (DEFAULT, 'd', 'dd', DEFAULT)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into test_alter_column set a = NULL, b = 'd', c = 'dd'")
+	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
@@ -1590,123 +1590,44 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` int(11) DEFAULT rand()\n" +
+			"  `c1` int(11) DEFAULT (rand())\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
 		"t1 CREATE TABLE `t1` (\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
-			"  `c1` double DEFAULT rand()\n" +
+			"  `c1` double DEFAULT (rand())\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
-			"  `c1` double DEFAULT rand(1)\n" +
+			"  `c1` double DEFAULT (rand(1))\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// use a non-existent function name
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 }
 
-func TestDefaultColumnWithReplace(t *testing.T) {
+// TestDefaultValueAsExpressions is used for tests that are inconvenient to place in the pkg/tests directory.
+func TestDefaultValueAsExpressions(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1, t2")
 
-	// create table
-	tk.MustExec("create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')))")
-	tk.MustExec("create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')))")
-	tk.MustExec("create table t2 (c int(10), c1 varchar(256) default (REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', '')))")
-	tk.MustGetErrCode("create table t1 (c int(10), c1 varchar(256) default (REPLACE('xdfj-jfj', '-', '')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
-	tk.MustGetErrCode("create table t1 (c int(10), c1 varchar(256) default (UPPER(UUID())))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
-	tk.MustGetErrCode("create table t1 (c int(10), c1 varchar(256) default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+	// date_format
+	tk.MustExec("create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')))")
+	tk.MustExec("create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')))")
+	// Error message like: Error 1292 (22007): Truncated incorrect DOUBLE value: '2024-03-05 16:37:25'.
+	tk.MustGetErrCode("insert into t6(c) values (1)", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("insert into t7(c) values (1)", errno.ErrTruncatedWrongValue)
 
-	// add column with default expression for table t is forbidden in MySQL 8.0
-	tk.MustGetErrCode("alter table t add column c2 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''))", errno.ErrBinlogUnsafeSystemFunction)
-	tk.MustGetErrCode("alter table t add column c3 int default (UPPER(UUID()))", errno.ErrBinlogUnsafeSystemFunction)
-	tk.MustGetErrCode("alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', ''))", errno.ErrBinlogUnsafeSystemFunction)
-
-	// insert records
-	tk.MustExec("insert into t(c) values (1),(2),(3)")
-	// Different UUID values will result in different error code.
-	_, err := tk.Exec("insert into t1(c) values (1)")
-	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*terror.Error)
-	require.Truef(t, ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
-	sqlErr := terror.ToSQLError(tErr)
-	if int(sqlErr.Code) != errno.ErrTruncatedWrongValue {
-		require.Equal(t, errno.ErrDataOutOfRange, int(sqlErr.Code))
-	}
-
-	rows := tk.MustQuery("SELECT c1 from t").Rows()
-	for _, row := range rows {
-		d, ok := row[0].(string)
-		require.True(t, ok)
-		// It consists of uppercase letters or numbers.
-		for _, r := range d {
-			if unicode.IsUpper(r) {
-				require.True(t, unicode.IsUpper(r), fmt.Sprintf("col val:%v, r:%v", d, r))
-			} else {
-				require.True(t, unicode.IsDigit(r), fmt.Sprintf("col val:%v, r:%v", d, r))
-			}
-		}
-	}
-
-	// TODO: Implement add the "convert" function when executing "show create table".
-	// `c1` varchar(16) DEFAULT (replace(convert(upper(uuid()) using utf8mb4),_utf8mb4'-',_utf8mb4''))
-	tk.MustQuery("show create table t").Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` int(11) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table t2").Check(testkit.Rows(
-		"t2 CREATE TABLE `t2` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT replace(convert(upper(uuid()) using ''utf8mb4''), _utf8mb4''-'', _utf8mb4'''')\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(30) DEFAULT 'xx'\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("alter table t1 modify column c1 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));")
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(32) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-}
-
-func TestDefaultColumnWithUpper(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1, t2")
-
-	// create table
-	tk.MustExec("create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))))")
-	tk.MustExec("create table t1 (c int(10), c1 int default (upper(substring_index(user(),_utf8mb4'@',1))))")
-	tk.MustGetErrCode("create table t2 (c int(10), c1 varchar(256) default (substring_index(user(),'@',1)))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
-	tk.MustGetErrCode("create table t2 (c int(10), c1 varchar(256) default (upper(substring_index('fjks@jkkl','@',1))))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
-	tk.MustGetErrCode("create table t2 (c int(10), c1 varchar(256) default (upper(substring_index(user(),'x',1))))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
-
-	// add column with default expression for table t is forbidden in MySQL 8.0
-	tk.MustGetErrCode("alter table t add column c2 varchar(32) default (upper(substring_index(user(),'@',1)))", errno.ErrBinlogUnsafeSystemFunction)
-	tk.MustGetErrCode("alter table t add column c3 int default (upper(substring_index('fjks@jkkl','@',1)))", errno.ErrBinlogUnsafeSystemFunction)
-
-	// insert records
+	// user
+	tk.MustExec("create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))));")
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	tk.MustExec("insert into t(c) values (1),(2),(3)")
-	tk.MustGetErrCode("insert into t1(c) values (1)", errno.ErrTruncatedWrongValue)
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "xyz", Hostname: "localhost"}
 	tk.MustExec("insert into t(c) values (4),(5),(6)")
-
+	tk.MustExec("insert into t values (7, default)")
 	rows := tk.MustQuery("SELECT c1 from t order by c").Rows()
 	for i, row := range rows {
 		d, ok := row[0].(string)
@@ -1718,28 +1639,28 @@ func TestDefaultColumnWithUpper(t *testing.T) {
 		}
 	}
 
-	tk.MustQuery("show create table t").Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT upper(substring_index(user(), _utf8mb4''@'', 1))\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` int(11) DEFAULT upper(substring_index(user(), _utf8mb4''@'', 1))\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(30) DEFAULT 'xx'\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("alter table t1 modify column c1 varchar(32) default (upper(substring_index(user(),'@',1)));")
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(32) DEFAULT upper(substring_index(user(), _utf8mb4''@'', 1))\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// replace
+	tk.MustExec("create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')))")
+	// Different UUID values will result in different error code.
+	_, err := tk.Exec("insert into t1(c) values (1)")
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	require.Truef(t, ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	sqlErr := terror.ToSQLError(tErr)
+	if int(sqlErr.Code) != errno.ErrTruncatedWrongValue {
+		require.Equal(t, errno.ErrDataOutOfRange, int(sqlErr.Code))
+	}
+	// test modify column
+	// The error message has UUID, so put this test here.
+	tk.MustExec("create table t2(c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));")
+	tk.MustExec("insert into t2(c) values (1),(2),(3);")
+	tk.MustGetErrCode("alter table t2 modify column c1 varchar(30) default 'xx';", errno.WarnDataTruncated)
+	// test add column for enum
+	nowStr := time.Now().Format("2006-01")
+	sql := fmt.Sprintf("alter table t2 add column c3 enum('%v','n')", nowStr) + " default (date_format(now(),'%Y-%m'))"
+	tk.MustExec(sql)
+	tk.MustExec("insert into t2(c) values (4);")
+	tk.MustQuery("select c3 from t2").Check(testkit.Rows(nowStr, nowStr, nowStr, nowStr))
 }
 
 func TestChangingDBCharset(t *testing.T) {
@@ -1968,7 +1889,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	tk.MustExec("alter table t add index idx((a+b));")
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = 't'").Check(testkit.Rows())
 
-	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	columns := tblInfo.Meta().Columns
 	require.Equal(t, 3, len(columns))
@@ -1977,7 +1898,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t add index idx_multi((a+b),(a+1), b);")
-	tblInfo, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	columns = tblInfo.Meta().Columns
 	require.Equal(t, 5, len(columns))
@@ -1987,7 +1908,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t drop index idx;")
-	tblInfo, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	columns = tblInfo.Meta().Columns
 	require.Equal(t, 4, len(columns))
@@ -1995,7 +1916,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t drop index idx_multi;")
-	tblInfo, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	columns = tblInfo.Meta().Columns
 	require.Equal(t, 2, len(columns))
@@ -2820,7 +2741,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	sessionVars := tk.Session().GetSessionVars()
 	sessVarsTempTable := sessionVars.LocalTemporaryTables
 	localTemporaryTable := sessVarsTempTable.(*infoschema.SessionTables)
-	tbl, exist := localTemporaryTable.TableByName(model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
+	tbl, exist := localTemporaryTable.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
 	require.True(t, exist)
 	tblInfo := tbl.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID)
@@ -2922,7 +2843,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 
 	// truncate temporary table will clear session data
 	localTemporaryTables := tk.Session().GetSessionVars().LocalTemporaryTables.(*infoschema.SessionTables)
-	tb1, exist := localTemporaryTables.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb1, exist := localTemporaryTables.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbl1Info := tb1.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID)
 	endTablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID + 1)
@@ -3020,10 +2941,11 @@ func TestDDLLastInfo(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows("\"\" 0"))
+	lastDDLSQL := "select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')"
+	tk.MustQuery(lastDDLSQL).Check(testkit.Rows("\"\" 0"))
 	tk.MustExec("create table t(a int)")
 	firstSequence := 0
-	res := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')")
+	res := tk.MustQuery(lastDDLSQL)
 	require.Len(t, res.Rows(), 1)
 	require.Equal(t, "\"create table t(a int)\"", res.Rows()[0][0])
 	var err error
@@ -3033,10 +2955,22 @@ func TestDDLLastInfo(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test;`)
 	tk.MustExec("create table t2(a int)")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
+	tk.MustQuery(lastDDLSQL).Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
 
 	tk.MustExec("drop table t, t2")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
+	tk.MustQuery(lastDDLSQL).Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
+
+	// owner change, sequence will be reset
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterSchedulerClose", func() {
+		close(ch)
+	})
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	require.NoError(t, dom.DDL().OwnerManager().ResignOwner(context.Background()))
+	<-ch
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery(lastDDLSQL).Check(testkit.Rows(fmt.Sprintf(`"create table t(a int)" %d`, 1)))
 }
 
 func TestDefaultCollationForUTF8MB4(t *testing.T) {
@@ -3096,4 +3030,93 @@ func TestOptimizeTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrMsg("optimize table t", "[ddl:8200]OPTIMIZE TABLE is not supported")
+}
+
+func TestIssue52680(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue52680 (id bigint primary key auto_increment) auto_id_cache=1;")
+	tk.MustExec("insert into issue52680 values(default),(default);")
+	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2"))
+
+	is := dom.InfoSchema()
+	ti, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	require.NoError(t, err)
+
+	ddlutil.EmulatorGCDisable()
+	defer ddlutil.EmulatorGCEnable()
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	testSteps := []struct {
+		sql    string
+		expect meta.AutoIDGroup
+	}{
+		{sql: "", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "drop table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
+		{sql: "recover table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+	}
+	for _, step := range testSteps {
+		if step.sql != "" {
+			tk.MustExec(step.sql)
+		}
+
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		idAcc := m.GetAutoIDAccessors(ti.DBID, ti.ID)
+		ids, err := idAcc.Get()
+		require.NoError(t, err)
+		require.Equal(t, ids, step.expect)
+		txn.Rollback()
+	}
+
+	tk.MustQuery("show table issue52680 next_row_id").Check(testkit.Rows(
+		"test issue52680 id 1 _TIDB_ROWID",
+		"test issue52680 id 3 AUTO_INCREMENT",
+	))
+
+	is = dom.InfoSchema()
+	ti1, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	require.NoError(t, err)
+	require.Equal(t, ti1.ID, ti.ID)
+
+	tk.MustExec("insert into issue52680 values(default);")
+	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2", "3"))
+}
+
+func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	originCfg := config.GetGlobalConfig()
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type != model.ActionAddIndex {
+			return
+		}
+		if job.SchemaState == model.StateNone {
+			newCfg := *originCfg
+			newCfg.MaxIndexLength = 1000
+			config.StoreGlobalConfig(&newCfg)
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(id int, a json DEFAULT NULL, b varchar(2) DEFAULT NULL);")
+	tk.MustGetErrMsg("CREATE INDEX idx_test on t ((cast(a as char(2000) array)),b);", "[ddl:1071]Specified key was too long (2000 bytes); max key length is 1000 bytes")
 }

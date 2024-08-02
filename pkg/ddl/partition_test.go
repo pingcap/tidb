@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -32,19 +33,19 @@ import (
 func TestDropAndTruncatePartition(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
-	d := domain.DDL()
 	dbInfo, err := testSchemaInfo(store, "test_partition")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+	de := domain.DDLExecutor().(ddl.ExecutorForTest)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), de, dbInfo)
 	// generate 5 partition in tableInfo.
 	tblInfo, partIDs := buildTableInfoWithPartition(t, store)
 	ctx := testkit.NewTestKit(t, store).Session()
-	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-	testDropPartition(t, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
+	testCreateTable(t, ctx, de, dbInfo, tblInfo)
+	testDropPartition(t, ctx, de, dbInfo, tblInfo, []string{"p0", "p1"})
 
 	newIDs, err := genGlobalIDs(store, 2)
 	require.NoError(t, err)
-	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]}, newIDs)
+	testTruncatePartition(t, ctx, de, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]}, newIDs)
 }
 
 func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableInfo, []int64) {
@@ -107,7 +108,9 @@ func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableIn
 func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	return &model.Job{
 		SchemaID:    dbInfo.ID,
+		SchemaName:  dbInfo.Name.L,
 		TableID:     tblInfo.ID,
+		TableName:   tblInfo.Name.L,
 		SchemaState: model.StatePublic,
 		Type:        model.ActionDropTablePartition,
 		BinlogInfo:  &model.HistoryInfo{},
@@ -115,10 +118,10 @@ func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partN
 	}
 }
 
-func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
+func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -128,7 +131,9 @@ func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *
 func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
 	return &model.Job{
 		SchemaID:    dbInfo.ID,
+		SchemaName:  dbInfo.Name.L,
 		TableID:     tblInfo.ID,
+		TableName:   tblInfo.Name.L,
 		Type:        model.ActionTruncateTablePartition,
 		SchemaState: model.StatePublic,
 		BinlogInfo:  &model.HistoryInfo{},
@@ -136,10 +141,10 @@ func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, p
 	}
 }
 
-func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
+func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
 	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids, newIDs)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -237,7 +242,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 		" PARTITION `p3` VALUES LESS THAN (8000000),\n" +
 		" PARTITION `p4` VALUES LESS THAN (10000000),\n" +
 		" PARTITION `p5` VALUES LESS THAN (MAXVALUE))"))
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	require.Nil(t, tbl.Meta().Partition.AddingDefinitions)

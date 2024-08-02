@@ -332,7 +332,7 @@ update t1 set pid=1 where id>1;
 alter table t1 add foreign key (pid) references t1 (id) on update cascade;
 select sum(id) from t1;
 SET GLOBAL tidb_mem_oom_action='CANCEL';
-set @@tidb_mem_quota_query=40960;
+set @@tidb_mem_quota_query=81920;
 -- replace_regex /conn=[0-9]+/conn=<num>/
 -- error 8175
 update t1 set id=id+100000 where id=1;
@@ -377,3 +377,19 @@ disconnect conn1;
 set @@global.tidb_enable_foreign_key=default;
 set @@foreign_key_checks=default;
 
+# TestForeignKeyOtherSchema
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+create database executor__foreign_key_other_schema;
+use executor__foreign_key_other_schema;
+drop table if exists users;
+CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
+use executor__foreign_key;
+drop table if exists orders;
+CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES executor__foreign_key_other_schema.users(id));
+alter table orders modify user_id int null;
+show create table orders;
+drop table if exists orders;
+drop database executor__foreign_key_other_schema;
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;

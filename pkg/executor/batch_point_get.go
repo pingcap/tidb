@@ -25,17 +25,17 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -46,26 +46,27 @@ type BatchPointGetExec struct {
 	exec.BaseExecutor
 	indexUsageReporter *exec.IndexUsageReporter
 
-	tblInfo     *model.TableInfo
-	idxInfo     *model.IndexInfo
-	handles     []kv.Handle
-	physIDs     []int64
-	partExpr    *tables.PartitionExpr
-	partPos     int
+	tblInfo *model.TableInfo
+	idxInfo *model.IndexInfo
+	handles []kv.Handle
+	// table/partition IDs for handle or index read
+	// (can be secondary unique key,
+	// and need lookup through handle)
 	planPhysIDs []int64
-	singlePart  bool
-	partTblID   int64
-	idxVals     [][]types.Datum
-	txn         kv.Transaction
-	lock        bool
-	waitTime    int64
-	inited      uint32
-	values      [][]byte
-	index       int
-	rowDecoder  *rowcodec.ChunkDecoder
-	keepOrder   bool
-	desc        bool
-	batchGetter kv.BatchGetter
+	// If != 0 then it is a single partition under Static Prune mode.
+	singlePartID   int64
+	partitionNames []model.CIStr
+	idxVals        [][]types.Datum
+	txn            kv.Transaction
+	lock           bool
+	waitTime       int64
+	inited         uint32
+	values         [][]byte
+	index          int
+	rowDecoder     *rowcodec.ChunkDecoder
+	keepOrder      bool
+	desc           bool
+	batchGetter    kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -192,29 +193,28 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.index >= len(e.values) {
 		return nil
 	}
+
+	schema := e.Schema()
+	sctx := e.BaseExecutor.Ctx()
+	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
 		e.index++
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), req)
+	err := fillRowChecksum(sctx, start, e.index, schema, e.tblInfo, e.values, e.handles, req, nil)
+	if err != nil {
+		return err
+	}
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, schema.Columns, e.columns, sctx.GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-func datumsContainNull(vals []types.Datum) bool {
-	for _, val := range vals {
-		if val.IsNull() {
-			return true
-		}
-	}
-	return false
 }
 
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
@@ -228,30 +228,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		dedup := make(map[hack.MutableString]struct{})
 		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
 		for i, idxVals := range e.idxVals {
-			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
-			if datumsContainNull(idxVals) {
-				continue
+			physID := e.tblInfo.ID
+			if e.singlePartID != 0 {
+				physID = e.singlePartID
+			} else if len(e.planPhysIDs) > i {
+				physID = e.planPhysIDs[i]
 			}
-
-			var physID int64
-			if e.partPos == core.GlobalWithoutColumnPos {
-				physID = e.tblInfo.ID
-			} else {
-				if len(e.planPhysIDs) > 0 {
-					physID = e.planPhysIDs[i]
-				} else {
-					physID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, idxVals[e.partPos])
-					if err != nil {
-						continue
-					}
-				}
-			}
-
-			// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
-			if e.singlePart && e.partTblID != physID {
-				continue
-			}
-			idxKey, err1 := EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
+			idxKey, err1 := plannercore.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
@@ -266,6 +249,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			toFetchIndexKeys = append(toFetchIndexKeys, idxKey)
 		}
 		if e.keepOrder {
+			// TODO: if multiple partitions, then the IDs needs to be
+			// in the same order as the index keys
+			// and should skip table id part when comparing
+			intest.Assert(e.singlePartID != 0 || len(e.planPhysIDs) <= 1 || e.idxInfo.Global)
 			slices.SortFunc(toFetchIndexKeys, func(i, j kv.Key) int {
 				if e.desc {
 					return j.Cmp(i)
@@ -296,37 +283,42 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 		e.handles = make([]kv.Handle, 0, len(toFetchIndexKeys))
 		if e.tblInfo.Partition != nil {
-			e.physIDs = make([]int64, 0, len(toFetchIndexKeys))
+			e.planPhysIDs = e.planPhysIDs[:0]
 		}
 		for _, key := range toFetchIndexKeys {
 			handleVal := handleVals[string(key)]
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
+			handle, err1 := tablecodec.DecodeHandleInIndexValue(handleVal)
 			if err1 != nil {
 				return err1
-			}
-			e.handles = append(e.handles, handle)
-			if rc {
-				indexKeys = append(indexKeys, key)
 			}
 			if e.tblInfo.Partition != nil {
 				var pid int64
 				if e.idxInfo.Global {
-					segs := tablecodec.SplitIndexValue(handleVal)
-					_, pid, err = codec.DecodeInt(segs.PartitionID)
+					_, pid, err = codec.DecodeInt(tablecodec.SplitIndexValue(handleVal).PartitionID)
 					if err != nil {
 						return err
 					}
-					e.physIDs = append(e.physIDs, pid)
+					if e.singlePartID != 0 && e.singlePartID != pid {
+						continue
+					}
+					if !matchPartitionNames(pid, e.partitionNames, e.tblInfo.GetPartitionInfo()) {
+						continue
+					}
+					e.planPhysIDs = append(e.planPhysIDs, pid)
 				} else {
 					pid = tablecodec.DecodeTableID(key)
-					e.physIDs = append(e.physIDs, pid)
+					e.planPhysIDs = append(e.planPhysIDs, pid)
 				}
 				if e.lock {
 					e.UpdateDeltaForTableID(pid)
 				}
+			}
+			e.handles = append(e.handles, handle)
+			if rc {
+				indexKeys = append(indexKeys, key)
 			}
 		}
 
@@ -373,36 +365,23 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 		}
 		slices.SortFunc(e.handles, less)
+		// TODO: if partitioned table, sorting the handles would also
+		//  need to have the physIDs rearranged in the same order!
+		intest.Assert(e.singlePartID != 0 || len(e.planPhysIDs) <= 1)
 	}
 
 	keys := make([]kv.Key, 0, len(e.handles))
 	newHandles := make([]kv.Handle, 0, len(e.handles))
 	for i, handle := range e.handles {
-		var tID int64
-		if len(e.physIDs) > 0 {
-			tID = e.physIDs[i]
+		tID := e.tblInfo.ID
+		if e.singlePartID != 0 {
+			tID = e.singlePartID
 		} else if len(e.planPhysIDs) > 0 {
+			// Direct handle read
 			tID = e.planPhysIDs[i]
-		} else {
-			if handle.IsInt() {
-				d := types.NewIntDatum(handle.IntValue())
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
-				if err != nil {
-					continue
-				}
-			} else {
-				_, d, err1 := codec.DecodeOne(handle.EncodedCol(e.partPos))
-				if err1 != nil {
-					return err1
-				}
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
-				if err != nil {
-					continue
-				}
-			}
 		}
-		// If this BatchPointGetExec is built only for the specific table partition, skip those handles not matching this partition.
-		if e.singlePart && e.partTblID != tID {
+		if tID <= 0 {
+			// not matching any partition
 			continue
 		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
@@ -445,9 +424,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					IndexEncode: func(_ *consistency.RecordData) kv.Key {
 						return indexKeys[i]
 					},
-					Tbl:  e.tblInfo,
-					Idx:  e.idxInfo,
-					Sctx: e.Ctx(),
+					Tbl:             e.tblInfo,
+					Idx:             e.idxInfo,
+					EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+					Storage:         e.Ctx().GetStore(),
 				}).ReportLookupInconsistent(ctx,
 					1, 0,
 					e.handles[i:i+1],

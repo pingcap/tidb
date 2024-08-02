@@ -17,8 +17,8 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -29,6 +29,8 @@ const (
 	EventAdd EventType = iota
 	EventDel
 	EventErr
+	EventPause
+	EventResume
 )
 
 func (t EventType) String() string {
@@ -39,6 +41,10 @@ func (t EventType) String() string {
 		return "Del"
 	case EventErr:
 		return "Err"
+	case EventPause:
+		return "Pause"
+	case EventResume:
+		return "Resume"
 	}
 	return "Unknown"
 }
@@ -70,29 +76,47 @@ func errorEvent(err error) TaskEvent {
 }
 
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
-	if !bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument,
-			"the path isn't a task path (%s)", string(event.Kv.Key))
+	te := TaskEvent{}
+	var prefix string
+
+	if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
+		prefix = PrefixOfTask()
+		te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
+	} else if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfPause())) {
+		prefix = PrefixOfPause()
+		te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
+	} else {
+		return TaskEvent{},
+			errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task/pause path (%s)",
+				string(event.Kv.Key))
 	}
 
-	te := TaskEvent{}
-	te.Name = strings.TrimPrefix(string(event.Kv.Key), PrefixOfTask())
-	if event.Type == clientv3.EventTypeDelete {
-		te.Type = EventDel
-	} else if event.Type == clientv3.EventTypePut {
+	switch {
+	case event.Type == clientv3.EventTypePut && prefix == PrefixOfTask():
 		te.Type = EventAdd
-	} else {
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
+	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfTask():
+		te.Type = EventDel
+	case event.Type == clientv3.EventTypePut && prefix == PrefixOfPause():
+		te.Type = EventPause
+	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfPause():
+		te.Type = EventResume
+	default:
+		return TaskEvent{},
+			errors.Annotatef(berrors.ErrInvalidArgument,
+				"invalid event type or prefix: type=%s, prefix=%s", event.Type, prefix)
 	}
+
 	te.Info = new(backuppb.StreamBackupTaskInfo)
 	if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
 		return TaskEvent{}, err
 	}
+
 	var err error
 	te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
 	if err != nil {
 		return TaskEvent{}, err
 	}
+
 	return te, nil
 }
 
@@ -113,7 +137,10 @@ func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResp
 }
 
 func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
-	c := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	taskCh := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	pauseCh := t.Client.Watcher.Watch(ctx, PrefixOfPause(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+
+	// inner function def
 	handleResponse := func(resp clientv3.WatchResponse) bool {
 		events, err := t.eventFromWatch(ctx, resp)
 		if err != nil {
@@ -127,21 +154,26 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		}
 		return true
 	}
+
+	// inner function def
 	collectRemaining := func() {
 		log.Info("Start collecting remaining events in the channel.", zap.String("category", "log backup advancer"),
-			zap.Int("remained", len(c)))
+			zap.Int("remained", len(taskCh)))
 		defer log.Info("Finish collecting remaining events in the channel.", zap.String("category", "log backup advancer"))
 		for {
-			select {
-			case resp, ok := <-c:
-				if !ok {
-					return
-				}
-				if !handleResponse(resp) {
-					return
-				}
-			default:
+			if taskCh == nil && pauseCh == nil {
 				return
+			}
+
+			select {
+			case resp, ok := <-taskCh:
+				if !ok || !handleResponse(resp) {
+					taskCh = nil
+				}
+			case resp, ok := <-pauseCh:
+				if !ok || !handleResponse(resp) {
+					pauseCh = nil
+				}
 			}
 		}
 	}
@@ -150,8 +182,20 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		defer close(ch)
 		for {
 			select {
-			case resp, ok := <-c:
+			case resp, ok := <-taskCh:
 				failpoint.Inject("advancer_close_channel", func() {
+					// We cannot really close the channel, just simulating it.
+					ok = false
+				})
+				if !ok {
+					ch <- errorEvent(io.EOF)
+					return
+				}
+				if !handleResponse(resp) {
+					return
+				}
+			case resp, ok := <-pauseCh:
+				failpoint.Inject("advancer_close_pause_channel", func() {
 					// We cannot really close the channel, just simulating it.
 					ok = false
 				})

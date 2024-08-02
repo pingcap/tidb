@@ -184,13 +184,10 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	defer se.Close()
 
 	currentTimerKeys := make(map[string]struct{})
-	for _, db := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(db.Name) {
-			tblInfo := tbl.Meta()
-			if tblInfo.State != model.StatePublic || tblInfo.TTLInfo == nil {
-				continue
-			}
-			for _, key := range g.syncTimersForTable(ctx, se, db.Name, tblInfo) {
+	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	for _, v := range ch {
+		for _, tblInfo := range v.TableInfos {
+			for _, key := range g.syncTimersForTable(ctx, se, model.NewCIStr(v.DBName), tblInfo) {
 				currentTimerKeys[key] = struct{}{}
 			}
 		}

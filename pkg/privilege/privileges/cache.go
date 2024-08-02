@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
 )
@@ -582,7 +581,7 @@ func (p *MySQLPrivilege) LoadDefaultRoles(ctx sessionctx.Context) error {
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1126,7 +1125,7 @@ func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*aut
 }
 
 // RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
-func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host string, privName string, withGrant bool) bool {
 	privName = strings.ToUpper(privName)
 	if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
 		return true
@@ -1136,6 +1135,7 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 	if sem.IsEnabled() && sem.IsRestrictedPrivilege(privName) {
 		return false
 	}
+
 	// For compatibility reasons, the SUPER privilege also has all DYNAMIC privileges granted to it (dynamic privs are a super replacement)
 	// This may be changed in future, but will require a bootstrap task to assign all dynamic privileges
 	// to users with SUPER, otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail.
@@ -1633,7 +1633,7 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
-	priv atomic.Value
+	priv atomic.Pointer[MySQLPrivilege]
 }
 
 // NewHandle returns a Handle.
@@ -1643,7 +1643,7 @@ func NewHandle() *Handle {
 
 // Get the MySQLPrivilege for read.
 func (h *Handle) Get() *MySQLPrivilege {
-	return h.priv.Load().(*MySQLPrivilege)
+	return h.priv.Load()
 }
 
 // Update loads all the privilege info from kv storage.

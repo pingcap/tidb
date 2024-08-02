@@ -89,7 +89,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	}
 
 	// Add `` for some names like `table name`.
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := ctx.GetRestrictedSQLExecutor()
 	tblCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -146,9 +146,10 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				}
 				return k
 			},
-			Tbl:  t.Meta(),
-			Idx:  idx.Meta(),
-			Sctx: sessCtx,
+			Tbl:             t.Meta(),
+			Idx:             idx.Meta(),
+			EnableRedactLog: sessCtx.GetSessionVars().EnableRedactLog,
+			Storage:         sessCtx.GetStore(),
 		}
 	}
 
@@ -161,7 +162,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
-				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
+				colDefVal, err := table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
 				if err != nil {
 					return false, errors.Trace(err)
 				}
@@ -184,7 +185,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc)
+	err := iterRecords(sessCtx, txn, t, startKey, cols, idx.Meta().Global, filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -194,7 +195,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 
 func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +205,7 @@ func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder
 	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, isGlobalIndex bool, fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
 
@@ -234,8 +235,11 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if isGlobalIndex {
+			handle = kv.NewPartitionHandle(tablecodec.DecodeTableID(it.Key()), handle)
+		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx.GetExprCtx(), handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

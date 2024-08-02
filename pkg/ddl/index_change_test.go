@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -43,8 +43,6 @@ func TestIndexChange(t *testing.T) {
 	tk.MustExec("create table t (c1 int primary key, c2 int)")
 	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3);")
 
-	d := dom.DDL()
-	tc := &callback.TestDDLCallback{Do: dom}
 	// set up hook
 	prevState := model.StateNone
 	addIndexDone := false
@@ -54,7 +52,7 @@ func TestIndexChange(t *testing.T) {
 		writeOnlyTable  table.Table
 		publicTable     table.Table
 	)
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex || job.TableName != "t" {
 			return
 		}
@@ -83,9 +81,7 @@ func TestIndexChange(t *testing.T) {
 				addIndexDone = true
 			}
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(tc)
+	})
 	tk.MustExec("alter table t add index c2(c2)")
 	// We need to make sure onJobUpdated is called in the first hook.
 	// After testCreateIndex(), onJobUpdated() may not be called when job.state is Sync.
@@ -101,7 +97,7 @@ func TestIndexChange(t *testing.T) {
 
 	prevState = model.StateNone
 	var noneTable table.Table
-	onJobUpdatedExportedFunc2 := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID.Store(job.ID)
 		if job.SchemaState == prevState {
 			return
@@ -125,8 +121,7 @@ func TestIndexChange(t *testing.T) {
 			noneTable = tbl
 			require.Equalf(t, 0, len(noneTable.Indices()), "index should have been dropped")
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
+	})
 	tk.MustExec("alter table t drop index c2")
 	v = getSchemaVer(t, tk.Session())
 	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: noneTable.Meta()})

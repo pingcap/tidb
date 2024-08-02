@@ -232,6 +232,14 @@ const (
 	DataLockWaitsColumnSQLDigestText = "SQL_DIGEST_TEXT"
 )
 
+// The following variables will only be used when PD in the microservice mode.
+const (
+	// tsoServiceName is the name of TSO service.
+	tsoServiceName = "tso"
+	// schedulingServiceName is the name of scheduling service.
+	schedulingServiceName = "scheduling"
+)
+
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
 	TableTables:                             autoid.InformationSchemaDBID + 2,
@@ -538,6 +546,7 @@ var collationsCols = []columnInfo{
 	{name: "IS_DEFAULT", tp: mysql.TypeVarchar, size: 3},
 	{name: "IS_COMPILED", tp: mysql.TypeVarchar, size: 3},
 	{name: "SORTLEN", tp: mysql.TypeLonglong, size: 3},
+	{name: "PAD_ATTRIBUTE", tp: mysql.TypeVarchar, size: 9},
 }
 
 var keyColumnUsageCols = []columnInfo{
@@ -846,6 +855,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "CURRENT_AFFECTED_ROWS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -861,6 +871,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
+	{name: "IS_GLOBAL", tp: mysql.TypeLonglong, size: 21},
 }
 
 var slowQueryCols = []columnInfo{
@@ -1255,9 +1266,9 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
+	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "END_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
@@ -1379,6 +1390,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.MaxQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
 	{name: stmtsummary.AvgQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
+	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
+	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1397,7 +1410,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 64},
 	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64},
@@ -1454,7 +1467,7 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
@@ -1519,7 +1532,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.StartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Start time of the transaction"},
 	{name: txninfo.CurrentSQLDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
 	{name: txninfo.CurrentSQLDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The normalized sql the transaction are currently running"},
-	{name: txninfo.StateStr, tp: mysql.TypeEnum, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
+	{name: txninfo.StateStr, tp: mysql.TypeEnum, size: 16, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
 	{name: txninfo.WaitingStartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Current lock waiting's start time"},
 	{name: txninfo.MemBufferKeysStr, tp: mysql.TypeLonglong, size: 64, comment: "How many entries are in MemDB"},
 	{name: txninfo.MemBufferBytesStr, tp: mysql.TypeLonglong, size: 64, comment: "MemDB used memory"},
@@ -1700,23 +1713,21 @@ var tableTiDBIndexUsage = []columnInfo{
 //
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
-func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) any {
-	if dbInfo == nil || tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.Name.L) {
+func GetShardingInfo(dbInfo model.CIStr, tableInfo *model.TableInfo) any {
+	if tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.L) {
 		return nil
 	}
 	shardingInfo := "NOT_SHARDED"
-	if tableInfo.PKIsHandle {
-		if tableInfo.ContainsAutoRandomBits() {
-			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
-			rangeBits := tableInfo.AutoRandomRangeBits
-			if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
-				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
-			}
-		} else {
-			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
+	if tableInfo.ContainsAutoRandomBits() {
+		shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+		rangeBits := tableInfo.AutoRandomRangeBits
+		if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
+			shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
 		}
 	} else if tableInfo.ShardRowIDBits > 0 {
 		shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+	} else if tableInfo.PKIsHandle {
+		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 	}
 	return shardingInfo
 }
@@ -1804,11 +1815,12 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	})
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
+	retrievers := []retriever{GetTiDBServerInfo, GetPDServerInfo, func(ctx sessionctx.Context) ([]ServerInfo, error) {
+		return GetStoreServerInfo(ctx.GetStore())
+	}, GetTiProxyServerInfo, GetTiCDCServerInfo, GetTSOServerInfo, GetSchedulingServerInfo}
 	//nolint: prealloc
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, func(ctx sessionctx.Context) ([]ServerInfo, error) {
-		return GetStoreServerInfo(ctx.GetStore())
-	}, GetTiProxyServerInfo} {
+	for _, r := range retrievers {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -1874,14 +1886,9 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 // GetPDServerInfo returns all PD nodes information of cluster
 func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
-	store := ctx.GetStore()
-	etcd, ok := store.(kv.EtcdBackend)
-	if !ok {
-		return nil, errors.Errorf("%T not an etcd backend", store)
-	}
-	members, err := etcd.EtcdAddrs()
+	members, err := getEtcdMembers(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	// TODO: maybe we should unify the PD API request interface.
 	var (
@@ -1949,6 +1956,96 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		return nil, errors.Trace(fmt.Errorf("%s", errorMsg))
 	}
 	return servers, nil
+}
+
+// GetTSOServerInfo returns all TSO nodes information of cluster
+func GetTSOServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	return getMicroServiceServerInfo(ctx, tsoServiceName)
+}
+
+// GetSchedulingServerInfo returns all scheduling nodes information of cluster
+func GetSchedulingServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	return getMicroServiceServerInfo(ctx, schedulingServiceName)
+}
+
+func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]ServerInfo, error) {
+	members, err := getEtcdMembers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: maybe we should unify the PD API request interface.
+	var servers []ServerInfo
+
+	if len(members) == 0 {
+		return servers, nil
+	}
+	// Try on each member until one succeeds or all fail.
+	for _, addr := range members {
+		// Get members
+		url := fmt.Sprintf("%s://%s%s/%s", util.InternalHTTPSchema(), addr, "/pd/api/v2/ms/members", serviceName)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("create microservice server info request error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+		req.Header.Add("PD-Allow-follower-handle", "true")
+		resp, err := util.InternalHTTPClient().Do(req)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("request microservice server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			terror.Log(resp.Body.Close())
+			continue
+		}
+		var content = []struct {
+			ServiceAddr    string `json:"service-addr"`
+			Version        string `json:"version"`
+			GitHash        string `json:"git-hash"`
+			DeployPath     string `json:"deploy-path"`
+			StartTimestamp int64  `json:"start-timestamp"`
+		}{}
+		err = json.NewDecoder(resp.Body).Decode(&content)
+		terror.Log(resp.Body.Close())
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("close microservice server info request error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+
+		for _, c := range content {
+			addr := strings.TrimPrefix(c.ServiceAddr, "http://")
+			addr = strings.TrimPrefix(addr, "https://")
+			if len(c.Version) > 0 && c.Version[0] == 'v' {
+				c.Version = c.Version[1:]
+			}
+			servers = append(servers, ServerInfo{
+				ServerType:     serviceName,
+				Address:        addr,
+				StatusAddr:     addr,
+				Version:        c.Version,
+				GitHash:        c.GitHash,
+				StartTimestamp: c.StartTimestamp,
+			})
+		}
+		return servers, nil
+	}
+	return servers, nil
+}
+
+func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
+	store := ctx.GetStore()
+	etcd, ok := store.(kv.EtcdBackend)
+	if !ok {
+		return nil, errors.Errorf("%T not an etcd backend", store)
+	}
+	members, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return members, nil
 }
 
 func isTiFlashStore(store *metapb.Store) bool {
@@ -2076,6 +2173,26 @@ func GetTiProxyServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			ServerType:     "tiproxy",
 			Address:        net.JoinHostPort(node.IP, node.Port),
 			StatusAddr:     net.JoinHostPort(node.IP, node.StatusPort),
+			Version:        node.Version,
+			GitHash:        node.GitHash,
+			StartTimestamp: node.StartTimestamp,
+		})
+	}
+	return servers, nil
+}
+
+// GetTiCDCServerInfo gets server info of TiCDC from PD.
+func GetTiCDCServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	ticdcNodes, err := infosync.GetTiCDCServerInfo(context.Background())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var servers = make([]ServerInfo, 0, len(ticdcNodes))
+	for _, node := range ticdcNodes {
+		servers = append(servers, ServerInfo{
+			ServerType:     "ticdc",
+			Address:        node.Address,
+			StatusAddr:     node.Address,
 			Version:        node.Version,
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
@@ -2293,6 +2410,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (it *infoschemaTable) WritableConstraint() []*table.Constraint {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
@@ -2378,6 +2500,11 @@ func (vt *VirtualTable) FullHiddenColsAndVisibleCols() []*table.Column {
 
 // Indices implements table.Table Indices interface.
 func (vt *VirtualTable) Indices() []table.Index {
+	return nil
+}
+
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (vt *VirtualTable) WritableConstraint() []*table.Constraint {
 	return nil
 }
 

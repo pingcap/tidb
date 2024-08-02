@@ -20,8 +20,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -59,7 +60,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
-			logutil.BgLogger().Info("clean dead table lock get alive servers failed.", zap.String("category", "ddl"), zap.Error(err))
+			logutil.DDLLogger().Info("clean dead table lock get alive servers failed.", zap.Error(err))
 			time.Sleep(defaultRetryInterval)
 			continue
 		}
@@ -73,7 +74,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 }
 
 // GetDeadLockedTables gets dead locked tables.
-func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
+func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, is infoschema.MetaOnlyInfoSchema) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
 	if d.etcdCli == nil {
 		return nil, nil
 	}
@@ -82,13 +83,17 @@ func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, schemas 
 		return nil, err
 	}
 	deadLockTables := make(map[model.SessionInfo][]model.TableLockTpInfo)
-	for _, schema := range schemas {
+	for _, schema := range is.AllSchemas() {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
-		for _, tbl := range schema.Tables {
+		tblInfos, err := is.SchemaTableInfos(ctx, schema.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, tbl := range tblInfos {
 			if tbl.Lock == nil {
 				continue
 			}

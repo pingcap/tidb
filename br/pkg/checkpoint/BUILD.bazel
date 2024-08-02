@@ -20,6 +20,7 @@ go_library(
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//pkg/parser/model",
+        "//pkg/util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",

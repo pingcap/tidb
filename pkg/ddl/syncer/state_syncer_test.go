@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
@@ -47,6 +48,8 @@ func TestStateSyncerSimple(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
+	domain, err := session.GetDomain(store)
+	require.NoError(t, err)
 
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
@@ -55,12 +58,13 @@ func TestStateSyncerSimple(t *testing.T) {
 	defer cancel()
 	ic := infoschema.NewCache(nil, 2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d := NewDDL(
+	d, _ := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
 		WithStore(store),
 		WithLease(testLease),
 		WithInfoCache(ic),
+		WithSchemaLoader(domain),
 	)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {

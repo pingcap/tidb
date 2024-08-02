@@ -17,7 +17,7 @@
 set -eux
 
 # restart service without tiflash
-source $( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/../_utils/run_services
+source $UTILS_DIR/run_services
 start_services --no-tiflash
 
 BACKUP_DIR=$TEST_DIR/"raw_backup"
@@ -186,5 +186,3 @@ run_test ""
 
 # ingest "region error" to trigger fineGrainedBackup, only one region error.
 run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=1*return(\"region error\")"
-# all regions failed.
-run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=return(\"region error\")"

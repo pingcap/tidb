@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -161,7 +162,7 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 
 	referredFKInfos := is.GetTableReferredForeignKeys(schema, tbInfo.Name.L)
 	for _, referredFK := range referredFKInfos {
-		childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+		childTable, err := is.TableByName(context.Background(), referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
 			return err
 		}
@@ -193,7 +194,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 		}
 		referTblInfo = tbInfo
 	} else {
-		referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+		referTable, err := is.TableByName(context.Background(), fk.RefSchema, fk.RefTable)
 		if err != nil {
 			if (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) && !fkCheck {
 				return nil
@@ -226,7 +227,7 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, t
 		if fk.RefSchema.L == job.SchemaName && fk.RefTable.L == tbInfo.Name.L {
 			referTableInfo = tbInfo
 		} else {
-			referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+			referTable, err := is.TableByName(d.ctx, fk.RefSchema, fk.RefTable)
 			if err != nil {
 				if !fkCheck && (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) {
 					continue
@@ -243,7 +244,7 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, t
 	}
 	referredFKInfos := is.GetTableReferredForeignKeys(job.SchemaName, tbInfo.Name.L)
 	for _, referredFK := range referredFKInfos {
-		childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+		childTable, err := is.TableByName(d.ctx, referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
 			return false, err
 		}
@@ -314,7 +315,7 @@ func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName 
 				if !is.TableExists(fkInfo.RefSchema, fkInfo.RefTable) {
 					continue
 				}
-				referTable, err := is.TableByName(fkInfo.RefSchema, fkInfo.RefTable)
+				referTable, err := is.TableByName(context.Background(), fkInfo.RefSchema, fkInfo.RefTable)
 				if err != nil {
 					return err
 				}
@@ -338,7 +339,7 @@ func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName 
 				if !is.TableExists(referredFK.ChildSchema, referredFK.ChildTable) {
 					continue
 				}
-				childTblInfo, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+				childTblInfo, err := is.TableByName(context.Background(), referredFK.ChildSchema, referredFK.ChildTable)
 				if err != nil {
 					return err
 				}
@@ -587,7 +588,7 @@ func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta
 	if !ok {
 		return result, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
-	tb, err := is.TableByName(schema, table)
+	tb, err := is.TableByName(context.Background(), schema, table)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
@@ -600,18 +601,21 @@ func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta
 	return result, nil
 }
 
-func checkDatabaseHasForeignKeyReferred(is infoschema.InfoSchema, schema model.CIStr, fkCheck bool) error {
+func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoSchema, schema model.CIStr, fkCheck bool) error {
 	if !fkCheck {
 		return nil
 	}
-	tables := is.SchemaTables(schema)
+	tables, err := is.SchemaTableInfos(ctx, schema)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	tableNames := make([]ast.Ident, len(tables))
 	for i := range tables {
-		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Meta().Name}
+		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Name}
 	}
 	for _, tbl := range tables {
-		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Meta().Name.L, tableNames, fkCheck); referredFK != nil {
-			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Meta().Name, referredFK.ChildFKName, referredFK.ChildTable))
+		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Name.L, tableNames, fkCheck); referredFK != nil {
+			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Name, referredFK.ChildFKName, referredFK.ChildTable))
 		}
 	}
 	return nil
@@ -634,7 +638,7 @@ func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *mod
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = checkDatabaseHasForeignKeyReferred(is, model.NewCIStr(job.SchemaName), fkCheck)
+	err = checkDatabaseHasForeignKeyReferred(d.ctx, is, model.NewCIStr(job.SchemaName), fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 	}
@@ -738,7 +742,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	}
 	buf.WriteString(" from %n.%n ) limit 1")
 	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, buf.String(), paramsList...)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}

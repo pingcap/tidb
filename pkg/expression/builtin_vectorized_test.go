@@ -535,6 +535,7 @@ func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.C
 }
 
 func vecEvalType(ctx EvalContext, f builtinFunc, eType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
+	ctx = wrapEvalAssert(ctx, f)
 	switch eType {
 	case types.ETInt:
 		return f.vecEvalInt(ctx, input, result)
@@ -582,8 +583,9 @@ func TestDoubleRow2Vec(t *testing.T) {
 func TestDoubleVec2Row(t *testing.T) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
-		ctx := mock.NewContext()
-		rowDouble, input, result, err := genMockRowDouble(ctx, eType, true)
+		mockCtx := mock.NewContext()
+		rowDouble, input, result, err := genMockRowDouble(mockCtx, eType, true)
+		ctx := wrapEvalAssert(mockCtx, rowDouble)
 		result.Reset(eType)
 		require.NoError(t, err)
 		it := chunk.NewIterator4Chunk(input)
@@ -831,7 +833,7 @@ func TestVecEvalBool(t *testing.T) {
 	for numCols := 1; numCols <= 5; numCols++ {
 		for round := 0; round < 16; round++ {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
-			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
+			selected, nulls, err := VecEvalBool(ctx, ctx.GetSessionVars().EnableVectorizedExpression, exprs, input, nil, nil)
 			require.NoError(t, err)
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
@@ -856,7 +858,7 @@ func TestRowBasedFilterAndVectorizedFilter(t *testing.T) {
 			isNull := make([]bool, it.Len())
 			selected, nulls, err := rowBasedFilter(ctx, exprs, it, nil, isNull)
 			require.NoError(t, err)
-			selected2, nulls2, err2 := vectorizedFilter(ctx, exprs, it, nil, isNull)
+			selected2, nulls2, err2 := vectorizedFilter(ctx, ctx.GetSessionVars().EnableVectorizedExpression, exprs, it, nil, isNull)
 			require.NoError(t, err2)
 			length := it.Len()
 			for i := 0; i < length; i++ {
@@ -876,11 +878,9 @@ func TestVectorizedFilterConsiderNull(t *testing.T) {
 			exprs, input := genVecEvalBool(numCols, nil, eTypes)
 			it := chunk.NewIterator4Chunk(input)
 			isNull := make([]bool, it.Len())
-			ctx.GetSessionVars().EnableVectorizedExpression = false
-			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			selected, nulls, err := VectorizedFilterConsiderNull(ctx, false, exprs, it, nil, isNull)
 			require.NoError(t, err)
-			ctx.GetSessionVars().EnableVectorizedExpression = true
-			selected2, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			selected2, nulls2, err2 := VectorizedFilterConsiderNull(ctx, true, exprs, it, nil, isNull)
 			require.NoError(t, err2)
 			length := it.Len()
 			for i := 0; i < length; i++ {
@@ -893,11 +893,10 @@ func TestVectorizedFilterConsiderNull(t *testing.T) {
 			input.SetSel(randomSel)
 			it2 := chunk.NewIterator4Chunk(input)
 			isNull = isNull[:0]
-			ctx.GetSessionVars().EnableVectorizedExpression = false
-			selected3, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
+			selected3, nulls, err := VectorizedFilterConsiderNull(ctx, false, exprs, it2, nil, isNull)
 			require.NoError(t, err)
 			ctx.GetSessionVars().EnableVectorizedExpression = true
-			selected4, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
+			selected4, nulls2, err2 := VectorizedFilterConsiderNull(ctx, true, exprs, it2, nil, isNull)
 			require.NoError(t, err2)
 			for i := 0; i < length; i++ {
 				require.Equal(t, nulls[i], nulls2[i])

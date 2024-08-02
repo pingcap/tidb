@@ -69,15 +69,15 @@ id	estRows	task	access object	operator info
 Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 4 5], keep order:false, desc:false
 explain format = 'brief' select * from t where a in (1, 2, 3, 1, 2);
 id	estRows	task	access object	operator info
-Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 1 2], keep order:false, desc:false
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false
 begin;
 explain format = 'brief' select * from t where a in (1, 2, 3, 1, 2) FOR UPDATE;
 id	estRows	task	access object	operator info
-Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 1 2], keep order:false, desc:false, lock
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false, lock
 rollback;
 explain format = 'brief' select * from t where (a) in ((1), (2), (3), (1), (2));
 id	estRows	task	access object	operator info
-Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 1 2], keep order:false, desc:false
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false
 drop table if exists t;
 create table t(a int, b int, c int, unique key idx_ab(a, b));
 insert into t values(1, 2, 3), (2, 3, 4), (3, 4, 5), (4, 5, 6);

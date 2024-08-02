@@ -55,9 +55,9 @@ func TestLoadBackupMeta(t *testing.T) {
 	mockDB := model.DBInfo{
 		ID:   1,
 		Name: dbName,
-		Tables: []*model.TableInfo{
-			mockTbl,
-		},
+	}
+	mockDB.Deprecated.Tables = []*model.TableInfo{
+		mockTbl,
 	}
 	dbBytes, err := json.Marshal(mockDB)
 	require.NoError(t, err)
@@ -105,6 +105,7 @@ func TestLoadBackupMeta(t *testing.T) {
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			}),
+		true,
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
@@ -139,9 +140,9 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	mockDB := model.DBInfo{
 		ID:   1,
 		Name: dbName,
-		Tables: []*model.TableInfo{
-			mockTbl,
-		},
+	}
+	mockDB.Deprecated.Tables = []*model.TableInfo{
+		mockTbl,
 	}
 	dbBytes, err := json.Marshal(mockDB)
 	require.NoError(t, err)
@@ -201,6 +202,7 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			},
 		),
+		true,
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
@@ -247,9 +249,9 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 		mockDB := model.DBInfo{
 			ID:   1,
 			Name: model.NewCIStr(dbName),
-			Tables: []*model.TableInfo{
-				mockTbl,
-			},
+		}
+		mockDB.Deprecated.Tables = []*model.TableInfo{
+			mockTbl,
 		}
 		dbBytes, err := json.Marshal(mockDB)
 		require.NoError(b, err)
@@ -287,6 +289,7 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)
@@ -319,6 +322,7 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)
@@ -351,6 +355,7 @@ func BenchmarkLoadBackupMeta10240(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)

@@ -23,6 +23,7 @@ import (
 	"testing"
 	gotime "time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -56,7 +57,7 @@ PARTITION BY RANGE ( id ) (
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(ctx, createTable1)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
@@ -105,7 +106,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable2)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(22))
 	require.NoError(t, err)
@@ -117,7 +118,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable3)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
@@ -133,7 +134,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable4)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1, 11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
@@ -150,7 +151,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
@@ -187,7 +188,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	// Test for partition expression is negative number.
 	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
 	require.NoError(t, err)
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
@@ -221,7 +222,7 @@ PARTITION BY RANGE ( id ) (
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), createTable1)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	ps := tbInfo.GetPartitionInfo()
@@ -247,7 +248,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 							partition p3 values less than maxvalue)`)
 	require.NoError(t, err)
 
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	type partitionExpr interface {
 		PartitionExpr() *tables.PartitionExpr
@@ -260,7 +261,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
-		require.Equal(t, upperBounds[i], expr.String())
+		require.Equal(t, upperBounds[i], expr.StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 	}
 }
 
@@ -279,7 +280,7 @@ func TestLocatePartition(t *testing.T) {
     	PARTITION watch_event VALUES IN ("WatchEvent")
     )`)
 	tk.MustExec(`insert into t values (1,"PushEvent"),(2,"WatchEvent"),(3, "WatchEvent")`)
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -354,7 +355,7 @@ func TestIssue31629(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 
-		tb, err := dom.InfoSchema().TableByName(model.NewCIStr("Issue31629"), model.NewCIStr("t1"))
+		tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("Issue31629"), model.NewCIStr("t1"))
 		require.NoError(t, err)
 		tbp, ok := tb.(table.PartitionedTable)
 		require.Truef(t, ok, "test %d does not generate a table.PartitionedTable: %s (%T, %+v)", i, createTable, tb, tb)
@@ -842,15 +843,15 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey0 WHERE col3 = 3",
-					true, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
+					true, false, true, true, []string{"partition:p3"}, []string{"partition:p0,p1,p2"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey0 WHERE col3 = 3 or col3 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p3"}, []string{"partition:p1", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p0,p3"}, []string{"partition:p1,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey0 WHERE col3 >1 AND col3 < 4",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p0", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p0,p2"}, 2,
 				},
 			},
 
@@ -882,23 +883,23 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey7 WHERE col3 = 3",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey7 WHERE col3 = 3 and col1 = 3",
-					true, false, true, true, []string{"partition:p1"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+					true, false, true, true, []string{"partition:p1"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey7 WHERE col3 = 3 or col3 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+					false, false, true, true, []string{"partition:all"}, []string{}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey7 WHERE col3 = 3 and col1 = 3 OR col3 = 4 and col1 = 4",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p1,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey7 WHERE col1>1 and col3 >1 AND col3 < 4 and col1<3",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey7",
@@ -929,23 +930,23 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey8 WHERE col3 = 3",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey8 WHERE col3 = 3 and col1 = 3",
-					true, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+					true, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey8 WHERE col3 = 3 or col3 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+					false, false, true, true, []string{"partition:all"}, []string{}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey8 WHERE col3 = 3 and col1 = 3 OR col3 = 4 and col1 = 4",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey8 WHERE col1>1 and col3 >1 AND col3 < 4 and col1<3",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 0,
+					false, false, true, true, []string{"partition:all"}, []string{}, 0,
 				},
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey8",
@@ -976,15 +977,15 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey6 WHERE col3 = 'linpin'",
-					true, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
+					true, false, true, true, []string{"partition:p3"}, []string{"partition:p0,p1,p2"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey6 WHERE col3 = 'zhangsan' or col3 = 'linpin'",
-					true, true, true, true, []string{}, []string{}, 2,
+					false, false, true, true, []string{"partition:p2,p3"}, []string{}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey6 WHERE col3 > 'linpin' AND col3 < 'qing'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey6",
@@ -1015,15 +1016,15 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey2 WHERE KHH = 'huaian'",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0,p1,p2"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey2 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0,p1,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey2 WHERE KHH > 'nanjing' AND KHH < 'suzhou'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+					false, false, true, true, []string{"partition:all"}, []string{}, 2,
 				},
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey2",
@@ -1054,15 +1055,15 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey5 WHERE KHH = 'huaian'",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0,p1,p2"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey5 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0,p1,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey5 WHERE KHH > 'nanjing' AND KHH < 'suzhou'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+					false, false, true, true, []string{"partition:all"}, []string{}, 2,
 				},
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey5",
@@ -1093,43 +1094,43 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE JYRQ = 2",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+					false, false, true, true, []string{"partition:all"}, []string{}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2  or KHH = 'zhenjiang' and JYRQ = 3",
-					false, false, true, true, []string{"partition:p0", "partition:p1"}, []string{"partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0,p1"}, []string{"partition:p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2  or KHH = 'zhenjiang' and JYRQ = 3 or KHH = 'HUAIAN' and JYRQ = 15",
-					false, false, true, true, []string{"partition:p0", "partition:p1"}, []string{"partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0,p1"}, []string{"partition:p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+					false, false, true, true, []string{"partition:all"}, []string{}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE JYRQ = 2  OR  JYRQ = 3",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 4,
+					false, false, true, true, []string{"partition:all"}, []string{}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE JYRQ = 2  OR  JYRQ = 3 OR JYRQ = 15",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+					false, false, true, true, []string{"partition:all"}, []string{}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE JYRQ >6 AND JYRQ < 10",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+					false, false, true, true, []string{"partition:all"}, []string{}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey4 WHERE JYRQ >6 and KHH>'lianyungang' AND JYRQ < 10 and KHH<'xuzhou'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey4",
@@ -1160,43 +1161,43 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH = '0517'",
-					true, false, true, true, []string{"partition:p0"}, []string{"partition:p3", "partition:p1", "partition:p2"}, 1,
+					true, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE JYRQ = 2",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+					false, false, true, true, []string{"partition:all"}, []string{}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH='0517'  or KHH = 'zhenjiang' and JYRQ = 3 and ZJZH = '0518'",
-					false, false, true, true, []string{"partition:p3", "partition:p0"}, []string{"partition:p1", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p0,p3"}, []string{"partition:p1,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH='0517'  or KHH = 'zhenjiang' and JYRQ = 3 and ZJZH = '0518' or KHH = 'NANJING' and JYRQ = 14 and ZJZH = '025'",
-					false, false, true, true, []string{"partition:p0", "partition:p3"}, []string{"partition:p2", "partition:p1"}, 3,
+					false, false, true, true, []string{"partition:p0,p3"}, []string{"partition:p2,p1"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+					false, false, true, true, []string{"partition:all"}, []string{}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE JYRQ = 2  OR  JYRQ = 3",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 4,
+					false, false, true, true, []string{"partition:all"}, []string{}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE JYRQ = 2  OR  JYRQ = 3 OR JYRQ = 15",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+					false, false, true, true, []string{"partition:all"}, []string{}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE JYRQ >6 AND JYRQ < 10",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+					false, false, true, true, []string{"partition:all"}, []string{}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey9 WHERE JYRQ = 2 and KHH = 'huaian' OR JYRQ = 3 and KHH = 'zhenjiang'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+					false, false, true, true, []string{"partition:all"}, []string{}, 2,
 				},
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey9",
@@ -1265,35 +1266,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 5,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id1 = 3",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 1,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id1 = 3 or id1 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p3"}, []string{"partition:p1", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p0,p3"}, []string{"partition:p1,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id1 >1 AND id1 < 4",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p2,p0"}, 2,
 				},
 			},
 		},
@@ -1302,35 +1303,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id2 = 3",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p0", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p0,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id2 = 3 or id2 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p3"}, []string{"partition:p1", "partition:p2"}, 3,
+					false, false, true, true, []string{"partition:p0,p3"}, []string{"partition:p1,p2"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id2 >1 AND id2 < 4",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p0", "partition:p2"}, 3,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p0,p2"}, 3,
 				},
 			},
 		},
@@ -1339,35 +1340,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p0", "partition:p1", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p0,p1,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id3 = 5",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id3 = 5 or id3 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p2"}, []string{"partition:p1", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0,p2"}, []string{"partition:p1,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id3 >1 AND id3 < 4",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p2", "partition:p0"}, 1,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p2,p0"}, 1,
 				},
 			},
 		},
@@ -1376,35 +1377,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 5,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id4 = 5",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id4 = 5 or id4 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p2"}, []string{"partition:p1", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0,p2"}, []string{"partition:p1,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id4 >1 AND id4 < 4",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p0", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p0,p2"}, 2,
 				},
 			},
 		},
@@ -1413,35 +1414,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p3", "partition:p0"}, 4,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p3,p0"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id5 = 5",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id5 = 5 or id5 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p2"}, []string{"partition:p1", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0,p2"}, []string{"partition:p1,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id5 >1 AND id5 < 4",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p2,p0"}, 2,
 				},
 			},
 		},
@@ -1450,35 +1451,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id6 = 5",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id6 = 5 or id6 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p2"}, []string{"partition:p1", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0,p2"}, []string{"partition:p1,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id6 >1 AND id6 < 4",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p2,p0"}, 2,
 				},
 			},
 		},
@@ -1487,35 +1488,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id7 = 5",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id7 = 5 or id7 = 4",
-					false, false, true, true, []string{"partition:p0", "partition:p2"}, []string{"partition:p1", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0,p2"}, []string{"partition:p1,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id7 >1 AND id7 < 4",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p2,p0"}, 2,
 				},
 			},
 		},
@@ -1524,35 +1525,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 4,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id8 = 1.1",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p2", "partition:p0", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p2,p0,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id8 = 1.1 or id8 = 33.78",
-					false, false, true, true, []string{"partition:p0", "partition:p1"}, []string{"partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0,p1"}, []string{"partition:p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id8 >1 AND id8 < 4",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+					false, false, true, true, []string{"partition:all"}, []string{}, 3,
 				},
 			},
 		},
@@ -1561,35 +1562,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id9 = 46.48",
-					false, false, true, true, []string{}, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, 0,
+					false, false, true, true, []string{}, []string{"partition:all"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id9 = 46.48 or id9 = 336.78",
-					false, false, true, true, []string{}, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, 0,
+					false, false, true, true, []string{}, []string{"partition:all"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id9 >45 AND id9 < 47",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1598,23 +1599,23 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
+					false, false, true, true, []string{"partition:all"}, []string{}, 12,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id10 = 46.48",
@@ -1626,7 +1627,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 				},
 				{
 					"SELECT count(*) FROM tkey_numeric WHERE id10 >366 AND id10 < 368",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1662,35 +1663,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_datetime",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 10,
+					false, false, true, true, []string{"partition:all"}, []string{}, 10,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id1 = '2012-04-10'",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id1 = '2012-04-10' or id1 = '2018-07-13'",
-					false, false, true, true, []string{"partition:p0", "partition:p2"}, []string{"partition:p1", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0,p2"}, []string{"partition:p1,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id1 >'2012-04-10' AND id1 < '2014-04-10'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1699,35 +1700,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_datetime",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 10,
+					false, false, true, true, []string{"partition:all"}, []string{}, 10,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id3 = '2012-04-10 12:12:12'",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id3 = '2012-04-10 12:12:12' or id3 = '2021-08-14 16:16:16'",
-					false, false, true, true, []string{"partition:p3", "partition:p1"}, []string{"partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id3 >'2012-04-10 12:12:12' AND id3 < '2014-04-10 12:12:12'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1736,35 +1737,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_datetime",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 10,
+					false, false, true, true, []string{"partition:all"}, []string{}, 10,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 4,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 4,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id4 = '2012-04-10 12:12:12'",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id4 = '2012-04-10 12:12:12' or id4 = '2021-08-14 16:16:16'",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p0", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p0,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id4 >'2012-04-10 12:12:12' AND id4 < '2014-04-10 12:12:12'",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1773,35 +1774,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_datetime",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 10,
+					false, false, true, true, []string{"partition:all"}, []string{}, 10,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 3,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id5 = 2012",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id5 = 2012 or id5 = 2018",
-					false, false, true, true, []string{"partition:p0", "partition:p2"}, []string{"partition:p1", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0,p2"}, []string{"partition:p1,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_datetime WHERE id5 >2012 AND id5 < 2014",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p3", "partition:p0"}, 1,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p3,p0"}, 1,
 				},
 			},
 		},
@@ -1835,35 +1836,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+					false, false, true, true, []string{"partition:all"}, []string{}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id1 = 'huaian'",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p0", "partition:p2"}, 1,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p0,p2"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id1 = 'huaian' or id1 = 'suzhou'",
-					false, false, true, true, []string{"partition:p3", "partition:p0"}, []string{"partition:p1", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p0,p3"}, []string{"partition:p1,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id1 >'huaian' AND id1 < 'suzhou'",
-					false, false, true, true, []string{"partition:p1", "partition:p2", "partition:p0", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1872,35 +1873,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+					false, false, true, true, []string{"partition:all"}, []string{}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id2 = 'huaian'",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 1,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id2 = 'huaian' or id2 = 'suzhou'",
-					false, false, true, true, []string{"partition:p3", "partition:p0"}, []string{"partition:p1", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p0,p3"}, []string{"partition:p1,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id2 >'huaian' AND id2 < 'suzhou'",
-					false, false, true, true, []string{"partition:p1", "partition:p2", "partition:p0", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1909,35 +1910,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+					false, false, true, true, []string{"partition:all"}, []string{}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 1,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id3 = 0x73757A686F7500000000000000000000",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id3 = 0x73757A686F7500000000000000000000 or id3 = 0x6E616E6A696E67000000000000000000",
-					false, false, true, true, []string{"partition:p0", "partition:p1"}, []string{"partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0,p1"}, []string{"partition:p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id3 >0x67756169616E00000000000000000000 AND id3 < 0x6E616E6A696E67000000000000000000",
-					false, false, true, true, []string{"partition:p1", "partition:p0", "partition:p2", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1946,35 +1947,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+					false, false, true, true, []string{"partition:all"}, []string{}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id4 = 0x68756169616E",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p0", "partition:p2"}, 1,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p0,p2"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id4 = 0x68756169616E or id4 = 0x73757A686F75",
-					false, false, true, true, []string{"partition:p3", "partition:p0"}, []string{"partition:p1", "partition:p2"}, 2,
+					false, false, true, true, []string{"partition:p0,p3"}, []string{"partition:p1,p2"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id4 >0x73757A686F75 AND id4 < 0x78757869",
-					false, false, true, true, []string{"partition:p1", "partition:p2", "partition:p0", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -1983,35 +1984,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+					false, false, true, true, []string{"partition:all"}, []string{}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id7 = 'x-small'",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id7 = 'x-small' or id7 = 'large'",
-					false, false, true, true, []string{"partition:p0", "partition:p2"}, []string{"partition:p1", "partition:p3"}, 2,
+					false, false, true, true, []string{"partition:p0,p2"}, []string{"partition:p1,p3"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id7 > 'large' AND id7 < 'x-small'",
-					false, false, true, true, []string{"partition:p1", "partition:p0", "partition:p3"}, []string{"partition:p2"}, 3,
+					false, false, true, true, []string{"partition:p0,p1,p3"}, []string{"partition:p2"}, 3,
 				},
 			},
 		},
@@ -2020,35 +2021,35 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
-					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+					false, false, true, true, []string{"partition:all"}, []string{}, 5,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p0)",
-					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p0"}, []string{"partition:p1,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p1)",
-					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0,p2,p3"}, 1,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p2)",
-					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1", "partition:p0", "partition:p3"}, 0,
+					false, false, true, true, []string{"partition:p2"}, []string{"partition:p1,p0,p3"}, 0,
 				},
 				{
 					"SELECT count(*) FROM tkey_string PARTITION(p3)",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 3,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id8 = 'a'",
-					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1", "partition:p2", "partition:p0"}, 2,
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p1,p2,p0"}, 2,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id8 = 'a' or id8 = 'b'",
-					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p0", "partition:p2"}, 3,
+					false, false, true, true, []string{"partition:p1,p3"}, []string{"partition:p0,p2"}, 3,
 				},
 				{
 					"SELECT count(*) FROM tkey_string WHERE id8 > 'a' AND id8 < 'c'",
-					false, false, true, true, []string{"partition:p1", "partition:p2", "partition:p0", "partition:p3"}, []string{}, 1,
+					false, false, true, true, []string{"partition:all"}, []string{}, 1,
 				},
 			},
 		},
@@ -2290,6 +2291,91 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 	}
 }
 
+func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
+	limitSizeOfTest := true
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "PartitionByIntExtensive"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`set @@tidb_enable_global_index = ON`)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
+	tk2.MustExec(`set @@tidb_enable_global_index = ON`)
+
+	tBase := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b), key (c,b), unique key idx_dc(d,c), key(e))`
+	t2Str := `create table t2 ` + tBase
+	tStr := `create table t ` + tBase
+
+	rows := 100
+	pkInserts := 20
+	pkUpdates := 20
+	pkDeletes := 10 // Enough to delete half of what is inserted?
+	thirdUintRange := 1 << 32 / 2
+	thirdUintRangeStr := fmt.Sprintf("%d", thirdUintRange)
+	twoThirdUintRangeStr := fmt.Sprintf("%d", 2*thirdUintRange)
+	tStart := []string{
+		// Non partitioned
+		tStr,
+		// RANGE COLUMNS
+		tStr + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
+			`partition pMid values less than (` + twoThirdUintRangeStr + `), partition pLast values less than (maxvalue))`,
+		// KEY
+		tStr + ` partition by key(b) partitions 5`,
+		// HASH
+		tStr + ` partition by hash(a) partitions 5`,
+		// HASH with function
+		tStr + ` partition by hash(a DIV 3) partitions 5`,
+	}
+	if limitSizeOfTest {
+		tStart = tStart[:2]
+	}
+	quarterUintRange := 1 << 30
+	quarterUintRangeStr := fmt.Sprintf("%d", quarterUintRange)
+	halfUintRangeStr := fmt.Sprintf("%d", 2*quarterUintRange)
+	threeQuarterUintRangeStr := fmt.Sprintf("%d", 3*quarterUintRange)
+	tAlter := []string{
+		// RANGE COLUMNS
+		//`alter table t partition by range columns (b) (partition pFirst values less than ("m"), partition pLast values less than (MAXVALUE))`,
+		// RANGE COLUMNS
+		`alter table t partition by range (a+2) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
+			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
+			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
+			`partition pLast values less than (maxvalue))`,
+		// KEY
+		`alter table t partition by key(b) partitions 3`,
+		// Hash
+		`alter table t partition by hash(a) partitions 7`,
+	}
+	if limitSizeOfTest {
+		tAlter = tAlter[:2]
+	}
+
+	seed := gotime.Now().UnixNano()
+	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	reorgRand := rand.New(rand.NewSource(seed))
+	for _, createSQL := range tStart {
+		for _, alterSQL := range tAlter {
+			tk.MustExec(createSQL)
+			tk.MustExec(t2Str)
+			getNewPK := getNewIntPK()
+			getValues := getIntValuesUniqueFunc()
+			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+			tk.MustExec(`drop table t`)
+			tk.MustExec(`drop table t2`)
+		}
+	}
+	for _, createSQL := range tStart[1:] {
+		tk.MustExec(createSQL)
+		tk.MustExec(t2Str)
+		getNewPK := getNewIntPK()
+		getValues := getIntValuesUniqueFunc()
+		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`drop table t2`)
+	}
+}
+
 func getNewIntPK() func(map[string]struct{}, string, *rand.Rand) string {
 	return func(m map[string]struct{}, suf string, reorgRand *rand.Rand) string {
 		uintPK := reorgRand.Uint32()
@@ -2315,6 +2401,25 @@ func getIntValuesFunc() func(string, bool, *rand.Rand) string {
 		return fmt.Sprintf(s,
 			pk,
 			randStr(reorgRand.Intn(19), reorgRand),
+			cnt, //reorgRand.Int31(),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			reorgRand.Float64(),
+			randStr(512+reorgRand.Intn(1024), reorgRand))
+	}
+}
+
+func getIntValuesUniqueFunc() func(string, bool, *rand.Rand) string {
+	cnt := 0
+	return func(pk string, asAssignment bool, reorgRand *rand.Rand) string {
+		s := `(%s, '%s', %d, '%s', '%s', %f, '%s')`
+		if asAssignment {
+			s = `a = %s, b = '%s', c = %d,  d = '%s', e = '%s', f = %f, g = '%s'`
+		}
+		cnt++
+		return fmt.Sprintf(s,
+			pk,
+			randStr(reorgRand.Intn(19), reorgRand)+pk,
 			cnt, //reorgRand.Int31(),
 			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
 			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
@@ -2586,7 +2691,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	transitions := 0
 	var currTbl table.Table
 	currSchema := sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
-	prevTbl, err := currSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	prevTbl, err := currSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	var hookErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -2634,7 +2739,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
 			currSchema = sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
-			currTbl, hookErr = currSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+			currTbl, hookErr = currSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 
 			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
 			// Now using previous schema version
@@ -3033,6 +3138,16 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)
 	tk.MustExec(`admin check table t2`)
+	res := tk.MustQuery(`select * from t`)
+	res2 := tk.MustQuery(`select * from t2`)
+	require.Equal(t, res.Sort().Rows(), res2.Sort().Rows())
+	res = tk.MustQuery(`select * from t order by a`)
+	res2 = tk.MustQuery(`select * from t2 order by a`)
+	require.Equal(t, res.Rows(), res2.Rows())
+	// b may be empty string and allows different order, so also do additional Sort
+	res = tk.MustQuery(`select * from t order by b`).Sort()
+	res2 = tk.MustQuery(`select * from t2 order by b`).Sort()
+	require.Equal(t, res.Rows(), res2.Rows())
 	tk.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select * from t except select * from t2 LIMIT 1`).Check(testkit.Rows())
@@ -3060,4 +3175,208 @@ func TestPointGetKeyPartitioning(t *testing.T) {
  c VARCHAR(45) NOT NULL, PRIMARY KEY (b, a)) PARTITION BY KEY(b) PARTITIONS 5`)
 	tk.MustExec(`INSERT INTO t VALUES ('Aa', 'Ab', 'Ac'), ('Ba', 'Bb', 'Bc')`)
 	tk.MustQuery(`SELECT * FROM t WHERE b = 'Ab'`).Check(testkit.Rows("Aa Ab Ac"))
+}
+
+func TestExplainPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t (a int, b int) PARTITION BY hash(a) PARTITIONS 3`)
+	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6)`)
+	tk.MustExec(`analyze table t all columns`)
+	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 3)`,
+		`  └─TableFullScan 2.00 cop[tikv] table:t, partition:p0 keep order:false`))
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
+		`TableReader 1.00 root partition:p0 data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 3)`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`CREATE TABLE t (a int unsigned primary key, b int) PARTITION BY hash(a) PARTITIONS 3`)
+	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`SELECT * FROM t WHERE a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0 handle:3"))
+}
+
+func TestPruningOverflow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("CREATE TABLE t (a int NOT NULL, b bigint NOT NULL,PRIMARY KEY (a,b)) PARTITION BY HASH ((a*b))PARTITIONS 13")
+	tk.MustExec(`insert into t values(0, 3522101843073676459)`)
+	tk.MustQuery(`SELECT a, b FROM t WHERE a IN (0,14158354938390,0) AND b IN (3522101843073676459,-2846203247576845955,838395691793635638)`).Check(testkit.Rows("0 3522101843073676459"))
+}
+
+func TestPartitionCoverage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustExec(`create table t (id int, d date, filler varchar(255))`)
+	tk.MustExec(`insert into t (id, d) values (1, '2024-02-29'), (2,'2024-03-01')`)
+	tk.MustExec(`alter table t partition by list (YEAR(d)) (partition p0 values in  (2024,2025), partition p1 values in (2023))`)
+	tk.MustQuery(`select id,d from t partition (p0)`).Check(testkit.Rows("1 2024-02-29", "2 2024-03-01"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`select id,d from t partition (p0)`).Check(testkit.Rows("1 2024-02-29", "2 2024-03-01"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`select id,d from t partition (p1)`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`select id,d from t partition (p1)`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`update t set filler = 'updated' where id = 1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b int, primary key (a,b)) partition by hash(b) partitions 3`)
+	tk.MustExec(`insert into t values (1,1),(1,2),(2,1),(2,2),(1,3)`)
+	tk.MustExec(`analyze table t all columns`)
+	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
+	query := `select * from t where a in (1,2) and b = 1 order by a`
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"))
+	tk.MustQuery(query).Check(testkit.Rows("1 1", "2 1"))
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"TableReader 2.00 root partition:p1 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t range:[1 1,1 1], [2 1,2 1], keep order:true"))
+	tk.MustQuery(query).Check(testkit.Rows("1 1", "2 1"))
+
+	query = `select * from t where a = 1 and b in (1,2)`
+	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"PartitionUnion 2.00 root  ",
+		"├─Batch_Point_Get 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"└─Batch_Point_Get 2.00 root table:t, partition:p2, clustered index:PRIMARY(a, b) keep order:false, desc:false"))
+
+	tk.MustQuery(query).Sort().Check(testkit.Rows("1 1", "1 2"))
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"TableReader 3.00 root partition:p1,p2 data:TableRangeScan",
+		"└─TableRangeScan 3.00 cop[tikv] table:t range:[1 1,1 1], [1 2,1 2], keep order:false"))
+	tk.MustQuery(query).Sort().Check(testkit.Rows("1 1", "1 2"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int) partition by range (a) (partition p values less than (10))`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
+		"TableReader 10.00 root partition:dual data:Selection",
+		"└─Selection 10.00 cop[tikv]  eq(test.t.a, 10)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec(`analyze table t all columns`)
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
+		`TableReader 0.00 root partition:dual data:Selection`,
+		`└─Selection 0.00 cop[tikv]  eq(test.t.a, 10)`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a = 10`).Check(testkit.Rows())
+
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`set @p=1,@q=2,@u=3;`)
+	tk.MustExec(`create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2`)
+	tk.MustExec(`insert into t values(1,0),(2,0),(3,0),(4,0)`)
+	tk.MustQuery(`explain format = 'brief' select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0 handle:2"))
+	tk.MustQuery(`select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Sort().Check(testkit.Rows("2 0"))
+	tk.MustExec(`prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and 1 = 1'`)
+	tk.MustQuery(`execute stmt using @p,@p`).Sort().Check(testkit.Rows("1 0", "2 0"))
+	tk.MustQuery(`execute stmt using @q,@q`).Sort().Check(testkit.Rows("2 0"))
+	tk.MustQuery(`execute stmt using @p,@u`).Sort().Check(testkit.Rows("1 0", "2 0", "3 0"))
+	tk.MustQuery(`execute stmt using @u,@p`).Sort().Check(testkit.Rows("2 0"))
+
+	tk.MustExec(`create table t19141 (c_int int, primary key (c_int)) partition by hash ( c_int ) partitions 4`)
+	tk.MustExec(`insert into t19141 values (1), (2), (3), (4)`)
+	tk.MustQuery(`explain format = 'brief' select * from t19141 partition (p0)`).Check(testkit.Rows(""+
+		"TableReader 10000.00 root partition:p0 data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t19141 keep order:false, stats:pseudo"))
+	tk.MustQuery(`select * from t19141 partition (p0)`).Sort().Check(testkit.Rows("4"))
+	tk.MustQuery(`select * from t19141 partition (p0) where c_int = 1`).Sort().Check(testkit.Rows())
+	tk.MustExec(`update t19141 partition (p0) set c_int = -c_int where c_int = 1`)
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustQuery(`select * from t19141 partition (p0, p2) where c_int in (1,2,3)`).Sort().Check(testkit.Rows("2"))
+	tk.MustExec(`update t19141 partition (p1) set c_int = -c_int where c_int in (2,3)`)
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec(`delete from t19141 partition (p0) where c_int in (2,3)`)
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
+}
+
+// Issue TiDB #51090.
+func TestAlterTablePartitionRollback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
+	tk5 := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test;`)
+	tk2.MustExec(`use test;`)
+	tk3.MustExec(`use test;`)
+	tk4.MustExec(`use test;`)
+	tk5.MustExec(`use test;`)
+	tk.MustExec(`create table t(a int);`)
+	tk.MustExec(`insert into t values(1), (2), (3);`)
+
+	alterChan := make(chan error)
+	alterPartition := func() {
+		err := tk4.ExecToErr(`alter table t partition by hash(a) partitions 3;`)
+		alterChan <- err
+	}
+	waitFor := func(s string) {
+		for {
+			select {
+			case alterErr := <-alterChan:
+				require.Fail(t, "Alter completed unexpectedly", "With error %v", alterErr)
+			default:
+				// Alter still running
+			}
+			res := tk5.MustQuery(`admin show ddl jobs where db_name = 'test' and table_name = 't' and job_type = 'alter table partition by'`).Rows()
+			if len(res) > 0 && res[0][4] == s {
+				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				break
+			}
+			gotime.Sleep(10 * gotime.Millisecond)
+		}
+		dom := domain.GetDomain(tk5.Session())
+		// Make sure the table schema is the new schema.
+		require.NoError(t, dom.Reload())
+	}
+
+	testFunc := func(states []string) {
+		for i, s := range states {
+			if i%2 == 0 {
+				tk2.MustExec(`begin;`)
+				tk2.MustExec(`select 1 from t;`)
+				if i > 0 {
+					tk3.MustExec(`commit;`)
+				}
+			} else {
+				tk3.MustExec(`begin;`)
+				tk3.MustExec(`select 1 from t;`)
+				tk2.MustExec(`commit;`)
+			}
+			if i == 0 {
+				go alterPartition()
+			}
+			waitFor(s)
+			if i == len(states)-1 {
+				break
+			}
+		}
+		res := tk.MustQuery(`admin show ddl jobs where table_name = 't' and job_type = 'alter table partition by'`).Rows()
+		tk.MustExec(fmt.Sprintf("admin cancel ddl jobs %v", res[0][0]))
+		tk2.MustExec(`commit;`)
+		tk3.MustExec(`commit;`)
+		require.ErrorContains(t, <-alterChan, "[ddl:8214]Cancelled DDL job")
+		tk.MustQuery(`show create table t;`).Check(testkit.Rows(
+			"t CREATE TABLE `t` (\n" +
+				"  `a` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		tk.MustQuery(`select a from t order by a;`).Check(testkit.Rows("1", "2", "3"))
+	}
+
+	states := []string{"delete only", "write only", "write reorganization", "delete reorganization"}
+	for i := range states {
+		testFunc(states[:i+1])
+	}
 }

@@ -114,9 +114,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 }
 
 func (s *importIntoSuite) TestGetNextStep() {
-	task := &proto.Task{
-		TaskBase: proto.TaskBase{Step: proto.StepInit},
-	}
+	task := &proto.TaskBase{Step: proto.StepInit}
 	ext := &ImportSchedulerExt{}
 	for _, nextStep := range []proto.Step{proto.ImportStepImport, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))

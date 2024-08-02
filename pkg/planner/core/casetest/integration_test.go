@@ -15,12 +15,14 @@
 package casetest
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -45,26 +47,17 @@ func TestVerboseExplain(t *testing.T) {
 	tk.MustExec("insert into t3 values(1,2)")
 	tk.MustExec("insert into t3 values(3,4)")
 	tk.MustExec("insert into t3 values(5,6)")
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
-	tk.MustExec("analyze table t3")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
+	tk.MustExec("analyze table t3 all columns")
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t1" || tblInfo.Name.L == "t2" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
 
 	var input []string
 	var output []struct {
@@ -94,13 +87,11 @@ func TestIsolationReadTiFlashNotChoosePointGet(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:     1,
-			Available: true,
-		}
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
@@ -152,17 +143,7 @@ func TestMergeContinuousSelections(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "ts" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "ts")
 
 	tk.MustExec(" set @@tidb_allow_mpp=1;")
 
@@ -194,7 +175,7 @@ func TestIssue31240(t *testing.T) {
 	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -247,9 +228,9 @@ func TestIssue32632(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("set @@tidb_enforce_mpp = 1")
 
-	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "partsupp", L: "partsupp"})
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "partsupp", L: "partsupp"})
 	require.NoError(t, err)
-	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "supplier", L: "supplier"})
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "supplier", L: "supplier"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -293,9 +274,9 @@ func TestTiFlashPartitionTableScan(t *testing.T) {
 	tk.MustExec("drop table if exists hp_t;")
 	tk.MustExec("create table rp_t(a int) partition by RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16), PARTITION p3 VALUES LESS THAN (21));")
 	tk.MustExec("create table hp_t(a int) partition by hash(a) partitions 4;")
-	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "rp_t", L: "rp_t"})
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "rp_t", L: "rp_t"})
 	require.NoError(t, err)
-	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "hp_t", L: "hp_t"})
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "hp_t", L: "hp_t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -328,24 +309,63 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int)")
 
-	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan []string
+		SQL    string
+		Plan   []string
+		Redact []string
 	}
 	integrationSuiteData := GetIntegrationSuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
+			tk.MustExec("set session tidb_redact_log=off")
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			tk.MustExec("set session tidb_redact_log=on")
+			output[i].Redact = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
+		tk.MustExec("set session tidb_redact_log=off")
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustExec("set session tidb_redact_log=on")
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Redact...))
 	}
+}
+
+func TestIssue51873(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE h1 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  position_date date NOT NULL,
+  asset_id varchar(32) DEFAULT NULL,
+  portfolio_code varchar(50) DEFAULT NULL,
+  PRIMARY KEY (id,position_date) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY uidx_posi_asset_balance_key (position_date,portfolio_code,asset_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002
+PARTITION BY RANGE COLUMNS(position_date)
+(PARTITION p202401 VALUES LESS THAN ('2024-02-01'))`)
+	tk.MustExec(`create table h2 like h1`)
+	tk.MustExec(`insert into h1 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`insert into h2 values(1,'2024-01-01',1,1)`)
+	tk.MustExec(`analyze table h1`)
+	tk.MustExec(`set @@tidb_skip_missing_partition_stats=0`)
+	tk.MustQuery(`with assetBalance AS
+    (SELECT asset_id, portfolio_code FROM h1 pab WHERE pab.position_date = '2024-01-01' ),
+cashBalance AS (SELECT portfolio_code, asset_id
+    FROM h2 pcb WHERE pcb.position_date = '2024-01-01' ),
+assetIdList AS (SELECT DISTINCT asset_id AS assetId
+    FROM assetBalance )
+SELECT main.portfolioCode
+FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
+    FROM assetBalance balance
+    LEFT JOIN assetIdList
+        ON balance.asset_id = assetIdList.assetId ) main`).Check(testkit.Rows("1"))
 }
 
 func TestIssue50926(t *testing.T) {
@@ -355,6 +375,19 @@ func TestIssue50926(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create or replace definer='root'@'localhost' view v (a,b) AS select 1 as a, json_object('k', '0') as b from t")
 	tk.MustQuery("select sum(json_extract(b, '$.path')) from v group by a").Check(testkit.Rows()) // no error
+}
+
+func TestFixControl43817(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int)`)
+	tk.MustExec(`create table t2 (a int)`)
+	tk.MustQuery(`select * from t1 where t1.a > (select max(a) from t2)`).Check(testkit.Rows()) // no error
+	tk.MustExec(`set tidb_opt_fix_control="43817:on"`)
+	tk.MustContainErrMsg(`select * from t1 where t1.a > (select max(a) from t2)`, "evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817")
+	tk.MustExec(`set tidb_opt_fix_control="43817:off"`)
+	tk.MustQuery(`select * from t1 where t1.a > (select max(a) from t2)`).Check(testkit.Rows()) // no error
 }
 
 func TestFixControl45132(t *testing.T) {
@@ -384,4 +417,78 @@ func TestFixControl45132(t *testing.T) {
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
 	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+}
+
+func TestIssue49438(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists tx`)
+	tk.MustExec(`create table tx (a int, b json, key k(a, (cast(b as date array))))`)
+	tk.MustExec(`select 1 from tx where a in (1)`) // no error
+}
+
+func TestIssue52023(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t (
+			a binary(1) NOT NULL,
+			PRIMARY KEY (a)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+		PARTITION BY RANGE COLUMNS(a)
+		(PARTITION P0 VALUES LESS THAN (_binary 0x03),
+		PARTITION P4 VALUES LESS THAN (_binary 0xc0),
+		PARTITION PMX VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`insert into t values (0x5)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("\u0005"))
+	tk.MustQuery(`select * from t where a = 0x5`).Check(testkit.Rows("\u0005"))
+	tk.MustQuery(`select * from t where a = 5`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a IN (5,55)`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
+	tk.MustQuery(`explain select * from t where a = 0x5`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:P4, clustered index:PRIMARY(a) "))
+	tk.MustQuery(`explain format='brief' select * from t where a = 5`).Check(testkit.Rows(""+
+		"TableReader 0.80 root partition:all data:Selection",
+		"└─Selection 0.80 cop[tikv]  eq(cast(test.t.a, double BINARY), 5)",
+		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format='brief' select * from t where a IN (5,55)`).Check(testkit.Rows(""+
+		"TableReader 0.96 root partition:all data:Selection",
+		"└─Selection 0.96 cop[tikv]  or(eq(cast(test.t.a, double BINARY), 5), eq(cast(test.t.a, double BINARY), 55))",
+		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format='brief' select * from t where a IN (0x5,55)`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:all data:Selection",
+		"└─Selection 1.00 cop[tikv]  or(eq(test.t.a, \"0x05\"), eq(cast(test.t.a, double BINARY), 55))",
+		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+}
+
+func TestTiFlashExtraColumnPrune(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = on")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
 }

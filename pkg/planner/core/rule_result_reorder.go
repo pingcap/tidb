@@ -18,7 +18,10 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 /*
@@ -39,7 +42,7 @@ This rule reorders results by modifying or injecting a Sort operator:
 type resultReorder struct {
 }
 
-func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (rs *resultReorder) optimize(_ context.Context, lp base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	ordered := rs.completeSort(lp)
 	if !ordered {
@@ -48,10 +51,13 @@ func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalO
 	return lp, planChanged, nil
 }
 
-func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
+func (rs *resultReorder) completeSort(lp base.LogicalPlan) bool {
 	if rs.isInputOrderKeeper(lp) {
+		if len(lp.Children()) == 0 {
+			return true
+		}
 		return rs.completeSort(lp.Children()[0])
-	} else if sort, ok := lp.(*LogicalSort); ok {
+	} else if sort, ok := lp.(*logicalop.LogicalSort); ok {
 		cols := sort.Schema().Columns // sort results by all output columns
 		if handleCol := rs.extractHandleCol(sort.Children()[0]); handleCol != nil {
 			cols = []*expression.Column{handleCol} // sort results by the handle column if we can get it
@@ -73,7 +79,7 @@ func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 	return false
 }
 
-func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
+func (rs *resultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 	if rs.isInputOrderKeeper(lp) {
 		lp.SetChildren(rs.injectSort(lp.Children()[0]))
 		return lp
@@ -87,25 +93,25 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	for _, col := range cols {
 		byItems = append(byItems, &util.ByItems{Expr: col})
 	}
-	sort := LogicalSort{
+	sort := logicalop.LogicalSort{
 		ByItems: byItems,
 	}.Init(lp.SCtx(), lp.QueryBlockOffset())
 	sort.SetChildren(lp)
 	return sort
 }
 
-func (*resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
+func (*resultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 	switch lp.(type) {
-	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
+	case *LogicalSelection, *logicalop.LogicalProjection, *logicalop.LogicalLimit, *logicalop.LogicalTableDual:
 		return true
 	}
 	return false
 }
 
 // extractHandleCols does the best effort to get the handle column.
-func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
+func (rs *resultReorder) extractHandleCol(lp base.LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
-	case *LogicalSelection, *LogicalLimit:
+	case *LogicalSelection, *logicalop.LogicalLimit:
 		handleCol := rs.extractHandleCol(lp.Children()[0])
 		if handleCol == nil {
 			return nil // fail to extract handle column from the child, just return nil.
@@ -115,7 +121,7 @@ func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
 			return handleCol
 		}
 	case *DataSource:
-		if x.tableInfo.IsCommonHandle {
+		if x.TableInfo.IsCommonHandle {
 			// Currently we deliberately don't support common handle case for simplicity.
 			return nil
 		}

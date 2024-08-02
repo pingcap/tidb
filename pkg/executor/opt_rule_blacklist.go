@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // ReloadOptRuleBlacklistExec indicates ReloadOptRuleBlacklist executor.
@@ -39,7 +38,7 @@ func (e *ReloadOptRuleBlacklistExec) Next(context.Context, *chunk.Chunk) error {
 
 // LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.
 func LoadOptRuleBlacklist(ctx context.Context, sctx sessionctx.Context) (err error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name from mysql.opt_rule_blacklist")
 	if err != nil {
 		return err

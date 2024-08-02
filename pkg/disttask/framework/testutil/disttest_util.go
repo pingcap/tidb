@@ -56,7 +56,7 @@ func RegisterTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerExt schedu
 	}
 	mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	executorExt.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
 }
@@ -104,28 +104,39 @@ func RegisterRollbackTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerEx
 	stepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	stepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	executorExt.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(stepExecutor, nil).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(stepExecutor, nil).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
 	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
 }
 
 // SubmitAndWaitTask schedule one task.
-func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, concurrency int) *proto.Task {
-	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, nil)
+func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, targetScope string, concurrency int) *proto.TaskBase {
+	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, targetScope, nil)
 	require.NoError(t, err)
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }
 
 // WaitTaskDoneOrPaused wait task done or paused.
-func WaitTaskDoneOrPaused(ctx context.Context, t testing.TB, taskKey string) *proto.Task {
-	taskMgr, err := storage.GetTaskManager()
-	require.NoError(t, err)
-	gotTask, err := taskMgr.GetTaskByKeyWithHistory(ctx, taskKey)
-	require.NoError(t, err)
-	task, err := handle.WaitTask(ctx, gotTask.ID, func(task *proto.Task) bool {
+func WaitTaskDoneOrPaused(ctx context.Context, t testing.TB, taskKey string) *proto.TaskBase {
+	return waitTaskUntil(ctx, t, taskKey, func(task *proto.TaskBase) bool {
 		return task.IsDone() || task.State == proto.TaskStatePaused
 	})
+}
+
+// WaitTaskDone wait task done.
+func WaitTaskDone(ctx context.Context, t testing.TB, taskKey string) *proto.TaskBase {
+	return waitTaskUntil(ctx, t, taskKey, func(task *proto.TaskBase) bool {
+		return task.IsDone()
+	})
+}
+
+func waitTaskUntil(ctx context.Context, t testing.TB, taskKey string, fn func(task *proto.TaskBase) bool) *proto.TaskBase {
+	taskMgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	gotTask, err := taskMgr.GetTaskBaseByKeyWithHistory(ctx, taskKey)
+	require.NoError(t, err)
+	task, err := handle.WaitTask(ctx, gotTask.ID, fn)
 	require.NoError(t, err)
 	return task
 }

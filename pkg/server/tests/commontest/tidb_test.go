@@ -22,6 +22,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -141,8 +142,9 @@ func TestStatusPort(t *testing.T) {
 	cfg.Performance.TCPKeepAlive = true
 
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	err = server.Run(ts.Domain)
 	require.Error(t, err)
-	require.Nil(t, server)
 }
 
 func TestMultiStatements(t *testing.T) {
@@ -164,16 +166,16 @@ func TestSocketForwarding(t *testing.T) {
 	cfg.Port = cli.Port
 	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	defer server.Close()
 
 	cli.RunTestRegression(t, func(config *mysql.Config) {
@@ -197,7 +199,7 @@ func TestSocket(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -205,7 +207,7 @@ func TestSocket(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
 	defer server.Close()
 
 	confFunc := func(config *mysql.Config) {
@@ -232,15 +234,17 @@ func TestSocketAndIp(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	cli.WaitUntilServerCanConnect()
 	defer server.Close()
 
@@ -397,7 +401,7 @@ func TestOnlySocket(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -405,7 +409,7 @@ func TestOnlySocket(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
 	defer server.Close()
 	require.Nil(t, server.Listener())
 	require.NotNil(t, server.Socket())
@@ -898,17 +902,18 @@ func TestGracefulShutdown(t *testing.T) {
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Performance.TCPKeepAlive = true
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	require.NotNil(t, server)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
-
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	resp, err := cli.FetchStatus("/status") // server is up
 	require.NoError(t, err)
 	require.Nil(t, resp.Body.Close())
@@ -1067,7 +1072,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			sqlStr := mc.GetSQL(s.SQLDigest)
 			encodedPlan := mc.GetPlan(s.PlanDigest)
 			// Normalize the user SQL before check.
-			normalizedSQL := parser.Normalize(sql)
+			normalizedSQL := parser.Normalize(sql, "ON")
 			require.Equalf(t, normalizedSQL, sqlStr, "sql: %v", sql)
 			// decode plan before check.
 			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
@@ -1768,7 +1773,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 		isQuery bool
 	}{
 		{"insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()", "", false},
-		{"analyze table t", "", false},
+		{"analyze table t all columns", "", false},
 		{"explain analyze select sum(a+b) from t", ".*TableReader.*", true},
 		{"trace select sum(b*a), sum(a+b) from t", "", true},
 		{"set global tidb_stmt_summary_history_size=5;", "", false},
@@ -2141,16 +2146,18 @@ func TestLocalhostClientMapping(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	cli.WaitUntilServerCanConnect()
 
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
@@ -2763,6 +2770,7 @@ type mockProxyProtocolProxy struct {
 	backendIsSock bool
 	ln            net.Listener
 	run           atomic.Bool
+	runChan       chan struct{}
 }
 
 func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
@@ -2772,6 +2780,7 @@ func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSo
 		clientAddr:    clientAddr,
 		backendIsSock: backendIsSock,
 		ln:            nil,
+		runChan:       make(chan struct{}),
 	}
 }
 
@@ -2785,6 +2794,7 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 	if err != nil {
 		return err
 	}
+	close(p.runChan)
 	for p.run.Load() {
 		conn, err := p.ln.Accept()
 		if err != nil {
@@ -2884,6 +2894,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	// Prepare Server
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -2895,7 +2906,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	defer func() {
 		server.Close()
 	}()
-
+	<-server2.RunInGoTestChan
 	require.NotNil(t, server.Listener())
 	require.Nil(t, server.Socket())
 
@@ -2908,7 +2919,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	defer func() {
 		ppProxy.Close()
 	}()
-
+	<-ppProxy.runChan
 	cli := testserverclient.NewTestServerClient()
 	cli.Port = testutil.GetPortFromTCPAddr(ppProxy.ListenAddr())
 	cli.WaitUntilServerCanConnect()
@@ -2949,6 +2960,7 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	// Prepare Server
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -2956,7 +2968,7 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 1000)
+	<-server2.RunInGoTestChan
 	defer func() {
 		server.Close()
 	}()
@@ -3060,4 +3072,98 @@ func TestPrepareCount(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
 	require.NoError(t, qctx.Close())
+}
+
+func TestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestSQLModeIsLoadedBeforeQuery(t)
+}
+
+func TestConnectionCount(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestConnectionCount(t)
+}
+
+func TestTypeAndCharsetOfSendLongData(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestTypeAndCharsetOfSendLongData(t)
+}
+
+func TestIssue53634(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue53634(t, ts.Domain)
+}
+
+func TestIssue54254(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue54254(t, ts.Domain)
+}
+
+func TestAuthSocket(t *testing.T) {
+	defer server2.ClearOSUserForAuthSocket()
+
+	cfg := util2.NewTestConfig()
+	cfg.Socket = filepath.Join(t.TempDir(), "authsock.sock")
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	ts := servertestkit.CreateTidbTestSuiteWithCfg(t, cfg)
+	ts.WaitUntilServerCanConnect()
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE USER 'u1'@'%' IDENTIFIED WITH auth_socket;")
+		dbt.MustExec("CREATE USER 'u2'@'%' IDENTIFIED WITH auth_socket AS 'sockuser'")
+		dbt.MustExec("CREATE USER 'sockuser'@'%' IDENTIFIED WITH auth_socket;")
+	})
+
+	// network login should be denied
+	for _, uname := range []string{"u1", "u2", "u3"} {
+		server2.MockOSUserForAuthSocket(uname)
+		db, err := sql.Open("mysql", ts.GetDSN(func(config *mysql.Config) {
+			config.User = uname
+		}))
+		require.NoError(t, err)
+		_, err = db.Conn(context.TODO())
+		require.EqualError(t,
+			err,
+			fmt.Sprintf("Error 1045 (28000): Access denied for user '%s'@'127.0.0.1' (using password: NO)", uname),
+		)
+		require.NoError(t, db.Close())
+	}
+
+	socketAuthConf := func(user string) func(*mysql.Config) {
+		return func(config *mysql.Config) {
+			config.User = user
+			config.Net = "unix"
+			config.Addr = cfg.Socket
+			config.DBName = ""
+		}
+	}
+
+	server2.MockOSUserForAuthSocket("sockuser")
+
+	// mysql username that is different with the OS user should be rejected.
+	db, err := sql.Open("mysql", ts.GetDSN(socketAuthConf("u1")))
+	require.NoError(t, err)
+	_, err = db.Conn(context.TODO())
+	require.EqualError(t, err, "Error 1045 (28000): Access denied for user 'u1'@'localhost' (using password: YES)")
+	require.NoError(t, db.Close())
+
+	// mysql username that is the same with the OS user should be accepted.
+	ts.RunTests(t, socketAuthConf("sockuser"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "sockuser@%")
+	})
+
+	// When a user is created with `IDENTIFIED WITH auth_socket AS ...`.
+	// It should be accepted when username or as string is the same with OS user.
+	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "u2@%")
+	})
+
+	server2.MockOSUserForAuthSocket("u2")
+	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "u2@%")
+	})
 }

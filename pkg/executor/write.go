@@ -144,7 +144,7 @@ func updateRecord(
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
-			v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+			v, err := expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return false, err
 			}
@@ -246,7 +246,7 @@ func addUnchangedKeysForLockByRow(
 	count := 0
 	physicalID := t.Meta().ID
 	if pt, ok := t.(table.PartitionedTable); ok {
-		p, err := pt.GetPartitionByRow(sctx, row)
+		p, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return 0, err
 		}
@@ -313,7 +313,7 @@ func rebaseAutoRandomValue(
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
-	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
+	newErr := types.ErrDataTooLong.FastGen("Data too long for column '%v' at row %v", colName, rowIdx)
 	return newErr
 }
 
@@ -329,8 +329,9 @@ func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, t
 	if !ok {
 		return errors.Errorf("exchange partition process assert table partition failed")
 	}
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	err := p.CheckForExchangePartition(
-		sctx.GetExprCtx(),
+		evalCtx,
 		pt.Meta().Partition,
 		row,
 		tbl.ExchangePartitionInfo.ExchangePartitionDefID,
@@ -340,15 +341,7 @@ func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, t
 		return err
 	}
 	if variable.EnableCheckConstraint.Load() {
-		type CheckConstraintTable interface {
-			CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error
-		}
-		cc, ok := pt.(CheckConstraintTable)
-		if !ok {
-			return errors.Errorf("exchange partition process assert check constraint failed")
-		}
-		err := cc.CheckRowConstraint(sctx, row)
-		if err != nil {
+		if err = table.CheckRowConstraintWithDatum(evalCtx, pt.WritableConstraint(), row); err != nil {
 			// TODO: make error include ExchangePartition info.
 			return err
 		}
