@@ -34,6 +34,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/felixge/fgprof"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -300,6 +301,7 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+	router.Handle("/debug/fgprof", fgprof.Handler())
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
