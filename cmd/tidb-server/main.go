@@ -905,6 +905,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()
 	go dom.ServerMemoryLimitHandle().SetSessionManager(svr).Run()
+	go dom.RunawayHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
 	return svr
 }

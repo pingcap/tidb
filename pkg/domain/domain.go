@@ -86,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/memoryusagealarm"
 	"github.com/pingcap/tidb/pkg/util/replayer"
+	"github.com/pingcap/tidb/pkg/util/runaway"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -163,6 +164,7 @@ type Domain struct {
 	expensiveQueryHandle    *expensivequery.Handle
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
+	runawayHandle           *runaway.Handle
 	// TODO: use Run for each process in future pr
 	wg            *util.WaitGroupEnhancedWrapper
 	statsUpdating atomicutil.Int32
@@ -1227,6 +1229,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
+	do.runawayHandle = runaway.NewRunawayHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
 	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
@@ -2739,6 +2742,11 @@ func (do *Domain) MemoryUsageAlarmHandle() *memoryusagealarm.Handle {
 // ServerMemoryLimitHandle returns the expensive query handle.
 func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 	return do.serverMemoryLimitHandle
+}
+
+// RunawayHandle returns the runaway handle.
+func (do *Domain) RunawayHandle() *runaway.Handle {
+	return do.runawayHandle
 }
 
 const (

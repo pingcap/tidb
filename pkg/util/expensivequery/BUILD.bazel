@@ -7,8 +7,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/metrics",
+        "//pkg/planner/core/base",
         "//pkg/sessionctx/variable",
         "//pkg/util",
+        "//pkg/util/execdetails",
         "//pkg/util/logutil",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
