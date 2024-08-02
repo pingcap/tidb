@@ -15,11 +15,12 @@
 package expression
 
 import (
+	"sync/atomic"
+
 	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"sync/atomic"
 )
 
 type columnEvaluator struct {
