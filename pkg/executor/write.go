@@ -163,6 +163,7 @@ func updateRecord(
 
 	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
+		// TODO: Anything to do for Global Index?
 		// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
 		// we use the staging buffer so that we don't need to precheck the existence of handle or unique keys by sending
 		// extra kv requests, and the remove action will not take effect if there are conflicts.

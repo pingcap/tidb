@@ -3729,6 +3729,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	// `REPLACE INTO` requires both INSERT + DELETE privilege
 	// `ON DUPLICATE KEY UPDATE` requires both INSERT + UPDATE privilege
+	// TODO: Anything to do for Global Index?
 	var extraPriv mysql.PrivilegeType
 	if insert.IsReplace {
 		extraPriv = mysql.DeletePriv
@@ -4021,6 +4022,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not a column of select's output.
 	//        MySQL won't throw error and will execute this SQL successfully.
 	// To make compatible with this strange feature, we add the variable `actualColLen` and the following IF branch.
+	// TODO: Anything for Global Index?
 	if len(insert.OnDuplicate) > 0 {
 		// If the select has aggregation, it cannot see the columns not in the select field.
 		//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; can be executed successfully.

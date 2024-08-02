@@ -1604,9 +1604,11 @@ func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r [
 			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	if t.Meta().Partition.HasTruncatingPartitionID(pid) {
-		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
-	}
+	/*
+		if t.Meta().Partition.HasTruncatingPartitionID(pid) {
+			return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
+		}
+	*/
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == pid &&
 		variable.EnableCheckConstraint.Load() {
@@ -1617,6 +1619,10 @@ func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r [
 	}
 	tbl := t.GetPartition(pid)
 	recordID, err = tbl.AddRecord(ctx, r, opts...)
+	// TODO: replace row if duplicate error and the duplicate comes from
+	// an old dropped/truncated partition!
+	// in DeleteReorganization state, OK to only remove the entries in the
+	// global indexes, not the old partition, since it is no-longer accessible
 	if err != nil {
 		return
 	}
@@ -1739,9 +1745,11 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	if t.Meta().Partition.HasTruncatingPartitionID(to) {
-		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
-	}
+	/*
+		if t.Meta().Partition.HasTruncatingPartitionID(to) {
+			return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
+		}
+	*/
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
 		variable.EnableCheckConstraint.Load() {
@@ -1768,6 +1776,8 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 
 		_, err = t.GetPartition(to).AddRecord(ctx, newData)
+		// TODO: replace row if duplicate error and the duplicate comes from
+		// an old dropped/truncated partition!
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1806,6 +1816,8 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
 			_, err = t.GetPartition(newTo).AddRecord(ctx, newData)
+			// TODO: replace row if duplicate error and the duplicate comes from
+			// an old dropped/truncated partition!
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1815,6 +1827,9 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 	}
 	tbl := t.GetPartition(to)
 	err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+	// TODO: replace row if duplicate error and the duplicate comes from
+	// an old dropped/truncated partition!
+	// TODO: Create a test case for update!!!
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1909,4 +1924,13 @@ func (lt *ForRangePruning) Compare(ith int, v int64, unsigned bool) int {
 		return 0
 	}
 	return -1
+}
+
+func HasGlobalIndex(tblInfo *model.TableInfo) bool {
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.Global {
+			return true
+		}
+	}
+	return false
 }

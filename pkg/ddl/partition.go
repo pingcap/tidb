@@ -1913,15 +1913,6 @@ func getPartitionIDsFromDefinitions(defs []model.PartitionDefinition) []int64 {
 	return pids
 }
 
-func hasGlobalIndex(tblInfo *model.TableInfo) bool {
-	for _, idxInfo := range tblInfo.Indices {
-		if idxInfo.Global {
-			return true
-		}
-	}
-	return false
-}
-
 // getTableInfoWithDroppingPartitions builds oldTableInfo including dropping partitions, only used by onDropTablePartition.
 func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	p := t.Partition
@@ -2083,12 +2074,14 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		}
 
 		job.SchemaState = model.StateDeleteOnly
+		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintaining the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
 		job.SchemaState = model.StateDeleteReorganization
+		tblInfo.Partition.DDLState = model.StateDeleteReorganization
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
@@ -2102,7 +2095,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Trace(err)
 		}
 		// If table has global indexes, we need reorg to clean up them.
-		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
+		if pt, ok := tbl.(table.PartitionedTable); ok && tables.HasGlobalIndex(tblInfo) {
 			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
 			elements := make([]*meta.Element, 0, len(tblInfo.Indices))
 			for _, idxInfo := range tblInfo.Indices {
@@ -2207,7 +2200,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	if !hasGlobalIndex(tblInfo) {
+	if !tables.HasGlobalIndex(tblInfo) {
 		oldPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 		newPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 		for k, oldID := range oldIDs {
@@ -2300,7 +2293,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 		// If table has global indexes, we need reorg to clean up them.
-		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
+		if pt, ok := tbl.(table.PartitionedTable); ok && tables.HasGlobalIndex(tblInfo) {
 			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
 			elements := make([]*meta.Element, 0, len(tblInfo.Indices))
 			for _, idxInfo := range tblInfo.Indices {

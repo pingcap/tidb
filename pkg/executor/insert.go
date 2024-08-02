@@ -87,6 +87,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
+	// TODO: Anything to do for Global Index?
 	if len(e.OnDuplicate) > 0 {
 		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
@@ -94,6 +95,30 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 	} else if ignoreErr {
 		err := e.batchCheckAndInsert(ctx, rows, e.addRecord, false)
+		if err != nil {
+			return err
+		}
+	} else if e.Table.Meta().Partition != nil &&
+		tables.HasGlobalIndex(e.Table.Meta()) &&
+		len(e.Table.Meta().Partition.DroppingDefinitions) > 0 &&
+		len(e.Table.Meta().Partition.AddingDefinitions) == 0 &&
+		e.Table.Meta().Partition.DDLState == model.StateDeleteReorganization {
+		// normal insert, but in DROP/TRUNCATE Partition and
+		// current state have dropped the old partition(s) but
+		// the previous state can still use them.
+		// So we must handle the case where insert/update in this
+		// state will succeed even if the global index may have
+		// entries from the old partition.
+		// I.e:
+		// If global entries exists pointing to the old partitions:
+		// Delete those rows from the old partitions before adding
+		// the new rows.
+		// If duplicate key for any other partition or index,
+		// return those errors!
+		// TODO: Apply similar handling for Exchange partition?
+		// TODO: Apply similar handling in batchCheckAndInsert and
+		// batchUpdateDupRows
+		err := e.batchDeleteOldGlobalIndexDupsAndInsert(ctx, rows)
 		if err != nil {
 			return err
 		}
@@ -210,6 +235,87 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
 	}
 	return err
+}
+
+func (e *InsertExec) batchDeleteOldGlobalIndexDupsAndInsert(ctx context.Context, newRows [][]types.Datum) error {
+	// Get keys need to be checked.
+	start := time.Now()
+	toBeCheckedRows, err := getGlobalIndexKeysNeedCheck(e.Ctx(), e.Table, newRows)
+	if err != nil {
+		return err
+	}
+
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return err
+	}
+
+	prefetchStart := time.Now()
+	// Use BatchGet to fill cache.
+	// It's an optimization and could be removed without affecting correctness.
+	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+		return err
+	}
+	if e.stats != nil {
+		e.stats.Prefetch += time.Since(prefetchStart)
+	}
+
+	for i, r := range toBeCheckedRows {
+		if r.handleKey != nil {
+			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
+			if err != nil {
+				return err
+			}
+
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
+			if err == nil {
+				continue
+			}
+			if !kv.IsErrNotFound(err) {
+				return err
+			}
+		}
+
+		for _, uk := range r.uniqueKeys {
+			_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
+			if err != nil {
+				return err
+			}
+			if handle == nil {
+				continue
+			}
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
+			if err != nil {
+				if kv.IsErrNotFound(err) {
+					// Data index inconsistent? A unique key provide the handle information, but the
+					// handle points to nothing.
+					logutil.BgLogger().Error("get old row failed when insert on dup",
+						zap.String("uniqueKey", hex.EncodeToString(uk.newKey)),
+						zap.Stringer("handle", handle),
+						zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
+				}
+				return err
+			}
+
+			newRows[i] = nil
+			break
+		}
+
+		// If row was checked with no duplicate keys,
+		// we should do insert the row,
+		// and key-values should be filled back to dupOldRowValues for the further row check,
+		// due to there may be duplicate keys inside the insert statement.
+		if newRows[i] != nil {
+			err := e.addRecord(ctx, newRows[i])
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if e.stats != nil {
+		e.stats.CheckInsertTime += time.Since(start)
+	}
+	return nil
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.

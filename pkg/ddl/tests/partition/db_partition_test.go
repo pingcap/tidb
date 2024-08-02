@@ -1470,6 +1470,9 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	// Here it will fail with
 	// the partition is not in public.
+	tk3.MustExec(`insert into test_global values (15,15,15)`)
+	//tk3.MustExec(`insert into test_global values (15,15,15) on duplicate key update a = 14`)
+	tk3.MustQuery(`select * from test_global where a = 14`).Check(testkit.Rows("14 15 15"))
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "the partition is in not in public")
@@ -3763,4 +3766,46 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.Equal(t, global, idxInfo.Global)
 		require.True(t, idxInfo.Primary)
 	}
+}
+
+func TestDropPartitionGlobalIndexReorgDML(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=ON")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkAdmin := testkit.NewTestKit(t, store)
+	tkAdmin.MustExec("use test")
+
+	tk.MustExec(`create table t (a int, b int, c varchar(255), primary key (a) nonclustered) partition by hash (b) partitions 3`)
+	tk.MustExec(`insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6)`)
+	tk.MustExec(`select sleep(1)`)
+	prevVersion := dom.InfoSchema().SchemaMetaVersion()
+	tk.MustExec(`BEGIN`)
+	tk.MustQuery(`select * from t where a = 1`).Check(testkit.Rows("1 1 1"))
+	ch := make(chan error)
+	go func() {
+		ch <- tkDDL.ExecToErr(`alter table t truncate partition p1`)
+	}()
+	tk.MustExec(`select sleep(1)`)
+	tk2.MustExec(`BEGIN`)
+	currVersion := dom.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, prevVersion, currVersion)
+	//tkAdmin.MustQuery(`admin show ddl jobs`).Check(testkit.Rows())
+	tk2.MustQuery(`select * from t where a = 2`).Check(testkit.Rows("2 2 2"))
+	tk.MustExec(`ROLLBACK`)
+	tk.MustExec(`select sleep(1)`)
+	tkAdmin.MustQuery(`admin show ddl jobs`).Check(testkit.Rows())
+	tk2.MustExec(`ROLLBACK`)
+	tk.MustExec(`select sleep(1)`)
+	tk.MustExec(`BEGIN`)
+	tkAdmin.MustQuery(`admin show ddl jobs`).Check(testkit.Rows())
+	require.NoError(t, <-ch)
+	tkAdmin.MustQuery(`admin show ddl jobs`).Check(testkit.Rows())
 }
