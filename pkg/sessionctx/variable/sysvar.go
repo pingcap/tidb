@@ -3291,7 +3291,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableSharedLockUpgrade, Value: BoolToOnOff(DefTiDBEnableSharedLockUpgrade), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		if s.NoopFuncsMode != OffInt && TiDBOptOn(val) {
-			return errors.Errorf("%v could not be set when %v is enabled", TiDBEnableSharedLockUpgrade, TiDBEnableNoopFuncs)
+			logutil.BgLogger().Warn("tidb_enable_shared_lock_upgrade set to on would override tidb_enable_noop_functions on")
 		}
 		s.SharedLockUpgrade = TiDBOptOn(val)
 		return nil
