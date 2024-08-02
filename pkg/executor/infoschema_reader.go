@@ -418,9 +418,6 @@ func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessi
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
-			if ex.Filter("table_name", table.Name.L) {
-				continue
-			}
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
