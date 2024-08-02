@@ -92,18 +92,13 @@ func GetTimeValue(ctx BuildContext, v any, tp byte, fsp int, explicitTz *time.Lo
 	switch x := v.(type) {
 	case string:
 		lowerX := strings.ToLower(x)
-<<<<<<< HEAD
-		if lowerX == ast.CurrentTimestamp || lowerX == ast.CurrentDate {
-			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
-=======
 		switch lowerX {
 		case ast.CurrentTimestamp:
-			if value, err = getTimeCurrentTimeStamp(ctx.GetEvalCtx(), tp, fsp); err != nil {
->>>>>>> 4d8e1d5e485 (expression: truncate time part for current_date columns (#54045))
+			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
 			}
 		case ast.CurrentDate:
-			if value, err = getTimeCurrentTimeStamp(ctx.GetEvalCtx(), tp, fsp); err != nil {
+			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
 			}
 			yy, mm, dd := value.Year(), value.Month(), value.Day()
