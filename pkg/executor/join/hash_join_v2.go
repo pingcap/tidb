@@ -135,6 +135,20 @@ func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 	return totalMemoryUsage
 }
 
+func (htc *hashTableContext) getAllMemoryUsageInHashTableTest() (int64, int64, string) {
+	partNum := len(htc.hashTable.tables)
+	totalMemoryUsage := int64(0)
+	totalHashLenMemUsage := int64(0)
+	info := ""
+	for i := 0; i < partNum; i++ {
+		mem1, mem2 := htc.hashTable.getPartitionMemoryUsageTest(i)
+		totalMemoryUsage += mem1
+		totalHashLenMemUsage += mem2
+		info = fmt.Sprintf("%s [%d %d]", info, i, mem2)
+	}
+	return totalMemoryUsage, totalHashLenMemUsage, info
+}
+
 func (htc *hashTableContext) clearHashTable() {
 	partNum := len(htc.hashTable.tables)
 	for i := 0; i < partNum; i++ {
@@ -190,8 +204,15 @@ func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable
 func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hashJoinSpillHelper) ([]*rowTable, error) {
 	totalMemoryUsage, partitionsMemoryUsage := htc.calculateHashTableMemoryUsage(rowTables)
 
+	info := ""
+	for i, usage := range partitionsMemoryUsage {
+		info = fmt.Sprintf("%s [%d %d]", info, i, usage)
+	}
+
 	// Pre-consume the memory usage
 	htc.memoryTracker.Consume(totalMemoryUsage)
+
+	total := totalMemoryUsage
 
 	if spillHelper != nil && spillHelper.isSpillNeeded() {
 		spillHelper.spillTriggeredBeforeBuildingHashTableForTest = true
@@ -215,14 +236,17 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 		// Though some partitions have been spilled or are empty, their hash tables are still be created
 		// because probe rows in these partitions may access their hash tables.
 		// We need to consider these memory usage.
-		totalDefaultMemUsage := int64(minimalHashTableLen * len(spilledPartition))
+		totalDefaultMemUsage := getHashTableMemoryUsage(minimalHashTableLen) * int64(len(spilledPartition))
 
 		htc.memoryTracker.Consume(totalDefaultMemUsage - totalReleasedMemoryUsage)
+		total += totalDefaultMemUsage - totalReleasedMemoryUsage
 	}
+
+	log.Info(fmt.Sprintf("xzxdebug tryToSpill: %d, info: %s", total, info))
 	return rowTables, nil
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spillHelper *hashJoinSpillHelper) (int, error) {
+func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spillHelper *hashJoinSpillHelper, memoryTracker *memory.Tracker) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < partitionNumber; i++ {
 		rowTables[i] = newRowTable()
@@ -251,6 +275,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 	}
 
 	before := htc.memoryTracker.BytesConsumed()
+	before1 := memoryTracker.BytesConsumed()
 
 	for i := 0; i < partitionNumber; i++ {
 		// No tracker needs to be passed as memory has been consumed in `tryToSpill`
@@ -264,7 +289,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 		totalSegmentCnt += table.getSegmentNum()
 	}
 
-	log.Info(fmt.Sprintf("xzxdebug memory usage before: %d, after: %d", before, htc.memoryTracker.BytesConsumed()))
+	log.Info(fmt.Sprintf("xzxdebug memory usage before: %d, after: %d, [b: %d, a: %d]", before, htc.memoryTracker.BytesConsumed(), before1, memoryTracker.BytesConsumed()))
 
 	return totalSegmentCnt, nil
 }
@@ -351,18 +376,20 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 }
 
 func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
-	before := hCtx.memTracker.BytesConsumed()
+	before := hCtx.hashTableContext.memoryTracker.BytesConsumed()
 	memoryUsage := hCtx.hashTableContext.getAllSegmentsMemoryUsageInRowTable()
 	hCtx.hashTableContext.clearAllSegmentsInRowTable()
-	hCtx.memTracker.Consume(-memoryUsage)
+	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
 	mem1 := memoryUsage
 
-	memoryUsage = hCtx.hashTableContext.getAllMemoryUsageInHashTable()
+	var hashtb int64
+	var info string
+	memoryUsage, hashtb, info = hCtx.hashTableContext.getAllMemoryUsageInHashTableTest()
 	hCtx.hashTableContext.clearHashTable()
-	hCtx.memTracker.Consume(-memoryUsage)
+	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
 	mem2 := memoryUsage
-	after := hCtx.memTracker.BytesConsumed()
-	log.Info(fmt.Sprintf("xzxdebug mem1: %d, mem2: %d, before: %d, after: %d", mem1, mem2, before, after))
+	after := hCtx.hashTableContext.memoryTracker.BytesConsumed()
+	log.Info(fmt.Sprintf("xzxdebug mem1: %d, mem2: %d, hashtb: %d, info: %s, before: %d, after: %d", mem1, mem2, hashtb, info, before, after))
 }
 
 // ProbeSideTupleFetcherV2 reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -386,6 +413,8 @@ type HashJoinV2Exec struct {
 	prepared bool
 
 	restoredProbeInDisk []*chunk.DataInDiskByChunks
+
+	isMemoryClearedForTest bool
 }
 
 // Close implements the Executor Close interface.
@@ -446,6 +475,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.prepared = false
 		return err
 	}
+	e.isMemoryClearedForTest = true
 	e.prepared = false
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = needScanRowTableAfterProbeDone
@@ -594,11 +624,11 @@ func (e *HashJoinV2Exec) startProbeWorkersForRestore(wg *sync.WaitGroup) {
 }
 
 func (e *HashJoinV2Exec) restoreAndProbe(pfAndFWSync chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) {
-	before := e.memTracker.BytesConsumed()
+	// before := e.memTracker.BytesConsumed()
 	e.startProbeWorkersForRestore(fetcherAndWorkerSyncer)
 	fetcherAndWorkerSyncer.Wait()
-	after := e.memTracker.BytesConsumed()
-	log.Info(fmt.Sprintf("xzxdebug probe before: %d, after: %d", before, after))
+	// after := e.memTracker.BytesConsumed()
+	// log.Info(fmt.Sprintf("xzxdebug probe before: %d, after: %d", before, after))
 	pfAndFWSync <- struct{}{}
 }
 
@@ -861,21 +891,10 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 
 	e.startBuildWorkers(buildTaskCh, wg)
 
-	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(int(e.partitionNumber), e.spillHelper)
+	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(int(e.partitionNumber), e.spillHelper, e.memTracker)
 	if err != nil {
 		return false, err
 	}
-
-	var mem0 int64
-	var mem1 int64
-	var mem2 int64
-	var mem3 int64
-	var mem4 int64
-
-	defer func() {
-		log.Info(fmt.Sprintf("xzxdebug mem0: %d, mem1: %d, mem2: %d, mem3: %d, mem4: %d", mem0, mem1, mem2, mem3, mem4))
-	}()
-	mem0 = e.hashTableContext.memoryTracker.BytesConsumed()
 
 	isBalanced := e.checkBalance(totalSegmentCnt)
 	segStep := max(1, totalSegmentCnt/int(e.Concurrency))
@@ -884,8 +903,6 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 		return &buildTask{partitionIdx: partIdx, segStartIdx: segStartIdx, segEndIdx: segEndIdx}
 	}
 	failpoint.Inject("createTasksPanic", nil)
-
-	mem1 = e.memTracker.BytesConsumed()
 
 	if isBalanced {
 		for partIdx, subTable := range subTables {
@@ -905,16 +922,12 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 		return true, nil
 	}
 
-	mem2 = e.memTracker.BytesConsumed()
-
 	partitionStartIndex := make([]int, len(subTables))
 	partitionSegmentLength := make([]int, len(subTables))
 	for i := 0; i < len(subTables); i++ {
 		partitionStartIndex[i] = 0
 		partitionSegmentLength[i] = len(subTables[i].rowData.segments)
 	}
-
-	mem3 = e.memTracker.BytesConsumed()
 
 	for {
 		hasNewTask := false
@@ -939,8 +952,6 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 			break
 		}
 	}
-
-	mem4 = e.memTracker.BytesConsumed()
 
 	return true, nil
 }
@@ -1048,6 +1059,10 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 
 		log.Info(fmt.Sprintf("xzxdebug start a restore round ------------ %d", e.memTracker.BytesConsumed()))
 
+		if e.memTracker.BytesConsumed() != 0 {
+			e.isMemoryClearedForTest = false
+		}
+
 		// Collect, so that we can close them in the end.
 		// We must collect them once they are popped from stack, or the resource may
 		// fail to be recycled because of the possible panic.
@@ -1139,6 +1154,10 @@ func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask, wg *sync
 			},
 		)
 	}
+}
+
+func (e *HashJoinV2Exec) isAllMemoryClearedForTest() bool {
+	return e.isMemoryClearedForTest
 }
 
 func handleError(joinResultCh chan *hashjoinWorkerResult, finished *atomic.Bool, r any) {

@@ -81,6 +81,7 @@ func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []c
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, retTypes)
+	require.True(t, hashJoinExec.isAllMemoryClearedForTest())
 	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 	require.False(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
 	require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
@@ -96,6 +97,7 @@ func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []c
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, retTypes)
+	require.True(t, hashJoinExec.isAllMemoryClearedForTest())
 	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 	require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
 	checkResults(t, retTypes, result, expectedResult)
@@ -110,6 +112,7 @@ func testInnerJoinSpillCase3(t *testing.T, ctx *mock.Context, expectedResult []c
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, retTypes)
+	require.True(t, hashJoinExec.isAllMemoryClearedForTest())
 	require.False(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 	require.False(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
 	require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
@@ -126,6 +129,7 @@ func testInnerJoinSpillCase4(t *testing.T, ctx *mock.Context, expectedResult []c
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, retTypes)
+	require.True(t, hashJoinExec.isAllMemoryClearedForTest())
 	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 	require.True(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
 	require.True(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
@@ -155,6 +159,7 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 		leftDataSource.PrepareChunks()
 		rightDataSource.PrepareChunks()
 		result := getSortedResults(t, hashJoinExec, retTypes)
+		require.True(t, hashJoinExec.isAllMemoryClearedForTest())
 		require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 		require.False(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
 		require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
@@ -217,14 +222,14 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
 	for i := 0; i < 1; i++ {
-		// testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		// testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		// testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+		testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+		testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+		testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 		testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		// testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
+		testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
 	}
 
-	// testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 }
 
 func TestLeftOuterJoinSpillCorrectness(t *testing.T) {
