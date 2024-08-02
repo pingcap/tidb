@@ -1493,7 +1493,6 @@ const (
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
 	DefTiDBLockUnchangedKeys                          = true
-	DefTiDBEnableVectorType                           = false
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
@@ -1614,7 +1613,6 @@ var (
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl           = atomic.NewBool(false)
-	EnableVectorType                = atomic.NewBool(false)
 	EnableResourceControlStrictMode = atomic.NewBool(true)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
