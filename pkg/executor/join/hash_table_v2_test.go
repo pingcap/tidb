@@ -29,9 +29,7 @@ import (
 )
 
 func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *rowTable {
-	ret := &rowTable{
-		meta: nil,
-	}
+	ret := &rowTable{}
 	for i := 0; i < segmentCount; i++ {
 		// no empty segment is allowed
 		rows := maxRowsPerSeg
@@ -91,27 +89,27 @@ func createRowTable(rows int) (*rowTable, error) {
 
 func TestHashTableSize(t *testing.T) {
 	rowTable := createMockRowTable(2, 5, true)
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	// min hash table size is 32
 	require.Equal(t, 32, len(subTable.hashTable))
 	rowTable = createMockRowTable(32, 1, true)
-	subTable = newSubTable(rowTable)
+	subTable = newSubTable(rowTable, nil)
 	require.Equal(t, 64, len(subTable.hashTable))
 	rowTable = createMockRowTable(33, 1, true)
-	subTable = newSubTable(rowTable)
+	subTable = newSubTable(rowTable, nil)
 	require.Equal(t, 64, len(subTable.hashTable))
 	rowTable = createMockRowTable(64, 1, true)
-	subTable = newSubTable(rowTable)
+	subTable = newSubTable(rowTable, nil)
 	require.Equal(t, 128, len(subTable.hashTable))
 	rowTable = createMockRowTable(65, 1, true)
-	subTable = newSubTable(rowTable)
+	subTable = newSubTable(rowTable, nil)
 	require.Equal(t, 128, len(subTable.hashTable))
 }
 
 func TestBuild(t *testing.T) {
 	rowTable, err := createRowTable(1000000)
 	require.NoError(t, err)
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	// single thread build
 	subTable.build(0, len(rowTable.segments))
 	rowSet := make(map[unsafe.Pointer]struct{}, rowTable.rowCount())
@@ -141,7 +139,7 @@ func TestBuild(t *testing.T) {
 func TestConcurrentBuild(t *testing.T) {
 	rowTable, err := createRowTable(3000000)
 	require.NoError(t, err)
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	segmentCount := len(rowTable.segments)
 	buildThreads := 3
 	wg := util.WaitGroupWrapper{}
@@ -180,7 +178,7 @@ func TestConcurrentBuild(t *testing.T) {
 func TestLookup(t *testing.T) {
 	rowTable, err := createRowTable(200000)
 	require.NoError(t, err)
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	// single thread build
 	subTable.build(0, len(rowTable.segments))
 

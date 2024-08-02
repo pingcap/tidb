@@ -269,6 +269,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		RUsed:                 rightUsed,
 		LUsedInOtherCondition: leftUsedByOtherCondition,
 		RUsedInOtherCondition: rightUsedByOtherCondition,
+		spillHelper:           newHashJoinSpillHelper(nil, partitionNumber, nil),
 	}
 	hashJoinCtx.SessCtx = mock.NewContext()
 	hashJoinCtx.JoinType = joinType
@@ -277,7 +278,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	// update the partition number
 	partitionNumber = int(hashJoinCtx.partitionNumber)
 	hashJoinCtx.initHashTableContext()
-	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide)
+	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide, nil)
 	buildSchema := &expression.Schema{}
 	for _, tp := range buildTypes {
 		buildSchema.Append(&expression.Column{
@@ -344,7 +345,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	}
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	checkRowLocationAlignment(t, hashJoinCtx.hashTableContext.rowTables[0])
-	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.hashTableMeta, hashJoinCtx.partitionNumber)
+	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(int(hashJoinCtx.partitionNumber), nil, nil)
 	// build hash table
 	for i := 0; i < partitionNumber; i++ {
 		hashJoinCtx.hashTableContext.hashTable.buildHashTableForTest(i, 0, len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments))
@@ -370,10 +371,10 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	if joinProbe.NeedScanRowTable() {
 		joinProbes := make([]ProbeV2, 0, hashJoinCtx.Concurrency)
 		for i := uint(0); i < hashJoinCtx.Concurrency; i++ {
-			joinProbes = append(joinProbes, NewJoinProbe(hashJoinCtx, i, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide))
+			joinProbes = append(joinProbes, NewJoinProbe(hashJoinCtx, i, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide, nil))
 		}
 		for _, prober := range joinProbes {
-			prober.InitForScanRowTable()
+			prober.InitForScanRowTable(false)
 			for !prober.IsScanRowTableDone() {
 				joinResult = prober.ScanRowTable(joinResult, &sqlkiller.SQLKiller{})
 				require.NoError(t, joinResult.err, "unexpected error during scan row table")

@@ -6,6 +6,8 @@ go_library(
         "base_join_probe.go",
         "concurrent_map.go",
         "hash_join_base.go",
+        "hash_join_spill.go",
+        "hash_join_spill_helper.go",
         "hash_join_v1.go",
         "hash_join_v2.go",
         "hash_table_v1.go",
@@ -64,6 +66,7 @@ go_test(
     srcs = [
         "bench_test.go",
         "concurrent_map_test.go",
+        "hash_join_spill_test.go",
         "hash_table_v1_test.go",
         "hash_table_v2_test.go",
         "index_lookup_join_test.go",

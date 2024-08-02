@@ -114,12 +114,13 @@ func (s *parallelSortSpillAction) actionImpl(t *memory.Tracker) bool {
 		s.spillHelper.cond.Wait()
 	}
 
+	// we may be in `needSpill` status, so it's necessary check if we are in `notSpilled` status
 	if t.CheckExceed() && s.spillHelper.isNotSpilledNoLock() && hasEnoughDataToSpill(s.spillHelper.sortExec.memTracker, t) {
-		// Ideally, all goroutines entering this action should wait for the finish of spill once
-		// spill is triggered(we consider spill is triggered when the `needSpill` has been set).
-		// However, out of some reasons, we have to directly return before the finish of
-		// sort operation executed in spill as sort will retrigger the action and lead to dead lock.
 		s.spillHelper.setNeedSpillNoLock()
+
+		// Because all executors could keep running before spill flag is set to `inSpilling`, memory
+		// consumption will be modified before we print the spill log. It's necessary to record the
+		// memory consumption when spill is triggered.
 		s.spillHelper.bytesConsumed.Store(t.BytesConsumed())
 		s.spillHelper.bytesLimit.Store(t.GetBytesLimit())
 		return true

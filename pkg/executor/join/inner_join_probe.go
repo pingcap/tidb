@@ -97,7 +97,7 @@ func (*innerJoinProbe) ScanRowTable(*hashjoinWorkerResult, *sqlkiller.SQLKiller)
 	panic("should not reach here")
 }
 
-func (*innerJoinProbe) InitForScanRowTable() {
+func (*innerJoinProbe) InitForScanRowTable(bool) {
 	panic("should not reach here")
 }
 

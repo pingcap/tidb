@@ -15,9 +15,15 @@
 package join
 
 import (
+	"fmt"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/serialization"
 )
+
+const minimalHashTableLen = 32
 
 type subTable struct {
 	rowData          *rowTable
@@ -28,7 +34,18 @@ type subTable struct {
 }
 
 func (st *subTable) lookup(hashValue uint64) uintptr {
+	if len(st.hashTable) == 0 || st.posMask == 0 {
+		fmt.Sprintln("123")
+	}
 	return st.hashTable[hashValue&st.posMask]
+}
+
+func (st *subTable) getTotalMemoryUsage() int64 {
+	return st.rowData.getTotalMemoryUsage() + getHashTableMemoryUsage(uint64(len(st.hashTable)))
+}
+
+func (st *subTable) getSegmentNum() int {
+	return st.rowData.getSegmentNum()
 }
 
 func nextPowerOfTwo(value uint64) uint64 {
@@ -43,7 +60,15 @@ func nextPowerOfTwo(value uint64) uint64 {
 	return ret
 }
 
-func newSubTable(table *rowTable) *subTable {
+func getHashTableLength(table *rowTable) uint64 {
+	return max(nextPowerOfTwo(table.validKeyCount()), uint64(minimalHashTableLen))
+}
+
+func getHashTableMemoryUsage(hashTableLength uint64) int64 {
+	return int64(hashTableLength) * serialization.UnsafePointerLen
+}
+
+func newSubTable(table *rowTable, tracker *memory.Tracker) *subTable {
 	ret := &subTable{
 		rowData:          table,
 		isHashTableEmpty: false,
@@ -55,7 +80,11 @@ func newSubTable(table *rowTable) *subTable {
 	if table.validKeyCount() == 0 {
 		ret.isHashTableEmpty = true
 	}
-	hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(32))
+
+	hashTableLength := getHashTableLength(table)
+	if tracker != nil {
+		tracker.Consume(getHashTableMemoryUsage(hashTableLength))
+	}
 	ret.hashTable = make([]uintptr, hashTableLength)
 	ret.posMask = hashTableLength - 1
 	return ret
@@ -104,6 +133,27 @@ type hashTableV2 struct {
 	partitionNumber uint64
 }
 
+func (ht *hashTableV2) getPartitionMemoryUsage(partID int) int64 {
+	if ht.tables[partID] != nil {
+		return ht.tables[partID].getTotalMemoryUsage()
+	}
+	return 0
+}
+
+func (ht *hashTableV2) getPartitionMemoryUsageTest(partID int) (int64, int64) {
+	if ht.tables[partID] != nil {
+		return ht.tables[partID].getTotalMemoryUsage(), getHashTableMemoryUsage(uint64(len(ht.tables[partID].hashTable)))
+	}
+	return 0, 0
+}
+
+func (ht *hashTableV2) clearPartitionSegments(partID int) {
+	if ht.tables[partID] != nil {
+		ht.tables[partID].rowData.clearSegments()
+		ht.tables[partID].hashTable = nil
+	}
+}
+
 type rowPos struct {
 	subTableIndex   int
 	rowSegmentIndex int
@@ -146,7 +196,7 @@ func newJoinHashTableForTest(partitionedRowTables []*rowTable) *hashTableV2 {
 		partitionNumber: uint64(len(partitionedRowTables)),
 	}
 	for i, rowTable := range partitionedRowTables {
-		jht.tables[i] = newSubTable(rowTable)
+		jht.tables[i] = newSubTable(rowTable, nil)
 	}
 	return jht
 }

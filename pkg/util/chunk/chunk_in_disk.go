@@ -164,6 +164,7 @@ func (d *DataInDiskByChunks) Close() {
 		d.diskTracker.Consume(-d.diskTracker.BytesConsumed())
 		terror.Call(d.dataFile.file.Close)
 		terror.Log(os.Remove(d.dataFile.file.Name()))
+		d.dataFile.file = nil
 	}
 }
 
