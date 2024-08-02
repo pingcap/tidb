@@ -287,7 +287,7 @@ func (e *InfoSchemaBaseExtractor) listSchemas(is infoschema.InfoSchema, schemaCo
 	schemas := e.getSchemaObjectNames(schemaCol)
 	if len(schemas) == 0 {
 		ret := is.AllSchemaNames()
-		slices.SortFunc(schemas, func(a, b model.CIStr) int {
+		slices.SortFunc(ret, func(a, b model.CIStr) int {
 			return strings.Compare(a.L, b.L)
 		})
 		return ret
