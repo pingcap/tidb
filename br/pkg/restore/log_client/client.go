@@ -652,9 +652,9 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
 	if cfg.FullBackupStorage == nil {
-		envVal, ok := os.LookupEnv("PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL")
+		envVal, ok := os.LookupEnv("UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL")
 		if ok && envVal == "1" {
-			log.Info("the environment variable PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL is active, skip loading the base schemas.")
+			log.Info("the environment variable UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL is activite, skip loading the base schemas.")
 			return dbReplaces, nil
 		}
 		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
@@ -713,7 +713,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		// the id map doesn't need to construct only when it is not the first execution
 		needConstructIdMap bool
 
-		dbReplaces map[stream.UpstreamID]*stream.DBReplace = nil
+		dbReplaces map[stream.UpstreamID]*stream.DBReplace
 	)
 
 	// not new task, load schemas map from external storage
