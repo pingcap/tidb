@@ -35,11 +35,13 @@ func TestMapTableToFiles(t *testing.T) {
 			Name:     "table1-1.sst",
 			StartKey: tablecodec.EncodeTablePrefix(1),
 			EndKey:   tablecodec.EncodeTablePrefix(1),
+			Cf:       restoreutils.WriteCFName,
 		},
 		{
 			Name:     "table1-2.sst",
 			StartKey: tablecodec.EncodeTablePrefix(1),
 			EndKey:   tablecodec.EncodeTablePrefix(1),
+			Cf:       restoreutils.WriteCFName,
 		},
 		{
 			Name:     "table1-3.sst",
@@ -52,6 +54,7 @@ func TestMapTableToFiles(t *testing.T) {
 			Name:     "table2-1.sst",
 			StartKey: tablecodec.EncodeTablePrefix(2),
 			EndKey:   tablecodec.EncodeTablePrefix(2),
+			Cf:       restoreutils.WriteCFName,
 		},
 		{
 			Name:     "table2-2.sst",
@@ -64,7 +67,7 @@ func TestMapTableToFiles(t *testing.T) {
 
 	require.Equal(t, filesOfTable1, result[1])
 	require.Equal(t, filesOfTable2, result[2])
-	require.Equal(t, 2, hintSplitKeyCount)
+	require.Equal(t, 3, hintSplitKeyCount)
 }
 
 type MockUpdateCh struct {

@@ -1652,6 +1652,7 @@ func afterTableRestoredCh(ctx context.Context, createdTables []*snapclient.Creat
 			case ch <- createdTable:
 			}
 		}
+		close(ch)
 	}()
 	return ch
 }
