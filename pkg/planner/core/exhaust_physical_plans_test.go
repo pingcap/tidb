@@ -195,15 +195,14 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.Schema(), testCtx.joinColNames)
 	require.NoError(t, err)
 	joinNode.OtherConditions = others
-	helper := &indexJoinBuildHelper{
-		sctx:                  ctx,
+	indexJoinInfo := &indexJoinBuildInfo{
 		joinOtherConditions:   others,
 		outerJoinKeys:         testCase.innerKeys,
 		innerJoinKeys:         testCase.innerKeys,
 		innerStats:            dataSourceNode.StatsInfo(),
 		innerSchema:           dataSourceNode.Schema(),
 		innerPushedConditions: dataSourceNode.PushedDownConds}
-	result, _, err := helper.analyzeIndexJoinPath(testCtx.path, testCase.rebuildMode)
+	result, _, err := analyzeIndexJoinPath(ctx, testCtx.path, indexJoinInfo, testCase.rebuildMode)
 	if result == nil {
 		result = &indexJoinPathResult{}
 	}

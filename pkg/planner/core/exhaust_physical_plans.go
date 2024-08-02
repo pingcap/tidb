@@ -791,8 +791,7 @@ childLoop:
 
 func getIndexJoinBuildHelper(p *LogicalJoin, ds *DataSource, innerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool, outerJoinKeys []*expression.Column) (*indexJoinPathResult, []int) {
-	helper := &indexJoinBuildHelper{
-		sctx:                  p.SCtx(),
+	indexJoinInfo := &indexJoinBuildInfo{
 		joinOtherConditions:   p.OtherConditions,
 		outerJoinKeys:         outerJoinKeys,
 		innerJoinKeys:         innerJoinKeys,
@@ -803,7 +802,7 @@ func getIndexJoinBuildHelper(p *LogicalJoin, ds *DataSource, innerJoinKeys []*ex
 	var bestResult *indexJoinPathResult
 	for _, path := range ds.PossibleAccessPaths {
 		if checkPathValid(path) {
-			result, emptyRange, err := helper.analyzeIndexJoinPath(path, false)
+			result, emptyRange, err := analyzeIndexJoinPath(p.SCtx(), path, indexJoinInfo, false)
 			if emptyRange {
 				return nil, nil
 			}
@@ -1007,17 +1006,18 @@ type indexJoinPathResult struct {
 	lastColManager *ColWithCmpFuncManager
 }
 
-type indexJoinBuildHelper struct {
-	// read-only fields, information of the outer child
-	sctx                  context.PlanContext
+// indexJoinBuildInfo records necessary information to build IndexJoin.
+type indexJoinBuildInfo struct {
 	joinOtherConditions   []expression.Expression
 	outerJoinKeys         []*expression.Column
 	innerJoinKeys         []*expression.Column
 	innerSchema           *expression.Schema
 	innerPushedConditions []expression.Expression
 	innerStats            *property.StatsInfo
+}
 
-	// below is mutable fields
+// indexJoinBuildTmp records temporary information to build IndexJoin.
+type indexJoinBuildTmp struct {
 	curPossibleUsedKeys []*expression.Column
 	curNotUsedIndexCols []*expression.Column
 	curNotUsedColLens   []int
@@ -1671,54 +1671,59 @@ For each idxCols,
 */
 // For example, innerKeys[t1.a, t1.sum_b, t1.c], idxCols [a, b, c]
 // 'curIdxOff2KeyOff' = [0, -1, 2]
-func (ijHelper *indexJoinBuildHelper) resetContextForIndex(idxCols []*expression.Column, colLens []int) {
-	tmpSchema := expression.NewSchema(ijHelper.innerJoinKeys...)
-	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
-	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
-	ijHelper.curNotUsedColLens = make([]int, 0, len(idxCols))
+func newIndexJoinTmpForIndex(
+	sctx context.PlanContext,
+	indexJoinInfo *indexJoinBuildInfo,
+	idxCols []*expression.Column, colLens []int) *indexJoinBuildTmp {
+	tmpSchema := expression.NewSchema(indexJoinInfo.innerJoinKeys...)
+	buildTmp := new(indexJoinBuildTmp)
+	buildTmp.curIdxOff2KeyOff = make([]int, len(idxCols))
+	buildTmp.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
+	buildTmp.curNotUsedColLens = make([]int, 0, len(idxCols))
 	for i, idxCol := range idxCols {
-		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
-		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
+		buildTmp.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
+		if buildTmp.curIdxOff2KeyOff[i] >= 0 {
 			// Don't use the join columns if their collations are unmatched and the new collation is enabled.
-			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetType()) && types.IsString(ijHelper.outerJoinKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.GetType()) {
-				et, err := expression.CheckAndDeriveCollationFromExprs(ijHelper.sctx.GetExprCtx(), "equal", types.ETInt, idxCol, ijHelper.outerJoinKeys[ijHelper.curIdxOff2KeyOff[i]])
+			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetType()) && types.IsString(indexJoinInfo.outerJoinKeys[buildTmp.curIdxOff2KeyOff[i]].RetType.GetType()) {
+				et, err := expression.CheckAndDeriveCollationFromExprs(sctx.GetExprCtx(), "equal", types.ETInt, idxCol, indexJoinInfo.outerJoinKeys[buildTmp.curIdxOff2KeyOff[i]])
 				if err != nil {
 					logutil.BgLogger().Error("Unexpected error happened during constructing index join", zap.Stack("stack"))
 				}
 				if !collate.CompatibleCollate(idxCol.GetStaticType().GetCollate(), et.Collation) {
-					ijHelper.curIdxOff2KeyOff[i] = -1
+					buildTmp.curIdxOff2KeyOff[i] = -1
 				}
 			}
 			continue
 		}
-		ijHelper.curNotUsedIndexCols = append(ijHelper.curNotUsedIndexCols, idxCol)
-		ijHelper.curNotUsedColLens = append(ijHelper.curNotUsedColLens, colLens[i])
+		buildTmp.curNotUsedIndexCols = append(buildTmp.curNotUsedIndexCols, idxCol)
+		buildTmp.curNotUsedColLens = append(buildTmp.curNotUsedColLens, colLens[i])
 	}
+	return buildTmp
 }
 
 // findUsefulEqAndInFilters analyzes the PushedDownConds held by inner child and split them to three parts.
 // usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
 // remainedEqOrIn is part of usefulEqOrInFilters, which needs to be evaluated again in selection.
 // remainingRangeCandidates is the other conditions for future use.
-func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters() (usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates []expression.Expression, emptyRange bool) {
+func findUsefulEqAndInFilters(sctx context.PlanContext, indexJoinInfo *indexJoinBuildInfo, buildTmp *indexJoinBuildTmp) (usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates []expression.Expression, emptyRange bool) {
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
 	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, emptyRange = ranger.ExtractEqAndInCondition(
-		ijHelper.sctx.GetRangerCtx(),
-		ijHelper.innerPushedConditions,
-		ijHelper.curNotUsedIndexCols,
-		ijHelper.curNotUsedColLens,
+		sctx.GetRangerCtx(),
+		indexJoinInfo.innerPushedConditions,
+		buildTmp.curNotUsedIndexCols,
+		buildTmp.curNotUsedColLens,
 	)
 	return usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, emptyRange
 }
 
 // buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
 // The returned value is just for outputting explain information
-func (ijHelper *indexJoinBuildHelper) buildLastColManager(nextCol *expression.Column,
-	cwc *ColWithCmpFuncManager) []expression.Expression {
+func buildLastColManager(indexJoinInfo *indexJoinBuildInfo,
+	nextCol *expression.Column, cwc *ColWithCmpFuncManager) []expression.Expression {
 	var lastColAccesses []expression.Expression
 loopOtherConds:
-	for _, filter := range ijHelper.joinOtherConditions {
+	for _, filter := range indexJoinInfo.joinOtherConditions {
 		sf, ok := filter.(*expression.ScalarFunction)
 		if !ok || !(sf.FuncName.L == ast.LE || sf.FuncName.L == ast.LT || sf.FuncName.L == ast.GE || sf.FuncName.L == ast.GT) {
 			continue
@@ -1741,7 +1746,7 @@ loopOtherConds:
 			continue
 		}
 		for _, col := range affectedCols {
-			if ijHelper.innerSchema.Contains(col) {
+			if indexJoinInfo.innerSchema.Contains(col) {
 				continue loopOtherConds
 			}
 		}
@@ -1758,19 +1763,19 @@ loopOtherConds:
 //	It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
 //	[0 -1 -1].
 //	So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
-func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression) (usefulEqAndIn, uselessOnes []expression.Expression) {
-	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
+func removeUselessEqAndInFunc(buildTmp *indexJoinBuildTmp, idxCols []*expression.Column, notKeyEqAndIn []expression.Expression) (usefulEqAndIn, uselessOnes []expression.Expression) {
+	buildTmp.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
-		if ijHelper.curIdxOff2KeyOff[idxColPos] != -1 {
-			ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
+		if buildTmp.curIdxOff2KeyOff[idxColPos] != -1 {
+			buildTmp.curPossibleUsedKeys = append(buildTmp.curPossibleUsedKeys, idxCols[idxColPos])
 			continue
 		}
-		if notKeyColPos < len(notKeyEqAndIn) && ijHelper.curNotUsedIndexCols[notKeyColPos].EqualColumn(idxCols[idxColPos]) {
+		if notKeyColPos < len(notKeyEqAndIn) && buildTmp.curNotUsedIndexCols[notKeyColPos].EqualColumn(idxCols[idxColPos]) {
 			notKeyColPos++
 			continue
 		}
 		for i := idxColPos + 1; i < len(idxCols); i++ {
-			ijHelper.curIdxOff2KeyOff[i] = -1
+			buildTmp.curIdxOff2KeyOff[i] = -1
 		}
 		remained := make([]expression.Expression, 0, len(notKeyEqAndIn)-notKeyColPos)
 		remained = append(remained, notKeyEqAndIn[notKeyColPos:]...)
@@ -1784,16 +1789,16 @@ type mutableIndexJoinRange struct {
 	ranges    ranger.Ranges
 	rangeInfo string
 
-	buildHelper *indexJoinBuildHelper
-	path        *util.AccessPath
+	indexJoinInfo *indexJoinBuildInfo
+	path          *util.AccessPath
 }
 
 func (mr *mutableIndexJoinRange) Range() ranger.Ranges {
 	return mr.ranges
 }
 
-func (mr *mutableIndexJoinRange) Rebuild() error {
-	result, empty, err := mr.buildHelper.analyzeIndexJoinPath(mr.path, true)
+func (mr *mutableIndexJoinRange) Rebuild(sctx context.PlanContext) error {
+	result, empty, err := analyzeIndexJoinPath(sctx, mr.path, mr.indexJoinInfo, true)
 	if err != nil {
 		return err
 	}
@@ -1805,70 +1810,66 @@ func (mr *mutableIndexJoinRange) Rebuild() error {
 		// some access conditions cannot be used to calculate the range after parameters change, return an error in this case for safety.
 		return errors.New("failed to rebuild range: range width changed")
 	}
-	mr.rangeInfo = buildRangeDecidedByInformation(mr.buildHelper.sctx, mr.buildHelper.outerJoinKeys, result)
+	mr.rangeInfo = buildRangeDecidedByInformation(sctx, mr.indexJoinInfo.outerJoinKeys, result)
 	mr.ranges = result.chosenRanges.Range()
 	return nil
 }
 
-func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(relatedExprs []expression.Expression, ranges []*ranger.Range, path *util.AccessPath) ranger.MutableRanges {
+func createMutableIndexJoinRange(
+	sctx context.PlanContext, indexJoinInfo *indexJoinBuildInfo,
+	relatedExprs []expression.Expression, ranges []*ranger.Range, path *util.AccessPath) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(ijHelper.sctx.GetExprCtx(), relatedExprs) {
+	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
 		return &mutableIndexJoinRange{
-			ranges: ranges,
-			buildHelper: &indexJoinBuildHelper{
-				sctx:                  ijHelper.sctx,
-				innerSchema:           ijHelper.innerSchema,
-				innerPushedConditions: ijHelper.innerPushedConditions,
-				innerStats:            ijHelper.innerStats,
-				innerJoinKeys:         ijHelper.innerJoinKeys,
-				outerJoinKeys:         ijHelper.outerJoinKeys,
-				joinOtherConditions:   ijHelper.joinOtherConditions},
-			path: path,
+			ranges:        ranges,
+			indexJoinInfo: indexJoinInfo,
+			path:          path,
 		}
 	}
 	return ranger.Ranges(ranges)
 }
 
-func (ijHelper *indexJoinBuildHelper) updateByTemplateRangeResult(tempRangeRes *templateRangeResult,
+func updateByTemplateRangeResult(sctx context.PlanContext, buildTmp *indexJoinBuildTmp, tempRangeRes *templateRangeResult,
 	accesses, remained []expression.Expression) (lastColPos int, newAccesses, newRemained []expression.Expression) {
 	lastColPos = tempRangeRes.keyCntInRange + tempRangeRes.eqAndInCntInRange
-	ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
-	for i := lastColPos; i < len(ijHelper.curIdxOff2KeyOff); i++ {
-		ijHelper.curIdxOff2KeyOff[i] = -1
+	buildTmp.curPossibleUsedKeys = buildTmp.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
+	for i := lastColPos; i < len(buildTmp.curIdxOff2KeyOff); i++ {
+		buildTmp.curIdxOff2KeyOff[i] = -1
 	}
 	newAccesses = accesses[:tempRangeRes.eqAndInCntInRange]
-	newRemained = ranger.AppendConditionsIfNotExist(ijHelper.sctx.GetExprCtx().GetEvalCtx(),
+	newRemained = ranger.AppendConditionsIfNotExist(sctx.GetExprCtx().GetEvalCtx(),
 		remained, accesses[tempRangeRes.eqAndInCntInRange:])
 	return
 }
 
-func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath, rebuildMode bool) (result *indexJoinPathResult, emptyRange bool, err error) {
+func analyzeIndexJoinPath(sctx context.PlanContext, path *util.AccessPath,
+	indexJoinInfo *indexJoinBuildInfo, rebuildMode bool) (result *indexJoinPathResult, emptyRange bool, err error) {
 	if len(path.IdxCols) == 0 {
 		return nil, false, nil
 	}
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
-	ijHelper.resetContextForIndex(path.IdxCols, path.IdxColLens)
-	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := ijHelper.findUsefulEqAndInFilters()
+	buildTmp := newIndexJoinTmpForIndex(sctx, indexJoinInfo, path.IdxCols, path.IdxColLens)
+	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := findUsefulEqAndInFilters(sctx, indexJoinInfo, buildTmp)
 	if emptyRange {
 		return nil, true, nil
 	}
 	var remainedEqAndIn []expression.Expression
-	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.IdxCols, notKeyEqAndIn)
-	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
+	notKeyEqAndIn, remainedEqAndIn = removeUselessEqAndInFunc(buildTmp, path.IdxCols, notKeyEqAndIn)
+	matchedKeyCnt := len(buildTmp.curPossibleUsedKeys)
 	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
-	if matchedKeyCnt <= 0 && len(ijHelper.innerJoinKeys) > 0 {
+	if matchedKeyCnt <= 0 && len(indexJoinInfo.innerJoinKeys) > 0 {
 		return nil, false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
-	remained = ranger.AppendConditionsIfNotExist(ijHelper.sctx.GetExprCtx().GetEvalCtx(), remained, remainedEqAndIn)
+	remained = ranger.AppendConditionsIfNotExist(sctx.GetExprCtx().GetEvalCtx(), remained, remainedEqAndIn)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
 	// A more strict check is applied later.
 	if lastColPos <= 0 {
 		return nil, false, nil
 	}
-	rangeMaxSize := ijHelper.sctx.GetSessionVars().RangeMaxSize
+	rangeMaxSize := sctx.GetSessionVars().RangeMaxSize
 	if rebuildMode {
 		// When rebuilding ranges for plan cache, we don't restrict range mem limit.
 		rangeMaxSize = 0
@@ -1882,13 +1883,13 @@ func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath
 			return nil, false, nil
 		}
 		remained = append(remained, rangeFilterCandidates...)
-		tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false, rangeMaxSize)
+		tempRangeRes := buildTemplateRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, false, rangeMaxSize)
 		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
 			return nil, tempRangeRes.emptyRange, tempRangeRes.err
 		}
-		lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
-		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-		ret := ijHelper.constructIndexJoinResult(mutableRange, path, accesses, remained, nil, lastColPos)
+		lastColPos, accesses, remained = updateByTemplateRangeResult(sctx, buildTmp, tempRangeRes, accesses, remained)
+		mutableRange := createMutableIndexJoinRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
+		ret := constructIndexJoinResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
@@ -1897,7 +1898,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath
 		colLength:         path.IdxColLens[lastColPos],
 		affectedColSchema: expression.NewSchema(),
 	}
-	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, lastColManager)
+	lastColAccess := buildLastColManager(indexJoinInfo, lastPossibleCol, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
 	if len(lastColAccess) == 0 {
 		// If there's no join key matching index column, then choosing hash join is always a better idea.
@@ -1906,12 +1907,12 @@ func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath
 		if matchedKeyCnt <= 0 {
 			return nil, false, nil
 		}
-		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.sctx.GetRangerCtx(), rangeFilterCandidates, lastPossibleCol)
+		colAccesses, colRemained := ranger.DetachCondsForColumn(sctx.GetRangerCtx(), rangeFilterCandidates, lastPossibleCol)
 		var nextColRange []*ranger.Range
 		var err error
 		if len(colAccesses) > 0 {
 			var colRemained2 []expression.Expression
-			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, ijHelper.sctx.GetRangerCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize)
+			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, sctx.GetRangerCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize)
 			if err != nil {
 				return nil, false, err
 			}
@@ -1920,11 +1921,11 @@ func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath
 				nextColRange = nil
 			}
 		}
-		tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false, rangeMaxSize)
+		tempRangeRes := buildTemplateRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nextColRange, false, rangeMaxSize)
 		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
 			return nil, tempRangeRes.emptyRange, tempRangeRes.err
 		}
-		lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
+		lastColPos, accesses, remained = updateByTemplateRangeResult(sctx, buildTmp, tempRangeRes, accesses, remained)
 		// update accesses and remained by colAccesses and colRemained.
 		remained = append(remained, colRemained...)
 		if tempRangeRes.nextColInRange {
@@ -1936,15 +1937,15 @@ func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath
 		} else {
 			remained = append(remained, colAccesses...)
 		}
-		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-		ret := ijHelper.constructIndexJoinResult(mutableRange, path, accesses, remained, nil, lastColPos)
+		mutableRange := createMutableIndexJoinRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
+		ret := constructIndexJoinResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
-	tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
+	tempRangeRes := buildTemplateRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
 	if tempRangeRes.err != nil || tempRangeRes.emptyRange {
 		return nil, tempRangeRes.emptyRange, tempRangeRes.err
 	}
-	lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
+	lastColPos, accesses, remained = updateByTemplateRangeResult(sctx, buildTmp, tempRangeRes, accesses, remained)
 
 	remained = append(remained, rangeFilterCandidates...)
 	if tempRangeRes.extraColInRange {
@@ -1956,8 +1957,8 @@ func (ijHelper *indexJoinBuildHelper) analyzeIndexJoinPath(path *util.AccessPath
 		}
 		lastColManager = nil
 	}
-	mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-	ret := ijHelper.constructIndexJoinResult(mutableRange, path, accesses, remained, lastColManager, lastColPos)
+	mutableRange := createMutableIndexJoinRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
+	ret := constructIndexJoinResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
 	return ret, false, nil
 }
 
@@ -1982,14 +1983,15 @@ func compareIndexJoinChoice(best, current *indexJoinPathResult) (curIsBetter boo
 	return true
 }
 
-func (ijHelper *indexJoinBuildHelper) constructIndexJoinResult(ranges ranger.MutableRanges, path *util.AccessPath, accesses,
+func constructIndexJoinResult(indexJoinInfo *indexJoinBuildInfo, buildTmp *indexJoinBuildTmp,
+	ranges ranger.MutableRanges, path *util.AccessPath, accesses,
 	remained []expression.Expression, lastColManager *ColWithCmpFuncManager, usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
-	if stats := ijHelper.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], ijHelper.innerSchema, stats)
+	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
 	}
-	idxOff2KeyOff := make([]int, len(ijHelper.curIdxOff2KeyOff))
-	copy(idxOff2KeyOff, ijHelper.curIdxOff2KeyOff)
+	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
+	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
 	return &indexJoinPathResult{
 		chosenPath:     path,
 		usedColsLen:    len(ranges.Range()[0].LowVal),
@@ -2028,11 +2030,11 @@ func appendTailTemplateRange(originRanges ranger.Ranges, rangeMaxSize int64) (ra
 	return originRanges, false
 }
 
-func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range,
+func buildTemplateRange(sctx context.PlanContext, buildTmp *indexJoinBuildTmp,
+	matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range,
 	haveExtraCol bool, rangeMaxSize int64) (res *templateRangeResult) {
 	res = &templateRangeResult{}
-	ctx := ijHelper.sctx
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := sctx.GetSessionVars().StmtCtx
 	defer func() {
 		if sc.MemTracker != nil && res != nil && len(res.ranges) > 0 {
 			sc.MemTracker.Consume(2 * types.EstimatedMemUsage(res.ranges[0].LowVal, len(res.ranges)))
@@ -2041,12 +2043,12 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
 	ranges := ranger.Ranges{&ranger.Range{}}
 	for i, j := 0, 0; i+j < pointLength; {
-		if ijHelper.curIdxOff2KeyOff[i+j] != -1 {
+		if buildTmp.curIdxOff2KeyOff[i+j] != -1 {
 			// This position is occupied by join key.
 			var fallback bool
 			ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)
 			if fallback {
-				ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
+				sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 				res.ranges = ranges
 				res.keyCntInRange = i
 				res.eqAndInCntInRange = j
@@ -2055,7 +2057,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			i++
 		} else {
 			exprs := []expression.Expression{eqAndInFuncs[j]}
-			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, ijHelper.sctx.GetRangerCtx(), ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j], rangeMaxSize)
+			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, sctx.GetRangerCtx(), buildTmp.curNotUsedIndexCols[j].RetType, buildTmp.curNotUsedColLens[j], rangeMaxSize)
 			if err != nil {
 				return &templateRangeResult{err: err}
 			}
@@ -2074,7 +2076,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			var fallback bool
 			ranges, fallback = ranger.AppendRanges2PointRanges(ranges, oneColumnRan, rangeMaxSize)
 			if fallback {
-				ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
+				sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 				res.ranges = ranges
 				res.keyCntInRange = i
 				res.eqAndInCntInRange = j
@@ -2087,7 +2089,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 		var fallback bool
 		ranges, fallback = ranger.AppendRanges2PointRanges(ranges, nextColRange, rangeMaxSize)
 		if fallback {
-			ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
+			sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 		}
 		res.ranges = ranges
 		res.keyCntInRange = matchedKeyCnt
@@ -2099,7 +2101,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 		var fallback bool
 		ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)
 		if fallback {
-			ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
+			sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 		}
 		res.ranges = ranges
 		res.keyCntInRange = matchedKeyCnt
