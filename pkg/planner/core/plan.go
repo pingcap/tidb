@@ -261,7 +261,7 @@ type basePhysicalPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
+	probeParents []base.PhysicalPlan `plan-cache-clone:"shallow"`
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
@@ -285,17 +285,6 @@ func (p *basePhysicalPlan) cloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 			return nil, false
 		}
 		cloned.children = append(cloned.children, clonedPP)
-	}
-	for _, probe := range p.probeParents {
-		clonedProbe, ok := probe.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		clonedPP, ok := clonedProbe.(base.PhysicalPlan)
-		if !ok {
-			return nil, false
-		}
-		cloned.probeParents = append(cloned.probeParents, clonedPP)
 	}
 	return cloned, true
 }

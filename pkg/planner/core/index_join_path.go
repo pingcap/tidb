@@ -50,6 +50,17 @@ type mutableIndexJoinRange struct {
 	path          *util.AccessPath   // read-only
 }
 
+func (mr *mutableIndexJoinRange) CloneForPlanCache() ranger.MutableRanges {
+	cloned := new(mutableIndexJoinRange)
+	if mr.ranges != nil {
+		cloned.ranges = mr.ranges.CloneForPlanCache().(ranger.Ranges)
+	}
+	cloned.rangeInfo = mr.rangeInfo
+	cloned.indexJoinInfo = mr.indexJoinInfo
+	cloned.path = mr.path
+	return cloned
+}
+
 func (mr *mutableIndexJoinRange) Range() ranger.Ranges {
 	return mr.ranges
 }
@@ -626,6 +637,23 @@ type ColWithCmpFuncManager struct {
 	TmpConstant       []*expression.Constant
 	affectedColSchema *expression.Schema
 	compareFuncs      []chunk.CompareFunc
+}
+
+// Copy clones the ColWithCmpFuncManager.
+func (cwc *ColWithCmpFuncManager) Copy() *ColWithCmpFuncManager {
+	cloned := new(ColWithCmpFuncManager)
+	if cwc.TargetCol != nil {
+		cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)
+	}
+	cloned.colLength = cwc.colLength
+	cloned.OpType = make([]string, len(cwc.OpType))
+	copy(cloned.OpType, cwc.OpType)
+	cloned.opArg = util.CloneExpressions(cwc.opArg)
+	cloned.TmpConstant = util.CloneConstants(cwc.TmpConstant)
+	cloned.affectedColSchema = cwc.affectedColSchema.Clone()
+	cloned.compareFuncs = make([]chunk.CompareFunc, len(cwc.compareFuncs))
+	copy(cloned.compareFuncs, cwc.compareFuncs)
+	return cloned
 }
 
 func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {

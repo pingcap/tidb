@@ -3611,7 +3611,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 
 	// init the instance plan cache
 	// TODO: introduce 2 new variable to control these 2 mem limits.
-	dom.InitInstancePlanCache(1000000, 1000000)
+	dom.InitInstancePlanCache(10000000, 10000000) // around 10MB
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
