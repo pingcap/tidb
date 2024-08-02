@@ -37,7 +37,6 @@ go_library(
         "logical_table_scan.go",
         "logical_tikv_single_gather.go",
         "logical_union_all.go",
-        "logical_union_scan.go",
         "memtable_infoschema_extractor.go",
         "memtable_predicate_extractor.go",
         "mock.go",

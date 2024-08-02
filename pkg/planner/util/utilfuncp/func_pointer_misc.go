@@ -141,3 +141,7 @@ var ExhaustLogicalWindowPhysicalPlans func(lp base.LogicalPlan, prop *property.P
 // ExhaustPhysicalPlans4LogicalLock will be called by LogicalLock in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalLock func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalUnionScan will be called by LogicalUnionScan in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalUnionScan func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
