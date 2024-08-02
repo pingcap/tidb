@@ -15,7 +15,7 @@
 package join
 
 import (
-	"hash/fnv"
+	"hash/crc64"
 	"sync/atomic"
 	"unsafe"
 
@@ -558,7 +558,7 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 }
 
 func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {
-	h := fnv.New64()
+	h := crc64.New(crc64.MakeTable(crc64.ECMA))
 	fakePartIndex := uint64(0)
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if (b.filterVector != nil && !b.filterVector[physicalRowIndex]) || (b.nullKeyVector != nil && b.nullKeyVector[physicalRowIndex]) {

@@ -16,7 +16,7 @@ package join
 
 import (
 	"bytes"
-	"hash/fnv"
+	"hash/crc64"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -235,7 +235,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 	// generate hash value
-	hash := fnv.New64()
+	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	//hash := fnv.New64()
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
 		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
 			// explicit set the matchedRowsHeaders[logicalRowIndex] to nil to indicate there is no matched rows
