@@ -1379,7 +1379,7 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 		if err == nil {
 			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
 			allUnique = false
-		} else if infoschema.ErrTableNotExists.Equal(err) {
+		} else if !infoschema.ErrTableNotExists.Equal(err) {
 			return errors.Trace(err)
 		}
 	}
