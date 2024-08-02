@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -256,6 +257,11 @@ type planCacheKey struct {
 	TiDBSuperReadOnly        bool
 	exprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 
+	// status related to Txn
+	inTxn          bool
+	autoCommit     bool
+	pessAutoCommit bool
+
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
 }
@@ -279,6 +285,9 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
+	if key == nil {
+		return nil
+	}
 	if len(key.hash) == 0 {
 		if key.hash == nil {
 			key.hash = make([]byte, 0, len(key.stmtText)*2)
@@ -307,8 +316,18 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 		key.hash = codec.EncodeInt(key.hash, key.exprBlacklistTS)
+		key.hash = append(key.hash, bool2Byte(key.inTxn))
+		key.hash = append(key.hash, bool2Byte(key.autoCommit))
+		key.hash = append(key.hash, bool2Byte(key.pessAutoCommit))
 	}
 	return key.hash
+}
+
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
+	}
+	return '0'
 }
 
 const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
@@ -380,6 +399,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 		exprBlacklistTS:          exprBlacklistTS,
+		inTxn:                    sessionVars.InTxn(),
+		autoCommit:               sessionVars.IsAutocommit(),
+		pessAutoCommit:           config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load(),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -508,6 +530,9 @@ type PlanCacheStmt struct {
 		// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 		Executor any
 		Plan     any // the cached PointGet Plan
+
+		// the cache key for point-get statement, have to check whether the cache key changes before reusing this plan for safety.
+		planCacheKey kvcache.Key
 	}
 
 	// below fields are for PointGet short path

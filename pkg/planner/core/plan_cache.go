@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -143,6 +144,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.PointGet.Plan = nil
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
+		stmt.PointGet.planCacheKey = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -225,7 +227,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	if stmtCtx.UseCache && stmt.PointGet.Plan != nil { // special code path for fast point plan
+	if stmtCtx.UseCache && stmt.PointGet.Plan != nil && bytes.Equal(stmt.PointGet.planCacheKey.Hash(), cacheKey.Hash()) { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmt, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
@@ -347,7 +349,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names)
+	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names, cacheKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -802,7 +804,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func tryCachePointPlan(_ context.Context, sctx PlanContext,
-	stmt *PlanCacheStmt, p Plan, names types.NameSlice) error {
+	stmt *PlanCacheStmt, p Plan, names types.NameSlice, cacheKey kvcache.Key) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil
 	}
@@ -825,6 +827,7 @@ func tryCachePointPlan(_ context.Context, sctx PlanContext,
 		// just cache point plan now
 		stmt.PointGet.Plan = p
 		stmt.PointGet.ColumnNames = names
+		stmt.PointGet.planCacheKey = cacheKey
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
@@ -846,6 +849,7 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 	if stmt.SchemaVersion != is.SchemaMetaVersion() {
 		stmt.PointGet.Plan = nil
 		stmt.PointGet.ColumnInfos = nil
+		stmt.PointGet.planCacheKey = nil
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current

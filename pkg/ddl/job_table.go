@@ -421,6 +421,7 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
+			failpoint.InjectCall("afterDelivery2Worker", job)
 			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()

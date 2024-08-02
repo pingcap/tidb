@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 const (
@@ -3216,7 +3217,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
-		if g.exprDepth == 1 {
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
@@ -3254,6 +3255,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				} else if ast.HasWindowFlag(ret) {
 					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
+					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+						isParam.UseAsValueInGbyByClause = true
+					}
 					return ret, true
 				}
 			}
@@ -5438,6 +5442,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
+		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&

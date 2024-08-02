@@ -63,7 +63,7 @@ func testNewIter(
 }
 
 func checkDupDB(t *testing.T, db *pebble.DB, expectedKeys, expectedValues [][]byte) {
-	iter := db.NewIter(nil)
+	iter, _ := db.NewIter(nil)
 	var (
 		gotKeys, gotValues [][]byte
 	)
