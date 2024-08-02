@@ -14,10 +14,12 @@
 package aws
 
 import (
+	"context"
 	"testing"
 
 	awsapi "github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,8 +78,6 @@ func TestHandleDescribeVolumesResponse(t *testing.T) {
 	require.Equal(t, int64(4), createdVolumeSize)
 	require.Equal(t, 1, len(unfinishedVolumes))
 }
-<<<<<<< HEAD
-=======
 
 type mockEC2 struct {
 	ec2iface.EC2API
@@ -221,4 +221,3 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 		require.Equal(t, c.expectedSize, size)
 	}
 }
->>>>>>> 035f79e896b (br: fix get snapshot response pointer deref panic (#54510))
