@@ -15,7 +15,6 @@
 package join
 
 import (
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
