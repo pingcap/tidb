@@ -550,10 +550,10 @@ type MigratedTo struct {
 // Migrations represents living migrations from the storage.
 type Migrations struct {
 	// The BASE migration.
-	Base *pb.Migration
+	Base *pb.Migration `json:"base"`
 	// Appended migrations.
 	// They are sorted by their sequence numbers.
-	Layers []*OrderedMigration
+	Layers []*OrderedMigration `json:"layers"`
 }
 
 // OrderedMigration is a migration with its path and sequence number.
