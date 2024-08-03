@@ -411,18 +411,16 @@ func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessi
 	if ex.SkipRequest {
 		return nil
 	}
-	schemas := ex.ListSchemas(e.is)
-	for _, schema := range schemas {
-		tables, err := ex.ListTables(ctx, e.is, schema)
-		if err != nil {
-			return errors.Trace(err)
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, table := range tables {
+		schema := schemas[i]
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+			continue
 		}
-		for _, table := range tables {
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			e.setDataForStatisticsInTable(schema, table, ex)
-		}
+		e.setDataForStatisticsInTable(schema, table, ex)
 	}
 	return nil
 }
