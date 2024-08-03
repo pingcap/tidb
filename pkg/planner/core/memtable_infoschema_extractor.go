@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"golang.org/x/exp/maps"
@@ -186,15 +187,84 @@ func (e *InfoSchemaBaseExtractor) Filter(colName string, val string) bool {
 	return false
 }
 
+// InfoSchemaTablesExtractor is the predicate extractor for information_schema.tables.
+type InfoSchemaTablesExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+// If there is no error, returning schema slice and table slice are guaranteed to have the same length.
+func (e *InfoSchemaTablesExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _tableSchema)
+
+	tableIDs := e.getSchemaObjectNames(_tidbTableID)
+	tableNames := e.getSchemaObjectNames(_tableName)
+
+	if len(tableIDs) > 0 {
+		tableMap := make(map[int64]*model.TableInfo, len(tableIDs))
+		findTablesByID(is, tableIDs, tableNames, tableMap)
+		schemaSlice, tableSlice := findSchemasForTables(is, schemas, maps.Values(tableMap))
+		return schemaSlice, tableSlice, nil
+	}
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
+// InfoSchemaPartitionsExtractor is the predicate extractor for information_schema.partitions.
+type InfoSchemaPartitionsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+// If there is no error, returning schema slice and table slice are guaranteed to have the same length.
+func (e *InfoSchemaPartitionsExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _tableSchema)
+
+	partIDs := e.getSchemaObjectNames(_tidbPartitionID)
+	tableNames := e.getSchemaObjectNames(_tableName)
+
+	if len(partIDs) > 0 {
+		tableMap := make(map[int64]*model.TableInfo, len(partIDs))
+		findTablesByPartID(is, partIDs, tableNames, tableMap)
+		schemaSlice, tableSlice := findSchemasForTables(is, schemas, maps.Values(tableMap))
+		return schemaSlice, tableSlice, nil
+	}
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
+// InfoSchemaStatisticsExtractor is the predicate extractor for  information_schema.statistics.
+type InfoSchemaStatisticsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
 // ListSchemas lists related schemas from predicate.
 // If no schema found in predicate, it return all schemas.
-func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
-	return e.listSchemas(is, _tableSchema)
+func (e *InfoSchemaStatisticsExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _tableSchema)
+	tableNames := e.getSchemaObjectNames(_tableName)
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
 }
 
 // ListTables lists related tables from predicate.
 // If no table is found in predicate, it return all tables.
-func (e *InfoSchemaBaseExtractor) ListTables(
+func (e *InfoSchemaStatisticsExtractor) ListTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
 	schema model.CIStr,
@@ -210,68 +280,6 @@ func (e *InfoSchemaBaseExtractor) ListTables(
 		return nil, errors.Trace(err)
 	}
 	return maps.Values(tables), nil
-}
-
-// InfoSchemaTablesExtractor is the predicate extractor for information_schema.tables.
-type InfoSchemaTablesExtractor struct {
-	InfoSchemaBaseExtractor
-}
-
-// ListTables lists related tables from predicate.
-// If no table is found in predicate, it return all tables.
-func (e *InfoSchemaTablesExtractor) ListTables(
-	ctx context.Context,
-	is infoschema.InfoSchema,
-	schema model.CIStr,
-) ([]*model.TableInfo, error) {
-	tableNames := e.getSchemaObjectNames(_tableName)
-	tableIDs := e.getSchemaObjectNames(_tidbTableID)
-	if len(tableNames)+len(tableIDs) == 0 {
-		return is.SchemaTableInfos(ctx, schema)
-	}
-
-	tables := make(map[int64]*model.TableInfo, 8)
-	err := findNameAndAppendToTableMap(ctx, is, schema, tableNames, tables)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = findIDAndAppendToTableMap(ctx, is, schema, tableIDs, tables)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return maps.Values(tables), nil
-}
-
-// InfoSchemaPartitionsExtractor is the predicate extractor for information_schema.partitions.
-type InfoSchemaPartitionsExtractor struct {
-	InfoSchemaBaseExtractor
-}
-
-// ListTables lists related tables from predicate.
-// If no table is found in predicate, it return all tables.
-func (e *InfoSchemaPartitionsExtractor) ListTables(
-	ctx context.Context,
-	is infoschema.InfoSchema,
-	schema model.CIStr,
-) ([]*model.TableInfo, error) {
-	tableNames := e.getSchemaObjectNames(_tableName)
-	partIDs := e.getSchemaObjectNames(_tidbPartitionID)
-	if len(tableNames)+len(partIDs) == 0 {
-		return is.SchemaTableInfos(ctx, schema)
-	}
-
-	tables := make(map[int64]*model.TableInfo, 8)
-	err := findNameAndAppendToTableMap(ctx, is, schema, tableNames, tables)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	findByPartIDAndAppendToTableMap(is, schema, partIDs, tables)
-	return maps.Values(tables), nil
-}
-
-// InfoSchemaStatisticsExtractor is the predicate extractor for  information_schema.statistics.
-type InfoSchemaStatisticsExtractor struct {
-	InfoSchemaBaseExtractor
 }
 
 // InfoSchemaSchemataExtractor is the predicate extractor for information_schema.schemata.
@@ -324,48 +332,135 @@ func findNameAndAppendToTableMap(
 	return nil
 }
 
-func findIDAndAppendToTableMap(
-	ctx context.Context,
+// findTablesByID finds tables by table IDs and append them to table map.
+func findTablesByID(
 	is infoschema.InfoSchema,
-	schema model.CIStr,
 	tableIDs []model.CIStr,
+	tableNames []model.CIStr,
 	tables map[int64]*model.TableInfo,
-) error {
-	for _, id := range parseIDs(tableIDs) {
-		tbl, ok := is.TableByID(id)
+) {
+	for _, tid := range parseIDs(tableIDs) {
+		tbl, ok := is.TableByID(tid)
 		if !ok {
 			continue
 		}
-		_, err := is.TableByName(ctx, schema, tbl.Meta().Name)
-		if err != nil {
-			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-				continue
-			}
-			return errors.Trace(err)
+		if len(tableNames) > 0 && containInTableNames(tableNames, tbl) {
+			continue
 		}
 		tblInfo := tbl.Meta()
 		tables[tblInfo.ID] = tblInfo
 	}
-	return nil
 }
 
-func findByPartIDAndAppendToTableMap(
+// findTablesByPartID finds tables by partition IDs and append them to table map.
+func findTablesByPartID(
 	is infoschema.InfoSchema,
-	schema model.CIStr,
 	partIDs []model.CIStr,
+	tableNames []model.CIStr,
 	tables map[int64]*model.TableInfo,
 ) {
 	for _, pid := range parseIDs(partIDs) {
-		tbl, db, _ := is.FindTableByPartitionID(pid)
+		tbl, _, _ := is.FindTableByPartitionID(pid)
 		if tbl == nil {
 			continue
 		}
-		if db.Name.L != schema.L {
+		if len(tableNames) > 0 && containInTableNames(tableNames, tbl) {
 			continue
 		}
 		tblInfo := tbl.Meta()
 		tables[tblInfo.ID] = tblInfo
 	}
+}
+
+func containInTableNames(tableNames []model.CIStr, tbl table.Table) bool {
+	for _, n := range tableNames {
+		if tbl.Meta().Name.L == n.L {
+			return true
+		}
+	}
+	return false
+}
+
+func findTableAndSchemaByName(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemas []model.CIStr,
+	tableNames []model.CIStr,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	type schemaAndTable struct {
+		schema model.CIStr
+		table  *model.TableInfo
+	}
+	tableMap := make(map[int64]schemaAndTable, len(tableNames))
+	for _, n := range tableNames {
+		for _, s := range schemas {
+			tbl, err := is.TableByName(ctx, s, n)
+			if err != nil {
+				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+					continue
+				}
+				return nil, nil, errors.Trace(err)
+			}
+			tblInfo := tbl.Meta()
+			tableMap[tblInfo.ID] = schemaAndTable{s, tblInfo}
+		}
+	}
+	schemaSlice := make([]model.CIStr, 0, len(tableMap))
+	tableSlice := make([]*model.TableInfo, 0, len(tableMap))
+	for _, st := range tableMap {
+		schemaSlice = append(schemaSlice, st.schema)
+		tableSlice = append(tableSlice, st.table)
+	}
+	return schemaSlice, tableSlice, nil
+}
+
+func listTablesForEachSchema(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemas []model.CIStr,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemaSlice := make([]model.CIStr, 0, 8)
+	tableSlice := make([]*model.TableInfo, 0, 8)
+	for _, s := range schemas {
+		tables, err := is.SchemaTableInfos(ctx, s)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, t := range tables {
+			schemaSlice = append(schemaSlice, s)
+			tableSlice = append(tableSlice, t)
+		}
+	}
+	return schemaSlice, tableSlice, nil
+}
+
+func findSchemasForTables(
+	is infoschema.InfoSchema,
+	schemas []model.CIStr,
+	tableSlice []*model.TableInfo,
+) ([]model.CIStr, []*model.TableInfo) {
+	schemaSlice := make([]model.CIStr, 0, len(tableSlice))
+	for i, tbl := range tableSlice {
+		found := false
+		for _, s := range schemas {
+			if is.TableExists(s, tbl.Name) {
+				schemaSlice = append(schemaSlice, s)
+				found = true
+				break
+			}
+		}
+		if !found {
+			tableSlice[i] = nil
+		}
+	}
+	// Remove nil elements in tableSlice.
+	remains := tableSlice[:0]
+	for _, tbl := range tableSlice {
+		if tbl != nil {
+			remains = append(remains, tbl)
+		}
+	}
+	return schemaSlice, remains
 }
 
 func parseIDs(ids []model.CIStr) []int64 {
