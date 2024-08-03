@@ -128,15 +128,21 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b<t3.b and t1.a<?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
-	// TODO: IndexJoin
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b<t3.b and t1.a<?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	// IndexJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// IndexHashJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
 	// Limit
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? limit 1'`,
@@ -214,12 +220,6 @@ func TestCheckPlanClone(t *testing.T) {
 	ts1.AccessCondition[0] = expr
 	ts2.AccessCondition[0] = expr
 	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
-
-	// same interface
-	child := &core.PhysicalTableScan{}
-	ts1.SetProbeParents([]base.PhysicalPlan{child})
-	ts2.SetProbeParents([]base.PhysicalPlan{child})
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.physicalSchemaProducer.basePhysicalPlan.probeParents[0](*core.PhysicalTableScan)")
 
 	// same map
 	l1 := &core.PhysicalLock{}

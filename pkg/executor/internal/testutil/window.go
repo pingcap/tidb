@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -31,7 +31,7 @@ import (
 // WindowTestCase has a fixed schema (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 type WindowTestCase struct {
 	Ctx              sessionctx.Context
-	Frame            *core.WindowFrame
+	Frame            *logicalop.WindowFrame
 	WindowFunc       string
 	RawDataSmall     string
 	Columns          []*expression.Column

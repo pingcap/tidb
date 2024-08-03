@@ -188,6 +188,23 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
+func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
+	for _, idxCol := range idxCols {
+		col := model.FindColumnInfo(cols, idxCol.Name.L)
+		if col == nil {
+			err = dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", idxCol.Name.L)
+			return
+		}
+		var l int
+		l, err = getIndexColumnLength(col, idxCol.Length)
+		if err != nil {
+			return
+		}
+		colLen += l
+	}
+	return
+}
+
 func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumnLen int) error {
 	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {

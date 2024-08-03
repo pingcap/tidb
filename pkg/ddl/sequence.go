@@ -75,7 +75,7 @@ func createSequenceWithCheck(t *meta.Meta, job *model.Job, tbInfo *model.TableIn
 		} else {
 			sequenceBase = tbInfo.Sequence.Start + 1
 		}
-		return t.CreateSequenceAndSetSeqValue(job.SchemaID, job.SchemaName, tbInfo, sequenceBase)
+		return t.CreateSequenceAndSetSeqValue(job.SchemaID, tbInfo, sequenceBase)
 	default:
 		return dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
 	}

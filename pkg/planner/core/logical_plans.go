@@ -26,7 +26,7 @@ import (
 var (
 	_ base.LogicalPlan = &LogicalJoin{}
 	_ base.LogicalPlan = &LogicalAggregation{}
-	_ base.LogicalPlan = &LogicalProjection{}
+	_ base.LogicalPlan = &logicalop.LogicalProjection{}
 	_ base.LogicalPlan = &LogicalSelection{}
 	_ base.LogicalPlan = &LogicalApply{}
 	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
@@ -36,10 +36,10 @@ var (
 	_ base.LogicalPlan = &LogicalTableScan{}
 	_ base.LogicalPlan = &LogicalIndexScan{}
 	_ base.LogicalPlan = &LogicalUnionAll{}
-	_ base.LogicalPlan = &LogicalSort{}
+	_ base.LogicalPlan = &logicalop.LogicalSort{}
 	_ base.LogicalPlan = &LogicalLock{}
-	_ base.LogicalPlan = &LogicalLimit{}
-	_ base.LogicalPlan = &LogicalWindow{}
+	_ base.LogicalPlan = &logicalop.LogicalLimit{}
+	_ base.LogicalPlan = &logicalop.LogicalWindow{}
 	_ base.LogicalPlan = &LogicalExpand{}
 	_ base.LogicalPlan = &LogicalUnionScan{}
 	_ base.LogicalPlan = &logicalop.LogicalMemTable{}

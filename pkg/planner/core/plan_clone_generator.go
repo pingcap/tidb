@@ -37,6 +37,7 @@ func genPlanCloneForPlanCacheCode() ([]byte, error) {
 		PhysicalSort{}, PhysicalTopN{}, PhysicalStreamAgg{}, PhysicalHashAgg{},
 		PhysicalHashJoin{}, PhysicalMergeJoin{}, PhysicalTableReader{}, PhysicalIndexReader{},
 		PointGetPlan{}, BatchPointGetPlan{}, PhysicalLimit{},
+		PhysicalIndexJoin{}, PhysicalIndexHashJoin{},
 		PhysicalIndexLookUpReader{}, PhysicalIndexMergeReader{}}
 	c := new(codeGen)
 	c.write(codeGenPrefix)
@@ -110,7 +111,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("}")
 		case "*core.PhysPlanPartInfo", "*core.PushedDownLimit", "*expression.Schema":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
-		case "kv.Handle":
+		case "kv.Handle", "*core.ColWithCmpFuncManager":
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Copy()", f.Name, f.Name)
 			c.write("}")
@@ -118,6 +119,11 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Clone().(%v)", f.Name, f.Name, f.Type.String())
 			c.write("}")
+		case "core.PhysicalIndexJoin":
+			c.write("inlj, ok := op.%v.CloneForPlanCache(newCtx)", f.Name)
+			c.write("if !ok {return nil, false}")
+			c.write("cloned.%v = *inlj.(*PhysicalIndexJoin)", f.Name)
+			c.write("cloned.self = cloned")
 		case "base.PhysicalPlan":
 			c.write("%v, ok := op.%v.CloneForPlanCache(newCtx)", f.Name, f.Name)
 			c.write("if !ok {return nil, false}")
@@ -131,6 +137,8 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = new(int)", f.Name)
 			c.write("*cloned.%v = *op.%v", f.Name, f.Name)
 			c.write("}")
+		case "ranger.MutableRanges":
+			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
 		default:
 			return nil, fmt.Errorf("can't generate Clone method for type %v in %v", f.Type.String(), vType.String())
 		}

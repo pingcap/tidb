@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -128,7 +129,7 @@ func (smj *semiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	innerJoin.SetSchema(expression.MergeSchema(join.Children()[0].Schema(), subAgg.Schema()))
 	innerJoin.AttachOnConds(expression.ScalarFuncs2Exprs(join.EqualConditions))
 
-	proj := LogicalProjection{
+	proj := logicalop.LogicalProjection{
 		Exprs: expression.Column2Exprs(join.Children()[0].Schema().Columns),
 	}.Init(p.SCtx(), p.QueryBlockOffset())
 	proj.SetChildren(innerJoin)

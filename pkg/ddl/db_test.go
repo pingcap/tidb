@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -161,7 +162,7 @@ func TestIssue22307(t *testing.T) {
 }
 
 func TestAddExpressionIndexRollback(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
@@ -171,13 +172,11 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	d := dom.DDL()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var currJob *model.Job
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -209,9 +208,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 				times++
 			}
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(hook)
+	})
 
 	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	require.NoError(t, checkErr)
@@ -379,7 +376,7 @@ func TestAlterShardRowIDBits(t *testing.T) {
 }
 
 func TestDDLJobErrorCount(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddl_error_table, new_ddl_error_table")
@@ -391,14 +388,9 @@ func TestDDLJobErrorCount(t *testing.T) {
 	}()
 
 	var jobID int64
-	hook := &callback.TestDDLCallback{}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID = job.ID
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	originHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
-	defer dom.DDL().SetHook(originHook)
+	})
 
 	tk.MustGetErrCode("rename table ddl_error_table to new_ddl_error_table", errno.ErrEntryTooLarge)
 
@@ -1017,7 +1009,7 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 }
 
 func TestMDLTruncateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1029,13 +1021,12 @@ func TestMDLTruncateTable(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	wg.Add(2)
 	var timetk2 time.Time
 	var timetk3 time.Time
 
 	one := false
-	f := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if one {
 			return
 		}
@@ -1045,10 +1036,7 @@ func TestMDLTruncateTable(t *testing.T) {
 			timetk3 = time.Now()
 			wg.Done()
 		}()
-	}
-
-	hook.OnJobUpdatedExported.Store(&f)
-	dom.DDL().SetHook(hook)
+	})
 
 	go func() {
 		tk2.MustExec("truncate table test.t")
@@ -1065,7 +1053,7 @@ func TestMDLTruncateTable(t *testing.T) {
 }
 
 func TestTruncateTableAndSchemaDependence(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -1080,7 +1068,7 @@ func TestTruncateTableAndSchemaDependence(t *testing.T) {
 	var timetk3 time.Time
 
 	first := false
-	f := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if first || job.Type != model.ActionTruncateTable {
 			return
 		}
@@ -1091,11 +1079,7 @@ func TestTruncateTableAndSchemaDependence(t *testing.T) {
 			wg.Done()
 		}()
 		time.Sleep(3 * time.Second)
-	}
-
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobUpdatedExported.Store(&f)
-	dom.DDL().SetHook(hook)
+	})
 
 	go func() {
 		tk2.MustExec("truncate table test.t")
@@ -1118,12 +1102,7 @@ func TestInsertIgnore(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
-
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("INSERT INTO t VALUES (-18585,'aaa',1), (-18585,'0',1), (-18585,'1',1), (-18585,'duplicatevalue',1);")
@@ -1136,9 +1115,7 @@ func TestInsertIgnore(t *testing.T) {
 				return
 			}
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(callback)
+	})
 
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")

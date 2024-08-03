@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -852,7 +853,7 @@ func isNoResultPlan(p base.Plan) bool {
 	// the Projection has two expressions and two columns in the schema, but we should
 	// not return the result of the two expressions.
 	switch raw := p.(type) {
-	case *plannercore.LogicalProjection:
+	case *logicalop.LogicalProjection:
 		if raw.CalculateNoDelay {
 			return true
 		}

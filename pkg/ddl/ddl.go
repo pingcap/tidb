@@ -21,18 +21,15 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -86,7 +83,6 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 10
-	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -253,16 +249,12 @@ type ddl struct {
 	sessPool          *sess.Pool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
-	// used in the concurrency ddl.
-	localWorkerPool *workerPool
 	// get notification if any DDL job submitted or finished.
 	ddlJobNotifyCh    chan struct{}
 	sysTblMgr         systable.Manager
 	minJobIDRefresher *systable.MinJobIDRefresher
 
-	// localJobCh is used to delivery job in local TiDB nodes.
-	localJobCh chan *JobWrapper
-	// globalIDLocal locks global id to reduce write conflict.
+	// globalIDLock locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
 	executor     *executor
 }
@@ -550,10 +542,6 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
-func (dc *ddlCtx) initJobDoneCh(jobID int64) {
-	dc.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
-}
-
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
 	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
 		// broadcast done event as we might merge multiple jobs into one when fast
@@ -582,6 +570,8 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
+// TODO this is called after ddl started, will cause panic if related DDL are executed
+// in between.
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
 	d.executor.statsHandle = h
@@ -681,7 +671,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		limitJobCh:        make(chan *JobWrapper, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobNotifyCh:    make(chan struct{}, 100),
-		localJobCh:        make(chan *JobWrapper, 1),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -744,33 +733,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
-func (d *ddl) prepareLocalModeWorkers() {
-	var idAllocator atomic.Uint64
-	workerFactory := func(tp workerType) func() (pools.Resource, error) {
-		return func() (pools.Resource, error) {
-			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx)
-			sessForJob, err := d.sessPool.Get()
-			if err != nil {
-				return nil, err
-			}
-			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = sess.NewSession(sessForJob)
-			wk.seqAllocator = &idAllocator
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
-			return wk, nil
-		}
-	}
-	// local worker count at least 2 at most 10.
-	localCnt := min(max(runtime.GOMAXPROCS(0)/4, 2), localWorkerCnt)
-	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localCnt, localCnt, 0), jobTypeLocal)
-	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return()
-		}
-	})
-	d.wg.Run(d.startLocalWorkerLoop)
-}
-
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
@@ -780,7 +742,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.sysTblMgr = systable.NewManager(d.sessPool)
 	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
 	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobsV1)
+		d.limitDDLJobs()
 	})
 	d.wg.Run(func() {
 		d.minJobIDRefresher.Start(d.ctx)
@@ -795,8 +757,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.ownerManager.SetListener(&ownerListener{
 		ddl: d,
 	})
-
-	d.prepareLocalModeWorkers()
 
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
@@ -892,9 +852,6 @@ func (d *ddl) close() {
 	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
-	if d.localWorkerPool != nil {
-		d.localWorkerPool.close()
-	}
 
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -981,7 +938,7 @@ func (d *ddl) startCleanDeadTableLock() {
 				continue
 			}
 			for se, tables := range deadLockTables {
-				err := d.CleanDeadTableLock(tables, se)
+				err := d.cleanDeadTableLock(tables, se)
 				if err != nil {
 					logutil.DDLLogger().Info("clean dead table lock failed.", zap.Error(err))
 				}
@@ -990,6 +947,32 @@ func (d *ddl) startCleanDeadTableLock() {
 			return
 		}
 	}
+}
+
+// cleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &LockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []any{arg},
+	}
+
+	ctx, err := d.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.Put(ctx)
+	err = d.executor.DoDDLJob(ctx, job)
+	return errors.Trace(err)
 }
 
 // SwitchMDL enables MDL or disable MDL.

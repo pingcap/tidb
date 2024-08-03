@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -31,7 +31,7 @@ import (
 
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
 	PartitionBy     []property.SortItem
@@ -90,7 +90,8 @@ func (fb *FrameBound) Clone() *FrameBound {
 	return cloned
 }
 
-func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) {
+// UpdateCmpFuncsAndCmpDataType updates CmpFuncs and CmpDataType.
+func (fb *FrameBound) UpdateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) {
 	// When cmpDataType can't match to any condition, we can ignore it.
 	//
 	// For example:
@@ -117,6 +118,28 @@ func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) {
 	}
 }
 
+// ToPB converts FrameBound to tipb structure.
+func (fb *FrameBound) ToPB(ctx *base.BuildPBContext) (*tipb.WindowFrameBound, error) {
+	pbBound := &tipb.WindowFrameBound{
+		Type:      tipb.WindowBoundType(fb.Type),
+		Unbounded: fb.UnBounded,
+	}
+	offset := fb.Num
+	pbBound.Offset = &offset
+
+	if fb.IsExplicitRange {
+		rangeFrame, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), fb.CalcFuncs, ctx.GetClient())
+		if err != nil {
+			return nil, err
+		}
+
+		pbBound.FrameRange = rangeFrame[0]
+		pbBound.CmpDataType = &fb.CmpDataType
+	}
+
+	return pbBound, nil
+}
+
 // UpdateCompareCols will update CompareCols.
 func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
 	ectx := ctx.GetExprCtx().GetEvalCtx()
@@ -136,14 +159,14 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		}
 
 		cmpDataType := expression.GetAccurateCmpType(ctx.GetExprCtx().GetEvalCtx(), fb.CompareCols[0], fb.CalcFuncs[0])
-		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
+		fb.UpdateCmpFuncsAndCmpDataType(cmpDataType)
 	}
 	return nil
 }
 
 // Init initializes LogicalWindow.
 func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeWindow, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeWindow, &p, offset)
 	return &p
 }
 
@@ -289,7 +312,7 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustLogicalWindowPhysicalPlans(p, prop)
+	return utilfuncp.ExhaustLogicalWindowPhysicalPlans(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
