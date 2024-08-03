@@ -142,25 +142,7 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// before return the db, please show the session variables to log file
-	// to help debug
-	rows, err := db.Query("SHOW VARIABLES")
-	// if we can get the session variables, we will log it
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var name, value string
-			if err := rows.Scan(&name, &value); err != nil {
-				log.L().Warn("failed to scan session variable", zap.Error(err))
-				break
-			}
-			log.L().Info("session variable", zap.String("name", name), zap.String("value", value))
-		}
-	}
-	db.SetMaxIdleConns(32)
-	db.SetMaxOpenConns(32)
-	db.SetConnMaxIdleTime(time.Hour)
-	db.SetConnMaxLifetime(time.Hour)
+	db.SetMaxIdleConns(128)
 	return db, nil
 }
 

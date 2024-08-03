@@ -25,7 +25,6 @@ import (
 
 	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
-	lru "github.com/hashicorp/golang-lru"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -44,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -58,7 +59,7 @@ var extraHandleTableColumn = &table.Column{
 const (
 	writeRowsMaxRetryTimes = 3
 	// To limit memory usage for prepared statements.
-	prepStmtCacheSize int  = 16 * 1024
+	prepStmtCacheSize uint = 100
 	cachePrepStmts    bool = true
 )
 
@@ -302,6 +303,22 @@ func (*targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.Check
 	return nil
 }
 
+// stmtKey defines key for stmtCache.
+type stmtKey struct {
+	query string
+	// `hash` is the hash value of this object.
+	hash []byte
+}
+
+// Hash implements SimpleLRUCache.Key.
+func (k *stmtKey) Hash() []byte {
+	if len(k.hash) == 0 {
+		k.hash = make([]byte, 0, len(k.query))
+		k.hash = append(k.hash, hack.Slice(k.query)...)
+	}
+	return k.hash
+}
+
 type tidbBackend struct {
 	db          *sql.DB
 	conflictCfg config.Conflict
@@ -316,7 +333,7 @@ type tidbBackend struct {
 	maxChunkSize uint64
 	maxChunkRows int
 	// implement stmtCache to improve performance, especially when the downstream is TiDB
-	stmtCache *lru.Cache
+	stmtCache *kvcache.SimpleLRUCache
 	// Indicate if the CachePrepStmts should be enabled or not
 	cachePrepStmts bool
 }
@@ -352,8 +369,8 @@ func NewTiDBBackend(
 		log.FromContext(ctx).Warn("unsupported conflict strategy for TiDB backend, overwrite with `error`")
 		onDuplicate = config.ErrorOnDup
 	}
-	var stmtCache *lru.Cache
-	stmtCache, _ = lru.NewWithEvict(prepStmtCacheSize, func(key, value interface{}) {
+	stmtCache := kvcache.NewSimpleLRUCache(prepStmtCacheSize, 0, 0)
+	stmtCache.SetOnEvict(func(key kvcache.Key, value kvcache.Value) {
 		stmt := value.(*sql.Stmt)
 		stmt.Close()
 	})
@@ -801,11 +818,13 @@ stmtLoop:
 			query := stmtTask.stmt
 			if be.cachePrepStmts {
 				var prepStmt *sql.Stmt
-				if stmt, ok := be.stmtCache.Get(query); ok {
+				// how to impletement the interface kvcache.Key interface for string query?
+				key := &stmtKey{query: query}
+				if stmt, ok := be.stmtCache.Get(key); ok {
 					prepStmt = stmt.(*sql.Stmt)
 				} else if stmt, err := be.db.Prepare(query); err == nil {
 					prepStmt = stmt
-					be.stmtCache.Add(query, stmt)
+					be.stmtCache.Put(key, stmt)
 				} else {
 					return errors.Trace(err)
 				}
