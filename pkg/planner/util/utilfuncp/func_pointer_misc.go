@@ -129,3 +129,11 @@ var ExhaustPhysicalPlans4LogicalTopN func(lp base.LogicalPlan, prop *property.Ph
 // ExhaustPhysicalPlans4LogicalLimit will be called by LogicalLimit in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalLimit func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalProjection will be called by LogicalLimit in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalProjection func(lp base.LogicalPlan,
+	prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error)
+
+// ExhaustLogicalWindowPhysicalPlans will be called by LogicalWindow in logicalOp pkg.
+var ExhaustLogicalWindowPhysicalPlans func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)

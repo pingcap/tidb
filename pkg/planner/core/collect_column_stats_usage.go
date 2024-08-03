@@ -240,7 +240,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		case *LogicalTableScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
-		case *LogicalProjection:
+		case *logicalop.LogicalProjection:
 			// Schema change from children to self.
 			schema := x.Schema()
 			for i, expr := range x.Exprs {
@@ -258,7 +258,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for i, aggFunc := range x.AggFuncs {
 				c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
 			}
-		case *LogicalWindow:
+		case *logicalop.LogicalWindow:
 			// Statistics of the columns in LogicalWindow.PartitionBy are used in optimizeByShuffle4Window.
 			// We don't use statistics of the columns in LogicalWindow.OrderBy currently.
 			for _, item := range x.PartitionBy {

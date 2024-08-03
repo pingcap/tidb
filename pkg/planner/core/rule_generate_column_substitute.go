@@ -188,7 +188,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 		for _, cond := range x.Conditions {
 			substituteExpression(cond, lp, exprToColumn, x.Schema(), opt)
 		}
-	case *LogicalProjection:
+	case *logicalop.LogicalProjection:
 		for i := range x.Exprs {
 			tp = x.Exprs[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
