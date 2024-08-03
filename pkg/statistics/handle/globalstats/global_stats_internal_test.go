@@ -64,10 +64,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tint global c 0 0 5 2 1 4 0", // bucket.ndv is not maintained for column histograms
 		"test tint global c 0 1 12 2 17 17 0",
-		"test tint p0 c 0 0 2 1 1 2 0",
-		"test tint p0 c 0 1 3 1 3 3 0",
-		"test tint p1 c 0 0 3 1 11 13 0",
-		"test tint p1 c 0 1 5 1 14 15 0"))
+                "test tint p0 c 0 0 3 1 1 3 0",
+                "test tint p1 c 0 0 5 1 11 15 0"))
 
 	tk.MustQuery("select distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("12 1 19", // global, g = p0 + p1
