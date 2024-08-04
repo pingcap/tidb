@@ -1009,6 +1009,8 @@ const (
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
 	// TiDBEnableAutoAnalyzePriorityQueue determines whether TiDB executes automatic analysis with priority queue.
 	TiDBEnableAutoAnalyzePriorityQueue = "tidb_enable_auto_analyze_priority_queue"
+	// TiDBEnableAnalyzeAutoCount determines whether TiDB can automatically adjust the number of TopN and Buckets collected by ANALYZE.
+	TiDBEnableAnalyzeAutoCount = "tidb_enable_analyze_auto_count"
 	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
@@ -1383,6 +1385,7 @@ const (
 	DefTiDBMemQuotaAnalyze                         = -1
 	DefTiDBEnableAutoAnalyze                       = true
 	DefTiDBEnableAutoAnalyzePriorityQueue          = true
+	DefTiDBEnableAnalyzeAutoCount                  = true
 	DefTiDBAnalyzeColumnOptions                    = "PREDICATE"
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
@@ -1515,6 +1518,7 @@ var (
 	ProcessGeneralLog              = atomic.NewBool(false)
 	RunAutoAnalyze                 = atomic.NewBool(DefTiDBEnableAutoAnalyze)
 	EnableAutoAnalyzePriorityQueue = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
+	EnableAnalyzeAutoCount         = atomic.NewBool(DefTiDBEnableAnalyzeAutoCount)
 	// AnalyzeColumnOptions is a global variable that indicates the default column choice for ANALYZE.
 	// The value of this variable is a string that can be one of the following values:
 	// "PREDICATE", "ALL".

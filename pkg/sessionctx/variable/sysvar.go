@@ -1054,6 +1054,20 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
+	{
+		Scope: ScopeGlobal,
+		Name:  TiDBEnableAnalyzeAutoCount,
+		Value: BoolToOnOff(DefTiDBEnableAnalyzeAutoCount),
+		Type:  TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(EnableAnalyzeAutoCount.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			persist := TiDBOptOn(val)
+			EnableAnalyzeAutoCount.Store(persist)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerThreshold, Value: strconv.FormatFloat(DefTiDBGOGCTunerThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatFloat(GOGCTunerThreshold.Load(), 'f', -1, 64), nil

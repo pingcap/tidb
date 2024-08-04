@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -324,7 +325,8 @@ func BuildHistAndTopN(
 	sampleFactor := float64(count) / float64(len(samples))
 	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
-	if numTopN != 100 {
+	// Don't allow automated pruning of TopN if global variable disabled
+	if numTopN != 100 || (!variable.EnableAnalyzeAutoCount.Load() && sampleFactor == 1) {
 		allowPruning = false
 	}
 
