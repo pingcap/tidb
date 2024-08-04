@@ -3316,9 +3316,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
-	var (
-		preSplit func()
-	)
+	var preSplit func()
 	if len(parts) > 0 {
 		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion, scatterRegionByClusterLevel) }
 	} else {
