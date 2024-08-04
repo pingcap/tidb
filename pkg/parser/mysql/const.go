@@ -161,7 +161,8 @@ const (
 	ClientSessionTrack                                  // CLIENT_SESSION_TRACK, Not supported: https://github.com/pingcap/tidb/issues/35309
 	ClientDeprecateEOF                                  // CLIENT_DEPRECATE_EOF
 	ClientOptionalResultsetMetadata                     // CLIENT_OPTIONAL_RESULTSET_METADATA, Not supported: https://dev.mysql.com/doc/c-api/8.0/en/c-api-optional-metadata.html
-	ClientZstdCompressionAlgorithm                      // CLIENT_ZSTD_COMPRESSION_ALGORITHM
+	ClientZstdCompressionAlgorithm
+	ClientQueryAttributes // CLIENT_ZSTD_COMPRESSION_ALGORITHM
 	// 1 << 27 == CLIENT_QUERY_ATTRIBUTES
 	// 1 << 28 == MULTI_FACTOR_AUTHENTICATION
 	// 1 << 29 == CLIENT_CAPABILITY_EXTENSION

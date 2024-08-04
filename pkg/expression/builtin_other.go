@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ var (
 	_ functionClass = &valuesFunctionClass{}
 	_ functionClass = &bitCountFunctionClass{}
 	_ functionClass = &getParamFunctionClass{}
+	_ functionClass = &getQueryAttrFunctionClass{}
 )
 
 var (
@@ -1645,4 +1647,57 @@ func (b *builtinGetParamStringSig) evalString(ctx EvalContext, row chunk.Row) (s
 		return "", true, nil
 	}
 	return str, false, nil
+}
+
+// getQueryAttrFunctionClass for plan cache of prepared statements
+type getQueryAttrFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *getQueryAttrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(mysql.MaxFieldVarCharLength)
+	sig := &builtinGetQueryAttrStringSig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinGetQueryAttrStringSig struct {
+	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
+}
+
+func (b *builtinGetQueryAttrStringSig) Clone() builtinFunc {
+	newSig := &builtinGetQueryAttrStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetQueryAttrStringSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
+func (b *builtinGetQueryAttrStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return "", true, err
+	}
+
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+	attrs := sessionVars.QueryAttributes
+	if attrs == nil {
+		return "", true, nil
+	}
+	if v, ok := attrs[varName]; ok {
+		return string(hack.String(v.Val)), false, nil
+	}
+	return "", true, nil
 }

@@ -42,6 +42,7 @@ import (
 	"encoding/binary"
 	goerr "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/param"
 	"io"
 	"net"
 	"os/user"
@@ -1275,6 +1276,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
+		cc.ctx.GetSessionVars().QueryAttributes = nil
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
@@ -1370,8 +1372,14 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		// See http://dev.mysql.com/doc/internals/en/com-query.html
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
-			dataStr = string(hack.String(data))
 		}
+		pos, err := cc.handleQueryAttributes(ctx, data)
+		if err != nil {
+			return err
+		}
+		// fix lastPacket for display/log
+		cc.lastPacket = append([]byte{cc.lastPacket[0]}, data[pos:]...)
+		dataStr = string(hack.String(data[pos:]))
 		return cc.handleQuery(ctx, dataStr)
 	case mysql.ComFieldList:
 		return cc.handleFieldList(ctx, dataStr)
@@ -1718,6 +1726,60 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 	if err != nil {
 		terror.Log(err)
 	}
+}
+
+// handleQueryAttributes support query attributes since mysql 8.0.23
+// see https://dev.mysql.com/doc/refman/8.0/en/query-attributes.html
+// https://archive.fosdem.org/2021/schedule/event/mysql_protocl/attachments/slides/4274/export/events/attachments/mysql_protocl/slides/4274/FOSDEM21_MySQL_Protocols_Query_Attributes.pdf
+func (cc *clientConn) handleQueryAttributes(ctx context.Context, data []byte) (pos int, error error) {
+	if cc.ctx.GetSessionVars().ClientCapability&mysql.ClientQueryAttributes > 0 {
+		paraCount, _, np := util2.ParseLengthEncodedInt(data)
+		numParams := int(paraCount)
+		pos += np
+		_, _, np = util2.ParseLengthEncodedInt(data[pos:])
+		pos += np
+		ps := make([]param.BinaryParam, numParams)
+		names := make([]string, numParams)
+		if paraCount > 0 {
+			var (
+				nullBitmaps []byte
+				paramTypes  []byte
+			)
+			cc.initInputEncoder(ctx)
+			nullBitmapLen := (numParams + 7) >> 3
+			nullBitmaps = data[pos : pos+nullBitmapLen]
+			pos += nullBitmapLen
+			if data[pos] == 1 {
+				pos++
+				for i := 0; i < numParams; i++ {
+					paramTypes = append(paramTypes, data[pos:pos+2]...)
+					pos += 2
+					s, _, p, e := util2.ParseLengthEncodedBytes(data[pos:])
+					if e != nil {
+						return 0, mysql.ErrMalformPacket
+					}
+					names[i] = string(hack.String(s))
+					pos += p
+				}
+			} else {
+				return 0, mysql.ErrMalformPacket
+			}
+			boundParams := make([][]byte, numParams)
+			if p, err := parseBinaryParams(ps, boundParams, nullBitmaps, paramTypes, data[pos:], cc.inputDecoder); err != nil {
+				return
+			} else {
+				pos += p
+			}
+
+			psWithName := make(map[string]param.BinaryParam, numParams)
+			for i := range names {
+				psWithName[names[i]] = ps[i]
+			}
+			cc.ctx.GetSessionVars().QueryAttributes = psWithName
+		}
+	}
+
+	return
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.

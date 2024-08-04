@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/param"
 	"math"
 	"math/rand"
 	"net"
@@ -1660,6 +1661,9 @@ type SessionVars struct {
 
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
+
+	// QueryAttributes record query attributed for each statement.
+	QueryAttributes map[string]param.BinaryParam
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
