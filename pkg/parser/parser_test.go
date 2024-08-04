@@ -1989,6 +1989,7 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT IS_USED_LOCK(@str);`, true, "SELECT IS_USED_LOCK(@`str`)"},
 		{`SELECT MASTER_POS_WAIT(@log_name, @log_pos), MASTER_POS_WAIT(@log_name, @log_pos, @timeout), MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name);`, true, "SELECT MASTER_POS_WAIT(@`log_name`, @`log_pos`),MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`),MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`, @`channel_name`)"},
 		{`SELECT NAME_CONST('myname', 14);`, true, "SELECT NAME_CONST(_UTF8MB4'myname', 14)"},
+		{`SELECT MYSQL_QUERY_ATTRIBUTE_STRING(@str);`, true, "SELECT MYSQL_QUERY_ATTRIBUTE_STRING(@`str`)"},
 		{`SELECT RELEASE_ALL_LOCKS();`, true, "SELECT RELEASE_ALL_LOCKS()"},
 		{`SELECT UUID();`, true, "SELECT UUID()"},
 		{`SELECT UUID_SHORT()`, true, "SELECT UUID_SHORT()"},

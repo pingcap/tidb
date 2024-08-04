@@ -26,6 +26,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/param",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
