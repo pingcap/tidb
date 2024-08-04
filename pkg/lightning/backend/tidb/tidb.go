@@ -382,7 +382,7 @@ func NewTiDBBackend(
 		maxChunkSize:   uint64(cfg.TikvImporter.LogicalImportBatchSize),
 		maxChunkRows:   cfg.TikvImporter.LogicalImportBatchRows,
 		stmtCache:      stmtCache,
-		cachePrepStmts: true,
+		cachePrepStmts: cfg.TikvImporter.LogicalImportPrepStmt,
 	}
 }
 
@@ -600,9 +600,9 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 
 	var encoded, preparedInsertStmt strings.Builder
 	var values []any
-	//	encoded.Grow(8 * len(row))
+	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
-	//	preparedInsertStmt.Grow(2 * len(row))
+	preparedInsertStmt.Grow(2 * len(row))
 	preparedInsertStmt.WriteByte('(')
 	cnt := 0
 	for i, field := range row {
@@ -732,15 +732,13 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 	}
 	// Note: we are not going to do interpolation (prepared statements) to avoid
 	// complication arise from data length overflow of BIT and BINARY columns
-	if cachePrepStmts {
-	}
 	var values []any
 	stmtTasks := make([]stmtTask, 1)
 	for i, row := range rows {
 		if i != 0 {
 			insertStmt.WriteByte(',')
 		}
-		if cachePrepStmts {
+		if be.cachePrepStmts {
 			insertStmt.WriteString(row.preparedInsertStmt)
 			values = append(values, row.values...)
 		} else {
