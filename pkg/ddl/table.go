@@ -870,7 +870,14 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		partitions = tblInfo.GetPartitionInfo().Definitions
 	}
-	preSplitAndScatter(w.sess.Context, d.store, tblInfo, partitions)
+	var scatterRegion bool
+	val, err := w.sess.Context.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
+	if err != nil {
+		logutil.DDLLogger().Warn("won't scatter region", zap.Error(err))
+	} else {
+		scatterRegion = variable.TiDBOptOn(val)
+	}
+	preSplitAndScatter(w.sess.Context, d.store, tblInfo, partitions, scatterRegion, false)
 
 	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {

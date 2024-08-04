@@ -3009,12 +3009,21 @@ func (e *executor) createTableWithInfoPost(
 	tbInfo *model.TableInfo,
 	schemaID int64,
 ) error {
-	var err error
-	var partitions []model.PartitionDefinition
+	var (
+		err           error
+		partitions    []model.PartitionDefinition
+		scatterRegion bool
+	)
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions)
+	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
+	if err != nil {
+		logutil.DDLLogger().Warn("won't scatter region", zap.Error(err))
+	} else {
+		scatterRegion = variable.TiDBOptOn(val)
+	}
+	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterRegion, true)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -3298,8 +3307,8 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 }
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
-// If `pi` is not nil, will only split region for `pi`, this is used when add partition.
-func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition) {
+// If length of `parts` is not zero, will only split region for `parts`, this is used when add partition.
+func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterRegion bool, scatterRegionByClusterLevel bool) {
 	if tbInfo.TempTableType != model.TempTableNone {
 		return
 	}
@@ -3308,20 +3317,8 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		return
 	}
 	var (
-		preSplit                    func()
-		scatterRegion               bool
-		scatterRegionByClusterLevel bool
+		preSplit func()
 	)
-	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
-	if err != nil {
-		logutil.DDLLogger().Warn("won't scatter region", zap.Error(err))
-	} else {
-		scatterRegion = variable.TiDBOptOn(val)
-	}
-	val, ok = ctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegionByClusterLevel)
-	if ok {
-		scatterRegionByClusterLevel = variable.TiDBOptOn(val)
-	}
 	if len(parts) > 0 {
 		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion, scatterRegionByClusterLevel) }
 	} else {

@@ -3260,10 +3260,6 @@ var defaultSysVars = []*SysVar{
 		s.EnableLazyCursorFetch = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBScatterRegionByClusterLevel, Value: BoolToOnOff(DefTiDBScatterRegionByClusterLevel), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.ScatterRegionByClusterLevel = TiDBOptOn(val)
-		return nil
-	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

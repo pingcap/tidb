@@ -1660,9 +1660,6 @@ type SessionVars struct {
 
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
-
-	// TiDBScatterRegionByClusterLevel control pd scatter region by cluster level
-	ScatterRegionByClusterLevel bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

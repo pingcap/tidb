@@ -217,7 +217,14 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
 
-		preSplitAndScatter(w.sess.Context, d.store, tblInfo, addingDefinitions)
+		var scatterRegion bool
+		val, err := w.sess.Context.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
+		if err != nil {
+			logutil.DDLLogger().Warn("won't scatter region", zap.Error(err))
+		} else {
+			scatterRegion = variable.TiDBOptOn(val)
+		}
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, addingDefinitions, scatterRegion, false)
 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
@@ -2237,7 +2244,14 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, err
 		}
 
-		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions)
+		var scatterRegion bool
+		val, err := w.sess.Context.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
+		if err != nil {
+			logutil.DDLLogger().Warn("won't scatter region", zap.Error(err))
+		} else {
+			scatterRegion = variable.TiDBOptOn(val)
+		}
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions, scatterRegion, false)
 
 		job.CtxVars = []any{oldIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -2376,7 +2390,14 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.NewPartitionIDs = nil
 
-		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions)
+		var scatterRegion bool
+		val, err := w.sess.Context.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
+		if err != nil {
+			logutil.DDLLogger().Warn("won't scatter region", zap.Error(err))
+		} else {
+			scatterRegion = variable.TiDBOptOn(val)
+		}
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions, scatterRegion, false)
 
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []any{oldIDs, newIDs}

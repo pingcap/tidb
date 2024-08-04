@@ -524,9 +524,6 @@ const (
 	// TiDBScatterRegion will scatter the regions for DDLs when it is ON.
 	TiDBScatterRegion = "tidb_scatter_region"
 
-	// TiDBScatterRegionByClusterLevel control pd scatter region by cluster level
-	TiDBScatterRegionByClusterLevel = "tidb_scatter_region_by_cluster_level"
-
 	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
 	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
 
@@ -1298,7 +1295,6 @@ const (
 	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
 	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10 // 10 minutes
 	DefTiDBScatterRegion                    = false
-	DefTiDBScatterRegionByClusterLevel      = false
 	DefTiDBWaitSplitRegionFinish            = true
 	DefWaitSplitRegionTimeout               = 300 // 300s
 	DefTiDBEnableNoopFuncs                  = Off
