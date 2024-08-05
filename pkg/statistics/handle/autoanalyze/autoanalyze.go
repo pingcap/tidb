@@ -790,6 +790,8 @@ func finishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 	var sql string
 	var args []any
 
+	// process_id is used to see which process is running the analyze job and kill the analyze job. After the analyze job
+	// is finished(or failed), process_id is useless and we set it to NULL to avoid `kill tidb process_id` wrongly.
 	if analyzeErr != nil {
 		failReason := analyzeErr.Error()
 		const textMaxLength = 65535
