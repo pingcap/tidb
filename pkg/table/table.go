@@ -121,7 +121,8 @@ type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more b
 
 // commonMutateOpt is the common options for mutating a table.
 type commonMutateOpt struct {
-	Ctx context.Context
+	Ctx         context.Context
+	DupKeyCheck DupKeyCheckMode
 }
 
 // AddRecordOpt contains the options will be used when adding a record.
@@ -220,6 +221,37 @@ type isUpdate struct{}
 
 func (i isUpdate) ApplyAddRecordOpt(opt *AddRecordOpt) {
 	opt.IsUpdate = true
+}
+
+// DupKeyCheckMode indicates how to check the duplicated key when adding/updating a record/index.
+type DupKeyCheckMode uint8
+
+const (
+	// DupKeyCheckDefault indicates using the default behavior.
+	// Currently, this means to use the return value `ctx.LazyCheckKeyNotExists()`.
+	// If the above method returns true, it will only check the duplicated key in the memory buffer,
+	// otherwise, it will also check the duplicated key in the storage.
+	// TODO: add `DupKeyCheckLazy` to indicate only checking the duplicated key in the memory buffer.
+	// After `DupKeyCheckLazy` added, `DupKeyCheckDefault` will be renamed to `DupKeyCheckInPlace` to force check
+	// the duplicated key in place.
+	DupKeyCheckDefault DupKeyCheckMode = iota
+	// DupKeyCheckSkip indicates skipping the duplicated key check.
+	DupKeyCheckSkip
+)
+
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (m DupKeyCheckMode) ApplyAddRecordOpt(opt *AddRecordOpt) {
+	opt.DupKeyCheck = m
+}
+
+// ApplyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (m DupKeyCheckMode) ApplyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.DupKeyCheck = m
+}
+
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (m DupKeyCheckMode) ApplyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.DupKeyCheck = m
 }
 
 type columnAPI interface {
