@@ -77,7 +77,7 @@ func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
 	})
 }
 
-func (sa *statsAnalyze) UpdateAnalyzeJob(job *statistics.AnalyzeJob, rowCount int64) {
+func (sa *statsAnalyze) UpdateAnalyzeJobProcess(job *statistics.AnalyzeJob, rowCount int64) {
 	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		updateAnalyzeJob(sctx, job, rowCount)
 		return nil
@@ -763,7 +763,7 @@ func updateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCo
 	}
 	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
-			logutil.BgLogger().Info("UpdateAnalyzeJob",
+			logutil.BgLogger().Info("UpdateAnalyzeJobProcess",
 				zap.Int64("increase processed_rows", delta),
 				zap.Uint64("job id", *job.ID),
 			)

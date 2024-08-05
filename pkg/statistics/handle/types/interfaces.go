@@ -126,10 +126,10 @@ type StatsAnalyze interface {
 	// It is OK because this won't affect the analysis job's success.
 	StartAnalyzeJob(job *statistics.AnalyzeJob)
 
-	// UpdateAnalyzeJob updates the current progress of the analyze job.
+	// UpdateAnalyzeJobProcess updates the current progress of the analyze job.
 	// There is no guarantee that the job will actually update. If the job fails to update, an error will be logged.
 	// It is OK because this won't affect the analysis job's success.
-	UpdateAnalyzeJob(job *statistics.AnalyzeJob, rowCount int64)
+	UpdateAnalyzeJobProcess(job *statistics.AnalyzeJob, rowCount int64)
 
 	// FinishAnalyzeJob updates the job status to `finished`, sets the end time, and updates the job info.
 	// There is no guarantee that the job will actually finish. If the job fails to finish, an error will be logged.

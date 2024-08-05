@@ -229,7 +229,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			rowCount = respSample.Count + respSample.NullCount
 			collectors[i].MergeSampleCollector(sc, respSample)
 		}
-		statsHandle.UpdateAnalyzeJob(e.job, rowCount)
+		statsHandle.UpdateAnalyzeJobProcess(e.job, rowCount)
 	}
 	timeZone := e.ctx.GetSessionVars().Location()
 	if hasPkHist(e.handleCols) {

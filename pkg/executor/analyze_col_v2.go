@@ -652,7 +652,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		// Update processed rows.
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
-		statsHandle.UpdateAnalyzeJob(e.job, subCollector.Base().Count)
+		statsHandle.UpdateAnalyzeJobProcess(e.job, subCollector.Base().Count)
 
 		// Print collect log.
 		oldRetCollectorSize := retCollector.Base().MemSize
