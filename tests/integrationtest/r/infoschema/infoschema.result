@@ -190,6 +190,7 @@ infoschema__infoschema_2
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema';
 SCHEMA_NAME
 infoschema__infoschema
+drop database infoschema__infoschema_2;
 create database if not exists db1;
 create table db1.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
 create table db1.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);

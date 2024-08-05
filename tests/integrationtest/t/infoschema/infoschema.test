@@ -91,6 +91,7 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 use infoschema__infoschema;
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema_2';
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema';
+drop database infoschema__infoschema_2;
 
 # TestFilterKeyColumnUsageTable
 create database if not exists db1;
