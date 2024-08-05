@@ -39,6 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -370,7 +371,11 @@ func (txn *tikvTxn) extractKeyExistsErr(errExist *tikverr.ErrKeyExist) error {
 			)
 		}
 	} else {
-		value, err = txn.KVTxn.GetUnionStore().GetMemBuffer().GetMemDB().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+		if memdb := txn.KVTxn.GetUnionStore().GetMemBuffer().GetMemDB(); memdb != nil {
+			value, err = memdb.SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+		} else {
+			value, err = transaction.ToArenaArt(txn.KVTxn.GetUnionStore().GetMemBuffer()).SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+		}
 	}
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
