@@ -22,13 +22,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -241,11 +241,11 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 type ttlDeleteWorker struct {
 	baseWorker
 	delCh       <-chan *ttlDeleteTask
-	sessionPool utils.SessionPool
+	sessionPool util.SessionPool
 	retryBuffer *ttlDelRetryBuffer
 }
 
-func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool utils.SessionPool) *ttlDeleteWorker {
+func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool util.SessionPool) *ttlDeleteWorker {
 	w := &ttlDeleteWorker{
 		delCh:       delCh,
 		sessionPool: sessPool,

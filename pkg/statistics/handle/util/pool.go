@@ -18,7 +18,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tiancaiamao/gp"
 )
 
@@ -28,7 +28,7 @@ type Pool interface {
 	GPool() *gp.Pool
 
 	// SPool returns the session pool.
-	SPool() utils.SessionPool
+	SPool() util.SessionPool
 
 	// Close closes the goroutine pool.
 	Close()
@@ -39,11 +39,11 @@ var _ Pool = (*pool)(nil)
 type pool struct {
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
-	pool  utils.SessionPool
+	pool  util.SessionPool
 }
 
 // NewPool creates a new Pool.
-func NewPool(p utils.SessionPool) Pool {
+func NewPool(p util.SessionPool) Pool {
 	return &pool{
 		gpool: gp.New(math.MaxInt16, time.Minute),
 		pool:  p,
@@ -56,7 +56,7 @@ func (p *pool) GPool() *gp.Pool {
 }
 
 // SPool returns the session pool.
-func (p *pool) SPool() utils.SessionPool {
+func (p *pool) SPool() util.SessionPool {
 	return p.pool
 }
 

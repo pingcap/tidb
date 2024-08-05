@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package util
 
 import (
 	"errors"
@@ -20,9 +20,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // SessionPool is a recyclable resource pool for the session.
@@ -32,6 +29,9 @@ type SessionPool interface {
 	Close()
 }
 
+// ResourceCallback is a helper function to be triggered after Get/Put call.
+type ResourceCallback func(pools.Resource)
+
 type pool struct {
 	resources chan pools.Resource
 	factory   pools.Factory
@@ -39,13 +39,17 @@ type pool struct {
 		sync.RWMutex
 		closed bool
 	}
+	getCallback ResourceCallback
+	putCallback ResourceCallback
 }
 
 // NewSessionPool creates a new session pool with the given capacity and factory function.
-func NewSessionPool(capacity int, factory pools.Factory) SessionPool {
+func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallback func(pools.Resource)) SessionPool {
 	return &pool{
-		resources: make(chan pools.Resource, capacity),
-		factory:   factory,
+		resources:   make(chan pools.Resource, capacity),
+		factory:     factory,
+		getCallback: getCallback,
+		putCallback: putCallback,
 	}
 }
 
@@ -66,10 +70,8 @@ func (p *pool) Get() (resource pools.Resource, err error) {
 		err = errors.New("mockSessionPoolReturnError")
 	})
 
-	if nil == err {
-		_, ok = resource.(sessionctx.Context)
-		intest.Assert(ok)
-		infosync.StoreInternalSession(resource)
+	if err == nil && p.getCallback != nil {
+		p.getCallback(resource)
 	}
 
 	return
@@ -77,13 +79,11 @@ func (p *pool) Get() (resource pools.Resource, err error) {
 
 // Put puts the session back to the pool.
 func (p *pool) Put(resource pools.Resource) {
-	_, ok := resource.(sessionctx.Context)
-	intest.Assert(ok)
-
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	// Delete the internal session to the map of SessionManager
-	infosync.DeleteInternalSession(resource)
+	if p.putCallback != nil {
+		p.putCallback(resource)
+	}
 	if p.mu.closed {
 		resource.Close()
 		return

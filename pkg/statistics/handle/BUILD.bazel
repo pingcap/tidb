@@ -10,7 +10,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/domain/utils",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/model",
@@ -34,6 +33,7 @@ go_library(
         "//pkg/statistics/handle/usage",
         "//pkg/statistics/handle/util",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/memory",

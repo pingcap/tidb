@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
@@ -148,7 +147,7 @@ type Domain struct {
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  utils.SessionPool
+	sysSessionPool  util.SessionPool
 	exit            chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
@@ -1220,9 +1219,21 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store:             store,
-		exit:              make(chan struct{}),
-		sysSessionPool:    utils.NewSessionPool(capacity, factory),
+		store: store,
+		exit:  make(chan struct{}),
+		sysSessionPool: util.NewSessionPool(
+			capacity, factory,
+			func(r pools.Resource) {
+				_, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				infosync.StoreInternalSession(r)
+			},
+			func(r pools.Resource) {
+				_, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				infosync.DeleteInternalSession(r)
+			},
+		),
 		statsLease:        statsLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
@@ -1726,7 +1737,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() utils.SessionPool {
+func (do *Domain) SysSessionPool() util.SessionPool {
 	return do.sysSessionPool
 }
 

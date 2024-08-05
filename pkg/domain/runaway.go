@@ -27,7 +27,6 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -441,7 +440,7 @@ func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.Quarantine
 	return err
 }
 
-func execRestrictedSQL(sessPool utils.SessionPool, sql string, params []any) ([]chunk.Row, error) {
+func execRestrictedSQL(sessPool util.SessionPool, sql string, params []any) ([]chunk.Row, error) {
 	se, err := sessPool.Get()
 	defer func() {
 		sessPool.Put(se)
@@ -485,11 +484,11 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 type runawaySyncer struct {
 	newWatchReader      *SystemTableReader
 	deletionWatchReader *SystemTableReader
-	sysSessionPool      utils.SessionPool
+	sysSessionPool      util.SessionPool
 	mu                  sync.Mutex
 }
 
-func newRunawaySyncer(sysSessionPool utils.SessionPool) *runawaySyncer {
+func newRunawaySyncer(sysSessionPool util.SessionPool) *runawaySyncer {
 	return &runawaySyncer{
 		sysSessionPool: sysSessionPool,
 		newWatchReader: &SystemTableReader{

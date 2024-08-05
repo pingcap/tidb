@@ -32,7 +32,6 @@ go_library(
         "//pkg/disttask/importinto",
         "//pkg/domain",
         "//pkg/domain/infosync",
-        "//pkg/domain/utils",
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/executor/staticrecordset",

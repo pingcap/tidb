@@ -17,19 +17,13 @@ package extension
 import (
 	"context"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
-
-// SessionPool is the pool for session
-type SessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
 
 // Option represents an option to initialize an extension
 type Option func(m *Manifest)
@@ -95,7 +89,7 @@ type BootstrapContext interface {
 	// EtcdClient returns the etcd client
 	EtcdClient() *clientv3.Client
 	// SessionPool returns the session pool of domain
-	SessionPool() SessionPool
+	SessionPool() util.SessionPool
 }
 
 // WithBootstrap specifies the bootstrap func of an extension

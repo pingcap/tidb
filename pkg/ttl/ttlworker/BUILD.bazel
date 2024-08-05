@@ -17,7 +17,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ttl/ttlworker",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/domain/utils",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/metrics",
@@ -73,7 +72,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/domain",
-        "//pkg/domain/utils",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/kv",
@@ -94,6 +92,7 @@ go_test(
         "//pkg/ttl/metrics",
         "//pkg/ttl/session",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/mock",

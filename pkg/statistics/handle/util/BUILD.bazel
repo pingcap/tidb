@@ -13,7 +13,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/util",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/domain/utils",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/ast",

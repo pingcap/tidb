@@ -19,11 +19,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -39,11 +39,11 @@ const (
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
-	pool utils.SessionPool
+	pool pkgutil.SessionPool
 }
 
 // NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool utils.SessionPool) types.StatsLock {
+func NewStatsLock(pool pkgutil.SessionPool) types.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 

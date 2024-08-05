@@ -10,12 +10,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/timer/tablestore",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/domain/utils",
         "//pkg/kv",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/timer/api",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",

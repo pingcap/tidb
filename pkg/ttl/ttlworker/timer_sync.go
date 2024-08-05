@@ -22,13 +22,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain/utils"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -49,7 +49,7 @@ type TTLTimerData struct {
 
 // TTLTimersSyncer is used to sync timers for ttl
 type TTLTimersSyncer struct {
-	pool           utils.SessionPool
+	pool           util.SessionPool
 	cli            timerapi.TimerClient
 	key2Timers     map[string]*timerapi.TimerRecord
 	lastPullTimers time.Time
@@ -60,7 +60,7 @@ type TTLTimersSyncer struct {
 }
 
 // NewTTLTimerSyncer creates a new TTLTimersSyncer
-func NewTTLTimerSyncer(pool utils.SessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
+func NewTTLTimerSyncer(pool util.SessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
 	return &TTLTimersSyncer{
 		pool:        pool,
 		cli:         cli,

@@ -38,7 +38,6 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/domain/metrics",
         "//pkg/domain/resourcegroup",
-        "//pkg/domain/utils",
         "//pkg/errno",
         "//pkg/infoschema",
         "//pkg/infoschema/metrics",

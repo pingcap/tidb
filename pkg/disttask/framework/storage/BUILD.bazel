@@ -14,10 +14,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/disttask/framework/proto",
-        "//pkg/domain/utils",
         "//pkg/kv",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/cpu",
         "//pkg/util/logutil",
