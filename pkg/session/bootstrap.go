@@ -1097,11 +1097,14 @@ const (
 	// version 198
 	//   add column `owner_id` for `mysql.tidb_mdl_info` table
 	version198 = 198
+
+	// version199 add column `summary` to `mysql.tidb_background_subtask_history`.
+	version199 = 199
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version198
+var currentBootstrapVersion int64 = version199
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1265,6 +1268,7 @@ var (
 		upgradeToVer196,
 		upgradeToVer197,
 		upgradeToVer198,
+		upgradeToVer199,
 	}
 )
 
@@ -3114,6 +3118,13 @@ func upgradeToVer198(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer199(s sessiontypes.Session, ver int64) {
+	if ver >= version199 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
