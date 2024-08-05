@@ -661,8 +661,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			// TODO: Handle global[i] vs indexOption[i].Global!
-			// Should we even keep the global in the job args?
 			indexInfo, err = BuildIndexInfo(
 				nil,
 				tblInfo.Columns,

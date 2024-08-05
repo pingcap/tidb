@@ -2409,7 +2409,6 @@ func getPartitionInfoTypeNone() *model.PartitionInfo {
 }
 
 // AlterTablePartitioning reorganize one set of partitions to a new set of partitions.
-// TODO: How to handle Global when altering partitioning?!? Having a new option?
 func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, t, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
@@ -2438,7 +2437,6 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 
 	for _, index := range newMeta.Indices {
 		if index.Unique {
-			// TODO: Check that GLOBAL was given as IndexOption!!!
 			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
 			if err != nil {
 				return err
@@ -2457,7 +2455,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 				if indexTp != "" {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 				}
-				// Also mark the unique index as global index
+				if !spec.Partition.ConvertToGlobal {
+					return dbterror.ErrGlobalIndexNotExplicitlySet
+				}
 				index.Global = true
 			}
 		}
@@ -2501,12 +2501,14 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	newPartInfo.DDLType = piOld.Type
 
 	job := &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        meta.ID,
-		SchemaName:     schema.Name.L,
-		TableName:      t.Meta().Name.L,
-		Type:           model.ActionAlterTablePartitioning,
-		BinlogInfo:     &model.HistoryInfo{},
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionAlterTablePartitioning,
+		BinlogInfo: &model.HistoryInfo{},
+		// TODO: Should we propagate the ConvertToGlobalInfo to the DDL job?
+		// It should only differ if there have been a change in the indexes since this was queued?
 		Args:           []any{partNames, newPartInfo},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
@@ -4558,8 +4560,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			}
 			// index columns does not contain all partition columns, must set global
 			if indexOption == nil || !indexOption.Global {
-				// TODO: update to better error?
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("GLOBAL IndexOption not set")
+				return dbterror.ErrGlobalIndexNotExplicitlySet
 			}
 			global = true
 		}
@@ -4704,11 +4705,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			if !ctx.GetSessionVars().EnableGlobalIndex {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
-			// TODO: Also check that IndexOption has GLOBAL set!
 			// index columns does not contain all partition columns, must set global
 			if indexOption == nil || !indexOption.Global {
-				// TODO: create a better error!
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("GLOBAL IndexOption not set!")
+				return dbterror.ErrGlobalIndexNotExplicitlySet
 			}
 		}
 	}
