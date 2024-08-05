@@ -2387,13 +2387,13 @@
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "merge_join(@`sel_1` `test`.`t3`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
+        "Hints": "merge_join(@`sel_1` `test`.`t3`), leading(@`sel_1` `test`.`t1`@`sel_1`, `test`.`t2`@`sel_1`, `test`.`t3`@`sel_1`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "merge_join(@`sel_1` `test`.`t3`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
+        "Hints": "merge_join(@`sel_1` `test`.`t3`), leading(@`sel_1` `test`.`t1`@`sel_1`, `test`.`t2`@`sel_1`, `test`.`t3`@`sel_1`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
