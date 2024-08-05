@@ -16,8 +16,8 @@ package server
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/expression"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser"
