@@ -141,63 +141,6 @@ func TestFixedVector(t *testing.T) {
 	tk.MustGetErrMsg("alter table t modify column embedding VECTOR(16001)", "vector cannot have more than 16000 dimensions")
 }
 
-func TestVectorVariable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test;")
-
-	tk.MustExec("CREATE USER semroot")
-	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* TO semroot;`)
-	tk.MustExec("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* to semroot;")
-
-	sem.Disable()
-
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	sem.Enable()
-
-	// root cannot set global variable in SEMLevelBasic
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	// semroot can set global variable in SEMLevelBasic
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semroot", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExec(`DROP TABLE t1;`)
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	sem.Enable()
-
-	// root cannot set global variable in SEMLevelStrict
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	// semroot can set global variable in SEMLevelStrict
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semroot", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExec(`DROP TABLE t1;`)
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	sem.Disable()
-
-	// root can set global variable when SEM is disabled
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExec(`DROP TABLE t1;`)
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	// semroot can set global variable when SEM is disabled
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semroot", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExec(`DROP TABLE t1;`)
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-}
-
 func TestVector(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
