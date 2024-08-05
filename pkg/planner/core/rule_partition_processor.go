@@ -1111,7 +1111,7 @@ func makePartitionByFnCol(sctx PlanContext, columns []*expression.Column, names 
 				break
 			}
 			val := con.Value.GetString()
-			colType := col.GetStaticType().GetType()
+			colType := col.GetType().GetType()
 			switch colType {
 			case mysql.TypeDate, mysql.TypeDatetime:
 				switch val {
