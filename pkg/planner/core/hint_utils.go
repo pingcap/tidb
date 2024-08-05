@@ -159,11 +159,16 @@ func getJoinMethodHintsForSinglePhysicalJoin(sctx base.PlanContext, joinType str
 		return nil
 	}
 
-	res = append(res, &ast.TableOptimizerHint{
-		QBName:   *hintQBName,
+	newHint := &ast.TableOptimizerHint{
 		HintName: model.NewCIStr(joinType),
 		Tables:   []ast.HintTable{hintTbls[0]},
-	})
+	}
+
+	if len(hintTbls) == len(children) && hintQBName != nil {
+		newHint.QBName = *hintQBName
+	}
+
+	res = append(res, newHint)
 	return res
 }
 
@@ -326,11 +331,14 @@ func genJoinOrderHintFromRootPhysicalJoin(
 		return nil
 	}
 
-	return &ast.TableOptimizerHint{
-		QBName:   *hintQBName,
+	res := &ast.TableOptimizerHint{
 		HintName: model.NewCIStr(h.HintLeading),
 		Tables:   hintTbls,
 	}
+	if hintQBName != nil {
+		res.QBName = *hintQBName
+	}
+	return res
 }
 
 func genHintTblFromPhysicalPlans(
@@ -352,16 +360,20 @@ func genHintTblFromPhysicalPlans(
 	if len(hintTbls) == 0 {
 		return nil, nil
 	}
-	minQBOffset := slices.Min(qbOffsets)
 	// Current join reorder will break QB offset in the operator, e.g. setting them to -1.
 	// So we are unable to get the correct QB offset for the join order hint from the join operator, now we use the
 	// minimum QB offset among the tables.
-	hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
-	if err != nil {
-		return nil, nil
+	minQBOffset := slices.Min(qbOffsets)
+	var hintQBNamePtr *model.CIStr
+	if minQBOffset > 1 {
+		hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
+		if err != nil {
+			return nil, nil
+		}
+		hintQBNamePtr = &hintQBName
 	}
 	for i := range hintTbls {
-		if qbOffsets[i] == minQBOffset {
+		if qbOffsets[i] <= 1 {
 			continue
 		}
 		tblQBName, err := h.GenerateQBName(nodeType, qbOffsets[i])
@@ -370,7 +382,7 @@ func genHintTblFromPhysicalPlans(
 		}
 		hintTbls[i].QBName = tblQBName
 	}
-	return hintTbls, &hintQBName
+	return hintTbls, hintQBNamePtr
 }
 
 func extractOrderedPhysicalJoinGroup(p PhysicalJoin, visitedIDs map[int]struct{}, depth uint) []base.PhysicalPlan {
