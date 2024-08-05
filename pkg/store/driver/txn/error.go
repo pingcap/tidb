@@ -117,7 +117,7 @@ func ExtractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 	var idxInfo *model.IndexInfo
 	for _, index := range tblInfo.Indices {
 		if index.ID == indexID {
-			idxInfo = index
+			idxInfo = index // TODO: Add break?
 		}
 	}
 	if idxInfo == nil {
