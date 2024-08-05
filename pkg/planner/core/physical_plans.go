@@ -79,6 +79,12 @@ var (
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
 	_ base.PhysicalPlan = &PhysicalTableSample{}
+
+	_ base.PhysicalJoin = &PhysicalHashJoin{}
+	_ base.PhysicalJoin = &PhysicalMergeJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexHashJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
 type tableScanAndPartitionInfo struct {
@@ -1214,6 +1220,11 @@ type PhysicalApply struct {
 	OuterSchema []*expression.CorrelatedColumn
 }
 
+// PhysicalJoinImplement has an extra bool return value compared with PhysicalJoin interface.
+// This will override basePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
+// base.PhysicalJoin interface.
+func (p *PhysicalApply) PhysicalJoinImplement() bool { return false }
+
 // Clone implements op.PhysicalPlan interface.
 func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalApply)
@@ -1282,7 +1293,14 @@ type basePhysicalJoin struct {
 	RightNAJoinKeys []*expression.Column
 }
 
-func (p *basePhysicalJoin) getInnerChildIdx() int {
+func (p *basePhysicalJoin) GetJoinType() JoinType {
+	return p.JoinType
+}
+
+// PhysicalJoinImplement implements base.PhysicalJoin interface.
+func (p *basePhysicalJoin) PhysicalJoinImplement() {}
+
+func (p *basePhysicalJoin) GetInnerChildIdx() int {
 	return p.InnerChildIdx
 }
 

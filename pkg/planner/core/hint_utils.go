@@ -39,9 +39,18 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return nil
 	}
+	// To generate leading hint, we need to extract join group from the plan tree by traversing children of PhysicalJoin
+	// operators. We use this map to avoid revisiting the same operator during this process.
+	visitedPhysicalJoinIDs := make(map[int]struct{})
 	for _, fop := range selectPlan {
 		p := fop.Origin.(base.PhysicalPlan)
 		hints = genHintsFromSingle(p, nodeTp, fop.StoreType, hints)
+		if join, ok := p.(base.PhysicalJoin); ok {
+			joinOrderHint := genJoinOrderHintFromRootPhysicalJoin(join, visitedPhysicalJoinIDs, nodeTp)
+			if joinOrderHint != nil {
+				hints = append(hints, joinOrderHint)
+			}
+		}
 	}
 	for _, cte := range flat.CTEs {
 		for i, fop := range cte {
@@ -50,6 +59,12 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 			}
 			p := fop.Origin.(base.PhysicalPlan)
 			hints = genHintsFromSingle(p, nodeTp, fop.StoreType, hints)
+			if join, ok := p.(base.PhysicalJoin); ok {
+				joinOrderHint := genJoinOrderHintFromRootPhysicalJoin(join, visitedPhysicalJoinIDs, nodeTp)
+				if joinOrderHint != nil {
+					hints = append(hints, joinOrderHint)
+				}
+			}
 		}
 	}
 	return h.RemoveDuplicatedHints(hints)
@@ -91,47 +106,65 @@ func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
-	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection:
+	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection,
+		*PhysicalHashAgg, *PhysicalStreamAgg:
 		return extractTableAsName(p.Children()[0])
 	}
 	return nil, nil
 }
 
-func getJoinHints(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res []*ast.TableOptimizerHint) {
+func extractHintTableForJoinNode(
+	sctx base.PlanContext,
+	joinNode base.PhysicalPlan,
+	parentOffset int,
+) (
+	int,
+	*ast.HintTable,
+) {
+	qbOffset := joinNode.QueryBlockOffset()
+	if qbOffset == -1 {
+		return -1, nil
+	}
+	var dbName, tableName *model.CIStr
+	if qbOffset != parentOffset {
+		var blockAsNames []ast.HintTable
+		if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+			blockAsNames = *p
+		}
+		if qbOffset >= len(blockAsNames) {
+			return -1, nil
+		}
+		hintTable := blockAsNames[qbOffset]
+		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+		dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
+	}
+	if tableName == nil || tableName.L == "" {
+		qbOffset = joinNode.QueryBlockOffset()
+		dbName, tableName = extractTableAsName(joinNode)
+	}
+	if tableName == nil || tableName.L == "" {
+		return -1, nil
+	}
+	return qbOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
+}
+
+func getJoinMethodHintsForSinglePhysicalJoin(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	if parentOffset == -1 {
 		return res
 	}
 	for _, child := range children {
-		qbOffset := child.QueryBlockOffset()
-		if qbOffset == -1 {
-			continue
-		}
-		var dbName, tableName *model.CIStr
-		if qbOffset != parentOffset {
-			var blockAsNames []ast.HintTable
-			if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-				blockAsNames = *p
-			}
-			if qbOffset >= len(blockAsNames) {
-				continue
-			}
-			hintTable := blockAsNames[qbOffset]
-			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-			dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
-		} else {
-			dbName, tableName = extractTableAsName(child)
-		}
-		if tableName == nil || tableName.L == "" {
-			continue
+		qbOffset, ht := extractHintTableForJoinNode(sctx, child, parentOffset)
+		if qbOffset < 0 || ht == nil {
+			return nil
 		}
 		qbName, err := h.GenerateQBName(nodeType, qbOffset)
 		if err != nil {
-			continue
+			return nil
 		}
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: model.NewCIStr(joinType),
-			Tables:   []ast.HintTable{{DBName: *dbName, TableName: *tableName}},
+			Tables:   []ast.HintTable{*ht},
 		})
 		break
 	}
@@ -261,16 +294,123 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			})
 		}
 	case *PhysicalMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintSMJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
+		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintSMJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
 		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
-		res = append(res, getJoinHints(p.SCtx(), h.HintHJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
+		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintHJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintINLJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLMJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintINLMJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexHashJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLHJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintINLHJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	}
 	return res
+}
+
+func genJoinOrderHintFromRootPhysicalJoin(
+	p base.PhysicalJoin,
+	visitedIDs map[int]struct{},
+	nodeType h.NodeType,
+) *ast.TableOptimizerHint {
+	if _, visited := visitedIDs[p.ID()]; visited {
+		return nil
+	}
+
+	// 1. Get the joined operators in this join group with correct order in the slice.
+	orderedJoinGroup := extractOrderedPhysicalJoinGroup(p, visitedIDs, 1)
+	// If it only involves two tables, we don't need to generate the join order hint.
+	if len(orderedJoinGroup) <= 2 {
+		return nil
+	}
+
+	// 2. Generate the leading hint based on the ordered operators.
+	minQBOffset := -1
+	hintTbls := make([]ast.HintTable, 0, len(orderedJoinGroup))
+	for _, plan := range orderedJoinGroup {
+		qbOffset, ht := extractHintTableForJoinNode(p.SCtx(), plan, p.QueryBlockOffset())
+		if qbOffset < 0 || ht == nil {
+			return nil
+		}
+		if minQBOffset == -1 {
+			minQBOffset = qbOffset
+		} else {
+			minQBOffset = min(minQBOffset, qbOffset)
+		}
+		tblQBNable, err := h.GenerateQBName(nodeType, qbOffset)
+		if err != nil {
+			return nil
+		}
+		ht.QBName = tblQBNable
+		hintTbls = append(hintTbls, *ht)
+	}
+	// Current join reorder will break QB offset in the operator, e.g. setting them to -1.
+	// So we are unable to get the correct QB offset for the join order hint from the join operator, now we use the
+	// minimum QB offset among the tables.
+	hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
+	if err != nil {
+		return nil
+	}
+	return &ast.TableOptimizerHint{
+		QBName:   hintQBName,
+		HintName: model.NewCIStr(h.HintLeading),
+		Tables:   hintTbls,
+	}
+}
+
+func extractOrderedPhysicalJoinGroup(p base.PhysicalJoin, visitedIDs map[int]struct{}, depth uint) []base.PhysicalPlan {
+	visitedIDs[p.ID()] = struct{}{}
+
+	// 1. sanity checks
+
+	// In our join reorder implementation, cartesian join will break the join relationship and make its two children
+	// two independent join groups. So we don't need to handle it here.
+	// Currently, index joins must match the index or PK of the inner table, so cartesian join must be a hash join.
+	if hashJoin, ok := p.(*PhysicalHashJoin); ok {
+		if len(hashJoin.EqualConditions) == 0 && len(hashJoin.NAEqualConditions) == 0 {
+			return nil
+		}
+	}
+
+	jt := p.GetJoinType()
+	// They are the only join types supported by current join reorder.
+	if jt != InnerJoin && jt != LeftOuterJoin && jt != RightOuterJoin {
+		return nil
+	}
+
+	// 2. Extract information from children according to whether the child is another Join, then construct the ordered
+	// join group and return.
+
+	var child0IsJoin, child1IsJoin bool
+	var childJoin base.PhysicalJoin
+	var childJoinGroup []base.PhysicalPlan
+	if childJoin, child0IsJoin = p.Children()[0].(base.PhysicalJoin); child0IsJoin {
+		childJoinGroup = extractOrderedPhysicalJoinGroup(childJoin, visitedIDs, depth+1)
+	}
+	if childJoin, child1IsJoin = p.Children()[1].(base.PhysicalJoin); child1IsJoin {
+		childJoinGroup = extractOrderedPhysicalJoinGroup(childJoin, visitedIDs, depth+1)
+	}
+
+	// case 1 - bushy join: not supported now, also should not appear now
+	if child0IsJoin && child1IsJoin {
+		return nil
+	}
+	// case 2 - leaf join operator: initialize the join group with the two children
+	if !child0IsJoin && !child1IsJoin {
+		// preallocate the slice based on the number of join operators to avoid reallocations
+		orderedJoinGroup := make([]base.PhysicalPlan, 0, depth+1)
+		orderedJoinGroup = append(orderedJoinGroup, p.Children()[0], p.Children()[1])
+		return orderedJoinGroup
+	}
+	// case 3 - non-leaf join operator: append the non-join child to the join group from the Join child
+	if len(childJoinGroup) < 2 {
+		return nil
+	}
+	var orderedJoinGroup []base.PhysicalPlan
+	if child0IsJoin {
+		orderedJoinGroup = append(childJoinGroup, p.Children()[1])
+	} else {
+		orderedJoinGroup = append(childJoinGroup, p.Children()[0])
+	}
+	return orderedJoinGroup
 }

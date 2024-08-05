@@ -16,10 +16,10 @@ package base
 
 import (
 	"fmt"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -162,6 +162,15 @@ type PhysicalPlan interface {
 	GetEstRowCountForDisplay() float64
 	// GetActualProbeCnt uses the runtime stats and the probeParents to calculate the actual "probe" count.
 	GetActualProbeCnt(*execdetails.RuntimeStatsColl) int64
+}
+
+// PhysicalJoin provides some common methods for join operators.
+// Note that PhysicalApply is deliberately excluded from this interface.
+type PhysicalJoin interface {
+	PhysicalPlan
+	PhysicalJoinImplement()
+	GetInnerChildIdx() int
+	GetJoinType() core.JoinType
 }
 
 // PlanCounterTp is used in hint nth_plan() to indicate which plan to use.

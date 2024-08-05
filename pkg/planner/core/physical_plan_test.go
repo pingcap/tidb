@@ -518,3 +518,8 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	require.Equal(t, 1, len(correlated))
 	require.Equal(t, "test.t2.company_no", correlated[0].StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 }
+
+func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
+	// PhysicalApply is expected not to implement PhysicalJoin.
+	require.NotImplements(t, (*base.PhysicalJoin)(nil), new(core.PhysicalApply))
+}
