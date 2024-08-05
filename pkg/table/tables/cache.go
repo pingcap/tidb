@@ -254,13 +254,13 @@ func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTab
 }
 
 // UpdateRecord implements table.Table
-func (c *cachedTable) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (c *cachedTable) UpdateRecord(ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
 	// Prevent furthur writing when the table is already too large.
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
-	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
+	txnCtxAddCachedTable(ctx, c.Meta().ID, c)
+	return c.TableCommon.UpdateRecord(ctx, h, oldData, newData, touched, opts...)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.

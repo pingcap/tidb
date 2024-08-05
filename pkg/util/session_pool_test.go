@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,40 +12,55 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package util_test
 
 import (
 	"testing"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSessionPool(t *testing.T) {
+	re := require.New(t)
 	f := func() (pools.Resource, error) { return &testResource{}, nil }
-	pool := newSessionPool(1, f)
+	pool := util.NewSessionPool(
+		1, f,
+		func(r pools.Resource) {
+			r.(*testResource).refCount++
+		}, func(r pools.Resource) {
+			r.(*testResource).refCount--
+		},
+	)
 	tr, err := pool.Get()
-	require.NoError(t, err)
+	re.NoError(err)
+	re.Equal(1, tr.(*testResource).refCount)
 	tr1, err := pool.Get()
-	require.NoError(t, err)
+	re.NoError(err)
+	re.Equal(1, tr1.(*testResource).refCount)
 	pool.Put(tr)
+	re.Equal(0, tr.(*testResource).refCount)
 	// Capacity is 1, so tr1 is closed.
 	pool.Put(tr1)
-	require.Equal(t, 1, tr1.(*testResource).status)
+	re.Equal(0, tr1.(*testResource).refCount)
+	re.Equal(1, tr1.(*testResource).status)
 	pool.Close()
 	pool.Close()
 	pool.Put(tr1)
+	re.Equal(-1, tr1.(*testResource).refCount)
 
 	tr, err = pool.Get()
-	require.Error(t, err)
-	require.Equal(t, "session pool closed", err.Error())
-	require.Nil(t, tr)
+	re.Error(err)
+	re.Equal("session pool closed", err.Error())
+	re.Nil(tr)
 }
 
 type testResource struct {
 	sessionctx.Context
-	status int
+	status   int
+	refCount int
 }
 
 func (tr *testResource) Close() { tr.status = 1 }

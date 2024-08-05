@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -110,7 +111,7 @@ func NewHandle(
 	_, /* ctx, keep it for feature usage */
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	pool util.SessionPool,
+	pool pkgutil.SessionPool,
 	tracker sysproctrack.Tracker,
 	autoAnalyzeProcIDGetter func() uint64,
 	releaseAutoAnalyzeProcID func(uint64),

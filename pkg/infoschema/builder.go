@@ -795,12 +795,12 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
-func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) {
+func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
 	isV2, _ := IsV2(oldSchema)
 	if b.enableV2 != isV2 {
-		return nil, errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
+		return errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
 	}
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
@@ -818,7 +818,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
-	return b, nil
+	return nil
 }
 
 // getSchemaAndCopyIfNecessary creates a new schemaTables instance when a table in the database has changed.
@@ -860,7 +860,7 @@ func (b *Builder) sortAllTablesByID() {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) error {
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
@@ -890,18 +890,18 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	b.sortAllTablesByID()
 
-	return b, nil
+	return nil
 }
 
 func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
@@ -1008,18 +1008,18 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
+func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
 	builder := &Builder{
 		Requirement:  r,
 		infoschemaV2: NewInfoSchemaV2(r, infoData),
 		dirtyDB:      make(map[string]bool),
 		factory:      factory,
 		infoData:     infoData,
+		enableV2:     useV2,
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
 	if schemaCacheSize > 0 {
 		infoData.tableCache.SetCapacity(schemaCacheSize)
-		builder.enableV2 = true
 	}
 	return builder
 }
