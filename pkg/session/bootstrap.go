@@ -1097,31 +1097,14 @@ const (
 	// version 198
 	//   add column `owner_id` for `mysql.tidb_mdl_info` table
 	version198 = 198
-<<<<<<< HEAD
-=======
 
-	// ...
-	// [version199, version208] is the version range reserved for patches of 8.1.x
-	// ...
-
-	// version 209
-	//   sets `tidb_resource_control_strict_mode` to off when a cluster upgrades from some version lower than v8.2.
-	version209 = 209
-	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
-	version210 = 210
-
-	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
-	version211 = 211
->>>>>>> 60cc666072c (session: add summary field to tidb_background_subtask_history (#54787))
+	// version199 add column `summary` to `mysql.tidb_background_subtask_history`.
+	version199 = 199
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-<<<<<<< HEAD
-var currentBootstrapVersion int64 = version198
-=======
-var currentBootstrapVersion int64 = version211
->>>>>>> 60cc666072c (session: add summary field to tidb_background_subtask_history (#54787))
+var currentBootstrapVersion int64 = version199
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1285,12 +1268,7 @@ var (
 		upgradeToVer196,
 		upgradeToVer197,
 		upgradeToVer198,
-<<<<<<< HEAD
-=======
-		upgradeToVer209,
-		upgradeToVer210,
-		upgradeToVer211,
->>>>>>> 60cc666072c (session: add summary field to tidb_background_subtask_history (#54787))
+		upgradeToVer199,
 	}
 )
 
@@ -3142,51 +3120,13 @@ func upgradeToVer198(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
 }
 
-<<<<<<< HEAD
-=======
-func upgradeToVer209(s sessiontypes.Session, ver int64) {
-	if ver >= version209 {
-		return
-	}
-
-	initGlobalVariableIfNotExists(s, variable.TiDBResourceControlStrictMode, variable.Off)
-}
-
-func upgradeToVer210(s sessiontypes.Session, ver int64) {
-	if ver >= version210 {
-		return
-	}
-
-	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
-	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
-}
-
-func upgradeToVer211(s sessiontypes.Session, ver int64) {
-	if ver >= version211 {
+func upgradeToVer199(s sessiontypes.Session, ver int64) {
+	if ver >= version199 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
-// initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
-func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, val)
-}
-
->>>>>>> 60cc666072c (session: add summary field to tidb_background_subtask_history (#54787))
 func writeOOMAction(s sessiontypes.Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
