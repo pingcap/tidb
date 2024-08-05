@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -134,7 +133,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
-	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil, false)
+	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +149,6 @@ func buildHist(
 	samples []*SampleItem,
 	count, ndv, numBuckets int64,
 	memTracker *memory.Tracker,
-	multiCol bool,
 ) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
@@ -218,7 +216,7 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if totalCount-float64(lastCount) <= valuesPerBucket || (multiCol && hg.Buckets[bucketIdx].Repeat == 1) {
+		} else if totalCount-float64(lastCount) <= valuesPerBucket {
 			// The bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
@@ -267,8 +265,7 @@ func BuildHistAndTopN(
 	tp *types.FieldType,
 	isColumn bool,
 	memTracker *memory.Tracker,
-	needExtStats,
-	multiCol bool,
+	needExtStats bool,
 ) (*Histogram, *TopN, error) {
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
@@ -325,8 +322,7 @@ func BuildHistAndTopN(
 	sampleFactor := float64(count) / float64(len(samples))
 	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
-	// Don't allow automated pruning of TopN if global variable disabled
-	if numTopN != 100 || (!variable.EnableAnalyzeAutoCount.Load() && sampleFactor == 1) {
+	if numTopN != 100 {
 		allowPruning = false
 	}
 
@@ -482,7 +478,7 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker, multiCol)
+		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}
