@@ -390,13 +390,13 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 }
 
 func splitAndValidateTableRanges(
-	ctx context.Context,
+	_ context.Context,
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
-	ranges, err := splitTableRanges(ctx, t, store, startKey, endKey, limit)
+	ranges, err := splitTableRanges(t, store, startKey, endKey, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +456,6 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
-<<<<<<< HEAD
 type resultConsumer struct {
 	dc         *ddlCtx
 	wg         *sync.WaitGroup
@@ -578,9 +577,6 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 	return nil
 }
 
-func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
-	taskIDAlloc *taskIDAllocator) []*reorgBackfillTask {
-=======
 func getBatchTasks(
 	t table.Table,
 	reorgInfo *reorgInfo,
@@ -588,7 +584,6 @@ func getBatchTasks(
 	taskIDAlloc *taskIDAllocator,
 	bfWorkerTp backfillerType,
 ) []*reorgBackfillTask {
->>>>>>> eec20e67fdf (ddl: skip getting actual end key for each range in ingest mode (#54143))
 	batchTasks := make([]*reorgBackfillTask, 0, len(kvRanges))
 	//nolint:forcetypeassert
 	phyTbl := t.(table.PhysicalTable)
@@ -650,21 +645,16 @@ func getActualEndKey(
 }
 
 // sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-<<<<<<< HEAD
-func sendTasks(scheduler backfillScheduler, consumer *resultConsumer,
-	t table.PhysicalTable, kvRanges []kv.KeyRange, reorgInfo *reorgInfo, taskIDAlloc *taskIDAllocator) {
-	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc)
-=======
 func sendTasks(
 	scheduler backfillScheduler,
+	consumer *resultConsumer,
 	t table.PhysicalTable,
 	kvRanges []kv.KeyRange,
 	reorgInfo *reorgInfo,
 	taskIDAlloc *taskIDAllocator,
 	bfWorkerTp backfillerType,
-) error {
+) {
 	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc, bfWorkerTp)
->>>>>>> eec20e67fdf (ddl: skip getting actual end key for each range in ingest mode (#54143))
 	for _, task := range batchTasks {
 		if consumer.shouldAbort() {
 			return
@@ -783,46 +773,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 
 	taskIDAlloc := newTaskIDAllocator()
 	for {
-		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
+		kvRanges, err := splitAndValidateTableRanges(dc.ctx, t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
-<<<<<<< HEAD
 		if len(kvRanges) == 0 {
 			break
-=======
-	})
-
-	// generate task goroutine
-	eg.Go(func() error {
-		// we will modify the startKey in this goroutine, so copy them to avoid race.
-		start, end := startKey, endKey
-		taskIDAlloc := newTaskIDAllocator()
-		for {
-			kvRanges, err2 := splitAndValidateTableRanges(egCtx, t, reorgInfo.d.store, start, end, backfillTaskChanSize)
-			if err2 != nil {
-				return errors.Trace(err2)
-			}
-			if len(kvRanges) == 0 {
-				break
-			}
-			logutil.DDLLogger().Info("start backfill workers to reorg record",
-				zap.Stringer("type", bfWorkerType),
-				zap.Int("workerCnt", scheduler.currentWorkerSize()),
-				zap.Int("regionCnt", len(kvRanges)),
-				zap.String("startKey", hex.EncodeToString(start)),
-				zap.String("endKey", hex.EncodeToString(end)))
-
-			err2 = sendTasks(scheduler, t, kvRanges, reorgInfo, taskIDAlloc, bfWorkerType)
-			if err2 != nil {
-				return errors.Trace(err2)
-			}
-
-			start = kvRanges[len(kvRanges)-1].EndKey
-			if start.Cmp(end) >= 0 {
-				break
-			}
->>>>>>> eec20e67fdf (ddl: skip getting actual end key for each range in ingest mode (#54143))
 		}
 		logutil.DDLLogger().Info("start backfill workers to reorg record",
 			zap.Stringer("type", bfWorkerType),
@@ -831,7 +787,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
 
-		sendTasks(scheduler, consumer, t, kvRanges, reorgInfo, taskIDAlloc)
+		sendTasks(scheduler, consumer, t, kvRanges, reorgInfo, taskIDAlloc, bfWorkerType)
 		if consumer.shouldAbort() {
 			break
 		}
