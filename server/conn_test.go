@@ -1987,7 +1987,6 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
 }
 
-<<<<<<< HEAD
 func TestLDAPAuthSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	cfg := newTestConfig()
@@ -2027,8 +2026,6 @@ func TestLDAPAuthSwitch(t *testing.T) {
 	require.Equal(t, []byte(mysql.AuthMySQLClearPassword), respAuthSwitch)
 }
 
-=======
->>>>>>> 05a1ad36ce8 (server: fix connection double close (#53690))
 func TestCloseConn(t *testing.T) {
 	var outBuffer bytes.Buffer
 
