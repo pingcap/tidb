@@ -189,6 +189,7 @@ type Table interface {
 	// Indices returns the indices of the table.
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
+	DeletableIndices() []Index
 
 	// WritableConstraint returns constraints of the table in writable states.
 	WritableConstraint() []*Constraint

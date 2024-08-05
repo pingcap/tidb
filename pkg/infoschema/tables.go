@@ -2410,6 +2410,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (it *infoschemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // WritableConstraint implements table.Table WritableConstraint interface.
 func (it *infoschemaTable) WritableConstraint() []*table.Constraint {
 	return nil
@@ -2500,6 +2505,11 @@ func (vt *VirtualTable) FullHiddenColsAndVisibleCols() []*table.Column {
 
 // Indices implements table.Table Indices interface.
 func (vt *VirtualTable) Indices() []table.Index {
+	return nil
+}
+
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *VirtualTable) DeletableIndices() []table.Index {
 	return nil
 }
 

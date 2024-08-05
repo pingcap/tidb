@@ -98,6 +98,7 @@ var (
 	ErrCTERecursiveForbiddenJoinOrder        = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveForbiddenJoinOrder)
 	ErrInvalidRequiresSingleReference        = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidRequiresSingleReference)
 	ErrSQLInReadOnlyMode                     = dbterror.ClassOptimizer.NewStd(mysql.ErrReadOnlyMode)
+	ErrDeleteNotFoundColumn                  = dbterror.ClassOptimizer.NewStd(mysql.ErrDeleteNotFoundColumn)
 	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
 	ErrAccessDenied              = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
 	ErrBadNull                   = dbterror.ClassOptimizer.NewStd(mysql.ErrBadNull)

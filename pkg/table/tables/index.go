@@ -16,6 +16,7 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -639,12 +641,25 @@ func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, e
 	return val, nil
 }
 
-func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
+func (c *index) FetchValues(ctx table.MutateContext, r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
 	needLength := len(c.idxInfo.Columns)
 	if vals == nil || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)
 	}
 	vals = vals[:needLength]
+	// If the context has extra info, use the extra layout info to get index columns.
+	if ctx.HasExtraInfo() {
+		offsets := ctx.GetExtraIndexKeyPosInfo(c.idxInfo.ID)
+		intest.Assert(len(offsets) == len(c.idxInfo.Columns), fmt.Sprintf("offsets length is not equal to index columns length, offset len: %v, index len: %v", len(offsets), len(c.idxInfo.Columns)))
+		for i, offset := range offsets {
+			if offset < 0 || offset > len(r) {
+				return nil, table.ErrIndexOutBound.GenWithStackByArgs(c.idxInfo.Name, offset, r)
+			}
+			vals[i] = r[offset]
+		}
+		return vals, nil
+	}
+	// Otherwise use the full column layout.
 	for i, ic := range c.idxInfo.Columns {
 		if ic.Offset < 0 || ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.GenWithStackByArgs(ic.Name, ic.Offset, r)
