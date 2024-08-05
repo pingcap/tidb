@@ -155,11 +155,11 @@ func getJoinMethodHintsForSinglePhysicalJoin(sctx base.PlanContext, joinType str
 	for _, child := range children {
 		qbOffset, ht := extractHintTableForJoinNode(sctx, child, parentOffset)
 		if qbOffset < 0 || ht == nil {
-			return nil
+			continue
 		}
 		qbName, err := h.GenerateQBName(nodeType, qbOffset)
 		if err != nil {
-			return nil
+			continue
 		}
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
