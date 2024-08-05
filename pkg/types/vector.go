@@ -59,7 +59,7 @@ func InitVectorFloat32(dims int) VectorFloat32 {
 // CheckVectorDimValid checks if the vector's dimension is valid.
 func CheckVectorDimValid(dim int) error {
 	const (
-		maxVectorDimension = 16000
+		maxVectorDimension = 16383
 	)
 	if dim < 0 {
 		return errors.Errorf("dimensions for type vector must be at least 0")
