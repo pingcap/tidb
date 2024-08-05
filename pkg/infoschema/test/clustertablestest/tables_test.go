@@ -16,7 +16,6 @@ package clustertablestest
 
 import (
 	"fmt"
-	"github.com/tikv/client-go/v2/oracle"
 	"math"
 	"os"
 	"strconv"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
@@ -1208,6 +1208,7 @@ func TestTiDBTrx(t *testing.T) {
 	sm.TxnInfo[1].BlockStartTime.Valid = true
 	sm.TxnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Session().SetSessionManager(sm)
+
 	tk.MustQuery(`select ID,
 	START_TIME,
 	CURRENT_SQL_DIGEST,
@@ -1232,6 +1233,7 @@ func TestTiDBTrx(t *testing.T) {
 
 	rows := tk.MustQuery(`select WAITING_TIME from information_schema.TIDB_TRX where WAITING_TIME is not null`)
 	require.Len(t, rows.Rows(), 1)
+
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
 	defer func() {
