@@ -1842,7 +1842,11 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 		return nil
 	}
 	for _, schema := range schemas {
+		// `constraint_schema` and `table_schema` are always the same in MySQL.
 		if ok && extractor.Filter("constraint_schema", schema.L) {
+			continue
+		}
+		if ok && extractor.Filter("table_schema", schema.L) {
 			continue
 		}
 		tables, err := e.is.SchemaTableInfos(ctx, schema)
