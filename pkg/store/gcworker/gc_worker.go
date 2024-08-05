@@ -875,6 +875,7 @@ func (w *GCWorker) deleteRanges(
 				zap.Int64("elementID", r.ElementID),
 				zap.Error(err))
 		}
+		// We only delete rules, so concurrently updating rules should not return errors.
 		if err := w.doGCLabelRules(r); err != nil {
 			logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
