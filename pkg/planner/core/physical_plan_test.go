@@ -521,5 +521,5 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 
 func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 	// PhysicalApply is expected not to implement PhysicalJoin.
-	require.NotImplements(t, (*base.PhysicalJoin)(nil), new(core.PhysicalApply))
+	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
 }

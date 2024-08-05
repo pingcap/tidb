@@ -230,8 +230,8 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 	for _, pp := range pps {
 		switch pp.(type) {
 		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
-			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
-				outerChildID := pp.Children()[1-join.GetInnerChildIdx()].ID()
+			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
+				outerChildID := pp.Children()[1-join.getInnerChildIdx()].ID()
 				actRows := int64(1)
 				if statsColl.ExistsRootStats(outerChildID) {
 					actRows = statsColl.GetRootStats(outerChildID).GetActRows()

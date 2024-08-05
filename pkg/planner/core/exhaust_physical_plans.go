@@ -1460,13 +1460,13 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 	var innerIdx int
 	switch ij := join.(type) {
 	case *PhysicalIndexJoin:
-		innerIdx = ij.GetInnerChildIdx()
+		innerIdx = ij.getInnerChildIdx()
 		joinMethod = indexJoinMethod
 	case *PhysicalIndexHashJoin:
-		innerIdx = ij.GetInnerChildIdx()
+		innerIdx = ij.getInnerChildIdx()
 		joinMethod = indexHashJoinMethod
 	case *PhysicalIndexMergeJoin:
-		innerIdx = ij.GetInnerChildIdx()
+		innerIdx = ij.getInnerChildIdx()
 		joinMethod = indexMergeJoinMethod
 	default:
 		return 0, 0, false

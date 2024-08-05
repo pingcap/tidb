@@ -80,11 +80,11 @@ var (
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
 	_ base.PhysicalPlan = &PhysicalTableSample{}
 
-	_ base.PhysicalJoin = &PhysicalHashJoin{}
-	_ base.PhysicalJoin = &PhysicalMergeJoin{}
-	_ base.PhysicalJoin = &PhysicalIndexJoin{}
-	_ base.PhysicalJoin = &PhysicalIndexHashJoin{}
-	_ base.PhysicalJoin = &PhysicalIndexMergeJoin{}
+	_ PhysicalJoin = &PhysicalHashJoin{}
+	_ PhysicalJoin = &PhysicalMergeJoin{}
+	_ PhysicalJoin = &PhysicalIndexJoin{}
+	_ PhysicalJoin = &PhysicalIndexHashJoin{}
+	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
 type tableScanAndPartitionInfo struct {
@@ -1268,6 +1268,15 @@ func (la *PhysicalApply) MemoryUsage() (sum int64) {
 	return
 }
 
+// PhysicalJoin provides some common methods for join operators.
+// Note that PhysicalApply is deliberately excluded from this interface.
+type PhysicalJoin interface {
+	base.PhysicalPlan
+	PhysicalJoinImplement()
+	getInnerChildIdx() int
+	GetJoinType() JoinType
+}
+
 type basePhysicalJoin struct {
 	physicalSchemaProducer
 
@@ -1300,7 +1309,7 @@ func (p *basePhysicalJoin) GetJoinType() JoinType {
 // PhysicalJoinImplement implements base.PhysicalJoin interface.
 func (p *basePhysicalJoin) PhysicalJoinImplement() {}
 
-func (p *basePhysicalJoin) GetInnerChildIdx() int {
+func (p *basePhysicalJoin) getInnerChildIdx() int {
 	return p.InnerChildIdx
 }
 
