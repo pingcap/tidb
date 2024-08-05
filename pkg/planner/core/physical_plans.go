@@ -1223,7 +1223,7 @@ type PhysicalApply struct {
 // PhysicalJoinImplement has an extra bool return value compared with PhysicalJoin interface.
 // This will override basePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
 // base.PhysicalJoin interface.
-func (_ *PhysicalApply) PhysicalJoinImplement() bool { return false }
+func (*PhysicalApply) PhysicalJoinImplement() bool { return false }
 
 // Clone implements op.PhysicalPlan interface.
 func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
@@ -1307,7 +1307,7 @@ func (p *basePhysicalJoin) GetJoinType() JoinType {
 }
 
 // PhysicalJoinImplement implements base.PhysicalJoin interface.
-func (_ *basePhysicalJoin) PhysicalJoinImplement() {}
+func (*basePhysicalJoin) PhysicalJoinImplement() {}
 
 func (p *basePhysicalJoin) getInnerChildIdx() int {
 	return p.InnerChildIdx
