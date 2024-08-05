@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -383,11 +382,6 @@ type ddlCtx struct {
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
-	// backfillCtx is used for backfill workers.
-	backfillCtx struct {
-		syncutil.RWMutex
-		jobCtxMap map[int64]*JobContext
-	}
 
 	jobCtx struct {
 		sync.RWMutex
@@ -566,6 +560,19 @@ type reorgContexts struct {
 	sync.RWMutex
 	// reorgCtxMap maps job ID to reorg context.
 	reorgCtxMap map[int64]*reorgCtx
+	beOwnerTS   int64
+}
+
+func (r *reorgContexts) getOwnerTS() int64 {
+	r.RLock()
+	defer r.RUnlock()
+	return r.beOwnerTS
+}
+
+func (r *reorgContexts) setOwnerTS(ts int64) {
+	r.Lock()
+	r.beOwnerTS = ts
+	r.Unlock()
 }
 
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
@@ -583,7 +590,7 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 		return existedRC
 	}
 	rc := &reorgCtx{}
-	rc.doneCh = make(chan error, 1)
+	rc.doneCh = make(chan reorgFnResult, 1)
 	// initial reorgCtx
 	rc.setRowCount(rowCount)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
@@ -831,6 +838,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			logutil.DDLLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+		d.reorgCtx.setOwnerTS(time.Now().Unix())
 		d.runningJobs.clear()
 	})
 

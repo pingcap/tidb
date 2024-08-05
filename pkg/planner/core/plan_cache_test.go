@@ -234,6 +234,18 @@ func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestIssue53872(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table test(id int, col int)`)
+	tk.MustExec(`prepare stmt from "select id, ? as col1 from test where col=? group by id,col1"`)
+	tk.MustExec(`set @a=100, @b=100`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // no error
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+}
+
 func TestIssue38269(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1253,6 +1265,20 @@ func TestPlanCacheBindingIgnore(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
+func TestIssue53505(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (v varchar(16))`)
+	tk.MustExec(`insert into t values ('156')`)
+	tk.MustExec(`prepare stmt7 from 'select * from t where v = conv(?, 16, 8)'`)
+	tk.MustExec(`set @arg=0x6E`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustExec(`set @arg=0x70`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows()) // empty
+}
+
 func TestBuiltinFuncFlen(t *testing.T) {
 	// same as TestIssue45378 and TestIssue45253
 	store := testkit.CreateMockStore(t)
@@ -1796,6 +1822,29 @@ partition by hash (a) partitions 3`)
 	tk.MustQuery(`execute stmt`)
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
+}
+
+func TestIssue54652(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set autocommit=on`)
+	tk.MustQuery(`select @@autocommit`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @pk=1`)
+
+	tk.MustExec(`prepare st from 'select * from t where pk=? for update'`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can reuse since it's in txn now.
+	tk.MustExec(`commit`)
 }
 
 func TestIndexRange(t *testing.T) {
