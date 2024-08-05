@@ -248,8 +248,8 @@ type InfoSchemaStatisticsExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
-// ListSchemas lists related schemas from predicate.
-// If no schema found in predicate, it return all schemas.
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+// If there is no error, returning schema slice and table slice are guaranteed to have the same length.
 func (e *InfoSchemaStatisticsExtractor) ListSchemasAndTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
