@@ -10,7 +10,6 @@ go_library(
         "//pkg/extension",
         "//pkg/kv",
         "//pkg/sessionctx",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
