@@ -15,12 +15,13 @@
 package core
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	h "github.com/pingcap/tidb/pkg/util/hint"
-	"slices"
 )
 
 // GenHintsFromFlatPlan generates hints from a FlatPhysicalPlan.
