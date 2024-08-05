@@ -16,7 +16,7 @@ Error 1235 (42000): This version of TiDB doesn't yet support 'Use of CAST( .. AS
 CREATE TABLE t1 (f1 json, primary key mvi((cast(cast(f1 as unsigned array) as unsigned array))));
 Error 1235 (42000): This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions'
 CREATE TABLE t1 (f1 json, key mvi((cast(f1->>'$[*]' as unsigned array))));
-Error 3146 (HY000): Invalid data type for JSON data in argument 1 to function cast_as_array; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function cast_as_array; a JSON string or JSON type is required.
 CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as year array))));
 Error 1235 (42000): This version of TiDB doesn't yet support 'CAST-ing data to array of year(-1) BINARY'
 CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as json array))));
@@ -68,221 +68,221 @@ insert into t values ('[1,2,3]');
 insert into t values ('[-1]');
 Error 3752 (HY000): Value is out of range for expression index 'idx' at row 1
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as signed array))));
 insert into t values ('[1,2,3]');
 insert into t values ('[-1]');
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as char(1) array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
 insert into t values ('["a"]');
 insert into t values ('["汉字"]');
 Error 3907 (HY000): Data too long for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as char(2) array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
 insert into t values ('["a"]');
 insert into t values ('["汉字"]');
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as binary(1) array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
 insert into t values ('["a"]');
 insert into t values ('["汉字"]');
 Error 3907 (HY000): Data too long for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as binary(2) array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
 insert into t values ('["a"]');
 insert into t values ('["汉字"]');
 Error 3907 (HY000): Data too long for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as date array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as time array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as datetime array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as double array))));
 insert into t values ('[1,2,3]');
 insert into t values ('[-1]');
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
 insert into t values ('[1.0]');
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 set @@sql_mode=default;
 drop table if exists t;
 create table t(a json, index idx((cast(a as unsigned array))));
@@ -290,221 +290,221 @@ insert into t values ('[1,2,3]');
 insert into t values ('[-1]');
 Error 3752 (HY000): Value is out of range for expression index 'idx' at row 1
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as signed array))));
 insert into t values ('[1,2,3]');
 insert into t values ('[-1]');
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as char(1) array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
 insert into t values ('["a"]');
 insert into t values ('["汉字"]');
 Error 3907 (HY000): Data too long for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as char(2) array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
 insert into t values ('["a"]');
 insert into t values ('["汉字"]');
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as binary(1) array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
 insert into t values ('["a"]');
 insert into t values ('["汉字"]');
 Error 3907 (HY000): Data too long for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as binary(2) array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
 insert into t values ('["a"]');
 insert into t values ('["汉字"]');
 Error 3907 (HY000): Data too long for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as date array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as time array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as datetime array))));
 insert into t values ('[1,2,3]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 drop table if exists t;
 create table t(a json, index idx((cast(a as double array))));
 insert into t values ('[1,2,3]');
 insert into t values ('[-1]');
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.2]');
 insert into t values ('[1.0]');
 insert into t values (json_array(cast("11:00:00" as time)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02" as date)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 insert into t values (json_array(cast('{"a":1}' as json)));
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 3903 (22018): Invalid JSON value for CAST for expression index 'idx'
 set sql_mode=default;
 drop table if exists t;
 create table t (j json not null, str varchar(5),  KEY `idx` ((cast(`j` as unsigned array)),`str`));
