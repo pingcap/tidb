@@ -916,17 +916,19 @@ func (do *Domain) topologySyncerKeeper() {
 
 func (do *Domain) refreshMDLCheckTableInfo() {
 	se, err := do.sysSessionPool.Get()
+
 	if err != nil {
 		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
 		return
 	}
-	defer do.sysSessionPool.Put(se)
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	if _, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback"); err != nil {
+		se.Close()
 		return
 	}
+	defer do.sysSessionPool.Put(se)
 	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
 	// the job must stay inside tidb_ddl_job if we need to wait schema version for it.

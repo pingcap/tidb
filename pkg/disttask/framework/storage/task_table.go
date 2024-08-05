@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	cliutil "github.com/tikv/client-go/v2/util"
+	clitutil "github.com/tikv/client-go/v2/util"
 )
 
 const (
@@ -144,7 +144,7 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 
 // WithNewTxn executes the fn in a new transaction.
 func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
-	ctx = cliutil.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
