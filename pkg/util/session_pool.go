@@ -29,8 +29,8 @@ type SessionPool interface {
 	Close()
 }
 
-// ResourceCallback is a helper function to be triggered after Get/Put call.
-type ResourceCallback func(pools.Resource)
+// resourceCallback is a helper function to be triggered after Get/Put call.
+type resourceCallback func(pools.Resource)
 
 type pool struct {
 	resources chan pools.Resource
@@ -39,12 +39,12 @@ type pool struct {
 		sync.RWMutex
 		closed bool
 	}
-	getCallback ResourceCallback
-	putCallback ResourceCallback
+	getCallback resourceCallback
+	putCallback resourceCallback
 }
 
 // NewSessionPool creates a new session pool with the given capacity and factory function.
-func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallback func(pools.Resource)) SessionPool {
+func NewSessionPool(capacity int, factory pools.Factory, getCallback, putCallback resourceCallback) SessionPool {
 	return &pool{
 		resources:   make(chan pools.Resource, capacity),
 		factory:     factory,
