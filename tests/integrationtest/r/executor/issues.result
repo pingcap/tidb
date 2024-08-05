@@ -901,9 +901,9 @@ TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
 203	1
 analyze table pt;
 set @@tidb_distsql_scan_concurrency = default;
-explain analyze select * from t order by id;  # expected distsql concurrency 15
+explain analyze select * from t order by id;  # expected distsql concurrency 2
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-TableReader_11	256.00	256	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+TableReader_11	256.00	256	root	NULL	max_distsql_concurrency: 2	NULL	<memory>	<disk>
 └─TableFullScan_10	256.00	256	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from t limit 100;    # expected distsql concurrency 1
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
@@ -953,9 +953,9 @@ Limit_11	0.26	0	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 select @@tidb_partition_prune_mode;
 @@tidb_partition_prune_mode
 dynamic
-explain analyze select * from pt order by id;  # expected distsql concurrency 15
+explain analyze select * from pt order by id;  # expected distsql concurrency 2
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-TableReader_11	256.00	256	root	partition:all	max_distsql_concurrency: 15	NULL	<memory>	<disk>
+TableReader_11	256.00	256	root	partition:all	max_distsql_concurrency: 2	NULL	<memory>	<disk>
 └─TableFullScan_10	256.00	256	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from pt limit 100;    # expected distsql concurrency 7
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk

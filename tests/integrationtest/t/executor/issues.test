@@ -702,7 +702,7 @@ analyze table pt;
 set @@tidb_distsql_scan_concurrency = default;
 -- replace_column 8 <memory> 9 <disk>
 -- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
-explain analyze select * from t order by id;  # expected distsql concurrency 15
+explain analyze select * from t order by id;  # expected distsql concurrency 2
 
 -- replace_column 8 <memory> 9 <disk>
 -- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
@@ -735,7 +735,7 @@ select @@tidb_partition_prune_mode;
 
 -- replace_column 8 <memory> 9 <disk>
 -- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
-explain analyze select * from pt order by id;  # expected distsql concurrency 15
+explain analyze select * from pt order by id;  # expected distsql concurrency 2
 
 -- replace_column 8 <memory> 9 <disk>
 -- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
