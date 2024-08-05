@@ -40,9 +40,8 @@ type subTable struct {
 
 func (st *subTable) lookup(hashValue uint64, tagHelper *tagPtrHelper) taggedPtr {
 	ret := st.hashTable[hashValue&st.posMask]
-	hashTagValue := tagHelper.getTaggedValueFromHashValue(hashValue)
-	rowTagValue := tagHelper.getTaggedValueFromTaggedPtr(taggedPtr(ret))
-	if rowTagValue&hashTagValue != hashTagValue {
+	hashTagValue := tagHelper.getTaggedValue(hashValue)
+	if uint64(ret)&hashTagValue != hashTagValue {
 		// if tag value not match, the key will not be matched
 		return 0
 	}
@@ -82,20 +81,20 @@ func newSubTable(table *rowTable) *subTable {
 func (st *subTable) updateHashValue(hashValue uint64, rowAddress unsafe.Pointer, tagHelper *tagPtrHelper) {
 	pos := hashValue & st.posMask
 	prev := st.hashTable[pos]
-	tagValue := tagHelper.getTaggedValueFromHashValue(hashValue) | tagHelper.getTaggedValueFromTaggedPtr(prev)
+	tagValue := tagHelper.getTaggedValue(hashValue | uint64(prev))
 	taggedAddress := tagHelper.toTaggedPtr(tagValue, rowAddress)
 	st.hashTable[pos] = taggedAddress
-	setNextRowAddress(taggedAddress, prev, tagHelper)
+	setNextRowAddress(rowAddress, prev)
 }
 
 func (st *subTable) atomicUpdateHashValue(hashValue uint64, rowAddress unsafe.Pointer, tagHelper *tagPtrHelper) {
 	pos := hashValue & st.posMask
 	for {
 		prev := taggedPtr(atomic.LoadUintptr((*uintptr)(unsafe.Pointer(&st.hashTable[pos]))))
-		tagValue := tagHelper.getTaggedValueFromHashValue(hashValue) | tagHelper.getTaggedValueFromTaggedPtr(prev)
+		tagValue := tagHelper.getTaggedValue(hashValue | uint64(prev))
 		taggedAddress := tagHelper.toTaggedPtr(tagValue, rowAddress)
 		if atomic.CompareAndSwapUintptr((*uintptr)(unsafe.Pointer(&st.hashTable[pos])), uintptr(prev), uintptr(taggedAddress)) {
-			setNextRowAddress(taggedAddress, prev, tagHelper)
+			setNextRowAddress(rowAddress, prev)
 			break
 		}
 	}

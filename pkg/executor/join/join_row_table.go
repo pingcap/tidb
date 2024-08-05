@@ -15,7 +15,7 @@
 package join
 
 import (
-	"hash/crc64"
+	"hash/fnv"
 	"sync/atomic"
 	"unsafe"
 
@@ -154,15 +154,14 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
 }
 
-func setNextRowAddress(rowStart taggedPtr, nextRowAddress taggedPtr, tagHelper *tagPtrHelper) {
-	*(*taggedPtr)(tagHelper.toUnsafePointer(rowStart)) = nextRowAddress
+func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress taggedPtr) {
+	*(*taggedPtr)(rowStart) = nextRowAddress
 }
 
 func getNextRowAddress(rowStart unsafe.Pointer, tagHelper *tagPtrHelper, hashValue uint64) taggedPtr {
 	ret := *(*taggedPtr)(rowStart)
-	hashTagValue := tagHelper.getTaggedValueFromHashValue(hashValue)
-	rowTagValue := tagHelper.getTaggedValueFromTaggedPtr(ret)
-	if rowTagValue&hashTagValue != hashTagValue {
+	hashTagValue := tagHelper.getTaggedValue(hashValue)
+	if uint64(ret)&hashTagValue != hashTagValue {
 		return 0
 	}
 	return ret
@@ -558,7 +557,7 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 }
 
 func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {
-	h := crc64.New(crc64.MakeTable(crc64.ECMA))
+	h := fnv.New64a()
 	fakePartIndex := uint64(0)
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if (b.filterVector != nil && !b.filterVector[physicalRowIndex]) || (b.nullKeyVector != nil && b.nullKeyVector[physicalRowIndex]) {

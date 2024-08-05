@@ -34,26 +34,18 @@ import (
 type taggedPtr uintptr
 
 type tagPtrHelper struct {
-	// mask to get the tagged value from hashValue
-	hashValueTaggedMask uint64
-	// offset to convert the tagged value from hashValue to the taggedValue in taggedPtr
-	hashValueTaggedOffset uint8
 	// mask to get the tagged value in taggedPtr
 	taggedMask uint64
 }
 
 func (th *tagPtrHelper) init(taggedBits uint8) {
-	th.hashValueTaggedMask = (1 << taggedBits) - 1
-	th.hashValueTaggedOffset = 64 - taggedBits
-	th.taggedMask = th.hashValueTaggedMask << th.hashValueTaggedOffset
+	hashValueTaggedMask := uint64(1<<taggedBits) - 1
+	hashValueTaggedOffset := uint64(64 - taggedBits)
+	th.taggedMask = hashValueTaggedMask << hashValueTaggedOffset
 }
 
-func (th *tagPtrHelper) getTaggedValueFromHashValue(hashValue uint64) uint64 {
-	return (hashValue >> 32) & th.hashValueTaggedMask << uint64(th.hashValueTaggedOffset)
-}
-
-func (th *tagPtrHelper) getTaggedValueFromTaggedPtr(taggedPtr taggedPtr) uint64 {
-	return uint64(taggedPtr) & th.taggedMask
+func (th *tagPtrHelper) getTaggedValue(hashValue uint64) uint64 {
+	return hashValue & th.taggedMask
 }
 
 func (th *tagPtrHelper) toTaggedPtr(taggedValue uint64, ptr unsafe.Pointer) taggedPtr {
