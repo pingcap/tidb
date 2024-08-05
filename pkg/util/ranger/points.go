@@ -330,6 +330,12 @@ func (r *builder) buildFromBinOp(
 		}
 		// If nulleq with null value, values.ToInt64 will return err
 		if col.GetType().GetType() == mysql.TypeYear && !value.IsNull() {
+			// Convert the out-of-range uint number to int and then let the following logic can handle it correctly.
+			// Since the max value of year is 2155, `col op MaxUint` should have the same result with `col op MaxInt`.
+			if value.Kind() == types.KindUint64 && value.GetUint64() > math.MaxInt64 {
+				value.SetInt64(math.MaxInt64)
+			}
+
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.

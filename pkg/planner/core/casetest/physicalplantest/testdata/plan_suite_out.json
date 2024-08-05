@@ -835,10 +835,7 @@
           "                      └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t) */. Maybe you can use the table alias name",
-          "[planner:1815]There are no matching table names for (t1, t, t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t, t1, t) */. Maybe you can use the table alias name"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -868,10 +865,7 @@
           "                  └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ BROADCAST_JOIN(t1, t, t1, t) */ or /*+ TIDB_BCJ(t1, t, t1, t) */. Maybe you can use the table alias name",
-          "[planner:1815]There are no matching table names for (t1, t, t1, t) in optimizer hint /*+ BROADCAST_JOIN(t1, t, t1, t, t1, t) */ or /*+ TIDB_BCJ(t1, t, t1, t, t1, t) */. Maybe you can use the table alias name"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
@@ -3738,6 +3732,44 @@
         "SQL": "select * from t where b in (1,2,3) and c in ('1');",
         "Plan": [
           "Batch_Point_Get 3.00 root table:t, index:ubc(b, c) keep order:false, desc:false"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestAlwaysTruePredicateWithSubquery",
+    "Cases": [
+      {
+        "SQL": "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+        "Plan": [
+          "HashJoin_14 10000.00 root  CARTESIAN inner join",
+          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#12",
+          "│ └─Limit_22 1.00 root  offset:0, count:1",
+          "│   └─HashAgg_23 1.00 root  group by:1, funcs:firstrow(1)->Column#13",
+          "│     └─TableDual_24 1.00 root  rows:1",
+          "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
+          "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;",
+        "Plan": [
+          "HashJoin_14 10000.00 root  CARTESIAN inner join",
+          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#15",
+          "│ └─Limit_22 1.00 root  offset:0, count:1",
+          "│   └─HashAgg_27 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->Column#16",
+          "│     └─TableReader_28 1.00 root  data:HashAgg_23",
+          "│       └─HashAgg_23 1.00 cop[tikv]  group by:1, funcs:firstrow(1)->Column#18",
+          "│         └─TableFullScan_26 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
+          "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       }

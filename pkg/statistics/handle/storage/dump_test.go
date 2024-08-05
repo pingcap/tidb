@@ -343,6 +343,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int)")
 	testKit.MustExec("insert into t values (1),(3),(4),(2),(5)")
+	testKit.MustExec("set @@tidb_analyze_version=1")
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
@@ -360,7 +361,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version2, 1, false, handleutil.StatsMetaHistorySourceLoadStats)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version1, 1, false, handleutil.StatsMetaHistorySourceLoadStats)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 

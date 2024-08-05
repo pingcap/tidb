@@ -120,6 +120,10 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	if err != nil {
 		return nil, err
 	}
+	// If its columns are all pruned, we directly use its child. The child will output at least one column.
+	if p.Schema().Len() == 0 {
+		return p.Children()[0], nil
+	}
 	return p, nil
 }
 
@@ -637,10 +641,6 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
-	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
-		return p, nil
-	}
-
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
 	var err error
