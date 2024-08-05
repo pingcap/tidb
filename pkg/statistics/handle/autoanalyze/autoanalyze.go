@@ -82,7 +82,7 @@ func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
 
 func (sa *statsAnalyze) UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64) {
 	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		updateAnalyzeJob(sctx, job, rowCount)
+		updateAnalyzeJobProgress(sctx, job, rowCount)
 		return nil
 	})
 	if err != nil {
@@ -756,8 +756,8 @@ func startAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	})
 }
 
-// updateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
-func updateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
+// updateAnalyzeJobProgress updates count of the processed rows when increment reaches a threshold.
+func updateAnalyzeJobProgress(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
 	if job == nil || job.ID == nil {
 		return
 	}
