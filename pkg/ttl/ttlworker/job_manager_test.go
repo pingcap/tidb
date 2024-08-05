@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,7 +144,7 @@ var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statis
 type TTLJob = ttlJob
 
 // GetSessionForTest is used for test
-func GetSessionForTest(pool sessionPool) (session.Session, error) {
+func GetSessionForTest(pool util.SessionPool) (session.Session, error) {
 	return getSession(pool)
 }
 
@@ -207,10 +208,6 @@ func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) 
 
 func (j *ttlJob) ID() string {
 	return j.id
-}
-
-func newMockTTLJob(tbl *cache.PhysicalTable, status cache.JobStatus) *ttlJob {
-	return &ttlJob{tbl: tbl, status: status}
 }
 
 func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
