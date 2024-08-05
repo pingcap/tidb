@@ -597,7 +597,7 @@ type ImplWindow struct {
 
 // Match implements ImplementationRule Match interface.
 func (*ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	lw := expr.ExprNode.(*plannercore.LogicalWindow)
+	lw := expr.ExprNode.(*logicalop.LogicalWindow)
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
@@ -607,7 +607,7 @@ func (*ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) 
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	lw := expr.ExprNode.(*plannercore.LogicalWindow)
+	lw := expr.ExprNode.(*logicalop.LogicalWindow)
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)

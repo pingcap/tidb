@@ -16,11 +16,13 @@ go_library(
         "logical_sort.go",
         "logical_table_dual.go",
         "logical_top_n.go",
+        "logical_window.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/expression/aggregation",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/ast",
@@ -37,6 +39,7 @@ go_library(
         "//pkg/planner/util/optimizetrace",
         "//pkg/planner/util/optimizetrace/logicaltrace",
         "//pkg/planner/util/utilfuncp",
+        "//pkg/sessionctx",
         "//pkg/statistics",
         "//pkg/types",
         "//pkg/util/dbterror/plannererrors",
@@ -45,5 +48,6 @@ go_library(
         "//pkg/util/size",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tipb//go-tipb",
     ],
 )

@@ -636,28 +636,6 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 	}, nil
 }
 
-// ToPB converts FrameBound to tipb structure.
-func (fb *FrameBound) ToPB(ctx *base.BuildPBContext) (*tipb.WindowFrameBound, error) {
-	pbBound := &tipb.WindowFrameBound{
-		Type:      tipb.WindowBoundType(fb.Type),
-		Unbounded: fb.UnBounded,
-	}
-	offset := fb.Num
-	pbBound.Offset = &offset
-
-	if fb.IsExplicitRange {
-		rangeFrame, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), fb.CalcFuncs, ctx.GetClient())
-		if err != nil {
-			return nil, err
-		}
-
-		pbBound.FrameRange = rangeFrame[0]
-		pbBound.CmpDataType = &fb.CmpDataType
-	}
-
-	return pbBound, nil
-}
-
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalWindow) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()

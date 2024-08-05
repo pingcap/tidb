@@ -2419,7 +2419,7 @@ type PhysicalWindow struct {
 	WindowFuncDescs []*aggregation.WindowFuncDesc
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
-	Frame           *WindowFrame
+	Frame           *logicalop.WindowFrame
 
 	// on which store the window function executes.
 	storeTp kv.StoreType

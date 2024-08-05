@@ -278,7 +278,7 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 // 3. currentSchemaVersion(before loading)
 // 4. the changed table IDs if it is not full load
 // 5. an error if any
-func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
+func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	beginTime := time.Now()
 	defer func() {
 		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
@@ -299,7 +299,6 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		schemaTs = 0
 	}
 
-	enableV2 := variable.SchemaCacheSize.Load() > 0
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -315,18 +314,18 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
-		if enableV2 == isV2 {
-			return is, true, 0, nil, nil
-		}
+		return is, true, 0, nil, nil
 	}
 
-	var isV1V2Switch bool
+	var oldIsV2 bool
+	enableV2 := variable.SchemaCacheSize.Load() > 0
 	currentSchemaVersion := int64(0)
 	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
-		isV2, _ := infoschema.IsV2(oldInfoSchema)
-		isV1V2Switch = enableV2 != isV2
+		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
 	}
+	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
+	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
 
 	// TODO: tryLoadSchemaDiffs has potential risks of failure. And it becomes worse in history reading cases.
 	// It is only kept because there is no alternative diff/partial loading solution.
@@ -336,8 +335,8 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 3. There are less 100 diffs.
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
-	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
+	if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
+		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(builder, m, currentSchemaVersion, neededSchemaVersion, startTS)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
@@ -373,11 +372,11 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
-	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	is := newISBuilder.Build(startTS)
+	is := builder.Build(startTS)
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
 		zap.Bool("isV2", isV2),
@@ -534,11 +533,21 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 	done <- nil
 }
 
+// shouldUseV2 decides whether to use infoschema v2.
+// When loading snapshot, infoschema should keep the same as before to avoid v1/v2 switch.
+// Otherwise, it is decided by enabledV2.
+func shouldUseV2(enableV2 bool, oldIsV2 bool, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+	if isSnapshot {
+		return oldIsV2, false
+	}
+	return enableV2, enableV2 != oldIsV2
+}
+
 // tryLoadSchemaDiffs tries to only load latest schema changes.
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+func (do *Domain) tryLoadSchemaDiffs(builder *infoschema.Builder, m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -573,17 +582,17 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 	})
 
-	builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	err := builder.InitWithOldInfoSchema(do.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
+
 	builder.WithStore(do.store).SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
 		if diff.RegenerateSchemaMap {
-			do.infoCache.Data = infoschema.NewData()
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		ids, err := builder.ApplyDiff(m, diff)
@@ -626,7 +635,7 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
 		return is, nil
 	}
-	is, _, _, _, err := do.loadInfoSchema(snapshotTS)
+	is, _, _, _, err := do.loadInfoSchema(snapshotTS, true)
 	infoschema_metrics.LoadSchemaCounterSnapshot.Inc()
 	return is, err
 }
@@ -727,12 +736,12 @@ func (do *Domain) Reload() error {
 	}
 
 	version := ver.Ver
-	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version)
+	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version, false)
 	if err != nil {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
 			// use the latest available version to create domain
 			version--
-			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
+			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version, false)
 		}
 	}
 	if err != nil {

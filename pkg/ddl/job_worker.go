@@ -527,9 +527,7 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	// later if the job is not cancelled.
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(d, t, job)
 
-	d.mu.RLock()
-	d.mu.hook.OnJobRunAfter(job)
-	d.mu.RUnlock()
+	failpoint.InjectCall("onJobRunAfter", job)
 
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)

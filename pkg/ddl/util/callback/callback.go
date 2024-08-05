@@ -29,7 +29,6 @@ type TestDDLCallback struct {
 	Do ddl.SchemaLoader
 
 	OnJobRunBeforeExported func(*model.Job)
-	OnJobRunAfterExported  func(*model.Job)
 }
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
@@ -41,17 +40,6 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 	}
 
 	tc.BaseCallback.OnJobRunBefore(job)
-}
-
-// OnJobRunAfter is used to run the user customized logic of `OnJobRunAfter` first.
-func (tc *TestDDLCallback) OnJobRunAfter(job *model.Job) {
-	logutil.DDLLogger().Info("on job run after", zap.String("job", job.String()))
-	if tc.OnJobRunAfterExported != nil {
-		tc.OnJobRunAfterExported(job)
-		return
-	}
-
-	tc.BaseCallback.OnJobRunAfter(job)
 }
 
 // Clone copies the callback and take its reference
