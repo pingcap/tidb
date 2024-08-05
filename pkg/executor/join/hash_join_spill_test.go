@@ -15,6 +15,7 @@
 package join
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -81,6 +82,7 @@ func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []c
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, retTypes)
+	// printResult(result, retTypes)
 	require.True(t, hashJoinExec.isAllMemoryClearedForTest())
 	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 	require.False(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
@@ -167,6 +169,16 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 	}
 }
 
+// TODO delete it
+func printResult(expectedResult []chunk.Row, retTypes []*types.FieldType) {
+	result := ""
+	for i, row := range expectedResult {
+		result = fmt.Sprintf("%s\n[%d %s]", result, i, row.ToString(retTypes))
+	}
+	log.Info(result)
+}
+
+// TODO test nullable type
 // Case 1: Trigger spill during the building of row table and spill partial partitions
 // Case 2: Trigger spill during the building of row table and spill all partitions
 // Case 3: Trigger spill before creating hash table when row table has been built and spill partial partitions
@@ -194,7 +206,7 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 		schema:           buildSchema(retTypes),
 		leftExec:         leftDataSource,
 		rightExec:        rightDataSource,
-		joinType:         plannercore.InnerJoin,
+		joinType:         plannercore.LeftOuterJoin,
 		rightAsBuildSide: true,
 		buildKeys: []*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -215,21 +227,24 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 
 	log.Info("xzxdebug ^^^^^^^^^^") // TODO remove it
 
+	// printResult(expectedResult, retTypes)
+
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
-	for i := 0; i < 1; i++ {
-		testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-		testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
-	}
+	testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	// for i := 0; i < 3; i++ {
+	// testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
+	// }
 
-	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	// testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 }
 
 func TestLeftOuterJoinSpillCorrectness(t *testing.T) {

@@ -16,7 +16,6 @@ package join
 
 import (
 	"bytes"
-	"fmt"
 	"hash"
 	"hash/fnv"
 	"slices"
@@ -24,7 +23,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -404,11 +402,11 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	}
 
 	h.spillTriggeredForTest = true
-	info := ""
-	for _, partID := range partitionsNeedSpill {
-		info = fmt.Sprintf("%s %d", info, partID)
-	}
-	log.Info(fmt.Sprintf("xzxdebug release mem: %d, spilled part: %s", totalReleasedMemory, info))
+	// info := ""
+	// for _, partID := range partitionsNeedSpill {
+	// 	info = fmt.Sprintf("%s %d", info, partID)
+	// }
+	// log.Info(fmt.Sprintf("xzxdebug release mem: %d, spilled part: %s", totalReleasedMemory, info))
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
 	for i := 0; i < workerNum; i++ {

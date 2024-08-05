@@ -233,7 +233,7 @@ func buildJoinKeyStringDatums(num int) []any {
 }
 
 // TODO delete it
-func buildSrc(opt testutil.MockDataSourceParameters) *testutil.MockDataSource {
+func buildLeftSrc(opt testutil.MockDataSourceParameters) *testutil.MockDataSource {
 	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
 	m := &testutil.MockDataSource{
 		BaseExecutor: baseExec,
@@ -262,6 +262,44 @@ func buildSrc(opt testutil.MockDataSourceParameters) *testutil.MockDataSource {
 				m.GenData[idx].AppendInt64(colIdx, int64(i))
 			case mysql.TypeVarString:
 				m.GenData[idx].AppendString(colIdx, strconv.Itoa(i))
+			default:
+				panic("not implement")
+			}
+		}
+	}
+	return m
+}
+
+// TODO delete it
+func buildRightSrc(opt testutil.MockDataSourceParameters) *testutil.MockDataSource {
+	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
+	m := &testutil.MockDataSource{
+		BaseExecutor: baseExec,
+		ChunkPtr:     0,
+		P:            opt,
+		GenData:      nil,
+		Chunks:       nil,
+	}
+	rTypes := exec.RetTypes(m)
+	colData := make([][]any, len(rTypes))
+	for i := 0; i < len(rTypes); i++ {
+		colData[i] = m.GenColDatums(i)
+	}
+
+	m.GenData = make([]*chunk.Chunk, (m.P.Rows+m.MaxChunkSize()-1)/m.MaxChunkSize())
+	for i := range m.GenData {
+		m.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(m), m.MaxChunkSize())
+	}
+
+	for i := 0; i < m.P.Rows; i++ {
+		idx := i / m.MaxChunkSize()
+		retTypes := exec.RetTypes(m)
+		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
+			switch retTypes[colIdx].GetType() {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				m.GenData[idx].AppendInt64(colIdx, int64(i+300))
+			case mysql.TypeVarString:
+				m.GenData[idx].AppendString(colIdx, strconv.Itoa(i+300))
 			default:
 				panic("not implement")
 			}

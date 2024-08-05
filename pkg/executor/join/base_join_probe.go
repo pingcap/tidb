@@ -143,6 +143,8 @@ type baseJoinProbe struct {
 	usedColIdx  []int
 	spillTmpChk []*chunk.Chunk
 
+	spilledIdx []int
+
 	spilledRowNum map[int]int // TODO remove it
 }
 
@@ -241,6 +243,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 
+	j.spilledIdx = j.spilledIdx[:0]
+
 	// generate hash value
 	hash := fnv.New64()
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
@@ -261,6 +265,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(hashValue))
 			j.spillTmpChk[partIndex].AppendBytes(1, j.serializedKeys[logicalRowIndex])
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
+
+			j.spilledIdx = append(j.spilledIdx, logicalRowIndex)
 
 			if j.spillTmpChk[partIndex].IsFull() {
 				rowNum := j.spillTmpChk[partIndex].NumRows()
@@ -343,6 +349,8 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
 
+	j.spilledIdx = j.spilledIdx[:0]
+
 	hash := fnv.New64()
 	rehashBuf := new(bytes.Buffer)
 
@@ -363,6 +371,8 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(newHashVal))
 			j.spillTmpChk[partIndex].AppendBytes(1, serializedKeysCol.GetBytes(physicalRowIndex))
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
+
+			j.spilledIdx = append(j.spilledIdx, logicalRowIndex)
 
 			if j.spillTmpChk[partIndex].IsFull() {
 				err := j.ctx.spillHelper.spillProbeChk(int(j.workID), int(partIndex), j.spillTmpChk[partIndex])

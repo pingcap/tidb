@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -42,6 +43,11 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 	if !ok {
 		return nil
 	}
+
+	totalOutputRowNum := 0
+	defer func() {
+		log.Info(fmt.Sprintf("xzxdebug final worker totalOutputRowNum: %d", totalOutputRowNum))
+	}()
 	for !w.JoinProbe.IsScanRowTableDone() {
 		joinResult = w.JoinProbe.ScanRowTable(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if joinResult.err != nil {
@@ -54,6 +60,7 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 				return err
 			}
 
+			totalOutputRowNum += joinResult.chk.NumRows()
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			if !ok {
@@ -64,6 +71,9 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 	if joinResult == nil {
 		return nil
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+		if joinResult.chk != nil {
+			totalOutputRowNum += joinResult.chk.NumRows()
+		}
 		w.HashJoinCtx.joinResultCh <- joinResult
 	}
 	return nil
@@ -137,6 +147,7 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 			info = fmt.Sprintf("%s [%d %d]", info, partID, rowNum)
 		}
 
+		log.Info(fmt.Sprintf("xzxdebug worker %d, totalOutputRowNum: %d", w.WorkerID, w.totalOutputRowNum))
 		w.totalOutputRowNum = 0
 	}()
 
@@ -227,6 +238,11 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error 
 	if !ok {
 		return nil
 	}
+
+	defer func() {
+		log.Info(fmt.Sprintf("xzxdebug worker %d, output: %d", w.WorkerID, w.totalOutputRowNum))
+		w.totalOutputRowNum = 0
+	}()
 
 	chunkNum := inDisk.NumChunks()
 

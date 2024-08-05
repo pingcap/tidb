@@ -66,6 +66,10 @@ func (j *outerJoinProbe) prepareIsNotMatchedRows() {
 		for i := 0; i < j.chunkRows; i++ {
 			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
+
+		for _, spilledIdx := range j.spilledIdx {
+			j.isNotMatchedRows[spilledIdx] = false
+		}
 	}
 }
 

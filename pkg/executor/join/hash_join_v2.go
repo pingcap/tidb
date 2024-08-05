@@ -242,7 +242,7 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 		total += totalDefaultMemUsage - totalReleasedMemoryUsage
 	}
 
-	log.Info(fmt.Sprintf("xzxdebug tryToSpill: %d, info: %s", total, info))
+	// log.Info(fmt.Sprintf("xzxdebug tryToSpill: %d, info: %s", total, info))
 	return rowTables, nil
 }
 
@@ -274,8 +274,8 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 		return 0, err
 	}
 
-	before := htc.memoryTracker.BytesConsumed()
-	before1 := memoryTracker.BytesConsumed()
+	// before := htc.memoryTracker.BytesConsumed()
+	// before1 := memoryTracker.BytesConsumed()
 
 	for i := 0; i < partitionNumber; i++ {
 		// No tracker needs to be passed as memory has been consumed in `tryToSpill`
@@ -289,7 +289,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 		totalSegmentCnt += table.getSegmentNum()
 	}
 
-	log.Info(fmt.Sprintf("xzxdebug memory usage before: %d, after: %d, [b: %d, a: %d]", before, htc.memoryTracker.BytesConsumed(), before1, memoryTracker.BytesConsumed()))
+	// log.Info(fmt.Sprintf("xzxdebug memory usage before: %d, after: %d, [b: %d, a: %d]", before, htc.memoryTracker.BytesConsumed(), before1, memoryTracker.BytesConsumed()))
 
 	return totalSegmentCnt, nil
 }
@@ -376,20 +376,20 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 }
 
 func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
-	before := hCtx.hashTableContext.memoryTracker.BytesConsumed()
+	// before := hCtx.hashTableContext.memoryTracker.BytesConsumed()
 	memoryUsage := hCtx.hashTableContext.getAllSegmentsMemoryUsageInRowTable()
 	hCtx.hashTableContext.clearAllSegmentsInRowTable()
 	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
-	mem1 := memoryUsage
+	// mem1 := memoryUsage
 
-	var hashtb int64
-	var info string
-	memoryUsage, hashtb, info = hCtx.hashTableContext.getAllMemoryUsageInHashTableTest()
+	// var hashtb int64
+	// var info string
+	memoryUsage, _, _ = hCtx.hashTableContext.getAllMemoryUsageInHashTableTest()
 	hCtx.hashTableContext.clearHashTable()
 	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
-	mem2 := memoryUsage
-	after := hCtx.hashTableContext.memoryTracker.BytesConsumed()
-	log.Info(fmt.Sprintf("xzxdebug mem1: %d, mem2: %d, hashtb: %d, info: %s, before: %d, after: %d", mem1, mem2, hashtb, info, before, after))
+	// mem2 := memoryUsage
+	// after := hCtx.hashTableContext.memoryTracker.BytesConsumed()
+	// log.Info(fmt.Sprintf("xzxdebug mem1: %d, mem2: %d, hashtb: %d, info: %s, before: %d, after: %d", mem1, mem2, hashtb, info, before, after))
 }
 
 // ProbeSideTupleFetcherV2 reads tuples from ProbeSideExec and send them to ProbeWorkers.
