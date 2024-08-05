@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"golang.org/x/exp/maps"
@@ -141,11 +140,9 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
+
 	r := new(bytes.Buffer)
-	colNames := make([]string, 0, len(e.ColPredicates))
-	for colName := range e.ColPredicates {
-		colNames = append(colNames, colName)
-	}
+	colNames := maps.Keys(e.ColPredicates)
 	sort.Strings(colNames)
 	for _, colName := range colNames {
 		if len(e.ColPredicates[colName]) > 0 {
@@ -339,13 +336,19 @@ func findTablesByID(
 	tableNames []model.CIStr,
 	tables map[int64]*model.TableInfo,
 ) {
+	tblNameMap := make(map[string]struct{}, len(tableNames))
+	for _, n := range tableNames {
+		tblNameMap[n.L] = struct{}{}
+	}
 	for _, tid := range parseIDs(tableIDs) {
 		tbl, ok := is.TableByID(tid)
 		if !ok {
 			continue
 		}
-		if len(tableNames) > 0 && containInTableNames(tableNames, tbl) {
-			continue
+		if len(tableNames) > 0 {
+			if _, ok := tblNameMap[tbl.Meta().Name.L]; ok {
+				continue
+			}
 		}
 		tblInfo := tbl.Meta()
 		tables[tblInfo.ID] = tblInfo
@@ -359,26 +362,23 @@ func findTablesByPartID(
 	tableNames []model.CIStr,
 	tables map[int64]*model.TableInfo,
 ) {
+	tblNameMap := make(map[string]struct{}, len(tableNames))
+	for _, n := range tableNames {
+		tblNameMap[n.L] = struct{}{}
+	}
 	for _, pid := range parseIDs(partIDs) {
 		tbl, _, _ := is.FindTableByPartitionID(pid)
 		if tbl == nil {
 			continue
 		}
-		if len(tableNames) > 0 && containInTableNames(tableNames, tbl) {
-			continue
+		if len(tableNames) > 0 {
+			if _, ok := tblNameMap[tbl.Meta().Name.L]; ok {
+				continue
+			}
 		}
 		tblInfo := tbl.Meta()
 		tables[tblInfo.ID] = tblInfo
 	}
-}
-
-func containInTableNames(tableNames []model.CIStr, tbl table.Table) bool {
-	for _, n := range tableNames {
-		if tbl.Meta().Name.L == n.L {
-			return true
-		}
-	}
-	return false
 }
 
 func findTableAndSchemaByName(
