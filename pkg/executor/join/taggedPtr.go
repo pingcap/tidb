@@ -69,8 +69,8 @@ func getTaggedBitsFromUnsafePointer(up unsafe.Pointer) uint8 {
 	}
 	p := taggedPtr(0)
 	*(*unsafe.Pointer)(unsafe.Pointer(&p)) = up
-	initMask := uint64(0xffffffffffff)
-	taggedBits := int8(16)
+	initMask := uint64(0xffffffffff)
+	taggedBits := int8(24)
 	pValue := uint64(p)
 	for taggedBits > 0 {
 		if pValue & ^initMask == 0 {

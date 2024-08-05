@@ -557,7 +557,7 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 }
 
 func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {
-	h := fnv.New64a()
+	h := fnv.New64()
 	fakePartIndex := uint64(0)
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if (b.filterVector != nil && !b.filterVector[physicalRowIndex]) || (b.nullKeyVector != nil && b.nullKeyVector[physicalRowIndex]) {
