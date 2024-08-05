@@ -13,6 +13,7 @@ go_library(
         "//pkg/kv",
         "//pkg/lock/context",
         "//pkg/metrics",
+        "//pkg/param",
         "//pkg/parser/model",
         "//pkg/planner/context",
         "//pkg/session/cursor",
