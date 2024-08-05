@@ -320,7 +320,7 @@ func updateIndexResult(
 	respHist := statistics.HistogramFromProto(resp.Hist)
 	if job != nil {
 		statsHandle := domain.GetDomain(ctx).StatsHandle()
-		statsHandle.UpdateAnalyzeJobProcess(job, int64(respHist.TotalRowCount()))
+		statsHandle.UpdateAnalyzeJobProgress(job, int64(respHist.TotalRowCount()))
 	}
 	hist, err = statistics.MergeHistograms(ctx.GetSessionVars().StmtCtx, hist, respHist, numBuckets, statsVer)
 	if err != nil {
