@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	dto "github.com/prometheus/client_model/go"
@@ -3078,7 +3079,7 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		callback.OnJobUpdatedExported.Store(&cbFunc1)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc1)
 	} else {
 		callback.OnJobRunBeforeExported = cbFunc1
 	}
@@ -3100,6 +3101,7 @@ func runTestInSchemaState(
 		}
 	}
 	d.SetHook(originalCallback)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 }
 
 func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {

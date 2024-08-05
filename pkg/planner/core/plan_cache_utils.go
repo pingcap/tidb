@@ -418,8 +418,8 @@ func (v *PlanCacheValue) CloneForInstancePlanCache(ctx context.Context, newCtx b
 	if !ok {
 		return nil, false
 	}
-	clonedPlan, err := phyPlan.Clone(newCtx)
-	if err != nil {
+	clonedPlan, ok := phyPlan.CloneForPlanCache(newCtx)
+	if !ok {
 		return nil, false
 	}
 	if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {

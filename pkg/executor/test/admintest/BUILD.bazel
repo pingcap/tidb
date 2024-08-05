@@ -12,7 +12,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
-        "//pkg/ddl/util/callback",
         "//pkg/domain",
         "//pkg/errno",
         "//pkg/executor",
@@ -26,6 +25,7 @@ go_test(
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
         "//pkg/types",

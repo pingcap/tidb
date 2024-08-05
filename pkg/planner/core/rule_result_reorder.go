@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
@@ -52,8 +53,11 @@ func (rs *resultReorder) optimize(_ context.Context, lp base.LogicalPlan, _ *opt
 
 func (rs *resultReorder) completeSort(lp base.LogicalPlan) bool {
 	if rs.isInputOrderKeeper(lp) {
+		if len(lp.Children()) == 0 {
+			return true
+		}
 		return rs.completeSort(lp.Children()[0])
-	} else if sort, ok := lp.(*LogicalSort); ok {
+	} else if sort, ok := lp.(*logicalop.LogicalSort); ok {
 		cols := sort.Schema().Columns // sort results by all output columns
 		if handleCol := rs.extractHandleCol(sort.Children()[0]); handleCol != nil {
 			cols = []*expression.Column{handleCol} // sort results by the handle column if we can get it
@@ -89,7 +93,7 @@ func (rs *resultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 	for _, col := range cols {
 		byItems = append(byItems, &util.ByItems{Expr: col})
 	}
-	sort := LogicalSort{
+	sort := logicalop.LogicalSort{
 		ByItems: byItems,
 	}.Init(lp.SCtx(), lp.QueryBlockOffset())
 	sort.SetChildren(lp)
@@ -98,7 +102,7 @@ func (rs *resultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 
 func (*resultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 	switch lp.(type) {
-	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
+	case *LogicalSelection, *logicalop.LogicalProjection, *logicalop.LogicalLimit, *logicalop.LogicalTableDual:
 		return true
 	}
 	return false
@@ -107,7 +111,7 @@ func (*resultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 // extractHandleCols does the best effort to get the handle column.
 func (rs *resultReorder) extractHandleCol(lp base.LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
-	case *LogicalSelection, *LogicalLimit:
+	case *LogicalSelection, *logicalop.LogicalLimit:
 		handleCol := rs.extractHandleCol(lp.Children()[0])
 		if handleCol == nil {
 			return nil // fail to extract handle column from the child, just return nil.

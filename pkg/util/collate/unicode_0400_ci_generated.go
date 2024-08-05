@@ -23,6 +23,11 @@ type unicodeCICollator struct {
 	impl unicode0400Impl
 }
 
+// Clone implements Collator interface.
+func (uc *unicodeCICollator) Clone() Collator {
+    return &unicodeCICollator{impl: uc.impl.Clone()}
+}
+
 // Compare implements Collator interface.
 func (uc *unicodeCICollator) Compare(a, b string) int {
 	a = uc.impl.Preprocess(a)

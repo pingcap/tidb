@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -82,34 +83,6 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 		}
 	}
 	return canBePushDown, canNotBePushDown
-}
-
-// BreakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
-func BreakDownPredicates(p *LogicalProjection, predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	canBePushed := make([]expression.Expression, 0, len(predicates))
-	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	exprCtx := p.SCtx().GetExprCtx()
-	for _, cond := range predicates {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)
-		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
-			canBePushed = append(canBePushed, newFilter)
-		} else {
-			canNotBePushed = append(canNotBePushed, cond)
-		}
-	}
-	return canBePushed, canNotBePushed
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
-	// condition related with grouping column shouldn't be pushed down through it.
-	// currently, since expand is adjacent to aggregate, any filter above aggregate wanted to be push down through expand only have two cases:
-	// 		1. agg function related filters. (these condition is always above aggregate)
-	// 		2. group-by item related filters. (there condition is always related with grouping sets columns, which can't be pushed down)
-	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
-	remained, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return append(remained, predicates...), child
 }
 
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
@@ -193,7 +166,7 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return nil
 	}
 	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
+		dual := logicalop.LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
 		dual.SetSchema(p.Schema())
 		return dual
 	}

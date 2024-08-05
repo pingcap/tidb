@@ -56,7 +56,7 @@ const (
 	HintINLJ = "inl_join"
 	// HintINLHJ is hint enforce index nested loop hash join.
 	HintINLHJ = "inl_hash_join"
-	// HintINLMJ is hint enforce index nested loop merge join.
+	// Deprecated: HintINLMJ is hint enforce index nested loop merge join.
 	HintINLMJ = "inl_merge_join"
 	// HintNoIndexJoin is the hint to enforce the query not to use index join.
 	HintNoIndexJoin = "no_index_join"
@@ -776,7 +776,10 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintINLHJ:
 			inlhjTables = append(inlhjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintINLMJ:
-			inlmjTables = append(inlmjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			if hint.Tables != nil {
+				warnHandler.SetHintWarning("The INDEX MERGE JOIN hint is deprecated for usage, try other hints.")
+				continue
+			}
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintNoHashJoin:

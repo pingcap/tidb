@@ -18,13 +18,16 @@ import (
 	"context"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type columnPruner struct {
@@ -36,36 +39,27 @@ func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 	if err != nil {
 		return nil, planChanged, err
 	}
+	intest.AssertNoError(noZeroColumnLayOut(lp), "After column pruning, some operator got zero row output. Please fix it.")
 	return lp, planChanged, nil
 }
 
-// PruneColumns implement the Expand OP's column pruning logic.
-// logicExpand is built in the logical plan building phase, where all the column prune is not done yet. So the
-// expand projection expressions is meaningless if it built at that time. (we only maintain its schema, while
-// the level projection expressions construction is left to the last logical optimize rule)
-//
-// so when do the rule_column_pruning here, we just prune the schema is enough.
-func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	// Expand need those extra redundant distinct group by columns projected from underlying projection.
-	// distinct GroupByCol must be used by aggregate above, to make sure this, append DistinctGroupByCol again.
-	parentUsedCols = append(parentUsedCols, p.DistinctGroupByCol...)
-	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
-	prunedColumns := make([]*expression.Column, 0)
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.SetOutputNames(append(p.OutputNames()[:i], p.OutputNames()[i+1:]...))
+func noZeroColumnLayOut(p base.LogicalPlan) error {
+	for _, child := range p.Children() {
+		if err := noZeroColumnLayOut(child); err != nil {
+			return err
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	// Underlying still need to keep the distinct group by columns and parent used columns.
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
+	if p.Schema().Len() == 0 {
+		// The p don't hold its schema. So we don't need check itself.
+		if len(p.Children()) > 0 && p.Schema() == p.Children()[0].Schema() {
+			return nil
+		}
+		_, ok := p.(*logicalop.LogicalTableDual)
+		if !ok {
+			return errors.Errorf("Operator %s has zero row output", p.ExplainID().String())
+		}
 	}
-	return p, nil
+	return nil
 }
 
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
@@ -101,28 +95,6 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 
 func (*columnPruner) name() string {
 	return "column_prune"
-}
-
-// By add const one, we can avoid empty Projection is eliminated.
-// Because in some cases, Projectoin cannot be eliminated even its output is empty.
-func addConstOneForEmptyProjection(p base.LogicalPlan) {
-	proj, ok := p.(*LogicalProjection)
-	if !ok {
-		return
-	}
-	if proj.Schema().Len() != 0 {
-		return
-	}
-
-	constOne := expression.NewOne()
-	proj.Schema().Append(&expression.Column{
-		UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
-		RetType:  constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-	})
-	proj.Exprs = append(proj.Exprs, &expression.Constant{
-		Value:   constOne.Value,
-		RetType: constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-	})
 }
 
 func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,

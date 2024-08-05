@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -760,7 +761,6 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 		b.inSelectLockStmt = true
 		defer func() { b.inSelectLockStmt = false }()
 	}
-	b.hasLock = true
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
@@ -769,13 +769,15 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 	if b.err != nil {
 		return nil
 	}
-	if !b.ctx.GetSessionVars().InTxn() {
+	if !b.ctx.GetSessionVars().PessimisticLockEligible() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 		return src
 	}
+	// If the `PhysicalLock` is not ignored by the above logic, set the `hasLock` flag.
+	b.hasLock = true
 	e := &SelectLockExec{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
 		Lock:               v.Lock,
@@ -4960,11 +4962,11 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 		exec.windowFuncs = windowFuncs
 		exec.partialResults = partialResults
 		if v.Frame == nil {
-			exec.start = &plannercore.FrameBound{
+			exec.start = &logicalop.FrameBound{
 				Type:      ast.Preceding,
 				UnBounded: true,
 			}
-			exec.end = &plannercore.FrameBound{
+			exec.end = &logicalop.FrameBound{
 				Type:      ast.Following,
 				UnBounded: true,
 			}

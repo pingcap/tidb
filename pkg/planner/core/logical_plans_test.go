@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -162,7 +163,7 @@ func TestImplicitCastNotNullFlag(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
-	castNotNullFlag := (p.(*LogicalProjection).Children()[0].(*LogicalSelection).Children()[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag()) & mysql.NotNullFlag
+	castNotNullFlag := (p.(*logicalop.LogicalProjection).Children()[0].(*LogicalSelection).Children()[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag()) & mysql.NotNullFlag
 	var nullableFlag uint = 0
 	require.Equal(t, nullableFlag, castNotNullFlag)
 }
@@ -180,8 +181,8 @@ func TestEliminateProjectionUnderUnion(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
-	schemaNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Schema().Columns[0].RetType.GetFlag() & mysql.NotNullFlag
-	exprNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Exprs[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag() & mysql.NotNullFlag
+	schemaNullFlag := p.(*logicalop.LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*logicalop.LogicalProjection).Schema().Columns[0].RetType.GetFlag() & mysql.NotNullFlag
+	exprNullFlag := p.(*logicalop.LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*logicalop.LogicalProjection).Exprs[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag() & mysql.NotNullFlag
 	require.Equal(t, exprNullFlag, schemaNullFlag)
 }
 
@@ -207,7 +208,7 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
-		proj, ok := p.(*LogicalProjection)
+		proj, ok := p.(*logicalop.LogicalProjection)
 		require.True(t, ok, comment)
 		join, ok := proj.Children()[0].(*LogicalJoin)
 		require.True(t, ok, comment)
@@ -248,7 +249,7 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
-		proj, ok := p.(*LogicalProjection)
+		proj, ok := p.(*logicalop.LogicalProjection)
 		require.True(t, ok, comment)
 		selection, ok := proj.Children()[0].(*LogicalSelection)
 		require.True(t, ok, comment)
@@ -391,7 +392,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	require.NoError(t, err, comment)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 	require.NoError(t, err, comment)
-	ds := p.(*LogicalProjection).Children()[0].(*LogicalAggregation).Children()[0].(*DataSource)
+	ds := p.(*logicalop.LogicalProjection).Children()[0].(*LogicalAggregation).Children()[0].(*DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Schema().Columns[2].RetType.GetFlag())
@@ -476,7 +477,7 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 	require.NoError(t, err, comment)
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown, p.(base.LogicalPlan))
 	require.NoError(t, err, comment)
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*logicalop.LogicalProjection)
 	require.True(t, ok, comment)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok, comment)
@@ -756,7 +757,7 @@ func TestCS3389(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert that all Projection is not empty and there is no Projection between Aggregation and Join.
-	proj, isProj := p.(*LogicalProjection)
+	proj, isProj := p.(*logicalop.LogicalProjection)
 	require.True(t, isProj)
 	require.True(t, len(proj.Exprs) > 0)
 	child := proj.Children()[0]
@@ -780,7 +781,7 @@ func TestAllocID(t *testing.T) {
 func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch v := p.(type) {
-	case *DataSource, *LogicalUnionAll, *LogicalLimit:
+	case *DataSource, *LogicalUnionAll, *logicalop.LogicalLimit:
 		testdata.OnRecord(func() {
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
@@ -802,7 +803,7 @@ func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string,
 func checkOrderByItems(p base.LogicalPlan, t *testing.T, colList *[]string, comment string) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch p := p.(type) {
-	case *LogicalSort:
+	case *logicalop.LogicalSort:
 		testdata.OnRecord(func() {
 			*colList = make([]string, len(p.ByItems))
 		})
@@ -1994,10 +1995,10 @@ func TestSkylinePruning(t *testing.T) {
 			switch v := lp.(type) {
 			case *DataSource:
 				ds = v
-			case *LogicalSort:
+			case *logicalop.LogicalSort:
 				byItems = v.ByItems
 				lp = lp.Children()[0]
-			case *LogicalProjection:
+			case *logicalop.LogicalProjection:
 				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
 					idx := v.Schema().ColumnIndex(col.Expr.(*expression.Column))
@@ -2113,7 +2114,7 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	require.NoError(t, err)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 	require.NoError(t, err)
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*logicalop.LogicalProjection)
 	require.True(t, ok)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok)
@@ -2140,7 +2141,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	require.NoError(t, err)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 	require.NoError(t, err)
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*logicalop.LogicalProjection)
 	require.True(t, ok)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok)

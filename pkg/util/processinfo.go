@@ -207,8 +207,6 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// GetAutoAnalyzeProcID returns processID for auto analyze
-	GetAutoAnalyzeProcID() uint64
 	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se any)
 	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.

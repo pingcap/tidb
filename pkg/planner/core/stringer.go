@@ -59,7 +59,7 @@ func needIncludeChildrenString(plan base.Plan) bool {
 
 func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
-	case *LogicalProjection:
+	case *logicalop.LogicalProjection:
 		strs = append(strs, "{"+x.FDs().String()+"}")
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
@@ -169,15 +169,15 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Apply{" + strings.Join(children, "->") + "}"
 	case *logicalop.LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
-	case *LogicalLimit, *PhysicalLimit:
+	case *logicalop.LogicalLimit, *PhysicalLimit:
 		str = "Limit"
 	case *PhysicalLock, *LogicalLock:
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *LogicalShow:
+	case *logicalop.LogicalShow:
 		str = "Show"
-		if pl := in.(*LogicalShow); pl.Extractor != nil {
+		if pl := in.(*logicalop.LogicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
 	case *PhysicalShow:
@@ -185,9 +185,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		if pl := in.(*PhysicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
-	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
+	case *logicalop.LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
-	case *LogicalSort, *PhysicalSort:
+	case *logicalop.LogicalSort, *PhysicalSort:
 		str = "Sort"
 	case *LogicalJoin:
 		last := len(idxs) - 1
@@ -212,7 +212,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = name + "{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
-	case *LogicalSequence:
+	case *logicalop.LogicalSequence:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -236,13 +236,13 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
-	case *LogicalProjection, *PhysicalProjection:
+	case *logicalop.LogicalProjection, *PhysicalProjection:
 		str = "Projection"
-	case *LogicalTopN:
+	case *logicalop.LogicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *PhysicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
-	case *LogicalTableDual, *PhysicalTableDual:
+	case *logicalop.LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
 		str = "HashAgg"
@@ -336,7 +336,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.SelectPlan != nil {
 			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
 		}
-	case *LogicalWindow:
+	case *logicalop.LogicalWindow:
 		buffer := bytes.NewBufferString("")
 		formatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
 		str = fmt.Sprintf("Window(%s)", buffer.String())

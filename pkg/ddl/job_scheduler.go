@@ -58,7 +58,6 @@ var (
 	// is a new DDL job.
 	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
-	localWorkerWaitingDuration  = 10 * time.Millisecond
 	schedulerLoopRetryInterval  = time.Second
 )
 
@@ -77,8 +76,6 @@ func (t jobType) String() string {
 		return "general"
 	case jobTypeReorg:
 		return "reorg"
-	case jobTypeLocal:
-		return "local"
 	}
 	return "unknown job type: " + strconv.Itoa(int(t))
 }
@@ -86,7 +83,6 @@ func (t jobType) String() string {
 const (
 	jobTypeGeneral jobType = iota
 	jobTypeReorg
-	jobTypeLocal
 )
 
 type ownerListener struct {
@@ -112,6 +108,7 @@ func (l *ownerListener) OnBecomeOwner() {
 		sessPool:       l.ddl.sessPool,
 		delRangeMgr:    l.ddl.delRangeMgr,
 	}
+	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
 }
 
@@ -243,21 +240,6 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 	}
 
 	return true, nil
-}
-
-// startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
-func (d *ddl) startLocalWorkerLoop() {
-	for {
-		select {
-		case <-d.ctx.Done():
-			return
-		case jobW, ok := <-d.localJobCh:
-			if !ok {
-				return
-			}
-			d.delivery2LocalWorker(d.localWorkerPool, jobW)
-		}
-	}
 }
 
 func (s *jobScheduler) scheduleLoop() {
@@ -465,51 +447,6 @@ func (s *jobScheduler) mustReloadSchemas() {
 	}
 }
 
-// delivery2LocalWorker runs the DDL job of v2 in local.
-// send the result to the error channels in the task.
-// delivery2Localworker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
-	job := jobW.Job
-	wk, err := pool.get()
-	if err != nil {
-		jobW.NotifyError(err)
-		return
-	}
-	for wk == nil {
-		select {
-		case <-d.ctx.Done():
-			return
-		case <-time.After(localWorkerWaitingDuration):
-		}
-		wk, err = pool.get()
-		if err != nil {
-			jobW.NotifyError(err)
-			return
-		}
-	}
-	d.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-		defer func() {
-			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
-		}()
-
-		for i := int64(0); i < variable.GetDDLErrorCountLimit(); i++ {
-			err = wk.HandleLocalDDLJob(d.ddlCtx, job)
-			// since local the job is not inserted into the ddl job queue, we need to add retry logic here.
-			if err == nil || !isRetryableError(err) {
-				break
-			}
-			logutil.DDLLogger().Info("handle local ddl job", zap.Int64("retry times", i), zap.Error(err))
-			time.Sleep(time.Second)
-		}
-		pool.put(wk)
-		if err != nil {
-			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
-		}
-		jobW.NotifyError(err)
-	})
-}
-
 // deliveryJob deliver the job to the worker to run it asynchronously.
 // the worker will run the job until it's finished, paused or another owner takes
 // over and finished it.
@@ -617,7 +554,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) 
 		}
 	})
 
-	failpoint.InjectCall("beforeWaitSchemaChanged", job)
+	failpoint.InjectCall("beforeWaitSchemaChanged", job, schemaVer)
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
@@ -627,17 +564,40 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) 
 	s.cleanMDLInfo(job, ownerID)
 	s.synced(job)
 
-	if RunInGoTest {
-		// s.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
-		s.mu.RLock()
-		s.mu.hook.OnSchemaStateChanged(schemaVer)
-		s.mu.RUnlock()
-	}
-
-	s.mu.RLock()
-	s.mu.hook.OnJobUpdated(job)
-	s.mu.RUnlock()
+	failpoint.InjectCall("onJobUpdated", job)
 	return nil
+}
+
+// cleanMDLInfo cleans metadata lock info.
+func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
+	if !variable.EnableMDL.Load() {
+		return
+	}
+	var sql string
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
+	} else {
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", job.ID, ownerID)
+	}
+	sctx, _ := s.sessPool.Get()
+	defer s.sessPool.Put(sctx)
+	se := sess.NewSession(sctx)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := se.Execute(s.schCtx, sql, "delete-mdl-info")
+	if err != nil {
+		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
+		return
+	}
+	// TODO we need clean it when version of JobStateRollbackDone is synced also.
+	if job.State == model.JobStateSynced && s.etcdCli != nil {
+		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
+		_, err = s.etcdCli.Delete(s.schCtx, path, clientv3.WithPrefix())
+		if err != nil {
+			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
+		}
+	}
 }
 
 func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
@@ -732,12 +692,6 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		return strconv.FormatInt(job.SchemaID, 10)
 	}
 	return strconv.FormatInt(job.TableID, 10)
-}
-
-func (w *worker) deleteDDLJob(job *model.Job) error {
-	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
-	_, err := w.sess.Execute(context.Background(), sql, "delete_job")
-	return errors.Trace(err)
 }
 
 func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {
