@@ -44,15 +44,13 @@ type Misspell struct {
 	IgnoreWords []string `mapstructure:"ignore-words"`
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	r := misspell.Replacer{
 		Replacements: misspell.DictMain,
 	}
 
 	// Figure out regional variations
-	settings := &Misspell{
-		Locale: "",
-	}
+	settings := &Misspell{}
 
 	if len(settings.IgnoreWords) != 0 {
 		r.RemoveRule(settings.IgnoreWords)

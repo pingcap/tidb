@@ -64,13 +64,13 @@ const (
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
-	k         byte        // datum kind.
-	decimal   uint16      // decimal can hold uint16 values.
-	length    uint32      // length can hold uint32 values.
-	i         int64       // i can hold int64 uint64 float64 values.
-	collation string      // collation hold the collation information for string value.
-	b         []byte      // b can hold string or []byte values.
-	x         interface{} // x hold all other types.
+	k         byte   // datum kind.
+	decimal   uint16 // decimal can hold uint16 values.
+	length    uint32 // length can hold uint32 values.
+	i         int64  // i can hold int64 uint64 float64 values.
+	collation string // collation hold the collation information for string value.
+	b         []byte // b can hold string or []byte values.
+	x         any    // x hold all other types.
 }
 
 // EmptyDatumSize is the size of empty datum.
@@ -279,12 +279,12 @@ func (d *Datum) SetBytesAsString(b []byte, collation string, length uint32) {
 }
 
 // GetInterface gets interface value.
-func (d *Datum) GetInterface() interface{} {
+func (d *Datum) GetInterface() any {
 	return d.x
 }
 
 // SetInterface sets interface to datum.
-func (d *Datum) SetInterface(x interface{}) {
+func (d *Datum) SetInterface(x any) {
 	d.k = KindInterface
 	d.x = x
 }
@@ -498,7 +498,7 @@ func (d Datum) String() string {
 }
 
 // GetValue gets the value of the datum of any kind.
-func (d *Datum) GetValue() interface{} {
+func (d *Datum) GetValue() any {
 	switch d.k {
 	case KindInt64:
 		return d.GetInt64()
@@ -532,7 +532,7 @@ func (d *Datum) GetValue() interface{} {
 }
 
 // SetValueWithDefaultCollation sets any kind of value.
-func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
+func (d *Datum) SetValueWithDefaultCollation(val any) {
 	switch x := val.(type) {
 	case nil:
 		d.SetNull()
@@ -580,7 +580,7 @@ func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
 }
 
 // SetValue sets any kind of value.
-func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
+func (d *Datum) SetValue(val any, tp *types.FieldType) {
 	switch x := val.(type) {
 	case nil:
 		d.SetNull()
@@ -1095,6 +1095,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, ctx Context, padZero boo
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
+		var needCalculateLen bool
 
 		// For  mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob(defined in tidb)
 		// and tinytext, text, mediumtext, longtext(not explicitly defined in tidb, corresponding to blob(s) in tidb) flen is the store length limit regardless of charset.
@@ -1126,25 +1127,29 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, ctx Context, padZero boo
 					s = truncateStr(s, truncateLen)
 				}
 			default:
-				characterLen = utf8.RuneCountInString(s)
-				if characterLen > flen {
-					// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
-					//    CREATE TABLE t (a char(0));
-					//    INSERT INTO t VALUES (``);
-					// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
-					//    SELECT 1, CAST(1234 AS CHAR(0));
-					// So truncateLen is not a suitable variable to determine to do truncate or not.
-					var runeCount int
-					var truncateLen int
-					for i := range s {
-						if runeCount == flen {
-							truncateLen = i
-							break
+				if len(s) > flen {
+					characterLen = utf8.RuneCountInString(s)
+					if characterLen > flen {
+						// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
+						//    CREATE TABLE t (a char(0));
+						//    INSERT INTO t VALUES (``);
+						// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
+						//    SELECT 1, CAST(1234 AS CHAR(0));
+						// So truncateLen is not a suitable variable to determine to do truncate or not.
+						var runeCount int
+						var truncateLen int
+						for i := range s {
+							if runeCount == flen {
+								truncateLen = i
+								break
+							}
+							runeCount++
 						}
-						runeCount++
+						overflowed = s[truncateLen:]
+						s = truncateStr(s, truncateLen)
+					} else {
+						needCalculateLen = true
 					}
-					overflowed = s[truncateLen:]
-					s = truncateStr(s, truncateLen)
 				}
 			}
 		} else if len(s) > flen {
@@ -1154,13 +1159,19 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, ctx Context, padZero boo
 		}
 
 		if len(overflowed) != 0 {
-			trimed := strings.TrimRight(overflowed, " \t\n\r")
-			if len(trimed) == 0 && !IsBinaryStr(tp) && IsTypeChar(tp.GetType()) {
+			trimmed := strings.TrimRight(overflowed, " \t\n\r")
+			if len(trimmed) == 0 && !IsBinaryStr(tp) && IsTypeChar(tp.GetType()) {
 				if tp.GetType() == mysql.TypeVarchar {
-					ctx.AppendWarning(ErrTruncated.GenWithStack("Data truncated, field len %d, data len %d", flen, characterLen))
+					if needCalculateLen {
+						characterLen = utf8.RuneCountInString(s)
+					}
+					ctx.AppendWarning(ErrTruncated.FastGen("Data truncated, field len %d, data len %d", flen, characterLen))
 				}
 			} else {
-				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+				if needCalculateLen {
+					characterLen = utf8.RuneCountInString(s)
+				}
+				err = ErrDataTooLong.FastGen("Data Too Long, field len %d, data len %d", flen, characterLen)
 			}
 		}
 
@@ -1515,7 +1526,7 @@ func ProduceDecWithSpecifiedTp(ctx Context, dec *MyDecimal, tp *FieldType) (_ *M
 			// select cast(111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if old != nil && dec.Compare(old) != 0 {
-			ctx.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", old))
+			ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", old))
 		}
 	}
 
@@ -2029,7 +2040,7 @@ func (d *Datum) ToHashKey() ([]byte, error) {
 // ToMysqlJSON is similar to convertToMysqlJSON, except the
 // latter parses from string, but the former uses it as primitive.
 func (d *Datum) ToMysqlJSON() (j BinaryJSON, err error) {
-	var in interface{}
+	var in any
 	switch d.Kind() {
 	case KindMysqlJSON:
 		j = d.GetMysqlJSON()
@@ -2130,9 +2141,9 @@ func invalidConv(d *Datum, tp byte) (Datum, error) {
 }
 
 // NewDatum creates a new Datum from an interface{}.
-func NewDatum(in interface{}) (d Datum) {
+func NewDatum(in any) (d Datum) {
 	switch x := in.(type) {
-	case []interface{}:
+	case []any:
 		d.SetValueWithDefaultCollation(MakeDatums(x...))
 	default:
 		d.SetValueWithDefaultCollation(in)
@@ -2237,7 +2248,7 @@ func NewMysqlSetDatum(e Set, collation string) (d Datum) {
 }
 
 // MakeDatums creates datum slice from interfaces.
-func MakeDatums(args ...interface{}) []Datum {
+func MakeDatums(args ...any) []Datum {
 	datums := make([]Datum, len(args))
 	for i, v := range args {
 		datums[i] = NewDatum(v)
@@ -2285,7 +2296,7 @@ func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
 
-var strBuilderPool = sync.Pool{New: func() interface{} { return &strings.Builder{} }}
+var strBuilderPool = sync.Pool{New: func() any { return &strings.Builder{} }}
 
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
@@ -2574,4 +2585,14 @@ func (d Datum) EstimatedMemUsage() int64 {
 		bytesConsumed += len(d.b)
 	}
 	return int64(bytesConsumed)
+}
+
+// DatumsContainNull return true if any value is null
+func DatumsContainNull(vals []Datum) bool {
+	for _, val := range vals {
+		if val.IsNull() {
+			return true
+		}
+	}
+	return false
 }

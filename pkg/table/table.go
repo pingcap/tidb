@@ -23,11 +23,16 @@ import (
 	"time"
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -114,30 +119,98 @@ var (
 // RecordIterFunc is used for low-level record iteration.
 type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more bool, err error)
 
+// commonMutateOpt is the common options for mutating a table.
+type commonMutateOpt struct {
+	Ctx context.Context
+}
+
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
-	CreateIdxOpt
+	commonMutateOpt
 	IsUpdate      bool
 	ReserveAutoID int
 }
 
+// NewAddRecordOpt creates a new AddRecordOpt with options.
+func NewAddRecordOpt(opts ...AddRecordOption) *AddRecordOpt {
+	opt := &AddRecordOpt{}
+	for _, o := range opts {
+		o.ApplyAddRecordOpt(opt)
+	}
+	return opt
+}
+
+// GetCreateIdxOpt creates a CreateIdxOpt.
+func (opt *AddRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
+	return &CreateIdxOpt{commonMutateOpt: opt.commonMutateOpt}
+}
+
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
 type AddRecordOption interface {
-	ApplyOn(*AddRecordOpt)
+	ApplyAddRecordOpt(*AddRecordOpt)
+}
+
+// UpdateRecordOpt contains the options will be used when updating a record.
+type UpdateRecordOpt struct {
+	commonMutateOpt
+}
+
+// NewUpdateRecordOpt creates a new UpdateRecordOpt with options.
+func NewUpdateRecordOpt(opts ...UpdateRecordOption) *UpdateRecordOpt {
+	opt := &UpdateRecordOpt{}
+	for _, o := range opts {
+		o.ApplyUpdateRecordOpt(opt)
+	}
+	return opt
+}
+
+// GetAddRecordOpt creates a AddRecordOpt.
+func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt}
+}
+
+// GetCreateIdxOpt creates a CreateIdxOpt.
+func (opt *UpdateRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
+	return &CreateIdxOpt{commonMutateOpt: opt.commonMutateOpt}
+}
+
+// UpdateRecordOption is defined for the UpdateRecord() method of the Table interface.
+type UpdateRecordOption interface {
+	ApplyUpdateRecordOpt(*UpdateRecordOpt)
+}
+
+// CommonMutateOptFunc is a function to provide common options for mutating a table.
+type CommonMutateOptFunc func(*commonMutateOpt)
+
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (f CommonMutateOptFunc) ApplyAddRecordOpt(opt *AddRecordOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// ApplyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (f CommonMutateOptFunc) ApplyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (f CommonMutateOptFunc) ApplyCreateIdxOpt(opt *CreateIdxOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// WithCtx returns a CommonMutateOptFunc.
+// This option is used to pass context.Context.
+func WithCtx(ctx context.Context) CommonMutateOptFunc {
+	return func(opt *commonMutateOpt) {
+		opt.Ctx = ctx
+	}
 }
 
 // WithReserveAutoIDHint tells the AddRecord operation to reserve a batch of auto ID in the stmtctx.
 type WithReserveAutoIDHint int
 
-// ApplyOn implements the AddRecordOption interface.
-func (n WithReserveAutoIDHint) ApplyOn(opt *AddRecordOpt) {
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (n WithReserveAutoIDHint) ApplyAddRecordOpt(opt *AddRecordOpt) {
 	opt.ReserveAutoID = int(n)
-}
-
-// ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc
-// can be passed as the optional argument to the table.AddRecord method.
-func (f CreateIdxOptFunc) ApplyOn(opt *AddRecordOpt) {
-	f(&opt.CreateIdxOpt)
 }
 
 // IsUpdate is a defined value for AddRecordOptFunc.
@@ -145,7 +218,7 @@ var IsUpdate AddRecordOption = isUpdate{}
 
 type isUpdate struct{}
 
-func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
+func (i isUpdate) ApplyAddRecordOpt(opt *AddRecordOpt) {
 	opt.IsUpdate = true
 }
 
@@ -171,6 +244,12 @@ type columnAPI interface {
 	FullHiddenColsAndVisibleCols() []*Column
 }
 
+// MutateContext is used to when mutating a table.
+type MutateContext = tbctx.MutateContext
+
+// AllocatorContext is used to provide context for method `table.Allocators`.
+type AllocatorContext = tbctx.AllocatorContext
+
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	columnAPI
@@ -179,22 +258,25 @@ type Table interface {
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
 
+	// WritableConstraint returns constraints of the table in writable states.
+	WritableConstraint() []*Constraint
+
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
 	// IndexPrefix returns the index key prefix.
 	IndexPrefix() kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
+	AddRecord(ctx MutateContext, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(ctx MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
 
 	// Allocators returns all allocators.
-	Allocators(ctx sessionctx.Context) autoid.Allocators
+	Allocators(ctx AllocatorContext) autoid.Allocators
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
@@ -206,13 +288,24 @@ type Table interface {
 	GetPartitionedTable() PartitionedTable
 }
 
+func getIncrementAndOffset(vars *variable.SessionVars) (int, int) {
+	increment := vars.AutoIncrementIncrement
+	offset := vars.AutoIncrementOffset
+	// When the value of auto_increment_offset is greater than that of auto_increment_increment,
+	// the value of auto_increment_offset is ignored.
+	// Ref https://dev.mysql.com/doc/refman/8.0/en/replication-options-source.html
+	if offset > increment {
+		offset = 1
+	}
+	return increment, offset
+}
+
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
 func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
 	defer r.End()
-	increment := sctx.GetSessionVars().AutoIncrementIncrement
-	offset := sctx.GetSessionVars().AutoIncrementOffset
-	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
+	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
+	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
 	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
@@ -222,18 +315,17 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
-func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
-	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
-	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
-	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
+	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
+	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
+	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
 	if err != nil {
 		return min, max, err
 	}
 	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
 	// signed and unsigned value can be unified as the unsigned handle.
-	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset)))
-	return nr, increment, nil
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment1), uint64(offset)))
+	return nr, int64(increment1), nil
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
@@ -249,11 +341,12 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
+	GetPartitionByRow(expression.EvalContext, []types.Datum) (PhysicalTable, error)
+	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
-	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
+	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -282,4 +375,27 @@ type CachedTable interface {
 	// 'exit' is a channel to tell the keep alive goroutine to exit.
 	// The result is sent to the 'wg' channel.
 	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
+}
+
+// CheckRowConstraint verify row check constraints.
+func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowToCheck chunk.Row) error {
+	for _, constraint := range constraints {
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
+		if err != nil {
+			return err
+		}
+		if ok == 0 && !isNull {
+			return ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
+		}
+	}
+	return nil
+}
+
+// CheckRowConstraintWithDatum verify row check constraints.
+// It is the same with `CheckRowConstraint` but receives a slice of `types.Datum` instead of `chunk.Row`.
+func CheckRowConstraintWithDatum(ctx exprctx.EvalContext, constraints []*Constraint, row []types.Datum) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	return CheckRowConstraint(ctx, constraints, chunk.MutRowFromDatums(row).ToRow())
 }

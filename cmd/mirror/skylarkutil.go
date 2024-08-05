@@ -51,7 +51,7 @@ func GetFunctionFromCall(call *syntax.CallExpr) string {
 	return fn
 }
 
-func downloadableArtifactsFromDepsBzl(in interface{}) (map[string]DownloadableArtifact, error) {
+func downloadableArtifactsFromDepsBzl(in any) (map[string]DownloadableArtifact, error) {
 	parsed, err := syntax.Parse("DEPS.bzl", in, 0)
 	if err != nil {
 		return nil, err

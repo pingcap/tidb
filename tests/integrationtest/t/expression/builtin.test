@@ -1560,3 +1560,21 @@ SELECT RELEASE_LOCK('test_lock1');
 SELECT RELEASE_LOCK('test_lock3');
 SELECT RELEASE_ALL_LOCKS();
 
+# Issue #49566
+drop table if exists t;
+create table t (col bit(37) NOT NULL);
+insert into t (col) values(x'05d3a46d88'), (x'04dba3570c'), (x'0ed284dfee'), (x'12657141bf');
+select hex(col), hex(reverse(col)) from t order by reverse(col);
+# Issue #50855
+drop table if exists t2;
+create table t2 (col bit(45) NOT NULL);
+insert into t2 (col) values (x'09a1441d083c');
+select hex(r) from (select REVERSE(col) as r from t2 group by REVERSE(col)) as t;
+select hex(r) from (select distinct REVERSE(col) as r from t2) as t;
+# Issue #50850
+drop table if exists t3;
+create table t3 (col1 double NOT NULL, col2 bit(8) NOT NULL);
+insert into t3 (col1, col2) values (2306.9705216860984, x'31'), (6779.239615471537, x'65'), (7601.530447792593, x'd5'), (7058.842877388801, x'a5'), (615.6011553350702, x'34'), (5613.036187642952, x'01'), (7047.649466854864, x'a6'), (8632.659024782468, x'5d'), (9546.629394674586, x'ff'), (2972.7118048537704, x'b1');
+select hex(r) as r0 from (select ELT(2, col1, col2) as r from t3 group by ELT(2, col1, col2)) as t order by r0;
+select hex(r) as r0 from (select distinct ELT(2, col1, col2) as r from t3) as t order by r0;
+drop table t, t2, t3;

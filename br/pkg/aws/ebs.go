@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -73,7 +74,11 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		}
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
+	tags := []*ec2.Tag{
+		ec2Tag("TiDBCluster-BR-Snapshot", "new"),
+	}
+
+	workerPool := util.NewWorkerPool(e.concurrency, "create snapshots")
 	for i := range backupInfo.TiKVComponent.Stores {
 		store := backupInfo.TiKVComponent.Stores[i]
 		volumes := store.Volumes
@@ -136,6 +141,12 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 				// Copy tags from source volume
 				createSnapshotInput.SetCopyTagsFromSource("volume")
+				createSnapshotInput.SetTagSpecifications([]*ec2.TagSpecification{
+					{
+						ResourceType: aws.String(ec2.ResourceTypeSnapshot),
+						Tags:         tags,
+					},
+				})
 				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
 
 				if err != nil {
@@ -241,6 +252,9 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 			if *s.State == ec2.SnapshotStateCompleted {
 				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
 				totalVolumeSize += *s.VolumeSize
+			} else if *s.State == ec2.SnapshotStateError {
+				log.Error("snapshot failed", zap.String("id", *s.SnapshotId), zap.String("error", utils.GetOrZero(s.StateMessage)))
+				return 0, errors.Errorf("snapshot %s failed", *s.SnapshotId)
 			} else {
 				log.Debug("snapshot creating...", zap.Stringer("snap", s))
 				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
@@ -264,7 +278,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 
 	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
-	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
+	workerPool := util.NewWorkerPool(e.concurrency, "delete snapshot")
 	for i := range pendingSnaps {
 		snapID := pendingSnaps[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
@@ -329,11 +343,6 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 // waitDataFSREnabled waits FSR for data volume snapshots are all enabled and also have enough credit balance
 func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) error {
-	// Record current time
-	start := time.Now()
-
-	//  get the maximum size of volumes, in GiB
-	var maxVolumeSize int64 = 0
 	resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapShotIDs})
 	if err != nil {
 		return errors.Trace(err)
@@ -342,25 +351,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		return errors.Errorf("specified snapshot [%s] is not found", *snapShotIDs[0])
 	}
 
-	for _, s := range resp.Snapshots {
-		if *s.VolumeSize > maxVolumeSize {
-			maxVolumeSize = *s.VolumeSize
-		}
-	}
-
-	// Calculate the time in minutes to fill 1.0 credit according to
-	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-fast-snapshot-restore.html#volume-creation-credits
-	// 5 minutes more is just for safe
-	fillElapsedTime := 60.0/(min(10, 1024.0/(float64)(maxVolumeSize))) + 5
-
-	// We have to sleep for at least fillElapsedTime minutes in order to make credits are filled to 1.0
-	// Let's heartbeat every 5 minutes
-	for time.Since(start) <= time.Duration(fillElapsedTime)*time.Minute {
-		log.Info("FSR enablement is ongoing, going to sleep for 5 minutes...")
-		time.Sleep(5 * time.Minute)
-	}
-
-	// Wait that all snapshot has enough fsr credit balance, it's very likely true since we have wait for long enough
+	// Wait that all snapshot has enough fsr credit balance
 	log.Info("Start check and wait all snapshots have enough fsr credit balance")
 
 	startIdx := 0
@@ -378,9 +369,8 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 				}
 				retryCount++
 			}
-			// Retry for both invalid calling and not enough fsr credit
-			// Cloudwatch by default flushes every 5 seconds. So, 20 seconds wait should be enough
-			time.Sleep(20 * time.Second)
+			// Retry for both invalid calling and not enough fsr credit at 3 minute intervals
+			time.Sleep(3 * time.Minute)
 		}
 	}
 
@@ -571,7 +561,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
+	workerPool := util.NewWorkerPool(e.concurrency, "create volume")
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
 		for j := range store.Volumes {
@@ -606,10 +596,12 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 					return errors.Errorf("specified snapshot [%s] is not found", oldVol.SnapshotID)
 				}
 
-				// Copy tags from source snapshots
+				// Copy tags from source snapshots, but avoid recursive tagging
 				for j := range resp.Snapshots[0].Tags {
-					tags = append(tags,
-						ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+					if !strings.HasPrefix(aws.StringValue(resp.Snapshots[0].Tags[j].Key), "snapshot/") {
+						tags = append(tags,
+							ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+					}
 				}
 
 				req.SetTagSpecifications([]*ec2.TagSpecification{
@@ -674,7 +666,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 
 	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
-	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
+	workerPool := util.NewWorkerPool(e.concurrency, "delete volume")
 	for i := range pendingVolumes {
 		volID := pendingVolumes[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {

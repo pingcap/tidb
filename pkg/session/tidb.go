@@ -25,12 +25,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -54,6 +56,9 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
+// Get or create the domain for store.
+// TODO decouple domain create from it, it's more clear to create domain explicitly
+// before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
@@ -75,19 +80,17 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	idxUsageSyncLease := GetIndexUsageSyncLease()
 	planReplayerGCLease := GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
-			zap.Stringer("stats lease", statisticLease),
-			zap.Stringer("index usage sync lease", idxUsageSyncLease))
+			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
 
-		var ddlInjector func(ddl.DDL) *schematracker.Checker
+		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}
@@ -136,11 +139,6 @@ var (
 	// statsLease is the time for reload stats table.
 	statsLease = int64(3 * time.Second)
 
-	// indexUsageSyncLease is the time for index usage synchronization.
-	// Because we have not completed GC and other functions, we set it to 0.
-	// TODO: Set indexUsageSyncLease to 60s.
-	indexUsageSyncLease = int64(0 * time.Second)
-
 	// planReplayerGCLease is the time for plan replayer gc.
 	planReplayerGCLease = int64(10 * time.Minute)
 )
@@ -176,16 +174,6 @@ func SetSchemaLease(lease time.Duration) {
 // SetStatsLease changes the default stats lease time for loading stats info.
 func SetStatsLease(lease time.Duration) {
 	atomic.StoreInt64(&statsLease, int64(lease))
-}
-
-// SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
-func SetIndexUsageSyncLease(lease time.Duration) {
-	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
-}
-
-// GetIndexUsageSyncLease returns the index usage sync lease time.
-func GetIndexUsageSyncLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
 }
 
 // SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
@@ -241,6 +229,9 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	failpoint.Inject("finishStmtError", func() {
+		failpoint.Return(errors.New("occur an error after finishStmt"))
+	})
 	sessVars := se.sessionVars
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.

@@ -119,9 +119,9 @@ func TestAbnormalSessionPool(t *testing.T) {
 	info.SetSessionManager(svr)
 
 	pool := domain.SysSessionPool()
-	failpoint.Enable("github.com/pingcap/tidb/pkg/domain/mockSessionPoolReturnError", "return")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/util/mockSessionPoolReturnError", "return")
 	se, err := pool.Get()
 	require.Error(t, err)
-	failpoint.Disable("github.com/pingcap/tidb/pkg/domain/mockSessionPoolReturnError")
+	failpoint.Disable("github.com/pingcap/tidb/pkg/util/mockSessionPoolReturnError")
 	require.Equal(t, svr.InternalSessionExists(se), false)
 }

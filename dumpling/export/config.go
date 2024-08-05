@@ -175,15 +175,16 @@ type Config struct {
 	TiDBMemQuotaQuery   uint64
 	FileSize            uint64
 	StatementSize       uint64
-	SessionParams       map[string]interface{}
+	SessionParams       map[string]any
 	Tables              DatabaseTables
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
 
-	Labels       prometheus.Labels       `json:"-"`
-	PromFactory  promutil.Factory        `json:"-"`
-	PromRegistry promutil.Registry       `json:"-"`
-	ExtStorage   storage.ExternalStorage `json:"-"`
+	Labels        prometheus.Labels       `json:"-"`
+	PromFactory   promutil.Factory        `json:"-"`
+	PromRegistry  promutil.Registry       `json:"-"`
+	ExtStorage    storage.ExternalStorage `json:"-"`
+	MinTLSVersion uint16                  `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
@@ -231,7 +232,7 @@ func DefaultConfig() *Config {
 		CsvDelimiter:             "\"",
 		CsvSeparator:             ",",
 		CsvLineTerminator:        "\r\n",
-		SessionParams:            make(map[string]interface{}),
+		SessionParams:            make(map[string]any),
 		OutputFileTemplate:       DefaultOutputFileTemplate,
 		PosAfterConnect:          false,
 		CollationCompatible:      LooseCollationCompatible,
@@ -276,10 +277,14 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	} else {
 		// Use TLS first.
 		driverCfg.AllowFallbackToPlaintext = true
+		minTLSVersion := uint16(tls.VersionTLS12)
+		if conf.MinTLSVersion != 0 {
+			minTLSVersion = conf.MinTLSVersion
+		}
 		/* #nosec G402 */
 		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS10,
+			MinVersion:         minTLSVersion,
 			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}
@@ -519,7 +524,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if conf.SessionParams == nil {
-		conf.SessionParams = make(map[string]interface{})
+		conf.SessionParams = make(map[string]any)
 	}
 
 	tablesList, err := flags.GetStringSlice(flagTablesList)
@@ -754,6 +759,7 @@ func buildTLSConfig(conf *Config) error {
 		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
 		util.WithCAContent(conf.Security.SSLCABytes),
 		util.WithCertAndKeyContent(conf.Security.SSLCertBytes, conf.Security.SSLKeyBytes),
+		util.WithMinTLSVersion(conf.MinTLSVersion),
 	)
 	if err != nil {
 		return errors.Trace(err)

@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +47,7 @@ func TestImplGroupZeroCost(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	rootGroup := memo.Convert2Group(logic)
@@ -72,7 +74,7 @@ func TestInitGroupSchema(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	g := memo.Convert2Group(logic)
@@ -97,7 +99,7 @@ func TestFillGroupStats(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	rootGroup := memo.Convert2Group(logic)
@@ -116,8 +118,8 @@ func TestPreparePossibleProperties(t *testing.T) {
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 
-	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandDataSource: {
+	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
+		pattern.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
 	})
@@ -131,10 +133,10 @@ func TestPreparePossibleProperties(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
-	logic, err = optimizer.onPhasePreprocessing(ctx, logic)
+	logic, err = optimizer.onPhasePreprocessing(ctx.GetPlanCtx(), logic)
 	require.NoError(t, err)
 
 	// collect the target columns: f, a
@@ -156,7 +158,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.True(t, ok)
 
 	group := memo.Convert2Group(agg)
-	require.NoError(t, optimizer.onPhaseExploration(ctx, group))
+	require.NoError(t, optimizer.onPhaseExploration(ctx.GetPlanCtx(), group))
 
 	// The memo looks like this:
 	// Group#0 Schema:[Column#13,test.t.f]
@@ -212,9 +214,9 @@ func TestAppliedRuleSet(t *testing.T) {
 	optimizer := NewOptimizer()
 
 	rule := fakeTransformation{}
-	rule.pattern = memo.NewPattern(memo.OperandProjection, memo.EngineAll)
-	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandProjection: {
+	rule.pattern = pattern.NewPattern(pattern.OperandProjection, pattern.EngineAll)
+	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
+		pattern.OperandProjection: {
 			&rule,
 		},
 	})
@@ -228,10 +230,10 @@ func TestAppliedRuleSet(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	group := memo.Convert2Group(logic)
-	require.NoError(t, optimizer.onPhaseExploration(ctx, group))
+	require.NoError(t, optimizer.onPhaseExploration(ctx.GetPlanCtx(), group))
 	require.Equal(t, 1, rule.appliedTimes)
 }

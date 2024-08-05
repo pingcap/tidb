@@ -22,9 +22,10 @@ import (
 	"strconv"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -53,7 +54,7 @@ func (s *mockGCSSuite) TestSplitFile() {
 	})
 	// split into 3 engines(subtasks)
 	importSQL := fmt.Sprintf(`import into split_file.t FROM 'gs://split-file/1.csv?endpoint=%s'
-		with split_file, __max_engine_size = '1'`, gcsEndpoint)
+		with split_file, lines_terminated_by = '\n', __max_engine_size = '1'`, gcsEndpoint)
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
@@ -65,7 +66,7 @@ func (s *mockGCSSuite) TestSplitFile() {
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 
-	subtasks, err2 := taskManager.GetSubtasksForImportInto(ctx, task.ID, importinto.StepImport)
+	subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
 	s.NoError(err2)
 	s.Len(subtasks, 3)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
@@ -73,7 +74,18 @@ func (s *mockGCSSuite) TestSplitFile() {
 	// skip 1 row
 	s.tk.MustExec("truncate table t")
 	importSQL = fmt.Sprintf(`import into split_file.t FROM 'gs://split-file/1.csv?endpoint=%s'
-		with split_file, skip_rows = 1, __max_engine_size = '1'`, gcsEndpoint)
+		with split_file, lines_terminated_by = '\n', skip_rows = 1, __max_engine_size = '1'`, gcsEndpoint)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData[1:]...))
+
+	s.tk.MustExec("create table t2 (a int primary key nonclustered, b varchar(100));")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "split-file", Name: "2.csv"},
+		Content:     []byte("1,2\r\n3,4\r\n5,6\r\n7,8\r\n9,10\r\n"),
+	})
+	config.MaxRegionSize = 9
+	importSQL = fmt.Sprintf(`import into split_file.t2 FROM 'gs://split-file/2.csv?endpoint=%s'
+		with split_file, lines_terminated_by='\r\n'`, gcsEndpoint)
+	s.tk.MustQuery(importSQL)
+	s.tk.MustExec("admin check table t2")
 }

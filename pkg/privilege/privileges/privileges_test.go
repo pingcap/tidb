@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
@@ -726,7 +726,7 @@ func TestShowCreateTable(t *testing.T) {
 	// should fail
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil, nil))
 	err := tk.ExecToErr(`SHOW CREATE TABLE mysql.user`)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 
 	// should pass
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil, nil))
@@ -750,7 +750,7 @@ func TestAnalyzeTable(t *testing.T) {
 	// low privileged user
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil, nil))
 	err := tk.ExecToErr("analyze table t1")
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	require.EqualError(t, err, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 
 	err = tk.ExecToErr("select * from t1")
@@ -761,7 +761,7 @@ func TestAnalyzeTable(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON atest.* TO 'anobody'")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil, nil))
 	err = tk.ExecToErr("analyze table t1")
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	require.EqualError(t, err, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 	// Add INSERT privilege and it should work.
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil, nil))
@@ -788,22 +788,22 @@ func TestSystemSchema(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "denied to user"))
 	err = tk.ExecToErr("update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
 
 	// Test metric_schema.
 	tk.MustExec(`select * from metrics_schema.tidb_query_duration`)
 	err = tk.ExecToErr("drop table metrics_schema.tidb_query_duration")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	err = tk.ExecToErr("update metrics_schema.tidb_query_duration set instance = 'tst'")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
 	err = tk.ExecToErr("delete from metrics_schema.tidb_query_duration")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	err = tk.ExecToErr("create table metric_schema.t(a int)")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 
 	tk.MustGetErrCode("create table metrics_schema.t (id int);", errno.ErrTableaccessDenied)
 	tk.MustGetErrCode("create table performance_schema.t (id int);", errno.ErrTableaccessDenied)
@@ -819,7 +819,7 @@ func TestPerformanceSchema(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
 	err := tk.ExecToErr("select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT SELECT ON *.* TO 'u1'@'localhost';`)
@@ -829,16 +829,16 @@ func TestPerformanceSchema(t *testing.T) {
 	tk.MustExec(`select * from performance_schema.events_statements_summary_by_digest`)
 	err = tk.ExecToErr("drop table performance_schema.events_statements_summary_by_digest")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	err = tk.ExecToErr("update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
 	err = tk.ExecToErr("delete from performance_schema.events_statements_summary_by_digest")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 	err = tk.ExecToErr("create table performance_schema.t(a int)")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 }
 
 func TestMetricsSchema(t *testing.T) {
@@ -881,7 +881,7 @@ func TestMetricsSchema(t *testing.T) {
 			"nobody",
 			func(err error) {
 				require.Error(t, err)
-				require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+				require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 			},
 		},
 		{
@@ -905,7 +905,7 @@ func TestMetricsSchema(t *testing.T) {
 			"nobody",
 			func(err error) {
 				require.Error(t, err)
-				require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+				require.True(t, terror.ErrorEqual(err, plannererrors.ErrSpecificAccessDenied))
 			},
 		},
 		{
@@ -921,7 +921,7 @@ func TestMetricsSchema(t *testing.T) {
 			"nobody",
 			func(err error) {
 				require.Error(t, err)
-				require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+				require.True(t, terror.ErrorEqual(err, plannererrors.ErrSpecificAccessDenied))
 			},
 		},
 		{
@@ -964,10 +964,10 @@ func TestAdminCommand(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil, nil))
 	err := tk.ExecToErr("ADMIN SHOW DDL JOBS")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
 	err = tk.ExecToErr("ADMIN CHECK TABLE t")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPrivilegeCheckFail))
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("ADMIN SHOW DDL JOBS")
@@ -998,7 +998,7 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
@@ -1011,7 +1011,7 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' REPLACE INTO TABLE t_load")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 }
 
 func TestAuthHost(t *testing.T) {
@@ -1323,7 +1323,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
 
 	tk.MustQuery(`SELECT @@global.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
-	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("0"))
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))
 	sem.Disable()

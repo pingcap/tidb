@@ -10,7 +10,6 @@ go_library(
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
-        "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//util",

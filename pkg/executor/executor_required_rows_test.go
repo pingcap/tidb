@@ -51,11 +51,11 @@ type requiredRowsDataSource struct {
 	expectedRowsRet []int
 	numNextCalled   int
 
-	generator func(valType *types.FieldType) interface{}
+	generator func(valType *types.FieldType) any
 }
 
 func newRequiredRowsDataSourceWithGenerator(ctx sessionctx.Context, totalRows int, expectedRowsRet []int,
-	gen func(valType *types.FieldType) interface{}) *requiredRowsDataSource {
+	gen func(valType *types.FieldType) any) *requiredRowsDataSource {
 	ds := newRequiredRowsDataSource(ctx, totalRows, expectedRowsRet)
 	ds.generator = gen
 	return ds
@@ -107,7 +107,7 @@ func (r *requiredRowsDataSource) genOneRow() chunk.Row {
 	return row.ToRow()
 }
 
-func defaultGenerator(valType *types.FieldType) interface{} {
+func defaultGenerator(valType *types.FieldType) any {
 	switch valType.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -393,15 +393,16 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 		ExecSchema:   src.Schema(),
 	}
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		SortExec:    sortExec,
+		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Concurrency: 5,
 	}
 }
 
 func TestSelectionRequiredRows(t *testing.T) {
-	gen01 := func() func(valType *types.FieldType) interface{} {
+	gen01 := func() func(valType *types.FieldType) any {
 		closureCount := 0
-		return func(valType *types.FieldType) interface{} {
+		return func(valType *types.FieldType) any {
 			switch valType.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				ret := int64(closureCount % 2)
@@ -422,7 +423,7 @@ func TestSelectionRequiredRows(t *testing.T) {
 		requiredRows   []int
 		expectedRows   []int
 		expectedRowsDS []int
-		gen            func(valType *types.FieldType) interface{}
+		gen            func(valType *types.FieldType) any
 	}{
 		{
 			totalRows:      20,
@@ -459,7 +460,7 @@ func TestSelectionRequiredRows(t *testing.T) {
 		} else {
 			ds = newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
 			f, err := expression.NewFunction(
-				sctx, ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
+				sctx.GetExprCtx(), ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
 					Value:   types.NewDatum(testCase.filtersOfCol1),
 					RetType: types.NewFieldType(mysql.TypeTiny),
 				})
@@ -481,8 +482,9 @@ func TestSelectionRequiredRows(t *testing.T) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
 	return &SelectionExec{
-		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		filters:      filters,
+		selectionExecutorContext: newSelectionExecutorContext(ctx),
+		BaseExecutorV2:           exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		filters:                  filters,
 	}
 }
 
@@ -599,16 +601,17 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
 	return &ProjectionExec{
-		BaseExecutor:  exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		numWorkers:    int64(numWorkers),
-		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		projectionExecutorContext: newProjectionExecutorContext(ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		numWorkers:                int64(numWorkers),
+		evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
 	}
 }
 
-func divGenerator(factor int) func(valType *types.FieldType) interface{} {
+func divGenerator(factor int) func(valType *types.FieldType) any {
 	closureCountInt := 0
 	closureCountDouble := 0
-	return func(valType *types.FieldType) interface{} {
+	return func(valType *types.FieldType) any {
 		switch valType.GetType() {
 		case mysql.TypeLong, mysql.TypeLonglong:
 			ret := int64(closureCountInt / factor)
@@ -632,7 +635,7 @@ func TestStreamAggRequiredRows(t *testing.T) {
 		requiredRows   []int
 		expectedRows   []int
 		expectedRowsDS []int
-		gen            func(valType *types.FieldType) interface{}
+		gen            func(valType *types.FieldType) any
 	}{
 		{
 			totalRows:      1000000,
@@ -667,7 +670,7 @@ func TestStreamAggRequiredRows(t *testing.T) {
 		childCols := ds.Schema().Columns
 		schema := expression.NewSchema(childCols...)
 		groupBy := []expression.Expression{childCols[1]}
-		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		aggFunc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), testCase.aggFunc, []expression.Expression{childCols[0]}, true)
 		require.NoError(t, err)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 		executor := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)
@@ -684,7 +687,7 @@ func TestStreamAggRequiredRows(t *testing.T) {
 }
 
 func TestMergeJoinRequiredRows(t *testing.T) {
-	justReturn1 := func(valType *types.FieldType) interface{} {
+	justReturn1 := func(valType *types.FieldType) any {
 		switch valType.GetType() {
 		case mysql.TypeLong, mysql.TypeLonglong:
 			return int64(1)
@@ -724,7 +727,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	innerCols := innerSrc.Schema().Columns
 	outerCols := outerSrc.Schema().Columns
-	j := plannercore.BuildMergeJoinPlan(ctx, joinType, outerCols, innerCols)
+	j := plannercore.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
 	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
@@ -733,10 +736,10 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftJoinKeys))
 	for i := range j.LeftJoinKeys {
-		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(ctx, nil)
 	return b.build(j)
 }
 

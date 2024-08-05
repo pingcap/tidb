@@ -29,6 +29,17 @@ func isIdentExtend(ch byte) bool {
 	return ch >= 0x80
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func isInCorrectIdentifierName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
+}
+
 // Initialize a lookup table for isUserVarChar
 var isUserVarCharTable [256]bool
 
@@ -275,6 +286,15 @@ var tokenMap = map[string]int{
 	"CSV_NULL":                 csvNull,
 	"CSV_SEPARATOR":            csvSeparator,
 	"CSV_TRIM_LAST_SEPARATORS": csvTrimLastSeparators,
+	"WAIT_TIFLASH_READY":       waitTiflashReady,
+	"WITH_SYS_TABLE":           withSysTable,
+	"IGNORE_STATS":             ignoreStats,
+	"LOAD_STATS":               loadStats,
+	"CHECKSUM_CONCURRENCY":     checksumConcurrency,
+	"COMPRESSION_LEVEL":        compressionLevel,
+	"COMPRESSION_TYPE":         compressionType,
+	"ENCRYPTION_METHOD":        encryptionMethod,
+	"ENCRYPTION_KEYFILE":       encryptionKeyFile,
 	"CURDATE":                  curDate,
 	"CURRENT_DATE":             currentDate,
 	"CURRENT_ROLE":             currentRole,
@@ -492,7 +512,6 @@ var tokenMap = map[string]int{
 	"LOCAL":                    local,
 	"LOCALTIME":                localTime,
 	"LOCALTIMESTAMP":           localTs,
-	"LOCAL_ONLY":               local_only,
 	"LOCATION":                 location,
 	"LOCK":                     lock,
 	"LOCKED":                   locked,
@@ -789,8 +808,6 @@ var tokenMap = map[string]int{
 	"TABLES":                   tables,
 	"TABLESAMPLE":              tableSample,
 	"TABLESPACE":               tablespace,
-	"TELEMETRY":                telemetry,
-	"TELEMETRY_ID":             telemetryID,
 	"TEMPORARY":                temporary,
 	"TEMPTABLE":                temptable,
 	"TERMINATED":               terminated,
@@ -844,11 +861,11 @@ var tokenMap = map[string]int{
 	"UNDEFINED":                undefined,
 	"UNICODE":                  unicodeSym,
 	"UNION":                    union,
-	"UNIVERSAL":                universal,
 	"UNIQUE":                   unique,
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
 	"UNLIMITED":                unlimited,
+	"UNSET":                    unset,
 	"UNSIGNED":                 unsigned,
 	"UNTIL":                    until,
 	"UNTIL_TS":                 untilTS,
@@ -871,6 +888,7 @@ var tokenMap = map[string]int{
 	"VARIABLES":                variables,
 	"VARIANCE":                 varPop,
 	"VARYING":                  varying,
+	"VECTOR":                   vectorType,
 	"VERBOSE":                  verboseType,
 	"VOTER":                    voter,
 	"VOTER_CONSTRAINTS":        voterConstraints,
@@ -1007,6 +1025,7 @@ var hintTokenMap = map[string]int{
 	"SET_VAR":               hintSetVar,
 	"RESOURCE_GROUP":        hintResourceGroup,
 	"QB_NAME":               hintQBName,
+	"HYPO_INDEX":            hintHypoIndex,
 
 	// TiDB hint names
 	"AGG_TO_COP":              hintAggToCop,

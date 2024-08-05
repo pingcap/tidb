@@ -14,7 +14,7 @@ func SetUnit(unit string) {
 }
 
 // CollectSuccessUnit collects success time costs.
-func CollectSuccessUnit(name string, unitCount int, arg interface{}) {
+func CollectSuccessUnit(name string, unitCount int, arg any) {
 	collector.CollectSuccessUnit(name, unitCount, arg)
 }
 

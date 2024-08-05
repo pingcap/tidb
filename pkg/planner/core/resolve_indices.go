@@ -95,7 +95,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 		p.RightJoinKeys[i] = rArg.(*expression.Column)
-		p.EqualConditions[i] = expression.NewFunctionInternal(ctx, fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+		p.EqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, fun := range p.NAEqualConditions {
 		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
@@ -108,7 +108,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
-		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx, fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
 		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
@@ -142,26 +142,33 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	copy(shallowColSlice, p.schema.Columns)
 	p.schema = expression.NewSchema(shallowColSlice...)
 	foundCnt := 0
-	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
-	// So we can just move forward j if there's no matching is found.
-	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
-	//   e.g. The schema of child_0 is [col0, col0, col1]
-	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
-	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) {
-			j++
-			continue
+
+	// Here we want to resolve all join schema columns directly as a merged schema, and you know same name
+	// col in join schema should be separately redirected to corresponded same col in child schema. But two
+	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
+	// we are using mapping mechanism instead of moving j forward.
+	marked := make([]bool, mergedSchema.Len())
+	for i := 0; i < colsNeedResolving; i++ {
+		findIdx := -1
+		for j := 0; j < len(mergedSchema.Columns); j++ {
+			if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
+				continue
+			}
+			// resolve to a same unique id one, and it not being marked.
+			findIdx = j
+			break
 		}
-		p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
-		p.schema.Columns[i].Index = j
-		i++
-		j++
-		foundCnt++
+		if findIdx != -1 {
+			// valid one.
+			p.schema.Columns[i] = p.schema.Columns[i].Clone().(*expression.Column)
+			p.schema.Columns[i].Index = findIdx
+			marked[findIdx] = true
+			foundCnt++
+		}
 	}
 	if foundCnt < colsNeedResolving {
 		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
 	}
-
 	return
 }
 
@@ -405,7 +412,7 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
 			sctx := p.SCtx()
-			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx, p.indexPlan.Schema())
+			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx().GetEvalCtx(), p.indexPlan.Schema())
 			if isOK {
 				p.OutputColumns[i] = newExprCol.(*expression.Column)
 				continue
@@ -485,7 +492,7 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 		p.Conditions[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
-			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx(), p.children[0].Schema())
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.children[0].Schema())
 			if isOk {
 				p.Conditions[i] = newCond
 				continue

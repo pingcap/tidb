@@ -22,9 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 )
+
+var _ helper.Storage = &mockStorage{}
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
 type mockStorage struct {
@@ -80,7 +83,7 @@ func (s *mockStorage) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
 }
 
 // ShowStatus returns the specified status of the storage
-func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (any, error) {
 	return nil, kv.ErrNotImplemented
 }
 

@@ -16,12 +16,15 @@ package ranger
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"regexp"
 	"slices"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -29,26 +32,25 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
-func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
-	sc := sctx.GetSessionVars().StmtCtx
-	l, err := codec.EncodeKey(sc.TimeZone(), nil, low.value)
-	err = sc.HandleError(err)
+func validInterval(ec errctx.Context, loc *time.Location, low, high *point) (bool, error) {
+	l, err := codec.EncodeKey(loc, nil, low.value)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if low.excl {
 		l = kv.Key(l).PrefixNext()
 	}
-	r, err := codec.EncodeKey(sc.TimeZone(), nil, high.value)
-	err = sc.HandleError(err)
+	r, err := codec.EncodeKey(loc, nil, high.value)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -60,7 +62,7 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 
 // convertPoints does some preprocessing on rangePoints to make them ready to build ranges. Preprocessing includes converting
 // points to the specified type, validating intervals and skipping impossible intervals.
-func convertPoints(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
+func convertPoints(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
 	i := 0
 	numPoints := len(rangePoints)
 	var minValueDatum, maxValueDatum types.Datum
@@ -100,7 +102,7 @@ func convertPoints(sctx sessionctx.Context, rangePoints []*point, newTp *types.F
 		if skipNull && endPoint.value.Kind() == types.KindNull {
 			continue
 		}
-		less, err := validInterval(sctx, startPoint, endPoint)
+		less, err := validInterval(sctx.ErrCtx, sctx.TypeCtx.Location(), startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -124,7 +126,7 @@ func estimateMemUsageForPoints2Ranges(rangePoints []*point) int64 {
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2Ranges(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
 	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, mysql.HasNotNullFlag(newTp.GetFlag()), false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -154,27 +156,27 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, newTp *types.F
 	return ranges, false, nil
 }
 
-func convertPoint(sctx sessionctx.Context, point *point, newTp *types.FieldType) (*point, error) {
-	sc := sctx.GetSessionVars().StmtCtx
+func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.FieldType) (*point, error) {
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
 	}
-	casted, err := point.value.ConvertTo(sc.TypeCtx(), newTp)
+	casted, err := point.value.ConvertTo(sctx.TypeCtx, newTp)
 	if err != nil {
-		if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
+		if sctx.InPreparedPlanBuilding {
 			// skip plan cache in this case for safety.
-			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("%s when converting %v", err.Error(), point.value))
+			sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
 		}
 		//revive:disable:empty-block
 		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
 		} else if newTp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if newTp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
-			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
+		} else if (newTp.GetType() == mysql.TypeNewDecimal || mysql.IsIntegerType(newTp.GetType()) || newTp.GetType() == mysql.TypeFloat) && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal/TypeTiny/TypeShort/TypeInt24/TypeLong/TypeLonglong/TypeFloat values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+			// tests in TestIndexRange/TestIndexRangeForDecimal
 		} else if point.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
 			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
@@ -198,7 +200,7 @@ func convertPoint(sctx sessionctx.Context, point *point, newTp *types.FieldType)
 		}
 		//revive:enable:empty-block
 	}
-	valCmpCasted, err := point.value.Compare(sc.TypeCtx(), &casted, collate.GetCollator(newTp.GetCollate()))
+	valCmpCasted, err := point.value.Compare(sctx.TypeCtx, &casted, collate.GetCollator(newTp.GetCollate()))
 	if err != nil {
 		return point, errors.Trace(err)
 	}
@@ -271,7 +273,7 @@ func estimateMemUsageForAppendPoints2Ranges(origin Ranges, rangePoints []*point)
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges after appending points exceeds
 // rangeMaxSize and the function rejects appending points to ranges.
-func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*point,
+func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoints []*point,
 	newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
 	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, false, false)
 	if err != nil {
@@ -384,7 +386,7 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
 	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, true, true)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -410,7 +412,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, newTp *ty
 // buildColumnRange builds range from CNF conditions.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
-func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
+func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	rb := builder{sctx: sctx}
 	newTp := newFieldType(tp)
@@ -437,7 +439,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		return nil, nil, nil, errors.Trace(err)
 	}
 	if rangeFallback {
-		sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
+		sctx.RecordRangeFallback(rangeMaxSize)
 		return ranges, nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
@@ -455,7 +457,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
-func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType,
+func BuildTableRange(accessConditions []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType,
 	rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMaxSize)
 }
@@ -466,7 +468,7 @@ func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.C
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
-func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int,
+func BuildColumnRange(conds []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType, colLen int,
 	rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	if len(conds) == 0 {
 		return FullRange(), nil, nil, nil
@@ -488,7 +490,10 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
-		tmpNewTp := convertStringFTToBinaryCollate(newTp[i])
+		tmpNewTp := newTp[i]
+		if d.convertToSortKey {
+			tmpNewTp = convertStringFTToBinaryCollate(tmpNewTp)
+		}
 		if i == 0 {
 			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
 		} else {
@@ -498,7 +503,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 			return nil, nil, nil, errors.Trace(err)
 		}
 		if rangeFallback {
-			d.sctx.GetSessionVars().StmtCtx.RecordRangeFallback(d.rangeMaxSize)
+			d.sctx.RecordRangeFallback(d.rangeMaxSize)
 			return ranges, accessConds[:i], accessConds[i:], nil
 		}
 	}
@@ -531,7 +536,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		return nil, nil, nil, errors.Trace(err)
 	}
 	if rangeFallback {
-		d.sctx.GetSessionVars().StmtCtx.RecordRangeFallback(d.rangeMaxSize)
+		d.sctx.RecordRangeFallback(d.rangeMaxSize)
 		return ranges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}
 	return ranges, accessConds, nil, nil
@@ -578,23 +583,22 @@ type sortRange struct {
 // For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
 // And this two can be merged as [a, max(b, d)].
 // Otherwise they aren't overlapped.
-func UnionRanges(sctx sessionctx.Context, ranges Ranges, mergeConsecutive bool) (Ranges, error) {
-	sc := sctx.GetSessionVars().StmtCtx
+func UnionRanges(sctx *rangerctx.RangerContext, ranges Ranges, mergeConsecutive bool) (Ranges, error) {
 	if len(ranges) == 0 {
 		return nil, nil
 	}
 	objects := make([]*sortRange, 0, len(ranges))
 	for _, ran := range ranges {
-		left, err := codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal...)
-		err = sc.HandleError(err)
+		left, err := codec.EncodeKey(sctx.TypeCtx.Location(), nil, ran.LowVal...)
+		err = sctx.ErrCtx.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if ran.LowExclude {
 			left = kv.Key(left).PrefixNext()
 		}
-		right, err := codec.EncodeKey(sc.TimeZone(), nil, ran.HighVal...)
-		err = sc.HandleError(err)
+		right, err := codec.EncodeKey(sctx.TypeCtx.Location(), nil, ran.HighVal...)
+		err = sctx.ErrCtx.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -725,10 +729,10 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 // 'points'. `col` is the target column to construct the Equal or In condition.
 // NOTE:
 // 1. 'points' should not be empty.
-func points2EqOrInCond(ctx sessionctx.Context, points []*point, col *expression.Column) expression.Expression {
+func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	// Constant and Column args should have same RetType, simply get from first arg
-	retType := col.GetType()
+	retType := col.GetType(ctx.GetEvalCtx())
 	args := make([]expression.Expression, 0, len(points)/2)
 	args = append(args, col)
 	for i := 0; i < len(points); i = i + 2 {
@@ -742,7 +746,7 @@ func points2EqOrInCond(ctx sessionctx.Context, points []*point, col *expression.
 	if len(args) > 2 {
 		funcName = ast.In
 	}
-	return expression.NewFunctionInternal(ctx, funcName, col.GetType(), args...)
+	return expression.NewFunctionInternal(ctx, funcName, col.GetType(ctx.GetEvalCtx()), args...)
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.

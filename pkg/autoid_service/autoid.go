@@ -73,14 +73,14 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 	// calcNeededBatchSize calculates the total batch size needed.
 	n1 := calcNeededBatchSize(alloc.base, int64(n), increment, offset, isUnsigned)
 
-	// The local rest is not enough for alloc, skip it.
+	// The local rest is not enough for alloc.
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) || alloc.base == 0 {
 		var newBase, newEnd int64
 		nextStep := int64(batch)
-		// Although it may skip a segment here, we still treat it as consumed.
+		fromBase := alloc.base
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
@@ -88,7 +88,12 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 				return err1
 			}
 			// calcNeededBatchSize calculates the total batch size needed on new base.
-			n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
+			if alloc.base == 0 || newBase != alloc.end {
+				alloc.base = newBase
+				alloc.end = newBase
+				n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
+			}
+
 			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
 			if nextStep < n1 {
 				nextStep = n1
@@ -107,7 +112,15 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 		if uint64(newBase) == math.MaxUint64 {
 			return 0, 0, errAutoincReadFailed
 		}
-		alloc.base, alloc.end = newBase, newEnd
+		logutil.BgLogger().Info("alloc4Unsigned from",
+			zap.String("category", "autoid service"),
+			zap.Int64("dbID", dbID),
+			zap.Int64("tblID", tblID),
+			zap.Int64("from base", fromBase),
+			zap.Int64("from end", alloc.end),
+			zap.Int64("to base", newBase),
+			zap.Int64("to end", newEnd))
+		alloc.end = newEnd
 	}
 	min = alloc.base
 	// Use uint64 n directly.
@@ -134,14 +147,15 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		return 0, 0, errAutoincReadFailed
 	}
 
-	// The local rest is not enough for allocN, skip it.
+	// The local rest is not enough for allocN.
 	// If alloc.base is 0, the alloc may not be initialized, force fetch from remote.
 	if alloc.base+n1 > alloc.end || alloc.base == 0 {
 		var newBase, newEnd int64
 		nextStep := int64(batch)
+		fromBase := alloc.base
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
@@ -149,7 +163,13 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 				return err1
 			}
 			// calcNeededBatchSize calculates the total batch size needed on global base.
-			n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
+			// alloc.base == 0 means uninitialized
+			// newBase != alloc.end means something abnormal, maybe transaction conflict and retry?
+			if alloc.base == 0 || newBase != alloc.end {
+				alloc.base = newBase
+				alloc.end = newBase
+				n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
+			}
 			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
 			if nextStep < n1 {
 				nextStep = n1
@@ -168,7 +188,15 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		if newBase == math.MaxInt64 {
 			return 0, 0, errAutoincReadFailed
 		}
-		alloc.base, alloc.end = newBase, newEnd
+		logutil.BgLogger().Info("alloc4Signed from",
+			zap.String("category", "autoid service"),
+			zap.Int64("dbID", dbID),
+			zap.Int64("tblID", tblID),
+			zap.Int64("from base", fromBase),
+			zap.Int64("from end", alloc.end),
+			zap.Int64("to base", newBase),
+			zap.Int64("to end", newEnd))
+		alloc.end = newEnd
 	}
 	min = alloc.base
 	alloc.base += n1
@@ -184,7 +212,7 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 		return nil
 	}
 	// Satisfied by alloc.end, need to update alloc.base.
-	if requiredBase <= uint64(alloc.end) {
+	if requiredBase > uint64(alloc.base) && requiredBase <= uint64(alloc.end) {
 		alloc.base = int64(requiredBase)
 		return nil
 	}
@@ -193,7 +221,7 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 	var oldValue int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -227,7 +255,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 		return nil
 	}
 	// Satisfied by alloc.end, need to update alloc.base.
-	if requiredBase <= alloc.end {
+	if requiredBase > alloc.base && requiredBase <= alloc.end {
 		alloc.base = requiredBase
 		return nil
 	}
@@ -235,7 +263,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	var oldValue, newBase, newEnd int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -301,10 +329,14 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 
 func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
-	l.SetBeOwnerHook(func() {
-		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
-			zap.String("addr", selfAddr),
-			zap.String("category", "autoid service"))
+	service := &Service{
+		autoIDMap:  make(map[autoIDKey]*autoIDValue),
+		leaderShip: l,
+		store:      store,
+	}
+	l.SetListener(&ownerListener{
+		Service:  service,
+		selfAddr: selfAddr,
 	})
 	// 10 means that autoid service's etcd lease is 10s.
 	err := l.CampaignOwner(10)
@@ -312,11 +344,7 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 		panic(err)
 	}
 
-	return &Service{
-		autoIDMap:  make(map[autoIDKey]*autoIDValue),
-		leaderShip: l,
-		store:      store,
-	}
+	return service
 }
 
 type mockClient struct {
@@ -353,18 +381,6 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
 	if s.leaderShip != nil && s.leaderShip.IsOwner() {
-		for k, v := range s.autoIDMap {
-			if v.base > 0 {
-				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
-				if err != nil {
-					logutil.BgLogger().Warn("save cached ID fail when service exit", zap.String("category", "autoid service"),
-						zap.Int64("db id", k.dbID),
-						zap.Int64("table id", k.tblID),
-						zap.Int64("value", v.base),
-						zap.Error(err))
-				}
-			}
-		}
 		s.leaderShip.Cancel()
 	}
 }
@@ -453,6 +469,8 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	})
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
+	val.Lock()
+	defer val.Unlock()
 
 	if req.N == 0 {
 		if val.base != 0 {
@@ -464,13 +482,14 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		// This item is not initialized, get the data from remote.
 		var currentEnd int64
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, s.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(req.DbID, req.TblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			currentEnd, err1 = idAcc.Get()
 			if err1 != nil {
 				return err1
 			}
+			val.base = currentEnd
 			val.end = currentEnd
 			return nil
 		})
@@ -482,9 +501,6 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			Max: currentEnd,
 		}, nil
 	}
-
-	val.Lock()
-	defer val.Unlock()
 
 	var min, max int64
 	var err error
@@ -506,7 +522,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbID, tblID, requiredBase int64, isUnsigned bool) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	var oldValue int64
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -546,6 +562,9 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 	}
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
+	val.Lock()
+	defer val.Unlock()
+
 	if req.Force {
 		err := val.forceRebase(ctx, s.store, req.DbID, req.TblID, req.Base, req.IsUnsigned)
 		if err != nil {
@@ -563,6 +582,29 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 		return &autoid.RebaseResponse{Errmsg: []byte(err.Error())}, nil
 	}
 	return &autoid.RebaseResponse{}, nil
+}
+
+type ownerListener struct {
+	*Service
+	selfAddr string
+}
+
+var _ owner.Listener = (*ownerListener)(nil)
+
+func (l *ownerListener) OnBecomeOwner() {
+	// Reset the map to avoid a case that a node lose leadership and regain it, then
+	// improperly use the stale map to serve the autoid requests.
+	// See https://github.com/pingcap/tidb/issues/52600
+	l.autoIDLock.Lock()
+	clear(l.autoIDMap)
+	l.autoIDLock.Unlock()
+
+	logutil.BgLogger().Info("leader change of autoid service, this node become owner",
+		zap.String("addr", l.selfAddr),
+		zap.String("category", "autoid service"))
+}
+
+func (*ownerListener) OnRetireOwner() {
 }
 
 func init() {

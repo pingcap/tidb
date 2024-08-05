@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/applycache"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util"
@@ -66,7 +67,7 @@ type ParallelNestedLoopApplyExec struct {
 	outerRow      []*chunk.Row
 	hasMatch      []bool
 	hasNull       []bool
-	joiners       []joiner
+	joiners       []join.Joiner
 
 	// fields about concurrency control
 	concurrency int
@@ -177,15 +178,15 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	err := exec.Close(e.outerExec)
 
 	if e.RuntimeStats() != nil {
-		runtimeStats := newJoinRuntimeStats()
+		runtimeStats := join.NewJoinRuntimeStats()
 		if e.useCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
 				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
 			}
-			runtimeStats.setCacheInfo(true, hitRatio)
+			runtimeStats.SetCacheInfo(true, hitRatio)
 		} else {
-			runtimeStats.setCacheInfo(false, 0)
+			runtimeStats.SetCacheInfo(false, 0)
 		}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
@@ -219,7 +220,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 		}
 		e.outerList.Add(chk)
 		outerIter := chunk.NewIterator4Chunk(chk)
-		selected, err = expression.VectorizedFilter(e.Ctx(), e.outerFilter, outerIter, selected)
+		selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx().GetEvalCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.outerFilter, outerIter, selected)
 		if err != nil {
 			e.putResult(nil, err)
 			return
@@ -326,7 +327,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 			break
 		}
 
-		e.innerSelected[id], err = expression.VectorizedFilter(e.Ctx(), e.innerFilter[id], innerIter, e.innerSelected[id])
+		e.innerSelected[id], err = expression.VectorizedFilter(e.Ctx().GetExprCtx().GetEvalCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.innerFilter[id], innerIter, e.innerSelected[id])
 		if err != nil {
 			return err
 		}
@@ -355,7 +356,7 @@ func (e *ParallelNestedLoopApplyExec) fetchNextOuterRow(id int, req *chunk.Chunk
 			}
 			if !outerRow.selected {
 				if e.outer {
-					e.joiners[id].onMissMatch(false, *outerRow.row, req)
+					e.joiners[id].OnMissMatch(false, *outerRow.row, req)
 					if req.IsFull() {
 						return nil, false
 					}
@@ -374,7 +375,7 @@ func (e *ParallelNestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int
 	for {
 		if e.innerIter[id] == nil || e.innerIter[id].Current() == e.innerIter[id].End() {
 			if e.outerRow[id] != nil && !e.hasMatch[id] {
-				e.joiners[id].onMissMatch(e.hasNull[id], *e.outerRow[id], req)
+				e.joiners[id].OnMissMatch(e.hasNull[id], *e.outerRow[id], req)
 			}
 			var exit bool
 			e.outerRow[id], exit = e.fetchNextOuterRow(id, req)
@@ -393,7 +394,7 @@ func (e *ParallelNestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int
 			e.innerIter[id].Begin()
 		}
 
-		matched, isNull, err := e.joiners[id].tryToMatchInners(*e.outerRow[id], e.innerIter[id], req)
+		matched, isNull, err := e.joiners[id].TryToMatchInners(*e.outerRow[id], e.innerIter[id], req)
 		e.hasMatch[id] = e.hasMatch[id] || matched
 		e.hasNull[id] = e.hasNull[id] || isNull
 

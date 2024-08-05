@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -588,11 +589,14 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
 	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
+	errMsg3 := "GetForUpdateTS not supported for stalenessTxnProvider"
 	testcases := []struct {
 		name       string
 		sql        string
 		isValidate bool
 		errMsg     string
+		// Only validate when transaction has not started
+		isValidateWithoutStart bool
 	}{
 		{
 			name:       "select statement",
@@ -602,7 +606,12 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 		{
 			name:       "explain statement",
 			sql:        `explain insert into t (id) values (1);`,
-			isValidate: true,
+			isValidate: false,
+			errMsg:     errMsg3,
+			// Explain will not start a transaction,
+			// but if one is already started,
+			// it will use it for getting the
+			isValidateWithoutStart: true,
 		},
 		{
 			name:       "explain analyze insert statement",
@@ -746,17 +755,17 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
-			require.Error(t, err)
-			require.Regexp(t, testcase.errMsg, err.Error())
+			require.Error(t, err, "name: %s stmt: %s", testcase.name, testcase.sql)
+			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		tk.MustExec("commit")
 		tk.MustExec("set transaction read only as of timestamp NOW(3);")
-		if testcase.isValidate {
+		if testcase.isValidate || testcase.isValidateWithoutStart {
 			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
-			require.Error(t, err)
-			require.Regexp(t, testcase.errMsg, err.Error())
+			require.Error(t, err, "name: %s stmt: %s", testcase.name, testcase.sql)
+			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		// clean the status
 		tk.MustExec("set transaction read only as of timestamp ''")
@@ -884,6 +893,14 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
+
+	for _, cacheSize := range []int{units.GiB, 0} {
+		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
+		testSetTransactionInfoSchema(t, tk)
+	}
+}
+
+func testSetTransactionInfoSchema(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
@@ -1327,7 +1344,7 @@ func TestStalePrepare(t *testing.T) {
 	require.Nil(t, err)
 	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc\"")
 
-	var expected [][]interface{}
+	var expected [][]any
 	for i := 0; i < 20; i++ {
 		tk.MustExec("insert into t values(?)", i)
 		time.Sleep(2 * time.Millisecond) // sleep 2ms to ensure staleread_ts > commit_ts.

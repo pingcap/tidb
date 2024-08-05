@@ -78,7 +78,7 @@ type StateRemote interface {
 }
 
 type sqlExec interface {
-	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
+	ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error)
 }
 
 type stateRemoteHandle struct {
@@ -458,7 +458,7 @@ func (h *stateRemoteHandle) updateRow(ctx context.Context, tid int64, lockType s
 	return err
 }
 
-func (h *stateRemoteHandle) execSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+func (h *stateRemoteHandle) execSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
 	rs, err := h.exec.ExecuteInternal(ctx, sql, args...)
 	if rs != nil {
 		//nolint: errcheck

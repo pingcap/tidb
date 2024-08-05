@@ -147,7 +147,7 @@ func (b *{{.SigName}}) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *c
 	}
 	{{- end }}
 	{{- if $InputInt }}
-		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	{{- end }}
 	var compareResult int
 	args := b.args[1:]
@@ -219,7 +219,7 @@ func (b *{{.SigName}}) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *c
 			return err
 		}
 		{{- if $InputInt }}
-			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().GetFlag())
+			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType(ctx).GetFlag())
 		{{- end }}
 		{{- if $InputFixed }}
 			args1 := buf1.{{.Input.TypeNameInColumn}}s()
@@ -295,7 +295,7 @@ type inGener struct {
 	defaultGener
 }
 
-func (g inGener) gen() interface{} {
+func (g inGener) gen() any {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}

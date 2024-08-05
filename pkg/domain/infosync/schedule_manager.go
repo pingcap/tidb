@@ -23,8 +23,8 @@ import (
 
 // ScheduleManager manages schedule configs
 type ScheduleManager interface {
-	GetScheduleConfig(ctx context.Context) (map[string]interface{}, error)
-	SetScheduleConfig(ctx context.Context, config map[string]interface{}) error
+	GetScheduleConfig(ctx context.Context) (map[string]any, error)
+	SetScheduleConfig(ctx context.Context, config map[string]any) error
 }
 
 // PDScheduleManager manages schedule with pd
@@ -34,14 +34,14 @@ type PDScheduleManager struct {
 
 type mockScheduleManager struct {
 	sync.RWMutex
-	schedules map[string]interface{}
+	schedules map[string]any
 }
 
 // GetScheduleConfig get schedule config from schedules map
-func (mm *mockScheduleManager) GetScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+func (mm *mockScheduleManager) GetScheduleConfig(context.Context) (map[string]any, error) {
 	mm.Lock()
 
-	schedules := make(map[string]interface{})
+	schedules := make(map[string]any)
 	for key, values := range mm.schedules {
 		schedules[key] = values
 	}
@@ -51,11 +51,11 @@ func (mm *mockScheduleManager) GetScheduleConfig(ctx context.Context) (map[strin
 }
 
 // SetScheduleConfig set schedule config to schedules map
-func (mm *mockScheduleManager) SetScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+func (mm *mockScheduleManager) SetScheduleConfig(_ context.Context, config map[string]any) error {
 	mm.Lock()
 
 	if mm.schedules == nil {
-		mm.schedules = make(map[string]interface{})
+		mm.schedules = make(map[string]any)
 	}
 	for key, value := range config {
 		mm.schedules[key] = value

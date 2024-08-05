@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -158,7 +159,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	}
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t with 1 samplerate, 20 topn")
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 	// Add 100 modify count
 	sql := "insert into t values "
 	topNValue := fmt.Sprintf("(%d,%d) ,", 5000, 5000)
@@ -166,13 +167,13 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	sql = sql[0 : len(sql)-1]
 	tk.MustExec(sql)
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 
 	var (
 		in  []string
 		out []struct {
-			ResultForV1 interface{}
-			ResultForV2 interface{}
+			ResultForV1 any
+			ResultForV2 any
 		}
 	)
 	traceSuiteData := cardinality.GetCardinalitySuiteData()
@@ -187,7 +188,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
 	statsTbl := statsHandle.GetTableStats(tblInfo)
@@ -208,12 +209,12 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
 
-		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		sel := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)
-		tblInfos = append(tblInfos, ds.TableInfo())
+		tblInfos = append(tblInfos, ds.TableInfo)
 	}
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
@@ -223,22 +224,22 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
 		require.NoError(t, encoder.Encode(traceInfo), sql, "For ver2")
-		var res interface{}
+		var res any
 		require.NoError(t, json.Unmarshal(buf.Bytes(), &res), sql, "For ver2")
 		testdata.OnRecord(func() {
 			out[i].ResultForV2 = res
 		})
-		require.Equal(t, out[i].ResultForV2, res, sql, "For ver2")
+		require.Equal(t, out[i].ResultForV2, res, sql, fmt.Sprintf("For ver2: test#%d", i))
 	}
 
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 20 topn")
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 	statsTbl = statsHandle.GetTableStats(tblInfo)
 
 	// Test using ver1 stats.
@@ -247,12 +248,12 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
 		require.NoError(t, encoder.Encode(traceInfo), sql, "For ver1")
-		var res interface{}
+		var res any
 		require.NoError(t, json.Unmarshal(buf.Bytes(), &res), sql, "For ver1")
 		testdata.OnRecord(func() {
 			out[i].ResultForV1 = res

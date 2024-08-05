@@ -49,7 +49,7 @@ func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *mo
 	if _, err := ensureSessionData(d.sctx); err != nil {
 		return err
 	}
-
+	info.DBID = db.ID
 	tbl, err := newTemporaryTableFromTableInfo(d.sctx, info)
 	if err != nil {
 		return err
@@ -81,7 +81,7 @@ func (d *temporaryTableDDL) TruncateLocalTemporaryTable(schema model.CIStr, tblN
 	}
 
 	localTempTables := getLocalTemporaryTables(d.sctx)
-	db, _ := localTempTables.SchemaByTable(oldTblInfo)
+	db, _ := localTempTables.SchemaByID(oldTblInfo.DBID)
 	localTempTables.RemoveTable(schema, tblName)
 	if err = localTempTables.AddTable(db, newTbl); err != nil {
 		return err
@@ -130,7 +130,7 @@ func checkLocalTemporaryExistsAndReturn(sctx sessionctx.Context, schema model.CI
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ident.String())
 	}
 
-	tbl, exist := localTemporaryTables.TableByName(schema, tblName)
+	tbl, exist := localTemporaryTables.TableByName(context.Background(), schema, tblName)
 	if !exist {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ident.String())
 	}

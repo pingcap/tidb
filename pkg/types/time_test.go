@@ -61,7 +61,7 @@ func TestTimeEncoding(t *testing.T) {
 
 func TestDateTime(t *testing.T) {
 	var warnings []error
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.NewFuncWarnHandlerForTest(func(err error) {
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.NewFuncWarnAppenderForTest(func(err error) {
 		warnings = append(warnings, err)
 	}))
 	table := []struct {
@@ -114,6 +114,8 @@ func TestDateTime(t *testing.T) {
 
 		// For issue 35291
 		{"2020-01-01 12:00:00.123456+05:00", "2020-01-01 07:00:00.123456"},
+		// For issue 49555
+		{"2020-01-01 12:00:00.123456-05:00", "2020-01-01 17:00:00.123456"},
 	}
 
 	for _, test := range table {
@@ -1902,6 +1904,8 @@ func TestGetFracIndex(t *testing.T) {
 		{"2019.01.01 00:00:00", -1},
 		{"2019.01.01 00:00:00.1", 19},
 		{"12345.6", 5},
+		{"2020-01-01 12:00:00.123456 +0600 PST", 19},
+		{"2020-01-01 12:00:00.123456 -0600 PST", 19},
 	}
 	for _, testCase := range testCases {
 		index := types.GetFracIndex(testCase.str)
@@ -2089,7 +2093,7 @@ func TestGetTimezone(t *testing.T) {
 	}
 	for ith, ca := range cases {
 		idx, tzSign, tzHour, tzSep, tzMinute := types.GetTimezone(ca.input)
-		require.Equal(t, [5]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, [5]interface{}{idx, tzSign, tzHour, tzSep, tzMinute}, "idx %d", ith)
+		require.Equal(t, [5]any{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, [5]any{idx, tzSign, tzHour, tzSep, tzMinute}, "idx %d", ith)
 	}
 }
 
@@ -2210,7 +2214,7 @@ func TestDurationConvertToYearFromNow(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, contextutil.NewFuncWarnHandlerForTest(func(_ error) {
+		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, contextutil.NewFuncWarnAppenderForTest(func(_ error) {
 			require.Fail(t, "shouldn't append warninng")
 		}))
 		now, err := time.Parse(time.RFC3339, c.nowLit)

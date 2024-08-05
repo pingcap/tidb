@@ -18,10 +18,14 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"math/rand"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -33,8 +37,46 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
+
+const defaultPartialResultsBufferCap = 2048
+const defaultGroupKeyCap = 8
+
+var partialResultsBufferPool = sync.Pool{
+	New: func() any {
+		s := make([][]aggfuncs.PartialResult, 0, defaultPartialResultsBufferCap)
+		return &s
+	},
+}
+
+var groupKeyPool = sync.Pool{
+	New: func() any {
+		s := make([][]byte, 0, defaultGroupKeyCap)
+		return &s
+	},
+}
+
+func getBuffer() (*[][]aggfuncs.PartialResult, *[][]byte) {
+	partialResultsBuffer := partialResultsBufferPool.Get().(*[][]aggfuncs.PartialResult)
+	*partialResultsBuffer = (*partialResultsBuffer)[:0]
+	groupKey := groupKeyPool.Get().(*[][]byte)
+	*groupKey = (*groupKey)[:0]
+	return partialResultsBuffer, groupKey
+}
+
+// tryRecycleBuffer recycles small buffers only. This approach reduces the CPU pressure
+// from memory allocation during high concurrency aggregation computations (like DDL's scheduled tasks),
+// and also prevents the pool from holding too much memory and causing memory pressure.
+func tryRecycleBuffer(buf *[][]aggfuncs.PartialResult, groupKey *[][]byte) {
+	if cap(*buf) <= defaultPartialResultsBufferCap {
+		partialResultsBufferPool.Put(buf)
+	}
+	if cap(*groupKey) <= defaultGroupKeyCap {
+		groupKeyPool.Put(groupKey)
+	}
+}
 
 func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {
@@ -45,7 +87,7 @@ func closeBaseExecutor(b *exec.BaseExecutor) {
 	}
 }
 
-func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
+func recoveryHashAgg(output chan *AfFinalResult, r any) {
 	err := util.GetRecoverError(r)
 	output <- &AfFinalResult{err: err}
 	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
@@ -72,8 +114,9 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 	}
 
 	errCtx := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	exprCtx := ctx.GetExprCtx()
 	for _, item := range groupByItems {
-		tp := item.GetType()
+		tp := item.GetType(ctx.GetExprCtx().GetEvalCtx())
 
 		buf, err := expression.GetColumn(tp.EvalType(), numRows)
 		if err != nil {
@@ -86,18 +129,18 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		// Ref to issue #26885.
 		// This check is used to handle invalid enum name same with user defined enum name.
 		// Use enum value as groupKey instead of enum name.
-		if item.GetType().GetType() == mysql.TypeEnum {
+		if item.GetType(ctx.GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeEnum {
 			newTp := *tp
 			newTp.AddFlag(mysql.EnumSetAsIntFlag)
 			tp = &newTp
 		}
 
-		if err := expression.EvalExpr(ctx, item, tp.EvalType(), input, buf); err != nil {
+		if err := expression.EvalExpr(exprCtx.GetEvalCtx(), ctx.GetSessionVars().EnableVectorizedExpression, item, tp.EvalType(), input, buf); err != nil {
 			expression.PutColumn(buf)
 			return nil, err
 		}
 		// This check is used to avoid error during the execution of `EncodeDecimal`.
-		if item.GetType().GetType() == mysql.TypeNewDecimal {
+		if item.GetType(ctx.GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeNewDecimal {
 			newTp := *tp
 			newTp.SetFlen(0)
 			tp = &newTp
@@ -213,12 +256,57 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
-// ActionSpill returns a AggSpillDiskAction for spilling intermediate data for hashAgg.
-func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
-	if e.spillAction == nil {
-		e.spillAction = &AggSpillDiskAction{
-			e: e,
-		}
+func (e *HashAggExec) actionSpillForUnparallel() memory.ActionOnExceed {
+	e.spillAction = &AggSpillDiskAction{
+		e: e,
 	}
 	return e.spillAction
+}
+
+func (e *HashAggExec) actionSpillForParallel() memory.ActionOnExceed {
+	e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
+		e:           e,
+		spillHelper: e.spillHelper,
+	}
+	return e.parallelAggSpillAction
+}
+
+// ActionSpill returns an action for spilling intermediate data for hashAgg.
+func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
+	if e.IsUnparallelExec {
+		return e.actionSpillForUnparallel()
+	}
+	return e.actionSpillForParallel()
+}
+
+func failpointError() error {
+	var err error
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(1000)
+			if num < 3 {
+				err = errors.Errorf("Random fail is triggered in ParallelAggSpillDiskAction")
+			}
+		}
+	})
+	return err
+}
+
+func updateWaitTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.WaitTime += int64(time.Since(startTime))
+	}
+}
+
+func updateWorkerTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.WorkerTime += int64(time.Since(startTime))
+	}
+}
+
+func updateExecTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.ExecTime += int64(time.Since(startTime))
+		stats.TaskNum++
+	}
 }

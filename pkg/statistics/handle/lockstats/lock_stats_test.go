@@ -160,7 +160,7 @@ func TestInsertIntoStatsTableLocked(t *testing.T) {
 		util.StatsCtx,
 		util.UseCurrentSessionOpt,
 		gomock.Eq(insertSQL),
-		gomock.Eq([]interface{}{int64(1), int64(1)}),
+		gomock.Eq([]any{int64(1), int64(1)}),
 	)
 	err := insertIntoStatsTableLocked(wrapAsSCtx(exec), 1)
 	require.NoError(t, err)
@@ -196,20 +196,20 @@ func TestAddLockedTables(t *testing.T) {
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]interface{}{int64(2), int64(2)}),
+		gomock.Eq([]any{int64(2), int64(2)}),
 	)
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]interface{}{int64(3), int64(3)}),
+		gomock.Eq([]any{int64(3), int64(3)}),
 	)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]interface{}{int64(4), int64(4)}),
+		gomock.Eq([]any{int64(4), int64(4)}),
 	)
 
 	tables := map[int64]*statstypes.StatsLockTable{
@@ -251,13 +251,13 @@ func TestAddLockedPartitions(t *testing.T) {
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]interface{}{int64(2), int64(2)}),
+		gomock.Eq([]any{int64(2), int64(2)}),
 	)
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]interface{}{int64(3), int64(3)}),
+		gomock.Eq([]any{int64(3), int64(3)}),
 	)
 
 	msg, err := AddLockedPartitions(

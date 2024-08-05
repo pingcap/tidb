@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
@@ -38,7 +39,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
-	err := checkSchemaNotExists(d, t, schemaID, dbInfo)
+	err := checkSchemaNotExists(d, schemaID, dbInfo)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) {
 			// The database already exists, can't create it, we should cancel this job now.
@@ -69,20 +70,10 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	}
 }
 
-func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
+// checkSchemaNotExists checks whether the database already exists.
+// see checkTableNotExists for the rationale of why we check using info schema only.
+func checkSchemaNotExists(d *ddlCtx, schemaID int64, dbInfo *model.DBInfo) error {
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
-		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
-	}
-	return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
-}
-
-func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, dbInfo *model.DBInfo) error {
 	// Check database exists by name.
 	if is.SchemaExists(dbInfo.Name) {
 		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
@@ -90,23 +81,6 @@ func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64
 	// Check database exists by ID.
 	if _, ok := is.SchemaByID(schemaID); ok {
 		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
-	}
-	return nil
-}
-
-func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
-	dbs, err := t.ListDatabases()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, db := range dbs {
-		if db.Name.L == dbInfo.Name.L {
-			if db.ID != schemaID {
-				return infoschema.ErrDatabaseExists.GenWithStackByArgs(db.Name)
-			}
-			dbInfo = db
-		}
 	}
 	return nil
 }
@@ -279,14 +253,6 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		} else {
 			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
 		}
-		// Clear all placement when recover
-		for _, recoverTabInfo := range recoverSchemaInfo.RecoverTabsInfo {
-			err = clearTablePlacementAndBundles(recoverTabInfo.TableInfo)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-			}
-		}
 		schemaInfo.State = model.StateWriteOnly
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -299,6 +265,36 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
+
+		recoverTbls := recoverSchemaInfo.RecoverTabsInfo
+		if recoverSchemaInfo.LoadTablesOnExecute {
+			sid := recoverSchemaInfo.DBInfo.ID
+			snap := w.store.GetSnapshot(kv.NewVersion(recoverSchemaInfo.SnapshotTS))
+			snapMeta := meta.NewSnapshotMeta(snap)
+			tables, err2 := snapMeta.ListTables(sid)
+			if err2 != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err2)
+			}
+			recoverTbls = make([]*RecoverInfo, 0, len(tables))
+			for _, tblInfo := range tables {
+				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
+				if err3 != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Trace(err3)
+				}
+				recoverTbls = append(recoverTbls, &RecoverInfo{
+					SchemaID:      sid,
+					TableInfo:     tblInfo,
+					DropJobID:     recoverSchemaInfo.DropJobID,
+					SnapshotTS:    recoverSchemaInfo.SnapshotTS,
+					AutoIDs:       autoIDs,
+					OldSchemaName: recoverSchemaInfo.OldSchemaName.L,
+					OldTableName:  tblInfo.Name.L,
+				})
+			}
+		}
+
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
 		err = t.CreateDatabase(dbInfo)
@@ -311,7 +307,8 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
+
+		for _, recoverInfo := range recoverTbls {
 			if recoverInfo.TableInfo.TTLInfo != nil {
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
@@ -322,10 +319,6 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			}
 		}
 		schemaInfo.State = model.StatePublic
-		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
-			recoverInfo.TableInfo.State = model.StatePublic
-			recoverInfo.TableInfo.UpdateTS = t.StartTS
-		}
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
 		ver, err = updateSchemaVersion(d, t, job)

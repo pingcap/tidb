@@ -34,11 +34,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -111,6 +113,11 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
+	if dagReq.DivPrecisionIncrement != nil {
+		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
+	} else {
+		sctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
+	}
 
 	ctx := &dagContext{
 		dagReq:    dagReq,
@@ -325,7 +332,7 @@ func (h coprHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]agg
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
 		var aggExpr aggregation.Aggregation
-		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sctx)
+		aggExpr, _, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sctx.GetExprCtx())
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
@@ -374,11 +381,11 @@ func (h coprHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	aggCtxs := make([]*aggregation.AggEvaluateContext, 0, len(aggs))
 	for _, agg := range aggs {
-		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sctx))
+		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sctx.GetExprCtx().GetEvalCtx()))
 	}
 	groupByCollators := make([]collate.Collator, 0, len(groupBys))
 	for _, expr := range groupBys {
-		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType().GetCollate()))
+		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType(ctx.evalCtx.sctx.GetExprCtx().GetEvalCtx()).GetCollate()))
 	}
 
 	return &streamAggExec{
@@ -467,6 +474,7 @@ func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Cont
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx.GetSessionVars().StmtCtx = sc
+	sctx.GetSessionVars().TimeZone = tz
 	return sctx
 }
 
@@ -491,10 +499,10 @@ func (mockClientStream) CloseSend() error { return nil }
 func (mockClientStream) Context() context.Context { return nil }
 
 // SendMsg implements grpc.ClientStream interface
-func (mockClientStream) SendMsg(m interface{}) error { return nil }
+func (mockClientStream) SendMsg(m any) error { return nil }
 
 // RecvMsg implements grpc.ClientStream interface
-func (mockClientStream) RecvMsg(m interface{}) error { return nil }
+func (mockClientStream) RecvMsg(m any) error { return nil }
 
 type mockBathCopErrClient struct {
 	mockClientStream
@@ -532,7 +540,7 @@ func (mock *mockBatchCopDataClient) Recv() (*coprocessor.BatchResponse, error) {
 	return nil, io.EOF
 }
 
-func (h coprHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, counts []int64) *tipb.SelectResponse {
+func (h coprHandler) initSelectResponse(err error, warnings []contextutil.SQLWarn, counts []int64) *tipb.SelectResponse {
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		OutputCounts: counts,

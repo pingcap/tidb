@@ -16,12 +16,12 @@ package hint
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // QBHintHandler is used to handle hints at different query blocks.
@@ -32,15 +32,28 @@ import (
 // QBHintHandler is used to handle this cases.
 type QBHintHandler struct {
 	QBNameToSelOffset map[string]int                    // map[QBName]SelectOffset
-	SelOffsetToHints  map[int][]*ast.TableOptimizerHint // map[SelectOffset]Hints
+	QBOffsetToHints   map[int][]*ast.TableOptimizerHint // map[QueryBlockOffset]Hints
 
 	// Used for the view's hint
-	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]TableInfo
+	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]HintedTable
 	ViewQBNameToHints map[string][]*ast.TableOptimizerHint // map[QBName]Hints
 	ViewQBNameUsed    map[string]struct{}                  // map[QBName]Used
 
-	Ctx              sessionctx.Context
+	warnHandler      hintWarnHandler
 	selectStmtOffset int
+}
+
+// hintWarnHandler is used to handle the warning when parsing hints.
+type hintWarnHandler interface {
+	SetHintWarning(warn string)
+	SetHintWarningFromError(err error)
+}
+
+// NewQBHintHandler creates a QBHintHandler.
+func NewQBHintHandler(warnHandler hintWarnHandler) *QBHintHandler {
+	return &QBHintHandler{
+		warnHandler: warnHandler,
+	}
 }
 
 // MaxSelectStmtOffset returns the current stmt offset.
@@ -84,8 +97,8 @@ func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, of
 			continue
 		}
 		if qbName != "" {
-			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block, using the first one %s", qbName))
+			if p.warnHandler != nil {
+				p.warnHandler.SetHintWarning(fmt.Sprintf("There are more than two query names in same query block, using the first one %s", qbName))
 			}
 		} else {
 			qbName = hint.QBName.L
@@ -98,8 +111,8 @@ func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, of
 		p.QBNameToSelOffset = make(map[string]int)
 	}
 	if _, ok := p.QBNameToSelOffset[qbName]; ok {
-		if p.Ctx != nil {
-			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s, only the first one is effective", qbName))
+		if p.warnHandler != nil {
+			p.warnHandler.SetHintWarning(fmt.Sprintf("Duplicate query block name %s, only the first one is effective", qbName))
 		}
 	} else {
 		p.QBNameToSelOffset[qbName] = offset
@@ -127,8 +140,8 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 			continue
 		}
 		if _, ok := p.ViewQBNameToTable[qbName]; ok {
-			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
+			if p.warnHandler != nil {
+				p.warnHandler.SetHintWarning(fmt.Sprintf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
 			}
 		} else {
 			if offset != 1 {
@@ -165,7 +178,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 					}
 				}
 				if !ok {
-					p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Only one query block name is allowed in a view hint, otherwise the hint will be invalid"))
+					p.warnHandler.SetHintWarning("Only one query block name is allowed in a view hint, otherwise the hint will be invalid")
 					usedHints[i] = true
 				}
 			}
@@ -193,8 +206,8 @@ func (p *QBHintHandler) HandleUnusedViewHints() {
 	if p.ViewQBNameToTable != nil {
 		for qbName := range p.ViewQBNameToTable {
 			_, ok := p.ViewQBNameUsed[qbName]
-			if !ok && p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
+			if !ok && p.warnHandler != nil {
+				p.warnHandler.SetHintWarning(fmt.Sprintf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
 			}
 		}
 	}
@@ -268,8 +281,8 @@ func (p *QBHintHandler) isHint4View(hint *ast.TableOptimizerHint) bool {
 
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
 func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int) []*ast.TableOptimizerHint {
-	if p.SelOffsetToHints == nil {
-		p.SelOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
+	if p.QBOffsetToHints == nil {
+		p.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
 	}
 	for _, hint := range hints {
 		if hint.HintName.L == hintQBName {
@@ -277,20 +290,22 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 		}
 		offset := p.GetHintOffset(hint.QBName, currentOffset)
 		if offset < 0 || !p.checkTableQBName(hint.Tables) {
-			if p.Ctx != nil {
+			if p.warnHandler != nil {
 				hintStr := RestoreTableOptimizerHint(hint)
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Hint %s is ignored due to unknown query block name", hintStr))
+				p.warnHandler.SetHintWarning(fmt.Sprintf("Hint %s is ignored due to unknown query block name", hintStr))
 			}
 			continue
 		}
-		p.SelOffsetToHints[offset] = append(p.SelOffsetToHints[offset], hint)
+		if !slices.Contains(p.QBOffsetToHints[offset], hint) {
+			p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
+		}
 	}
-	return p.SelOffsetToHints[currentOffset]
+	return p.QBOffsetToHints[currentOffset]
 }
 
 // GenerateQBName builds QBName from offset.
-func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
-	if blockOffset == 0 {
+func GenerateQBName(nodeType NodeType, qbOffset int) (model.CIStr, error) {
+	if qbOffset == 0 {
 		if nodeType == TypeDelete {
 			return model.NewCIStr(defaultDeleteBlockName), nil
 		}
@@ -299,5 +314,5 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 		}
 		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
-	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
+	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, qbOffset)), nil
 }

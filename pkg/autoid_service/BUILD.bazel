@@ -33,6 +33,7 @@ go_test(
     srcs = ["autoid_test.go"],
     embed = [":autoid_service"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//pkg/parser/model",
         "//pkg/testkit",

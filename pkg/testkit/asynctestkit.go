@@ -89,17 +89,17 @@ func GetStack() []byte {
 func (tk *AsyncTestKit) ConcurrentRun(
 	concurrent int,
 	loops int,
-	prepareFunc func(ctx context.Context, tk *AsyncTestKit, concurrent int, currentLoop int) [][][]interface{},
-	writeFunc func(ctx context.Context, tk *AsyncTestKit, input [][]interface{}),
+	prepareFunc func(ctx context.Context, tk *AsyncTestKit, concurrent int, currentLoop int) [][][]any,
+	writeFunc func(ctx context.Context, tk *AsyncTestKit, input [][]any),
 	checkFunc func(ctx context.Context, tk *AsyncTestKit),
 ) {
-	channel := make([]chan [][]interface{}, concurrent)
+	channel := make([]chan [][]any, concurrent)
 	contextList := make([]context.Context, concurrent)
 	doneList := make([]context.CancelFunc, concurrent)
 
 	for i := 0; i < concurrent; i++ {
 		w := i
-		channel[w] = make(chan [][]interface{}, 1)
+		channel[w] = make(chan [][]any, 1)
 		contextList[w], doneList[w] = context.WithCancel(context.Background())
 		contextList[w] = tk.OpenSession(contextList[w], "test")
 		go func() {
@@ -143,7 +143,7 @@ func (tk *AsyncTestKit) ConcurrentRun(
 }
 
 // Exec executes a sql statement.
-func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
 	se := TryRetrieveSession(ctx)
 	tk.require.NotNil(se)
 
@@ -176,7 +176,7 @@ func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...interface{
 }
 
 // MustExec executes a sql statement and asserts nil error.
-func (tk *AsyncTestKit) MustExec(ctx context.Context, sql string, args ...interface{}) {
+func (tk *AsyncTestKit) MustExec(ctx context.Context, sql string, args ...any) {
 	res, err := tk.Exec(ctx, sql, args...)
 	tk.require.NoErrorf(err, "sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
 	if res != nil {
@@ -191,7 +191,7 @@ func (tk *AsyncTestKit) MustGetErrMsg(ctx context.Context, sql string, errStr st
 }
 
 // ExecToErr executes a sql statement and discard results.
-func (tk *AsyncTestKit) ExecToErr(ctx context.Context, sql string, args ...interface{}) error {
+func (tk *AsyncTestKit) ExecToErr(ctx context.Context, sql string, args ...any) error {
 	res, err := tk.Exec(ctx, sql, args...)
 	if res != nil {
 		tk.require.NoError(res.Close())
@@ -201,7 +201,7 @@ func (tk *AsyncTestKit) ExecToErr(ctx context.Context, sql string, args ...inter
 
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
-func (tk *AsyncTestKit) MustQuery(ctx context.Context, sql string, args ...interface{}) *Result {
+func (tk *AsyncTestKit) MustQuery(ctx context.Context, sql string, args ...any) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(ctx, sql, args...)
 	tk.require.NoError(err, comment)

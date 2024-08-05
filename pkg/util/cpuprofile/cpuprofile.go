@@ -211,7 +211,7 @@ func (p *parallelCPUProfiler) sendToConsumers() {
 	defer func() {
 		p.Unlock()
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("parallel cpu profiler panic", zap.Any("recover", r))
+			logutil.BgLogger().Error("parallel cpu profiler panic", zap.Any("recover", r), zap.Stack("stack"))
 		}
 	}()
 

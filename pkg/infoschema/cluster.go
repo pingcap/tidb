@@ -52,6 +52,8 @@ const (
 	ClusterTableMemoryUsage = "CLUSTER_MEMORY_USAGE"
 	// ClusterTableMemoryUsageOpsHistory is the memory control operators history of tidb cluster.
 	ClusterTableMemoryUsageOpsHistory = "CLUSTER_MEMORY_USAGE_OPS_HISTORY"
+	// ClusterTableTiDBIndexUsage is a table to show the usage stats of indexes across the whole cluster.
+	ClusterTableTiDBIndexUsage = "CLUSTER_TIDB_INDEX_USAGE"
 )
 
 // memTableToAllTiDBClusterTables means add memory table to cluster table that will send cop request to all TiDB nodes.
@@ -66,6 +68,7 @@ var memTableToAllTiDBClusterTables = map[string]string{
 	TableTrxSummary:               ClusterTableTrxSummary,
 	TableMemoryUsage:              ClusterTableMemoryUsage,
 	TableMemoryUsageOpsHistory:    ClusterTableMemoryUsageOpsHistory,
+	TableTiDBIndexUsage:           ClusterTableTiDBIndexUsage,
 }
 
 // memTableToDDLOwnerClusterTables means add memory table to cluster table that will send cop request to DDL owner node.

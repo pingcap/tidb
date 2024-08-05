@@ -15,18 +15,13 @@
 package aggregate
 
 import (
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 // nolint:structcheck
 type baseHashAggWorker struct {
-	ctx          sessionctx.Context
 	finishCh     <-chan struct{}
 	aggFuncs     []aggfuncs.AggFunc
 	maxChunkSize int
@@ -36,10 +31,8 @@ type baseHashAggWorker struct {
 	BInMap     int // indicate there are 2^BInMap buckets in Golang Map.
 }
 
-func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
-	maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
+func newBaseHashAggWorker(finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
 	baseWorker := baseHashAggWorker{
-		ctx:          ctx,
 		finishCh:     finishCh,
 		aggFuncs:     aggFuncs,
 		maxChunkSize: maxChunkSize,
@@ -49,40 +42,19 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 	return baseWorker
 }
 
-func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupKey [][]byte, mapper aggfuncs.AggPartialResultMapper) [][]aggfuncs.PartialResult {
-	n := len(groupKey)
-	partialResults := make([][]aggfuncs.PartialResult, n)
-	allMemDelta := int64(0)
-	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
-	for i := 0; i < n; i++ {
-		var ok bool
-		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
-			continue
-		}
-		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
-		for j, af := range w.aggFuncs {
-			partialResult, memDelta := af.AllocPartialResult()
-			partialResults[i][j] = partialResult
-			allMemDelta += memDelta // the memory usage of PartialResult
-		}
-		allMemDelta += int64(partialResultSize * 8)
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
-			w.BInMap++
-		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
-	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(allMemDelta)
-	return partialResults
-}
-
 func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
 	length := len(w.aggFuncs)
 	if length == 1 {
 		return 1
 	}
 	return length + length&1
+}
+
+func (w *baseHashAggWorker) checkFinishChClosed() bool {
+	select {
+	case <-w.finishCh:
+		return true
+	default:
+	}
+	return false
 }

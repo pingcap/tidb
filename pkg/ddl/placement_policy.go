@@ -24,7 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -119,7 +123,7 @@ func getPlacementPolicyByName(d *ddlCtx, t *meta.Meta, policyName model.CIStr) (
 	}
 
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		// Use cached policy.
 		policy, ok := is.PolicyByName(policyName)
 		if ok {
@@ -276,41 +280,67 @@ func updateExistPlacementPolicy(t *meta.Meta, policy *model.PolicyInfo) error {
 		return errors.Trace(err)
 	}
 
-	dbIDs, partIDs, tblInfos, err := getPlacementPolicyDependedObjectsIDs(t, policy)
+	_, partIDs, tblInfos, err := getPlacementPolicyDependedObjectsIDs(t, policy)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if len(dbIDs)+len(tblInfos)+len(partIDs) != 0 {
-		// build bundle from new placement policy.
-		bundle, err := placement.NewBundleFromOptions(policy.PlacementSettings)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// Do the http request only when the rules is existed.
-		bundles := make([]*placement.Bundle, 0, len(tblInfos)+len(partIDs))
-		// Reset bundle for tables (including the default rule for partition).
-		for _, tbl := range tblInfos {
-			cp := bundle.Clone()
-			ids := []int64{tbl.ID}
-			if tbl.Partition != nil {
-				for _, pDef := range tbl.Partition.Definitions {
-					ids = append(ids, pDef.ID)
-				}
+	// build bundle from new placement policy.
+	bundle, err := placement.NewBundleFromOptions(policy.PlacementSettings)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Do the http request only when the rules is existed.
+	bundles := make([]*placement.Bundle, 0, len(tblInfos)+len(partIDs)+2)
+	// Reset bundle for tables (including the default rule for partition).
+	for _, tbl := range tblInfos {
+		cp := bundle.Clone()
+		ids := []int64{tbl.ID}
+		if tbl.Partition != nil {
+			for _, pDef := range tbl.Partition.Definitions {
+				ids = append(ids, pDef.ID)
 			}
-			bundles = append(bundles, cp.Reset(placement.RuleIndexTable, ids))
 		}
-		// Reset bundle for partitions.
-		for _, id := range partIDs {
+		bundles = append(bundles, cp.Reset(placement.RuleIndexTable, ids))
+	}
+	// Reset bundle for partitions.
+	for _, id := range partIDs {
+		cp := bundle.Clone()
+		bundles = append(bundles, cp.Reset(placement.RuleIndexPartition, []int64{id}))
+	}
+
+	resetRangeFn := func(ctx context.Context, rangeName string) error {
+		rangeBundleID := placement.TiDBBundleRangePrefixForGlobal
+		if rangeName == placement.KeyRangeMeta {
+			rangeBundleID = placement.TiDBBundleRangePrefixForMeta
+		}
+		policyName, err := GetRangePlacementPolicyName(ctx, rangeBundleID)
+		if err != nil {
+			return err
+		}
+		if policyName == policy.Name.L {
 			cp := bundle.Clone()
-			bundles = append(bundles, cp.Reset(placement.RuleIndexPartition, []int64{id}))
+			bundles = append(bundles, cp.RebuildForRange(rangeName, policyName))
 		}
+		return nil
+	}
+	// Reset range "global".
+	err = resetRangeFn(context.TODO(), placement.KeyRangeGlobal)
+	if err != nil {
+		return err
+	}
+	// Reset range "meta".
+	err = resetRangeFn(context.TODO(), placement.KeyRangeMeta)
+	if err != nil {
+		return err
+	}
+
+	if len(bundles) > 0 {
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 		if err != nil {
 			return errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 	}
-
 	return nil
 }
 
@@ -320,7 +350,7 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 		return err
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
 	} else {
 		err = CheckPlacementPolicyNotInUseFromMeta(t, policy)
@@ -338,8 +368,11 @@ func CheckPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 			return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 		}
 
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			tblInfo := tbl.Meta()
+		tblInfos, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, tblInfo := range tblInfos {
 			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
 				return err
 			}
@@ -350,18 +383,13 @@ func CheckPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 
 // checkPlacementPolicyNotInUseFromRange checks whether the placement policy is used by the special range.
 func checkPlacementPolicyNotInUseFromRange(policy *model.PolicyInfo) error {
-	checkFn := func(rangeName string) error {
-		bundle, err := infosync.GetRuleBundle(context.TODO(), rangeName)
+	checkFn := func(rangeBundleID string) error {
+		policyName, err := GetRangePlacementPolicyName(context.TODO(), rangeBundleID)
 		if err != nil {
 			return err
 		}
-		if bundle == nil {
-			return nil
-		}
-		for _, rule := range bundle.Rules {
-			if strings.Contains(rule.ID, policy.Name.L) {
-				return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
-			}
+		if policyName == policy.Name.L {
+			return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 		}
 		return nil
 	}
@@ -445,5 +473,194 @@ func checkPlacementPolicyNotUsedByTable(tblInfo *model.TableInfo, policy *model.
 		}
 	}
 
+	return nil
+}
+
+// GetRangePlacementPolicyName get the placement policy name used by range.
+// rangeBundleID is limited to TiDBBundleRangePrefixForGlobal and TiDBBundleRangePrefixForMeta.
+func GetRangePlacementPolicyName(ctx context.Context, rangeBundleID string) (string, error) {
+	bundle, err := infosync.GetRuleBundle(ctx, rangeBundleID)
+	if err != nil {
+		return "", err
+	}
+	if bundle == nil || len(bundle.Rules) == 0 {
+		return "", nil
+	}
+	rule := bundle.Rules[0]
+	pos := strings.LastIndex(rule.ID, "_rule_")
+	if pos > 0 {
+		return rule.ID[:pos], nil
+	}
+	return "", nil
+}
+
+func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.PolicyInfo, error) {
+	policyInfo := &model.PolicyInfo{PlacementSettings: &model.PlacementSettings{}}
+	policyInfo.Name = name
+	for _, opt := range options {
+		err := SetDirectPlacementOpt(policyInfo.PlacementSettings, opt.Tp, opt.StrValue, opt.UintValue)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return policyInfo, nil
+}
+
+func removeTablePlacement(tbInfo *model.TableInfo) bool {
+	hasPlacementSettings := false
+	if tbInfo.PlacementPolicyRef != nil {
+		tbInfo.PlacementPolicyRef = nil
+		hasPlacementSettings = true
+	}
+
+	if removePartitionPlacement(tbInfo.Partition) {
+		hasPlacementSettings = true
+	}
+
+	return hasPlacementSettings
+}
+
+func removePartitionPlacement(partInfo *model.PartitionInfo) bool {
+	if partInfo == nil {
+		return false
+	}
+
+	hasPlacementSettings := false
+	for i := range partInfo.Definitions {
+		def := &partInfo.Definitions[i]
+		if def.PlacementPolicyRef != nil {
+			def.PlacementPolicyRef = nil
+			hasPlacementSettings = true
+		}
+	}
+	return hasPlacementSettings
+}
+
+func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error {
+	if dbInfo.PlacementPolicyRef == nil {
+		return nil
+	}
+
+	sessVars := ctx.GetSessionVars()
+	if sessVars.PlacementMode == variable.PlacementModeIgnore {
+		dbInfo.PlacementPolicyRef = nil
+		sessVars.StmtCtx.AppendNote(
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
+		return nil
+	}
+
+	var err error
+	dbInfo.PlacementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, dbInfo.PlacementPolicyRef)
+	return err
+}
+
+func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	sessVars := ctx.GetSessionVars()
+	if sessVars.PlacementMode == variable.PlacementModeIgnore && removeTablePlacement(tbInfo) {
+		sessVars.StmtCtx.AppendNote(
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
+		return nil
+	}
+
+	var err error
+	tbInfo.PlacementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, tbInfo.PlacementPolicyRef)
+	if err != nil {
+		return err
+	}
+
+	if tbInfo.Partition != nil {
+		for i := range tbInfo.Partition.Definitions {
+			partition := &tbInfo.Partition.Definitions[i]
+			partition.PlacementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, partition.PlacementPolicyRef)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionInfo) error {
+	sessVars := ctx.GetSessionVars()
+	if sessVars.PlacementMode == variable.PlacementModeIgnore && removePartitionPlacement(partInfo) {
+		sessVars.StmtCtx.AppendNote(
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
+		return nil
+	}
+
+	var err error
+	for i := range partInfo.Definitions {
+		partition := &partInfo.Definitions[i]
+		partition.PlacementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, partition.PlacementPolicyRef)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef *model.PolicyRefInfo) (*model.PolicyRefInfo, error) {
+	if placementPolicyRef == nil {
+		return nil, nil
+	}
+
+	if placementPolicyRef.Name.L == defaultPlacementPolicyName {
+		// When policy name is 'default', it means to remove the placement settings
+		return nil, nil
+	}
+
+	policy, ok := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().PolicyByName(placementPolicyRef.Name)
+	if !ok {
+		return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
+	}
+
+	placementPolicyRef.ID = policy.ID
+	return placementPolicyRef, nil
+}
+
+func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
+	sessVars := ctx.GetSessionVars()
+	if sessVars.PlacementMode == variable.PlacementModeIgnore {
+		sessVars.StmtCtx.AppendNote(
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		)
+		return true
+	}
+	return false
+}
+
+// SetDirectPlacementOpt tries to make the PlacementSettings assignments generic for Schema/Table/Partition
+func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placementOptionType ast.PlacementOptionType, stringVal string, uintVal uint64) error {
+	switch placementOptionType {
+	case ast.PlacementOptionPrimaryRegion:
+		placementSettings.PrimaryRegion = stringVal
+	case ast.PlacementOptionRegions:
+		placementSettings.Regions = stringVal
+	case ast.PlacementOptionFollowerCount:
+		placementSettings.Followers = uintVal
+	case ast.PlacementOptionVoterCount:
+		placementSettings.Voters = uintVal
+	case ast.PlacementOptionLearnerCount:
+		placementSettings.Learners = uintVal
+	case ast.PlacementOptionSchedule:
+		placementSettings.Schedule = stringVal
+	case ast.PlacementOptionConstraints:
+		placementSettings.Constraints = stringVal
+	case ast.PlacementOptionLeaderConstraints:
+		placementSettings.LeaderConstraints = stringVal
+	case ast.PlacementOptionLearnerConstraints:
+		placementSettings.LearnerConstraints = stringVal
+	case ast.PlacementOptionFollowerConstraints:
+		placementSettings.FollowerConstraints = stringVal
+	case ast.PlacementOptionVoterConstraints:
+		placementSettings.VoterConstraints = stringVal
+	case ast.PlacementOptionSurvivalPreferences:
+		placementSettings.SurvivalPreferences = stringVal
+	default:
+		return errors.Trace(errors.New("unknown placement policy option"))
+	}
 	return nil
 }

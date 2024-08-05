@@ -68,7 +68,7 @@ func TestParseExecArgs(t *testing.T) {
 		args   args
 		err    error
 		warn   error
-		expect interface{}
+		expect any
 	}{
 		// Tests for int overflow
 		{
@@ -269,7 +269,7 @@ func TestParseExecArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		var warn error
-		typectx := types.NewContext(types.DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, contextutil.NewFuncWarnHandlerForTest(func(err error) {
+		typectx := types.NewContext(types.DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, contextutil.NewFuncWarnAppenderForTest(func(err error) {
 			warn = err
 		}))
 		err := decodeAndParse(typectx, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)

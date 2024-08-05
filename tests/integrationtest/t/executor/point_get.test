@@ -287,8 +287,8 @@ create table t1 (a int, b decimal(10,0), c int, primary key(a,b));
 create table t2 (a varchar(20), b int, primary key(a), unique key(b));
 insert into t1 values(1,1,1),(2,2,2),(3,3,3);
 insert into t2 values('111',1),('222',2),('333',3);
-analyze table t1;
-analyze table t2;
+analyze table t1 all columns;
+analyze table t2 all columns;
 explain format = 'brief' select * from t1 where a = 1 and b = 1 and c = 1;
 --sorted_result
 select * from t1 where a = 1 and b = 1 and c = 1;
@@ -333,29 +333,6 @@ connection default;
 disconnect conn1;
 execute s;
 set @@tidb_enable_plan_replayer_capture=default;
-
-# TestForUpdateRetry
-set session tidb_txn_mode='';
-drop table if exists t;
-create table t(pk int primary key, c int);
-insert into t values (1, 1), (2, 2);
-set @@tidb_disable_txn_auto_retry = 0;
-begin;
-select * from t where pk = 1 for update;
-
-connect (conn1, localhost, root, , executor__point_get);
-set session tidb_txn_mode='';
-update t set c = c + 1 where pk = 1;
-
-connection default;
-update t set c = c + 1 where pk = 2;
---replace_regex /\[[0-9]+\]/<ConnID>/
---error 8002
-commit;
-
-disconnect conn1;
-set session tidb_txn_mode=pessimistic;
-
 
 # TestPointGetWriteLock
 drop table if exists point;

@@ -530,3 +530,7 @@ select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 102
 Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
 set global tidb_mem_oom_action = DEFAULT;
 set @@tidb_mem_quota_query = default;
+drop table if exists t;
+create table t(a int, b int, c int, index(b, a), index(c, a));
+select * from t use index(b, c) where b=2 or c=3 order by a limit 10000000000000000;
+a	b	c

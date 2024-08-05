@@ -67,7 +67,7 @@ func getIntConstant(num int64) *Constant {
 	}
 }
 
-func setConstants(isNull bool, isBin bool, constVals map[int]interface{}, constants []*Constant) {
+func setConstants(isNull bool, isBin bool, constVals map[int]any, constants []*Constant) {
 	for i, val := range constVals {
 		switch v := val.(type) {
 		case string:
@@ -88,7 +88,7 @@ func setConstants(isNull bool, isBin bool, constVals map[int]interface{}, consta
 	}
 }
 
-func getVecExprBenchCaseForRegexpIncludeConst(retType types.EvalType, isBin bool, isNull bool, constVals map[int]interface{}, paramNum int, constants []*Constant, inputs ...interface{}) vecExprBenchCase {
+func getVecExprBenchCaseForRegexpIncludeConst(retType types.EvalType, isBin bool, isNull bool, constVals map[int]any, paramNum int, constants []*Constant, inputs ...any) vecExprBenchCase {
 	setConstants(isNull, isBin, constVals, constants)
 
 	defer func() {
@@ -104,7 +104,7 @@ func getVecExprBenchCaseForRegexpIncludeConst(retType types.EvalType, isBin bool
 	return retCase
 }
 
-func getVecExprBenchCaseForRegexp(retType types.EvalType, isBin bool, inputs ...interface{}) vecExprBenchCase {
+func getVecExprBenchCaseForRegexp(retType types.EvalType, isBin bool, inputs ...any) vecExprBenchCase {
 	gens := make([]dataGenerator, 0, 6)
 	paramTypes := make([]types.EvalType, 0, 6)
 
@@ -305,10 +305,10 @@ func TestRegexpLikeVec(t *testing.T) {
 		constants[i] = nil
 	}
 
-	args := make([]interface{}, 0)
-	args = append(args, interface{}(expr))
-	args = append(args, interface{}(pattern))
-	args = append(args, interface{}(matchType))
+	args := make([]any, 0)
+	args = append(args, any(expr))
+	args = append(args, any(pattern))
+	args = append(args, any(matchType))
 
 	cases := make([]vecExprBenchCase, 0, 30)
 
@@ -324,26 +324,26 @@ func TestRegexpLikeVec(t *testing.T) {
 	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, false, expr, pattern, make([]string, 0)))      // Test matchType == null, with BinCollation
 
 	// Prepare data: expr is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{0: interface{}("abc")}, len(args), constants, args...)) // index 10
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{0: interface{}("abc")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{0: interface{}("abc")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{0: interface{}("abc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{0: any("abc")}, len(args), constants, args...)) // index 10
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{0: any("abc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{0: any("abc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{0: any("abc")}, len(args), constants, args...))
 
 	// Prepare data: pattern is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("ab.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{1: interface{}("ab.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("ab.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{1: interface{}("ab.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{1: any("ab.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{1: any("ab.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{1: any("ab.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{1: any("ab.")}, len(args), constants, args...))
 
 	// Prepare data: matchType is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{2: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{2: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{2: interface{}("msi")}, len(args), constants, args...)) // index 20
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{2: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{2: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{2: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{2: any("msi")}, len(args), constants, args...)) // index 20
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{2: any("msi")}, len(args), constants, args...))
 
 	// Prepare data: test memorization
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("abc"), 2: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("abc")}, len(args)-1, constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{1: any("abc"), 2: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{1: any("abc")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpLikeCases
 	var vecBuiltinRegexpLikeCases = map[string][]vecExprBenchCase{
@@ -358,10 +358,10 @@ func TestRegexpSubstr(t *testing.T) {
 
 	// test regexp_substr(expr, pat)
 	testParam2 := []struct {
-		input    interface{} // string
-		pattern  interface{} // string
-		match    interface{} // string
-		matchBin interface{} // bin result
+		input    any // string
+		pattern  any // string
+		match    any // string
+		matchBin any // bin result
 		err      error
 	}{
 		{"abc", "bc", "bc", "0x6263", nil},
@@ -377,7 +377,7 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -396,11 +396,11 @@ func TestRegexpSubstr(t *testing.T) {
 
 	// // test regexp_substr(expr, pat, pos)
 	testParam3 := []struct {
-		input    interface{} // string
-		pattern  interface{} // string
-		pos      interface{} // int64
-		match    interface{} // string
-		matchBin interface{} // bin result
+		input    any // string
+		pattern  any // string
+		pos      any // int64
+		match    any // string
+		matchBin any // bin result
 		err      error
 	}{
 		{"abc", "bc", int64(2), "bc", "0x6263", nil},
@@ -426,7 +426,7 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -445,12 +445,12 @@ func TestRegexpSubstr(t *testing.T) {
 
 	// test regexp_substr(expr, pat, pos, occurrence)
 	testParam4 := []struct {
-		input    interface{} // string
-		pattern  interface{} // string
-		pos      interface{} // int64
-		occur    interface{} // int64
-		match    interface{} // string
-		matchBin interface{} // bin result
+		input    any // string
+		pattern  any // string
+		pos      any // int64
+		occur    any // int64
+		match    any // string
+		matchBin any // bin result
 		err      error
 	}{
 		{"abc abd abe", "ab.", int64(1), int64(1), "abc", "0x616263", nil},
@@ -479,7 +479,7 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occur))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -498,13 +498,13 @@ func TestRegexpSubstr(t *testing.T) {
 
 	// test regexp_substr(expr, pat, pos, occurrence, matchType)
 	testParam5 := []struct {
-		input     interface{} // string
-		pattern   interface{} // string
-		pos       interface{} // int64
-		occur     interface{} // int64
-		matchType interface{} // string
-		match     interface{} // string
-		matchBin  interface{} // bin result
+		input     any // string
+		pattern   any // string
+		pos       any // int64
+		occur     any // int64
+		matchType any // string
+		match     any // string
+		matchBin  any // bin result
 		err       error
 	}{
 		{"abc", "ab.", int64(1), int64(1), "", "abc", "0x616263", nil},
@@ -524,7 +524,7 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occur, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -549,12 +549,12 @@ func TestRegexpSubstrVec(t *testing.T) {
 	var occurrence []int = []int{-1, 10}
 	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
 
-	args := make([]interface{}, 0)
-	args = append(args, interface{}(expr))
-	args = append(args, interface{}(pattern))
-	args = append(args, interface{}(position))
-	args = append(args, interface{}(occurrence))
-	args = append(args, interface{}(matchType))
+	args := make([]any, 0)
+	args = append(args, any(expr))
+	args = append(args, any(pattern))
+	args = append(args, any(position))
+	args = append(args, any(occurrence))
+	args = append(args, any(matchType))
 
 	constants := make([]*Constant, 5)
 	for i := 0; i < 5; i++ {
@@ -567,38 +567,38 @@ func TestRegexpSubstrVec(t *testing.T) {
 	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, false, args...))
 
 	// Prepare data: expr is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...)) // index 5
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...)) // index 5
 
 	// Prepare data: pattern is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{1: any("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{1: any("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{1: any("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{1: any("aB.")}, len(args), constants, args...))
 
 	// Prepare data: position is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...)) // index 10
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{2: any(int64(2))}, len(args), constants, args...)) // index 10
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{2: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{2: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{2: any(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: occurrence is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...)) // index 15
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{3: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{3: any(int64(2))}, len(args), constants, args...)) // index 15
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{3: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{3: any(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: match type is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{4: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{4: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{4: interface{}("msi")}, len(args), constants, args...)) // index 20
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{4: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{4: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{4: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{4: any("msi")}, len(args), constants, args...)) // index 20
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{4: any("msi")}, len(args), constants, args...))
 
 	// Prepare data: test memorization
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB."), 4: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args)-1, constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{1: any("aB."), 4: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{1: any("aB.")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpSubstrCases = map[string][]vecExprBenchCase{
@@ -613,10 +613,10 @@ func TestRegexpInStr(t *testing.T) {
 
 	// test regexp_instr(expr, pat)
 	testParam2 := []struct {
-		input    interface{} // string
-		pattern  interface{} // string
-		match    interface{} // int64
-		matchBin interface{} // bin result
+		input    any // string
+		pattern  any // string
+		match    any // int64
+		matchBin any // bin result
 		err      error
 	}{
 		{"abc", "bc", int64(2), int64(2), nil},
@@ -633,7 +633,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -652,11 +652,11 @@ func TestRegexpInStr(t *testing.T) {
 
 	// test regexp_instr(expr, pat, pos)
 	testParam3 := []struct {
-		input    interface{} // string
-		pattern  interface{} // string
-		pos      interface{} // int64
-		match    interface{} // int64
-		matchBin interface{} // bin result
+		input    any // string
+		pattern  any // string
+		pos      any // int64
+		match    any // int64
+		matchBin any // bin result
 		err      error
 	}{
 		{"abc", "bc", int64(2), int64(2), int64(2), nil},
@@ -681,7 +681,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -700,12 +700,12 @@ func TestRegexpInStr(t *testing.T) {
 
 	// test regexp_instr(expr, pat, pos, occurrence)
 	testParam4 := []struct {
-		input      interface{} // string
-		pattern    interface{} // string
-		pos        interface{} // int64
-		occurrence interface{} // int64
-		match      interface{} // int64
-		matchBin   interface{} // bin result
+		input      any // string
+		pattern    any // string
+		pos        any // int64
+		occurrence any // int64
+		match      any // int64
+		matchBin   any // bin result
 		err        error
 	}{
 		{"abc abd abe", "ab.", int64(1), int64(1), 1, 1, nil},
@@ -734,7 +734,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -753,13 +753,13 @@ func TestRegexpInStr(t *testing.T) {
 
 	// test regexp_instr(expr, pat, pos, occurrence, return_option)
 	testParam5 := []struct {
-		input      interface{} // string
-		pattern    interface{} // string
-		pos        interface{} // int64
-		occurrence interface{} // int64
-		retOpt     interface{} // int64
-		match      interface{} // int64
-		matchBin   interface{} // bin result
+		input      any // string
+		pattern    any // string
+		pos        any // int64
+		occurrence any // int64
+		retOpt     any // int64
+		match      any // int64
+		matchBin   any // bin result
 		err        error
 	}{
 		{"abc abd abe", "ab.", int64(1), int64(1), int64(0), 1, 1, nil},
@@ -781,7 +781,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence, tt.retOpt))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -800,14 +800,14 @@ func TestRegexpInStr(t *testing.T) {
 
 	// test regexp_instr(expr, pat, pos, occurrence, return_option, match_type)
 	testParam6 := []struct {
-		input      interface{} // string
-		pattern    interface{} // string
-		pos        interface{} // int64
-		occurrence interface{} // int64
-		retOpt     interface{} // int64
-		matchType  interface{} // string
-		match      interface{} // int64
-		matchBin   interface{} // bin result
+		input      any // string
+		pattern    any // string
+		pos        any // int64
+		occurrence any // int64
+		retOpt     any // int64
+		matchType  any // string
+		match      any // int64
+		matchBin   any // bin result
 		err        error
 	}{
 		{"abc", "ab.", int64(1), int64(1), int64(0), "", 1, 1, nil},
@@ -828,7 +828,7 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence, tt.retOpt, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -854,13 +854,13 @@ func TestRegexpInStrVec(t *testing.T) {
 	var retOpt []int = []int{0, 1}
 	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
 
-	args := make([]interface{}, 0)
-	args = append(args, interface{}(expr))
-	args = append(args, interface{}(pattern))
-	args = append(args, interface{}(position))
-	args = append(args, interface{}(occurrence))
-	args = append(args, interface{}(retOpt))
-	args = append(args, interface{}(matchType))
+	args := make([]any, 0)
+	args = append(args, any(expr))
+	args = append(args, any(pattern))
+	args = append(args, any(position))
+	args = append(args, any(occurrence))
+	args = append(args, any(retOpt))
+	args = append(args, any(matchType))
 
 	constants := make([]*Constant, 6)
 	for i := 0; i < 6; i++ {
@@ -873,44 +873,44 @@ func TestRegexpInStrVec(t *testing.T) {
 	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETInt, false, args...))
 
 	// Prepare data: expr is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
 
 	// Prepare data: pattern is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{1: interface{}("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{1: any("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{1: any("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{1: any("aB.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{1: any("aB.")}, len(args), constants, args...))
 
 	// Prepare data: position is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{2: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{2: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{2: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{2: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{2: any(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: occurrence is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{3: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{3: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{3: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{3: any(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: return_option is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{4: interface{}(int64(1))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{4: interface{}(int64(1))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{4: interface{}(int64(1))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{4: interface{}(int64(1))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{4: any(int64(1))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{4: any(int64(1))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{4: any(int64(1))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{4: any(int64(1))}, len(args), constants, args...))
 
 	// Prepare data: match type is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{5: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{5: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{5: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, true, map[int]any{5: any("msi")}, len(args), constants, args...))
 
 	// Prepare data: test memorization
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("aB."), 5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]interface{}{1: interface{}("aB.")}, len(args)-1, constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{1: any("aB."), 5: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETInt, false, false, map[int]any{1: any("aB.")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpInStrCases = map[string][]vecExprBenchCase{
@@ -938,11 +938,11 @@ func TestRegexpReplace(t *testing.T) {
 
 	// test regexp_replace(expr, pat, repl)
 	testParam3 := []struct {
-		input    interface{} // string
-		pattern  interface{} // string
-		replace  interface{} // string
-		match    interface{} // string
-		matchBin interface{} // bin result
+		input    any // string
+		pattern  any // string
+		replace  any // string
+		match    any // string
+		matchBin any // bin result
 		err      error
 	}{
 		{"abc abd abe", "ab.", "cz", "cz cz cz", "0x637A20637A20637A", nil},
@@ -967,7 +967,7 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType(), args[2].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -986,12 +986,12 @@ func TestRegexpReplace(t *testing.T) {
 
 	// test regexp_replace(expr, pat, repl, pos)
 	testParam4 := []struct {
-		input    interface{} // string
-		pattern  interface{} // string
-		replace  interface{} // string
-		pos      interface{} // int64
-		match    interface{} // string
-		matchBin interface{} // bin result
+		input    any // string
+		pattern  any // string
+		replace  any // string
+		pos      any // int64
+		match    any // string
+		matchBin any // bin result
 		err      error
 	}{
 		{"abc", "ab.", "cc", int64(1), "cc", "0x6363", nil},
@@ -1022,7 +1022,7 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType(), args[2].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -1041,13 +1041,13 @@ func TestRegexpReplace(t *testing.T) {
 
 	// test regexp_replace(expr, pat, repl, pos, occurrence)
 	testParam5 := []struct {
-		input      interface{} // string
-		pattern    interface{} // string
-		replace    interface{} // string
-		pos        interface{} // int64
-		occurrence interface{} // int64
-		match      interface{} // string
-		matchBin   interface{} // bin result
+		input      any // string
+		pattern    any // string
+		replace    any // string
+		pos        any // int64
+		occurrence any // int64
+		match      any // string
+		matchBin   any // bin result
 		err        error
 	}{
 		{"abc abd", "ab.", "cc", int64(1), int64(1), "cc abd", "0x636320616264", nil},
@@ -1081,7 +1081,7 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos, tt.occurrence))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType(), args[2].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -1100,14 +1100,14 @@ func TestRegexpReplace(t *testing.T) {
 
 	// test regexp_replace(expr, pat, repl, pos, occurrence, match_type)
 	testParam6 := []struct {
-		input      interface{} // string
-		pattern    interface{} // string
-		replace    interface{} // string
-		pos        interface{} // int64
-		occurrence interface{} // int64
-		matchType  interface{} // string
-		match      interface{} // string
-		matchBin   interface{} // bin result
+		input      any // string
+		pattern    any // string
+		replace    any // string
+		pos        any // int64
+		occurrence any // int64
+		matchType  any // string
+		match      any // string
+		matchBin   any // bin result
 		err        error
 	}{
 		{"abc", "ab.", "cc", int64(1), int64(0), "", "cc", "0x6363", nil},
@@ -1133,7 +1133,7 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos, tt.occurrence, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(), args[1].GetType(), args[2].GetType())
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
@@ -1159,13 +1159,13 @@ func TestRegexpReplaceVec(t *testing.T) {
 	var occurrence []int = []int{-1, 5}
 	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
 
-	args := make([]interface{}, 0)
-	args = append(args, interface{}(expr))
-	args = append(args, interface{}(pattern))
-	args = append(args, interface{}(repl))
-	args = append(args, interface{}(position))
-	args = append(args, interface{}(occurrence))
-	args = append(args, interface{}(matchType))
+	args := make([]any, 0)
+	args = append(args, any(expr))
+	args = append(args, any(pattern))
+	args = append(args, any(repl))
+	args = append(args, any(position))
+	args = append(args, any(occurrence))
+	args = append(args, any(matchType))
 
 	constants := make([]*Constant, 6)
 	for i := 0; i < 6; i++ {
@@ -1178,44 +1178,44 @@ func TestRegexpReplaceVec(t *testing.T) {
 	cases = append(cases, getVecExprBenchCaseForRegexp(types.ETString, false, args...))
 
 	// Prepare data: expr is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{0: interface{}("好的 好滴 好~")}, len(args), constants, args...)) // index 5
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{0: any("好的 好滴 好~")}, len(args), constants, args...)) // index 5
 
 	// Prepare data: pattern is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{1: interface{}("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{1: any("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{1: any("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{1: any("(a)B.")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{1: any("(a)B.")}, len(args), constants, args...))
 
 	// Prepare data: repl is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...)) // index 10
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{2: interface{}("cc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{2: any("cc")}, len(args), constants, args...)) // index 10
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{2: any("cc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{2: any("cc")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{2: any("cc")}, len(args), constants, args...))
 
 	// Prepare data: position is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...)) // index 15
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{3: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{3: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{3: any(int64(2))}, len(args), constants, args...)) // index 15
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{3: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{3: any(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: occurrence is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{4: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{4: interface{}(int64(2))}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{4: interface{}(int64(2))}, len(args), constants, args...)) // index 20
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{4: interface{}(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{4: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{4: any(int64(2))}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{4: any(int64(2))}, len(args), constants, args...)) // index 20
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{4: any(int64(2))}, len(args), constants, args...))
 
 	// Prepare data: match type is constant
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]interface{}{5: interface{}("msi")}, len(args), constants, args...)) // index 25
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{5: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{5: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{5: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, true, map[int]any{5: any("msi")}, len(args), constants, args...)) // index 25
 
 	// Prepare data: test memorization
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("a(B)."), 5: interface{}("msi")}, len(args), constants, args...))
-	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]interface{}{1: interface{}("a(B).")}, len(args)-1, constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{1: any("a(B)."), 5: any("msi")}, len(args), constants, args...))
+	cases = append(cases, getVecExprBenchCaseForRegexpIncludeConst(types.ETString, false, false, map[int]any{1: any("a(B).")}, len(args)-1, constants, args...))
 
 	// Build vecBuiltinRegexpSubstrCases
 	var vecBuiltinRegexpReplaceCases = map[string][]vecExprBenchCase{

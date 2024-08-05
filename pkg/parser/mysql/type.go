@@ -45,6 +45,8 @@ const (
 	TypeVarString  byte = 0xfd
 	TypeString     byte = 0xfe /* TypeString is char type */
 	TypeGeometry   byte = 0xff
+
+	TypeTiDBVectorFloat32 byte = 0xe1
 )
 
 // Flag information.

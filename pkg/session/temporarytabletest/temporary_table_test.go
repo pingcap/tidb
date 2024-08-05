@@ -108,7 +108,7 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 
 	cases := []struct {
 		sql             string
-		checkResult     interface{}
+		checkResult     any
 		additionalCheck func(error)
 	}{
 		// update with point get for primary key
@@ -161,7 +161,7 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", checkSuccess{[]string{"1 101 2001", "9 109 2009"}, nil}, nil},
 	}
 
-	executeSQL := func(sql string, checkResult interface{}, additionalCheck func(error)) (err error) {
+	executeSQL := func(sql string, checkResult any, additionalCheck func(error)) (err error) {
 		switch check := checkResult.(type) {
 		case checkSuccess:
 			tk.MustExec(sql)
@@ -220,104 +220,6 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 		tk.MustExec("delete from tmp1")
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 	}
-}
-
-func TestRetryGlobalTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists normal_table")
-	tk.MustExec("create table normal_table(a int primary key, b int)")
-	defer tk.MustExec("drop table if exists normal_table")
-	tk.MustExec("drop table if exists temp_table")
-	tk.MustExec("create global temporary table temp_table(a int primary key, b int) on commit delete rows")
-	defer tk.MustExec("drop table if exists temp_table")
-
-	// insert select
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("insert normal_table value(100, 100)")
-	tk.MustExec("set @@autocommit = 0")
-	// used to make conflicts
-	tk.MustExec("update normal_table set b=b+1 where a=100")
-	tk.MustExec("insert temp_table value(1, 1)")
-	tk.MustExec("insert normal_table select * from temp_table")
-	require.Equal(t, 3, session.GetHistory(tk.Session()).Count())
-
-	// try to conflict with tk
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustExec("update normal_table set b=b+1 where a=100")
-
-	// It will retry internally.
-	tk.MustExec("commit")
-	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 1", "100 102"))
-	tk.MustQuery("select a, b from temp_table order by a").Check(testkit.Rows())
-
-	// update multi-tables
-	tk.MustExec("update normal_table set b=b+1 where a=100")
-	tk.MustExec("insert temp_table value(1, 2)")
-	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
-	tk.MustExec("update normal_table, temp_table set normal_table.b=temp_table.b where normal_table.a=temp_table.a")
-	require.Equal(t, 3, session.GetHistory(tk.Session()).Count())
-
-	// try to conflict with tk
-	tk1.MustExec("update normal_table set b=b+1 where a=100")
-
-	// It will retry internally.
-	tk.MustExec("commit")
-	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
-}
-
-func TestRetryLocalTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists normal_table")
-	tk.MustExec("create table normal_table(a int primary key, b int)")
-	defer tk.MustExec("drop table if exists normal_table")
-	tk.MustExec("drop table if exists temp_table")
-	tk.MustExec("create temporary table l_temp_table(a int primary key, b int)")
-	defer tk.MustExec("drop table if exists l_temp_table")
-
-	// insert select
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("insert normal_table value(100, 100)")
-	tk.MustExec("set @@autocommit = 0")
-	// used to make conflicts
-	tk.MustExec("update normal_table set b=b+1 where a=100")
-	tk.MustExec("insert l_temp_table value(1, 2)")
-	tk.MustExec("insert normal_table select * from l_temp_table")
-	require.Equal(t, 3, session.GetHistory(tk.Session()).Count())
-
-	// try to conflict with tk
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustExec("update normal_table set b=b+1 where a=100")
-
-	// It will retry internally.
-	tk.MustExec("commit")
-	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 102"))
-	tk.MustQuery("select a, b from l_temp_table order by a").Check(testkit.Rows("1 2"))
-
-	// update multi-tables
-	tk.MustExec("update normal_table set b=b+1 where a=100")
-	tk.MustExec("insert l_temp_table value(3, 4)")
-	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
-	tk.MustExec("update normal_table, l_temp_table set normal_table.b=l_temp_table.b where normal_table.a=l_temp_table.a")
-	require.Equal(t, 3, session.GetHistory(tk.Session()).Count())
-
-	// try to conflict with tk
-	tk1.MustExec("update normal_table set b=b+1 where a=100")
-
-	// It will retry internally.
-	tk.MustExec("commit")
-	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
 }
 
 func TestLocalTemporaryTableDelete(t *testing.T) {

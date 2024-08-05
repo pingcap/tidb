@@ -480,7 +480,7 @@ func createClusterGRPCServer(t testing.TB) map[string]*testServer {
 	testServers := map[string]*testServer{}
 
 	// create gRPC servers
-	for _, typ := range []string{"tidb", "tikv", "tiproxy", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "ticdc", "tiproxy", "pd"} {
 		tmpDir := t.TempDir()
 
 		server := grpc.NewServer()

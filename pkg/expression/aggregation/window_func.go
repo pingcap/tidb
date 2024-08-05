@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -31,18 +30,18 @@ type WindowFuncDesc struct {
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
-func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
+func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
 	// if we are in the prepare statement, skip the params check since it's not been initialized.
 	if !skipCheckArgs {
 		switch strings.ToLower(name) {
 		case ast.WindowFuncNthValue:
-			val, isNull, ok := expression.GetUint64FromConstant(ctx, args[1])
+			val, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[1])
 			// nth_value does not allow `0`, but allows `null`.
 			if !ok || (val == 0 && !isNull) {
 				return nil, nil
 			}
 		case ast.WindowFuncNtile:
-			val, isNull, ok := expression.GetUint64FromConstant(ctx, args[0])
+			val, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[0])
 			// ntile does not allow `0`, but allows `null`.
 			if !ok || (val == 0 && !isNull) {
 				return nil, nil
@@ -51,7 +50,7 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 			if len(args) < 2 {
 				break
 			}
-			_, isNull, ok := expression.GetUint64FromConstant(ctx, args[1])
+			_, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[1])
 			if !ok || isNull {
 				return nil, nil
 			}
@@ -67,8 +66,8 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 		base.RetTp.SetFlag(mysql.NotNullFlag)
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) == 3 &&
-			((args[0].GetType().GetFlag() & mysql.NotNullFlag) != 0) &&
-			((args[2].GetType().GetFlag() & mysql.NotNullFlag) != 0) {
+			((args[0].GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag) != 0) &&
+			((args[2].GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag) != 0) {
 			base.RetTp.SetFlag(mysql.NotNullFlag)
 			break
 		}
@@ -124,7 +123,7 @@ func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
 }
 
 // WindowFuncToPBExpr converts aggregate function to pb.
-func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
+func WindowFuncToPBExpr(sctx expression.EvalContext, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
 	pc := expression.NewPBConverter(client, sctx)
 	tp := desc.GetTiPBExpr(true)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
@@ -143,9 +142,9 @@ func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowF
 }
 
 // CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
-func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx sessionctx.Context) bool {
+func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.PushDownContext) bool {
 	// args
-	if !expression.CanExprsPushDown(ctx, s.Args, ctx.GetClient(), kv.TiFlash) {
+	if !expression.CanExprsPushDown(ctx, s.Args, kv.TiFlash) {
 		return false
 	}
 	// window functions

@@ -15,6 +15,7 @@
 package memorycontrol
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -22,7 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -143,12 +144,12 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	require.Len(t, rs0.Rows(), 0)
 
 	h := dom.StatsHandle()
-	originalVal4 := autoanalyze.AutoAnalyzeMinCnt
+	originalVal4 := statistics.AutoAnalyzeMinCnt
 	originalVal5 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originalVal4
+		statistics.AutoAnalyzeMinCnt = originalVal4
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal5))
 	}()
 
@@ -161,7 +162,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("insert into t values(4),(5),(6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err := h.Update(dom.InfoSchema())
+	err := h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
@@ -174,7 +175,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
 
-	h.HandleAutoAnalyze(dom.InfoSchema())
+	h.HandleAutoAnalyze()
 	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	failReason := rs.Rows()[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))

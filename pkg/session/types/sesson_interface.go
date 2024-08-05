@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -46,7 +45,7 @@ type Session interface {
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
-	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
+	ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
 	RollbackTxn(context.Context)
@@ -80,11 +79,6 @@ type Session interface {
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
 	SetPort(port string)
-
-	// set cur session operations allowed when tikv disk full happens.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	GetDiskFullOpt() kvrpcpb.DiskFullOpt
-	ClearDiskFullOpt()
 
 	// SetExtensions sets the `*extension.SessionExtensions` object
 	SetExtensions(extensions *extension.SessionExtensions)

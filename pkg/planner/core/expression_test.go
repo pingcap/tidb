@@ -19,12 +19,15 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +37,33 @@ func parseExpr(t *testing.T, expr string) ast.ExprNode {
 	require.NoError(t, err)
 	stmt := st.(*ast.SelectStmt)
 	return stmt.Fields.Fields[0].Expr
+}
+
+func buildExpr(t *testing.T, ctx expression.BuildContext, exprNode any, opts ...expression.BuildOption) (expr expression.Expression, err error) {
+	switch x := exprNode.(type) {
+	case string:
+		node := parseExpr(t, x)
+		expr, err = expression.BuildSimpleExpr(ctx, node, opts...)
+	case ast.ExprNode:
+		expr, err = expression.BuildSimpleExpr(ctx, x, opts...)
+	default:
+		require.FailNow(t, "invalid input type: %T", x)
+	}
+
+	if err != nil {
+		require.Nil(t, expr)
+	} else {
+		require.NotNil(t, expr)
+	}
+	return
+}
+
+func buildExprAndEval(t *testing.T, ctx expression.BuildContext, exprNode any) types.Datum {
+	expr, err := buildExpr(t, ctx, exprNode)
+	require.NoError(t, err)
+	val, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
+	require.NoError(t, err)
+	return val
 }
 
 type testCase struct {
@@ -51,6 +81,10 @@ func runTests(t *testing.T, tests []testCase) {
 		val, err := evalAstExpr(ctx, expr)
 		require.NoError(t, err)
 		valStr := fmt.Sprintf("%v", val.GetValue())
+		require.Equalf(t, tt.resultStr, valStr, "for %s", tt.exprStr)
+
+		val = buildExprAndEval(t, ctx, expr)
+		valStr = fmt.Sprintf("%v", val.GetValue())
 		require.Equalf(t, tt.resultStr, valStr, "for %s", tt.exprStr)
 	}
 }
@@ -102,9 +136,13 @@ func TestCaseWhen(t *testing.T) {
 	v, err := evalAstExpr(ctx, caseExpr)
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(int64(1)), v)
+	require.Equal(t, types.NewDatum(int64(1)), buildExprAndEval(t, ctx, caseExpr))
+
 	valExpr.SetValue(4)
 	v, err = evalAstExpr(ctx, caseExpr)
 	require.NoError(t, err)
+	require.Equal(t, types.KindNull, v.Kind())
+	v = buildExprAndEval(t, ctx, caseExpr)
 	require.Equal(t, types.KindNull, v.Kind())
 }
 
@@ -125,11 +163,13 @@ func TestCast(t *testing.T) {
 	v, err := evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(int64(1)), v)
+	require.Equal(t, types.NewDatum(int64(1)), buildExprAndEval(t, ctx, expr))
 
 	f.AddFlag(mysql.UnsignedFlag)
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(uint64(1)), v)
+	require.Equal(t, types.NewDatum(uint64(1)), buildExprAndEval(t, ctx, expr))
 
 	f.SetType(mysql.TypeString)
 	f.SetCharset(charset.CharsetBin)
@@ -138,6 +178,7 @@ func TestCast(t *testing.T) {
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum([]byte("1")), v)
+	testutil.DatumEqual(t, types.NewDatum([]byte("1")), buildExprAndEval(t, ctx, expr))
 
 	f.SetType(mysql.TypeString)
 	f.SetCharset(charset.CharsetUTF8)
@@ -146,10 +187,13 @@ func TestCast(t *testing.T) {
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum([]byte("1")), v)
+	testutil.DatumEqual(t, types.NewDatum([]byte("1")), buildExprAndEval(t, ctx, expr))
 
 	expr.Expr = ast.NewValueExpr(nil, "", "")
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
+	require.Equal(t, types.KindNull, v.Kind())
+	v = buildExprAndEval(t, ctx, expr)
 	require.Equal(t, types.KindNull, v.Kind())
 }
 
@@ -331,4 +375,129 @@ func TestIsTruth(t *testing.T) {
 		},
 	}
 	runTests(t, tests)
+}
+
+func TestBuildExpression(t *testing.T) {
+	tbl := &model.TableInfo{
+		Columns: []*model.ColumnInfo{
+			{
+				Name:          model.NewCIStr("id"),
+				Offset:        0,
+				State:         model.StatePublic,
+				FieldType:     *types.NewFieldType(mysql.TypeString),
+				DefaultIsExpr: true,
+				DefaultValue:  "uuid()",
+			},
+			{
+				Name:      model.NewCIStr("a"),
+				Offset:    1,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+			{
+				Name:         model.NewCIStr("b"),
+				Offset:       2,
+				State:        model.StatePublic,
+				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
+				DefaultValue: "123",
+			},
+		},
+	}
+
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
+	require.NoError(t, err)
+	schema := expression.NewSchema(cols...)
+
+	// normal build
+	ctx.GetSessionVars().PlanColumnID.Store(0)
+	expr, err := buildExpr(t, ctx, "(1+a)*(3+b)", expression.WithTableInfo("", tbl))
+	require.NoError(t, err)
+	ctx.GetSessionVars().PlanColumnID.Store(0)
+	expr2, err := expression.ParseSimpleExpr(ctx, "(1+a)*(3+b)", expression.WithTableInfo("", tbl))
+	require.NoError(t, err)
+	require.True(t, expr.Equal(ctx, expr2))
+	val, _, err := expr.EvalInt(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, int64(10), val)
+	val, _, err = expr.EvalInt(ctx, chunk.MutRowFromValues("", 3, 4).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, int64(28), val)
+	val, _, err = expr2.EvalInt(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, int64(10), val)
+	val, _, err = expr2.EvalInt(ctx, chunk.MutRowFromValues("", 3, 4).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, int64(28), val)
+
+	expr, err = buildExpr(t, ctx, "(1+a)*(3+b)", expression.WithInputSchemaAndNames(schema, names, nil))
+	require.NoError(t, err)
+	val, _, err = expr.EvalInt(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, int64(10), val)
+
+	// build expression without enough columns
+	_, err = buildExpr(t, ctx, "1+a")
+	require.EqualError(t, err, "[planner:1054]Unknown column 'a' in 'expression'")
+	_, err = buildExpr(t, ctx, "(1+a)*(3+b+c)", expression.WithTableInfo("", tbl))
+	require.EqualError(t, err, "[planner:1054]Unknown column 'c' in 'expression'")
+
+	// cast to array not supported by default
+	_, err = buildExpr(t, ctx, "cast(1 as signed array)")
+	require.EqualError(t, err, "[expression:1235]This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions'")
+	// use WithAllowCastArray to allow casting to array
+	expr, err = buildExpr(t, ctx, `cast(json_extract('{"a": [1, 2, 3]}', '$.a') as signed array)`, expression.WithAllowCastArray(true))
+	require.NoError(t, err)
+	j, _, err := expr.EvalJSON(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.JSONTypeCodeArray, j.TypeCode)
+	require.Equal(t, "[1, 2, 3]", j.String())
+
+	// default expr
+	expr, err = buildExpr(t, ctx, "default(id)", expression.WithTableInfo("", tbl))
+	require.NoError(t, err)
+	s, _, err := expr.EvalString(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, 36, len(s), s)
+
+	expr, err = buildExpr(t, ctx, "default(id)", expression.WithInputSchemaAndNames(schema, names, tbl))
+	require.NoError(t, err)
+	s, _, err = expr.EvalString(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, 36, len(s), s)
+
+	expr, err = buildExpr(t, ctx, "default(b)", expression.WithTableInfo("", tbl))
+	require.NoError(t, err)
+	d, err := expr.Eval(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, types.NewDatum(int64(123)), d)
+
+	// WithCastExprTo
+	expr, err = buildExpr(t, ctx, "1+2+3")
+	require.NoError(t, err)
+	require.Equal(t, mysql.TypeLonglong, expr.GetType(ctx).GetType())
+	castTo := types.NewFieldType(mysql.TypeVarchar)
+	expr, err = buildExpr(t, ctx, "1+2+3", expression.WithCastExprTo(castTo))
+	require.NoError(t, err)
+	require.Equal(t, mysql.TypeVarchar, expr.GetType(ctx).GetType())
+	v, err := expr.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, v.Kind())
+	require.Equal(t, "6", v.GetString())
+
+	// should report error for default expr when source table not provided
+	_, err = buildExpr(t, ctx, "default(b)", expression.WithInputSchemaAndNames(schema, names, nil))
+	require.EqualError(t, err, "Unsupported expr *ast.DefaultExpr when source table not provided")
+
+	// subquery not supported
+	_, err = buildExpr(t, ctx, "a + (select b from t)", expression.WithTableInfo("", tbl))
+	require.EqualError(t, err, "node '*ast.SubqueryExpr' is not allowed when building an expression without planner")
+
+	// param marker not supported
+	_, err = buildExpr(t, ctx, "a + ?", expression.WithTableInfo("", tbl))
+	require.EqualError(t, err, "node '*driver.ParamMarkerExpr' is not allowed when building an expression without planner")
 }

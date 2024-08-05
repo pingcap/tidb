@@ -15,12 +15,11 @@
 package table
 
 import (
-	"context"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -32,10 +31,23 @@ type IndexIterator interface {
 
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
-	Ctx             context.Context
-	Untouched       bool // If true, the index key/value is no need to commit.
+	commonMutateOpt
 	IgnoreAssertion bool
 	FromBackFill    bool
+}
+
+// NewCreateIdxOpt creates a new CreateIdxOpt.
+func NewCreateIdxOpt(opts ...CreateIdxOption) *CreateIdxOpt {
+	opt := &CreateIdxOpt{}
+	for _, o := range opts {
+		o.ApplyCreateIdxOpt(opt)
+	}
+	return opt
+}
+
+// CreateIdxOption is defined for the Create() method of the Index interface.
+type CreateIdxOption interface {
+	ApplyCreateIdxOpt(*CreateIdxOpt)
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -43,13 +55,13 @@ type CreateIdxOpt struct {
 // https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
 type CreateIdxOptFunc func(*CreateIdxOpt)
 
-// IndexIsUntouched uses to indicate the index kv is untouched.
-var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
-	opt.Untouched = true
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (f CreateIdxOptFunc) ApplyCreateIdxOpt(opt *CreateIdxOpt) {
+	f(opt)
 }
 
 // WithIgnoreAssertion uses to indicate the process can ignore assertion.
-var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
+var WithIgnoreAssertion CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.IgnoreAssertion = true
 }
 
@@ -57,16 +69,8 @@ var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
 // In the backfill-merge process, the index KVs from DML will be redirected to
 // the temp index. On the other hand, the index KVs from DDL backfill worker should
 // never be redirected to the temp index.
-var FromBackfill = func(opt *CreateIdxOpt) {
+var FromBackfill CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.FromBackFill = true
-}
-
-// WithCtx returns a CreateIdxFunc.
-// This option is used to pass context.Context.
-func WithCtx(ctx context.Context) CreateIdxOptFunc {
-	return func(opt *CreateIdxOpt) {
-		opt.Ctx = ctx
-	}
 }
 
 // Index is the interface for index data on KV store.
@@ -76,17 +80,17 @@ type Index interface {
 	// TableMeta returns TableInfo
 	TableMeta() *model.TableInfo
 	// Create supports insert into statement.
-	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
+	Create(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOption) (kv.Handle, error)
 	// Delete supports delete from statement.
-	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
+	Delete(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
-	GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexKVGenerator
+	GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexKVGenerator
 	// Exist supports check index exists or not.
-	Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
+	Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
 	// GenIndexKey generates an index key. If the index is a multi-valued index, use GenIndexKVIter instead.
-	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
+	GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
 	// GenIndexValue generates an index value.
-	GenIndexValue(sc *stmtctx.StatementContext, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error)
+	GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error)
 	// FetchValues fetched index column values in a row.
 	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
 	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
@@ -97,7 +101,8 @@ type Index interface {
 // It could be also used for generating multi-value indexes.
 type IndexKVGenerator struct {
 	index             Index
-	sCtx              *stmtctx.StatementContext
+	ec                errctx.Context
+	loc               *time.Location
 	handle            kv.Handle
 	handleRestoreData []types.Datum
 
@@ -112,14 +117,16 @@ type IndexKVGenerator struct {
 // NewMultiValueIndexKVGenerator creates a new IndexKVGenerator for multi-value indexes.
 func NewMultiValueIndexKVGenerator(
 	index Index,
-	stmtCtx *stmtctx.StatementContext,
+	ec errctx.Context,
+	loc *time.Location,
 	handle kv.Handle,
 	handleRestoredData []types.Datum,
 	mvIndexData [][]types.Datum,
 ) IndexKVGenerator {
 	return IndexKVGenerator{
 		index:             index,
-		sCtx:              stmtCtx,
+		ec:                ec,
+		loc:               loc,
 		handle:            handle,
 		handleRestoreData: handleRestoredData,
 		isMultiValue:      true,
@@ -131,14 +138,16 @@ func NewMultiValueIndexKVGenerator(
 // NewPlainIndexKVGenerator creates a new IndexKVGenerator for non multi-value indexes.
 func NewPlainIndexKVGenerator(
 	index Index,
-	stmtCtx *stmtctx.StatementContext,
+	ec errctx.Context,
+	loc *time.Location,
 	handle kv.Handle,
 	handleRestoredData []types.Datum,
 	idxData []types.Datum,
 ) IndexKVGenerator {
 	return IndexKVGenerator{
 		index:             index,
-		sCtx:              stmtCtx,
+		ec:                ec,
+		loc:               loc,
 		handle:            handle,
 		handleRestoreData: handleRestoredData,
 		isMultiValue:      false,
@@ -155,11 +164,11 @@ func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool,
 	} else {
 		val = iter.idxVals
 	}
-	key, distinct, err := iter.index.GenIndexKey(iter.sCtx, val, iter.handle, keyBuf)
+	key, distinct, err := iter.index.GenIndexKey(iter.ec, iter.loc, val, iter.handle, keyBuf)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	idxVal, err := iter.index.GenIndexValue(iter.sCtx, distinct, val, iter.handle, iter.handleRestoreData, valBuf)
+	idxVal, err := iter.index.GenIndexValue(iter.ec, iter.loc, distinct, val, iter.handle, iter.handleRestoreData, valBuf)
 	if err != nil {
 		return nil, nil, false, err
 	}

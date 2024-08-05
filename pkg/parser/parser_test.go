@@ -504,8 +504,6 @@ func TestAdminStmt(t *testing.T) {
 		{"admin capture bindings", true, "ADMIN CAPTURE BINDINGS"},
 		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
 		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
-		{"admin show telemetry", true, "ADMIN SHOW TELEMETRY"},
-		{"admin reset telemetry_id", true, "ADMIN RESET TELEMETRY_ID"},
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
@@ -515,10 +513,9 @@ func TestAdminStmt(t *testing.T) {
 		// We do not support the global level. We will check it in the later.
 		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 		// for BDR
-		{"admin set bdr role none", true, "ADMIN SET BDR ROLE NONE"},
 		{"admin set bdr role primary", true, "ADMIN SET BDR ROLE PRIMARY"},
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
-		{"admin set bdr role local_only", true, "ADMIN SET BDR ROLE LOCAL_ONLY"},
+		{"admin unset bdr role", true, "ADMIN UNSET BDR ROLE"},
 		{"admin show bdr role", true, "ADMIN SHOW BDR ROLE"},
 	}
 	RunTest(t, table, false)
@@ -1151,6 +1148,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
 		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
 		{"query watch remove", false, ""},
+
+		// for issue 34325, "replace into" with hints
+		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = 'ALLOW_INVALID_DATES')*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
 	}
 	RunTest(t, table, false)
 }
@@ -1276,6 +1276,8 @@ func TestDBAStmt(t *testing.T) {
 		{"show backups where start_time > now() - interval 10 hour", true, "SHOW BACKUPS WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)"},
 		{"show backup", false, ""},
 		{"show restore", false, ""},
+		{"show replica status", true, "SHOW REPLICA STATUS"},
+		{"show slave status", true, "SHOW REPLICA STATUS"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -2934,17 +2936,38 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE followers ( f1 int NOT NULL REFERENCES user_profiles (uid) );", true, "CREATE TABLE `followers` (`f1` INT NOT NULL REFERENCES `user_profiles`(`uid`))"},
 
 		// For column default expression
-		{"create table t (a int default rand())", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
-		{"create table t (a int default rand(1))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
-		{"create table t (a int default (rand()))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
-		{"create table t (a int default (rand(1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
-		{"create table t (a int default (((rand()))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
-		{"create table t (a int default (((rand(1)))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
-		{"create table t (d date default current_date())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
-		{"create table t (d date default current_date)", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
-		{"create table t (d date default (current_date()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
-		{"create table t (d date default (curdate()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
-		{"create table t (d date default curdate())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (a int default rand())", true, "CREATE TABLE `t` (`a` INT DEFAULT (RAND()))"},
+		{"create table t (a int default rand(1))", true, "CREATE TABLE `t` (`a` INT DEFAULT (RAND(1)))"},
+		{"create table t (a int default (rand()))", true, "CREATE TABLE `t` (`a` INT DEFAULT (RAND()))"},
+		{"create table t (a int default (rand(1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT (RAND(1)))"},
+		{"create table t (a int default (((rand()))))", true, "CREATE TABLE `t` (`a` INT DEFAULT (RAND()))"},
+		{"create table t (a int default (((rand(1)))))", true, "CREATE TABLE `t` (`a` INT DEFAULT (RAND(1)))"},
+		{"create table t (d date default current_date())", true, "CREATE TABLE `t` (`d` DATE DEFAULT (CURRENT_DATE()))"},
+		{"create table t (d date default current_date)", true, "CREATE TABLE `t` (`d` DATE DEFAULT (CURRENT_DATE()))"},
+		{"create table t (d date default (current_date()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (CURRENT_DATE()))"},
+		{"create table t (d date default (curdate()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (CURRENT_DATE()))"},
+		{"create table t (d date default curdate())", true, "CREATE TABLE `t` (`d` DATE DEFAULT (CURRENT_DATE()))"},
+		{"create table t (d date default current_date())", true, "CREATE TABLE `t` (`d` DATE DEFAULT (CURRENT_DATE()))"},
+		{"create table t (d date default date_format(now(),'%Y-%m'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m')))"},
+		{"create table t (d date default (date_format(now(),'%Y-%m')))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m')))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d')))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d %H.%i.%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H.%i.%s')))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d %H:%i:%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H:%i:%s')))"},
+		{"create table t (d date default date_format(now(),'%b %d %Y %h:%i %p'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%b %d %Y %h:%i %p')))"},
+		{"create table t (a varchar(32) default (replace(upper(uuid()), '-', '')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT (REPLACE(UPPER(UUID()), _UTF8MB4'-', _UTF8MB4'')))"},
+		{"create table t (a varchar(32) default replace(upper(uuid()), '-', ''))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT (REPLACE(UPPER(UUID()), _UTF8MB4'-', _UTF8MB4'')))"},
+		{"create table t (a varchar(32) default (replace(convert(upper(uuid()) using utf8mb4), '-', '')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT (REPLACE(CONVERT(UPPER(UUID()) USING 'utf8mb4'), _UTF8MB4'-', _UTF8MB4'')))"},
+		{"create table t (a varchar(32) default replace(convert(upper(uuid()) using utf8mb4), '-', ''))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT (REPLACE(CONVERT(UPPER(UUID()) USING 'utf8mb4'), _UTF8MB4'-', _UTF8MB4'')))"},
+		{"create table t (a int default upper(substring_index(user(),'@',1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT (UPPER(SUBSTRING_INDEX(USER(), _UTF8MB4'@', 1))))"},
+		{"create table t (a int default (upper(substring_index(user(),'@',1))))", true, "CREATE TABLE `t` (`a` INT DEFAULT (UPPER(SUBSTRING_INDEX(USER(), _UTF8MB4'@', 1))))"},
+		{"create table t (a varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT (STR_TO_DATE(_UTF8MB4'1980-01-01', _UTF8MB4'%Y-%m-%d')))"},
+		{"create table t (a varchar(32) default str_to_date('1980-01-01','%Y-%m-%d'))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT (STR_TO_DATE(_UTF8MB4'1980-01-01', _UTF8MB4'%Y-%m-%d')))"},
+		{"create table t (j json default (json_object()))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_OBJECT()))"},
+		{"create table t (j json default (json_array()))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_ARRAY()))"},
+		{"create table t (j json default (json_quote()))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_QUOTE()))"},
+		{"create table t (j json default (json_object('foo', 5, 'bar', 'barfoo')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_OBJECT(_UTF8MB4'foo', 5, _UTF8MB4'bar', _UTF8MB4'barfoo')))"},
+		{"create table t (j json default (json_array(1,2,3)))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_ARRAY(1, 2, 3)))"},
+		{"create table t (j json default (json_quote('foobar')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_QUOTE(_UTF8MB4'foobar')))"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3790,6 +3813,9 @@ func TestDDL(t *testing.T) {
 		{"create resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"create resource group x ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 2000"},
 		{"create resource group x ru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 200000"},
+		{"create resource group x ru_per_sec=UNLIMITED", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
+		{"create resource group x ru_per_sec=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
+		{"create resource group x ru_per_sec='check'", false, ""},
 		{"create resource group x followers=0", false, ""},
 		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = TRUE"},
 		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 2000"},
@@ -3799,6 +3825,7 @@ func TestDDL(t *testing.T) {
 		{"create resource group x burstable = true ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
 		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
 		{"create resource group default ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
+		{"create resource group default ru_per_sec=UNLIMITED, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = TRUE"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION DRYRUN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = DRYRUN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10m' ACTION COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10m' ACTION = COOLDOWN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(ACTION KILL EXEC_ELAPSED='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
@@ -3812,6 +3839,7 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=1000 background (task_types='br,lightning')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH EXACT DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{`create resource group x ru_per_sec=UNLIMITED QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		// This case is expected in parser test but not in actual ddl job.
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
 		{"create resource group x ru_per_sec=1000 QUERY=(EXEC_ELAPSED '10s')", false, ""},
@@ -3826,6 +3854,10 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
 		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=UNLIMITED", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
+		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=unlimited, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec='check', BURSTABLE", false, ""},
 		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 3000"},
 		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
 		// This case is expected in parser test but not in actual ddl job.
@@ -3844,6 +3876,7 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=( ACTION KILL EXEC_ELAPSED '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' WATCH = SIMILAR DURATION = '10m' ACTION = COOLDOWN)"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
+		{"alter resource group x ru_per_sec=UNLIMITED QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
 		// This case is expected in parser test but not in actual ddl job.
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT EXEC_ELAPSED '10s'", false, ""},
@@ -3958,6 +3991,12 @@ func TestErrorMsg(t *testing.T) {
 
 	_, _, err = p.Parse("create table t(f_year year(5))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", "", "")
 	require.EqualError(t, err, "[parser:1818]Supports only YEAR or YEAR(4) column")
+
+	_, _, err = p.Parse("create table ``.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ''")
+
+	_, _, err = p.Parse("create table ` `.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ' '")
 
 	_, _, err = p.Parse("select ifnull(a,0) & ifnull(a,0) like '55' ESCAPE '\\\\a' from t;", "", "")
 	require.EqualError(t, err, "[parser:1210]Incorrect arguments to ESCAPE")
@@ -4736,6 +4775,19 @@ func TestOptimizerHints(t *testing.T) {
 
 	require.Equal(t, "no_index_merge_join", hints[1].HintName.L)
 	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test HYPO_INDEX
+	stmt, _, err = p.Parse("select /*+ HYPO_INDEX(t1, a), HYPO_INDEX(t3, a, b, c) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "hypo_index", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "hypo_index", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 }
 
 func TestType(t *testing.T) {
@@ -5156,6 +5208,16 @@ func TestSetOperator(t *testing.T) {
 		{"(select c1 from t1) union all (select c2 from t2 except select c3 from t3) order by c1 limit 1", true, "(SELECT `c1` FROM `t1`) UNION ALL (SELECT `c2` FROM `t2` EXCEPT SELECT `c3` FROM `t3`) ORDER BY `c1` LIMIT 1"},
 		{"((select c1 from t1) except select c2 from t2) intersect all (select c3 from t3) order by c1 limit 1", true, "((SELECT `c1` FROM `t1`) EXCEPT SELECT `c2` FROM `t2`) INTERSECT ALL (SELECT `c3` FROM `t3`) ORDER BY `c1` LIMIT 1"},
 		{"select 1 union distinct (select 1 except all select 1 intersect select 1)", true, "SELECT 1 UNION (SELECT 1 EXCEPT ALL SELECT 1 INTERSECT SELECT 1)"},
+
+		// https://github.com/pingcap/tidb/issues/49874
+		{"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1)", true,
+			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1)"},
+		{"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1) order by pk limit 2", true,
+			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2"},
+		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk limit 2", true,
+			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2"},
+		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk", true,
+			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk`"},
 	}
 	RunTest(t, table, false)
 }
@@ -5476,13 +5538,11 @@ func TestBinding(t *testing.T) {
 		{"create session binding for select 1 union select 2 intersect select 3 using select 1 union select 2 intersect select 3", true, "CREATE SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3 USING SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
 		{"drop session binding for select 1 union select 2 intersect select 3 using select 1 union select 2 intersect select 3", true, "DROP SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3 USING SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
 		{"drop session binding for select 1 union select 2 intersect select 3", true, "DROP SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
-		// Universal bindings
-		{"create global universal binding for select * from t using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create session universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create global universal binding using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create session universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
+		// Use wildcards when creating binding
+		{"create global binding using select * from *.t1", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
+		{"create global binding using select * from *.t1 where t1.a > (select max(a) from t2)", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`) USING SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
+		{"create session binding using select * from *.t1", true, "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
+		{"create binding using select * from *.t1", true, "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
 		// Update cases.
 		{"CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},
 		{"CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},
@@ -6836,7 +6896,8 @@ func TestBRIE(t *testing.T) {
 		{"BACKUP DATABASE *, a TO 'noop://'", false, ""},
 		{"BACKUP DATABASE a, * TO 'noop://'", false, ""},
 		{"BACKUP DATABASE TO 'noop://'", false, ""},
-		{"BACKUP TABLE a TO 'noop://'", true, "BACKUP TABLE `a` TO 'noop://'"},
+		{"BACKUP TABLE a TO 'noop://' checksum_concurrency 4 compression_level 4 ignore_stats 1 compression_type 'lz4'", true, "BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 COMPRESSION_LEVEL = 4 IGNORE_STATS = 1 COMPRESSION_TYPE = 'lz4'"},
+		{"RESTORE TABLE a FROM 'noop://' checksum_concurrency 4 wait_tiflash_ready 1 with_sys_table 1", true, "RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1"},
 		{"BACKUP TABLE a.b TO 'noop://'", true, "BACKUP TABLE `a`.`b` TO 'noop://'"},
 		{"BACKUP TABLE a.b,c.d,e TO 'noop://'", true, "BACKUP TABLE `a`.`b`, `c`.`d`, `e` TO 'noop://'"},
 		{"BACKUP TABLE a.* TO 'noop://'", false, ""},
@@ -7498,6 +7559,21 @@ func TestCompatTypes(t *testing.T) {
 		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMTEXT)"},
 		{`CREATE TABLE t(id INT PRIMARY KEY, c1 MIDDLEINT)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMINT)"},
 		{`CREATE TABLE t(id INT PRIMARY KEY, c1 NUMERIC)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestVector(t *testing.T) {
+	table := []testCase{
+		{"CREATE TABLE t (a VECTOR)", true, "CREATE TABLE `t` (`a` VECTOR)"},
+		{"CREATE TABLE t (a VECTOR<FLOAT>)", true, "CREATE TABLE `t` (`a` VECTOR)"},
+		{"CREATE TABLE t (a VECTOR(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
+		{"CREATE TABLE t (a VECTOR<FLOAT>(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
+		{"CREATE TABLE t (a VECTOR<INT>)", false, ""},
+		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
+		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},
+		{"CREATE TABLE t (a VECTOR(5)<FLOAT>)", false, ""},
 	}
 
 	RunTest(t, table, false)

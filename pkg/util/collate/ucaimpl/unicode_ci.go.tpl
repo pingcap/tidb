@@ -23,6 +23,11 @@ type {{.Name}} struct {
 	impl {{.ImplName}}
 }
 
+// Clone implements Collator interface.
+func (uc *{{.Name}}) Clone() Collator {
+    return &{{.Name}}{impl: uc.impl.Clone()}
+}
+
 // Compare implements Collator interface.
 func (uc *{{.Name}}) Compare(a, b string) int {
 	a = uc.impl.Preprocess(a)

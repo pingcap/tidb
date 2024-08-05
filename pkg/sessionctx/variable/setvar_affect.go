@@ -53,15 +53,18 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_disk_factor":                            {},
 	"tidb_opt_concurrency_factor":                     {},
 	"tidb_opt_force_inline_cte":                       {},
+	"tidb_opt_use_invisible_indexes":                  {},
 	"tidb_index_join_batch_size":                      {},
 	"tidb_index_lookup_size":                          {},
 	"tidb_index_serial_scan_concurrency":              {},
+	"tidb_init_chunk_size":                            {},
 	"tidb_allow_batch_cop":                            {},
 	"tidb_allow_mpp":                                  {},
 	"tidb_enforce_mpp":                                {},
 	"tidb_max_bytes_before_tiflash_external_join":     {},
 	"tidb_max_bytes_before_tiflash_external_group_by": {},
 	"tidb_max_bytes_before_tiflash_external_sort":     {},
+	"tidb_max_chunk_size":                             {},
 	"tidb_min_paging_size":                            {},
 	"tidb_max_paging_size":                            {},
 	"tidb_enable_cascades_planner":                    {},
@@ -93,6 +96,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_enable_inl_join_inner_multi_pattern":        {},
 	"tidb_opt_enable_late_materialization":            {},
 	"tidb_opt_ordering_index_selectivity_threshold":   {},
+	"tidb_opt_ordering_index_selectivity_ratio":       {},
 	"tidb_opt_enable_mpp_shared_cte_execution":        {},
 	"tidb_opt_fix_control":                            {},
 	"tidb_runtime_filter_type":                        {},
@@ -113,7 +117,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 func setHintUpdatable(vars []*SysVar) {
 	for _, v := range vars {
 		if _, ok := isHintUpdatableVerified[v.Name]; ok {
-			v.IsHintUpdatableVerfied = true
+			v.IsHintUpdatableVerified = true
 		}
 	}
 }

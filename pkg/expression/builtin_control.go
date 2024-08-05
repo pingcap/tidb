@@ -17,7 +17,6 @@ package expression
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -136,14 +135,14 @@ func hasBinaryStr(args []*types.FieldType) bool {
 	return false
 }
 
-func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
+func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) != 2 {
 			panic("unexpected length of args for if/ifnull/lead/lag")
 		}
 		lexp, rexp := args[0], args[1]
-		lhs, rhs := lexp.GetType(), rexp.GetType()
+		lhs, rhs := lexp.GetType(ctx.GetEvalCtx()), rexp.GetType(ctx.GetEvalCtx())
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
@@ -184,7 +183,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		resultFieldType.SetCollate(ec.Collation)
 		resultFieldType.SetCharset(ec.Charset)
 		for i := range args {
-			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
+			if mysql.HasBinaryFlag(args[i].GetType(ctx.GetEvalCtx()).GetFlag()) || !types.IsNonBinaryStr(args[i].GetType(ctx.GetEvalCtx())) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 				break
 			}
@@ -192,7 +191,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 	case ast.Coalesce: // TODO ast.Case and ast.Coalesce should be merged into the same branch
 		argTypes := make([]*types.FieldType, 0)
 		for _, arg := range args {
-			argTypes = append(argTypes, arg.GetType())
+			argTypes = append(argTypes, arg.GetType(ctx.GetEvalCtx()))
 		}
 
 		nonBinaryStrExist := hasNonBinaryStr(argTypes)
@@ -232,7 +231,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 }
 
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, COALESCE, LEAD and LAG.
-func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Expression) (*types.FieldType, error) {
+func InferType4ControlFuncs(ctx BuildContext, funcName string, args ...Expression) (*types.FieldType, error) {
 	argsNum := len(args)
 	if argsNum == 0 {
 		panic("unexpected length 0 of args")
@@ -240,10 +239,10 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Exp
 	nullFields := make([]*types.FieldType, 0, argsNum)
 	notNullFields := make([]*types.FieldType, 0, argsNum)
 	for i := range args {
-		if args[i].GetType().GetType() == mysql.TypeNull {
-			nullFields = append(nullFields, args[i].GetType())
+		if args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+			nullFields = append(nullFields, args[i].GetType(ctx.GetEvalCtx()))
 		} else {
-			notNullFields = append(notNullFields, args[i].GetType())
+			notNullFields = append(notNullFields, args[i].GetType(ctx.GetEvalCtx()))
 		}
 	}
 	resultFieldType := &types.FieldType{}
@@ -307,7 +306,7 @@ type caseWhenFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -336,7 +335,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
-		argTps = append(argTps, args[i].GetType(), fieldTp.Clone())
+		argTps = append(argTps, args[i].GetType(ctx.GetEvalCtx()), fieldTp.Clone())
 	}
 	if l%2 == 1 {
 		argTps = append(argTps, fieldTp.Clone())
@@ -632,7 +631,7 @@ type ifFunctionClass struct {
 }
 
 // getFunction see https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
-func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -646,7 +645,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType().Clone(), retTp.Clone(), retTp.Clone())
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType(ctx.GetEvalCtx()).Clone(), retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
 	}
@@ -829,11 +828,11 @@ type ifNullFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhs, rhs := args[0].GetType(), args[1].GetType()
+	lhs, rhs := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[0], args[1])
 	if err != nil {
 		return nil, err

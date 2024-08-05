@@ -94,7 +94,7 @@ func TestTikvRegionPeers(t *testing.T) {
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(server.URL, "http://")
 	// mock PD API
-	router.Handle(pd.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -111,8 +111,11 @@ func TestTikvRegionPeers(t *testing.T) {
 	router.HandleFunc(pd.RegionByIDPrefix+"/"+"{id}", regionsInfoHandler)
 	defer server.Close()
 
+	pdAddrs := []string{mockAddr}
 	store := testkit.CreateMockStore(t,
-		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("tikv-regions-peers-table-test", []string{mockAddr})))
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("tikv-regions-peers-table-test", pdAddrs)),
+		mockstore.WithPDAddr(pdAddrs),
+	)
 
 	store = &mockStore{
 		store.(helper.Storage),

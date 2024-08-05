@@ -70,7 +70,7 @@ func (h *ddlHandlerImpl) onDropPartitions(t *util.DDLEvent) error {
 	// Reset the partition stats.
 	// It's OK to put those operations in different transactions. Because it will not affect the correctness.
 	for _, def := range droppedPartitionInfo.Definitions {
-		if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
+		if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
 			return err
 		}
 	}

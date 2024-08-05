@@ -1,23 +1,54 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "exec",
-    srcs = ["executor.go"],
+    srcs = [
+        "executor.go",
+        "indexusage.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/exec",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/domain",
         "//pkg/expression",
+        "//pkg/parser",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/table",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/execdetails",
-        "//pkg/util/sqlexec",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
         "//pkg/util/tracing",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "exec_test",
+    timeout = "short",
+    srcs = ["indexusage_test.go"],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        ":exec",
+        "//pkg/domain",
+        "//pkg/parser/model",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/testkit",
+        "//pkg/types/parser_driver",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )

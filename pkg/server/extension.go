@@ -58,7 +58,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 	cc.extensions.OnConnectionEvent(tp, info)
 }
 
-func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, err error, args ...param.BinaryParam) {
+func (cc *clientConn) onExtensionStmtEnd(node any, stmtCtxValid bool, err error, args ...param.BinaryParam) {
 	if !cc.extensions.HasStmtEventListeners() {
 		return
 	}
@@ -212,10 +212,26 @@ func (e *stmtEventInfo) AffectedRows() uint64 {
 }
 
 func (e *stmtEventInfo) RelatedTables() []stmtctx.TableEntry {
-	if e.sc == nil {
-		return nil
+	if useDB, ok := e.stmtNode.(*ast.UseStmt); ok {
+		return []stmtctx.TableEntry{{DB: useDB.DBName}}
 	}
-	return e.sc.Tables
+	if e.sc != nil && e.err == nil {
+		return e.sc.Tables
+	}
+	tableNames := core.ExtractTableList(e.stmtNode, false)
+	tableEntries := make([]stmtctx.TableEntry, 0, len(tableNames))
+	for i, tableName := range tableNames {
+		if tableName != nil {
+			tableEntries = append(tableEntries, stmtctx.TableEntry{
+				Table: tableName.Name.L,
+				DB:    tableName.Schema.L,
+			})
+			if tableEntries[i].DB == "" {
+				tableEntries[i].DB = e.sessVars.CurrentDB
+			}
+		}
+	}
+	return tableEntries
 }
 
 func (e *stmtEventInfo) GetError() error {

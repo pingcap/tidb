@@ -27,12 +27,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -101,7 +103,7 @@ func (w *watcher) Rewatch(ctx context.Context, etcdCli *clientv3.Client, path st
 		w.Lock()
 		w.wCh = wCh
 		w.Unlock()
-		logutil.BgLogger().Info("syncer rewatch global info finished", zap.String("category", "ddl"))
+		logutil.DDLLogger().Info("syncer rewatch global info finished")
 	}()
 }
 
@@ -126,8 +128,86 @@ type SchemaSyncer interface {
 	// the latest schema version. (exclude the isolated TiDB)
 	// It returns until all servers' versions are equal to the latest version.
 	OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error
+	// SyncJobSchemaVerLoop syncs the schema versions on all TiDB nodes for DDL jobs.
+	SyncJobSchemaVerLoop(ctx context.Context)
 	// Close ends SchemaSyncer.
 	Close()
+}
+
+// nodeVersions is used to record the schema versions of all TiDB nodes for a DDL job.
+type nodeVersions struct {
+	sync.Mutex
+	nodeVersions map[string]int64
+	// onceMatchFn is used to check if all the servers report the least version.
+	// If all the servers report the least version, i.e. return true, it will be
+	// set to nil.
+	onceMatchFn func(map[string]int64) bool
+}
+
+func newNodeVersions(initialCap int, fn func(map[string]int64) bool) *nodeVersions {
+	return &nodeVersions{
+		nodeVersions: make(map[string]int64, initialCap),
+		onceMatchFn:  fn,
+	}
+}
+
+func (v *nodeVersions) add(nodeID string, ver int64) {
+	v.Lock()
+	defer v.Unlock()
+	v.nodeVersions[nodeID] = ver
+	if v.onceMatchFn != nil {
+		if ok := v.onceMatchFn(v.nodeVersions); ok {
+			v.onceMatchFn = nil
+		}
+	}
+}
+
+func (v *nodeVersions) del(nodeID string) {
+	v.Lock()
+	defer v.Unlock()
+	delete(v.nodeVersions, nodeID)
+	// we don't call onceMatchFn here, for only "add" can cause onceMatchFn return
+	// true currently.
+}
+
+func (v *nodeVersions) len() int {
+	v.Lock()
+	defer v.Unlock()
+	return len(v.nodeVersions)
+}
+
+// matchOrSet onceMatchFn must be nil before calling this method.
+func (v *nodeVersions) matchOrSet(fn func(nodeVersions map[string]int64) bool) {
+	v.Lock()
+	defer v.Unlock()
+	if ok := fn(v.nodeVersions); !ok {
+		v.onceMatchFn = fn
+	}
+}
+
+func (v *nodeVersions) clearData() {
+	v.Lock()
+	defer v.Unlock()
+	v.nodeVersions = make(map[string]int64, len(v.nodeVersions))
+}
+
+func (v *nodeVersions) clearMatchFn() {
+	v.Lock()
+	defer v.Unlock()
+	v.onceMatchFn = nil
+}
+
+func (v *nodeVersions) emptyAndNotUsed() bool {
+	v.Lock()
+	defer v.Unlock()
+	return len(v.nodeVersions) == 0 && v.onceMatchFn == nil
+}
+
+// for test
+func (v *nodeVersions) getMatchFn() func(map[string]int64) bool {
+	v.Lock()
+	defer v.Unlock()
+	return v.onceMatchFn
 }
 
 type schemaVersionSyncer struct {
@@ -136,6 +216,10 @@ type schemaVersionSyncer struct {
 	session           unsafe.Pointer
 	globalVerWatcher  watcher
 	ddlID             string
+
+	mu               sync.RWMutex
+	jobNodeVersions  map[int64]*nodeVersions
+	jobNodeVerPrefix string
 }
 
 // NewSchemaSyncer creates a new SchemaSyncer.
@@ -144,6 +228,9 @@ func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 		etcdCli:           etcdCli,
 		selfSchemaVerPath: fmt.Sprintf("%s/%s", util.DDLAllSchemaVersions, id),
 		ddlID:             id,
+
+		jobNodeVersions:  make(map[int64]*nodeVersions),
+		jobNodeVerPrefix: util.DDLAllSchemaVersionsByJob + "/",
 	}
 }
 
@@ -189,7 +276,7 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
 		if val.(bool) {
 			err := s.loadSession().Close()
-			logutil.BgLogger().Error("close session failed", zap.Error(err))
+			logutil.DDLLogger().Error("close session failed", zap.Error(err))
 		}
 	})
 
@@ -238,7 +325,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 	var path string
 	if variable.EnableMDL.Load() {
 		path = fmt.Sprintf("%s/%d/%s", util.DDLAllSchemaVersionsByJob, jobID, s.ddlID)
-		err = util.PutKVToEtcd(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
+		err = util.PutKVToEtcdMono(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
 	} else {
 		path = s.selfSchemaVerPath
 		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,
@@ -275,7 +362,9 @@ func (s *schemaVersionSyncer) removeSelfVersionPath() error {
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
 	startTime := time.Now()
-	time.Sleep(CheckVersFirstWaitTime)
+	if !variable.EnableMDL.Load() {
+		time.Sleep(CheckVersFirstWaitTime)
+	}
 	notMatchVerCnt := 0
 	intervalCnt := int(time.Second / checkVersInterval)
 
@@ -291,16 +380,12 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 	// updatedMap should be empty if all the servers get the metadata lock.
 	updatedMap := make(map[string]string)
 	for {
-		if util.IsContextDone(ctx) {
+		if err := ctx.Err(); err != nil {
 			// ctx is canceled or timeout.
-			err = errors.Trace(ctx.Err())
-			return err
+			return errors.Trace(err)
 		}
 
-		// Prepare path and updatedMap.
-		path := util.DDLAllSchemaVersions
 		if variable.EnableMDL.Load() {
-			path = fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
 			serverInfos, err := infosync.GetAllServerInfo(ctx)
 			if err != nil {
 				return err
@@ -308,9 +393,10 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			updatedMap = make(map[string]string)
 			instance2id := make(map[string]string)
 
-			// Set updatedMap according to the serverInfos, and remove some invalid serverInfos.
 			for _, info := range serverInfos {
-				instance := fmt.Sprintf("%s:%d", info.IP, info.Port)
+				instance := disttaskutil.GenerateExecID(info)
+				// if some node shutdown abnormally and start, we might see some
+				// instance with different id, we should use the latest one.
 				if id, ok := instance2id[instance]; ok {
 					if info.StartTimestamp > serverInfos[id].StartTimestamp {
 						// Replace it.
@@ -325,78 +411,219 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			}
 		}
 
-		// Get all the schema versions from ETCD.
-		resp, err := s.etcdCli.Get(ctx, path, clientv3.WithPrefix())
-		if err != nil {
-			logutil.BgLogger().Info("syncer check all versions failed, continue checking.", zap.String("category", "ddl"), zap.Error(err))
-			continue
-		}
-
 		// Check all schema versions.
-		succ := true
 		if variable.EnableMDL.Load() {
-			for _, kv := range resp.Kvs {
-				key := string(kv.Key)
-				tidbIDInResp := key[strings.LastIndex(key, "/")+1:]
-				ver, err := strconv.Atoi(string(kv.Value))
-				if err != nil {
-					logutil.BgLogger().Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"), zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
-					succ = false
-					break
+			notifyCh := make(chan struct{})
+			var unmatchedNodeID atomic.Pointer[string]
+			matchFn := func(nodeVersions map[string]int64) bool {
+				if len(nodeVersions) < len(updatedMap) {
+					return false
 				}
-				// We need to check if the tidb ID is in the updatedMap, in case that deleting etcd is failed, and tidb server is down.
-				if int64(ver) < latestVer && updatedMap[tidbIDInResp] != "" {
-					if notMatchVerCnt%intervalCnt == 0 {
-						logutil.BgLogger().Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
-							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
+				for tidbID := range updatedMap {
+					if nodeVer, ok := nodeVersions[tidbID]; !ok || nodeVer < latestVer {
+						id := tidbID
+						unmatchedNodeID.Store(&id)
+						return false
 					}
-					succ = false
-					notMatchVerCnt++
-					break
 				}
-				delete(updatedMap, tidbIDInResp)
+				close(notifyCh)
+				return true
 			}
-			if len(updatedMap) > 0 {
-				succ = false
-				for _, info := range updatedMap {
-					logutil.BgLogger().Info("syncer check all versions, someone is not synced", zap.String("category", "ddl"), zap.String("info", info), zap.Int64("ddl job id", jobID), zap.Int64("ver", latestVer))
+			item := s.jobSchemaVerMatchOrSet(jobID, matchFn)
+			select {
+			case <-notifyCh:
+				return nil
+			case <-ctx.Done():
+				item.clearMatchFn()
+				return errors.Trace(ctx.Err())
+			case <-time.After(time.Second):
+				item.clearMatchFn()
+				if id := unmatchedNodeID.Load(); id != nil {
+					logutil.DDLLogger().Info("syncer check all versions, someone is not synced",
+						zap.String("info", *id),
+						zap.Int64("ddl job id", jobID),
+						zap.Int64("ver", latestVer))
+				} else {
+					logutil.DDLLogger().Info("syncer check all versions, all nodes are not synced",
+						zap.Int64("ddl job id", jobID),
+						zap.Int64("ver", latestVer))
 				}
 			}
 		} else {
+			// Get all the schema versions from ETCD.
+			resp, err := s.etcdCli.Get(ctx, util.DDLAllSchemaVersions, clientv3.WithPrefix())
+			if err != nil {
+				logutil.DDLLogger().Info("syncer check all versions failed, continue checking.", zap.Error(err))
+				continue
+			}
+			succ := true
 			for _, kv := range resp.Kvs {
 				if _, ok := updatedMap[string(kv.Key)]; ok {
 					continue
 				}
 
-				ver, err := strconv.Atoi(string(kv.Value))
-				if err != nil {
-					logutil.BgLogger().Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"), zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
-					succ = false
-					break
-				}
-				if int64(ver) < latestVer {
-					if notMatchVerCnt%intervalCnt == 0 {
-						logutil.BgLogger().Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
-							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
-					}
-					succ = false
-					notMatchVerCnt++
+				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt, true)
+				if !succ {
 					break
 				}
 				updatedMap[string(kv.Key)] = ""
 			}
-		}
 
-		if succ {
-			return nil
+			if succ {
+				return nil
+			}
+			time.Sleep(checkVersInterval)
+			notMatchVerCnt++
 		}
-		time.Sleep(checkVersInterval)
 	}
+}
+
+// SyncJobSchemaVerLoop implements SchemaSyncer.SyncJobSchemaVerLoop interface.
+func (s *schemaVersionSyncer) SyncJobSchemaVerLoop(ctx context.Context) {
+	for {
+		s.syncJobSchemaVer(ctx)
+		logutil.DDLLogger().Info("schema version sync loop interrupted, retrying...")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
+	resp, err := s.etcdCli.Get(ctx, s.jobNodeVerPrefix, clientv3.WithPrefix())
+	if err != nil {
+		logutil.DDLLogger().Info("get all job versions failed", zap.Error(err))
+		return
+	}
+	s.mu.Lock()
+	for jobID, item := range s.jobNodeVersions {
+		item.clearData()
+		// we might miss some DELETE events during retry, some items might be emptyAndNotUsed, remove them.
+		if item.emptyAndNotUsed() {
+			delete(s.jobNodeVersions, jobID)
+		}
+	}
+	s.mu.Unlock()
+	for _, oneKV := range resp.Kvs {
+		s.handleJobSchemaVerKV(oneKV, mvccpb.PUT)
+	}
+
+	startRev := resp.Header.Revision + 1
+	watchCtx, watchCtxCancel := context.WithCancel(ctx)
+	defer watchCtxCancel()
+	watchCtx = clientv3.WithRequireLeader(watchCtx)
+	watchCh := s.etcdCli.Watch(watchCtx, s.jobNodeVerPrefix, clientv3.WithPrefix(), clientv3.WithRev(startRev))
+	for {
+		var (
+			wresp clientv3.WatchResponse
+			ok    bool
+		)
+		select {
+		case <-watchCtx.Done():
+			return
+		case wresp, ok = <-watchCh:
+			if !ok {
+				// ctx must be cancelled, else we should have received a response
+				// with err and caught by below err check.
+				return
+			}
+		}
+		failpoint.Inject("mockCompaction", func() {
+			wresp.CompactRevision = 123
+		})
+		if err := wresp.Err(); err != nil {
+			logutil.DDLLogger().Warn("watch job version failed", zap.Error(err))
+			return
+		}
+		for _, ev := range wresp.Events {
+			s.handleJobSchemaVerKV(ev.Kv, ev.Type)
+		}
+	}
+}
+
+func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType) {
+	jobID, tidbID, schemaVer, valid := decodeJobVersionEvent(kv, tp, s.jobNodeVerPrefix)
+	if !valid {
+		logutil.DDLLogger().Error("invalid job version kv", zap.Stringer("kv", kv), zap.Stringer("type", tp))
+		return
+	}
+	if tp == mvccpb.PUT {
+		s.mu.Lock()
+		item, exists := s.jobNodeVersions[jobID]
+		if !exists {
+			item = newNodeVersions(1, nil)
+			s.jobNodeVersions[jobID] = item
+		}
+		s.mu.Unlock()
+		item.add(tidbID, schemaVer)
+	} else { // DELETE
+		s.mu.Lock()
+		if item, exists := s.jobNodeVersions[jobID]; exists {
+			item.del(tidbID)
+			if item.len() == 0 {
+				delete(s.jobNodeVersions, jobID)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(map[string]int64) bool) *nodeVersions {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, exists := s.jobNodeVersions[jobID]
+	if exists {
+		item.matchOrSet(matchFn)
+	} else {
+		item = newNodeVersions(1, matchFn)
+		s.jobNodeVersions[jobID] = item
+	}
+	return item
+}
+
+func decodeJobVersionEvent(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType, prefix string) (jobID int64, tidbID string, schemaVer int64, valid bool) {
+	left := strings.TrimPrefix(string(kv.Key), prefix)
+	parts := strings.Split(left, "/")
+	if len(parts) != 2 {
+		return 0, "", 0, false
+	}
+	jobID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, "", 0, false
+	}
+	// there is no Value in DELETE event, so we need to check it.
+	if tp == mvccpb.PUT {
+		schemaVer, err = strconv.ParseInt(string(kv.Value), 10, 64)
+		if err != nil {
+			return 0, "", 0, false
+		}
+	}
+	return jobID, parts[1], schemaVer, true
+}
+
+func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int, nodeAlive bool) bool {
+	ver, err := strconv.Atoi(val)
+	if err != nil {
+		logutil.DDLLogger().Info("syncer check all versions, convert value to int failed, continue checking.",
+			zap.String("ddl", key), zap.String("value", val), zap.Error(err))
+		return false
+	}
+	if int64(ver) < latestVer && nodeAlive {
+		if notMatchVerCnt%intervalCnt == 0 {
+			logutil.DDLLogger().Info("syncer check all versions, someone is not synced, continue checking",
+				zap.String("ddl", key), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
+		}
+		return false
+	}
+	return true
 }
 
 func (s *schemaVersionSyncer) Close() {
 	err := s.removeSelfVersionPath()
 	if err != nil {
-		logutil.BgLogger().Error("remove self version path failed", zap.String("category", "ddl"), zap.Error(err))
+		logutil.DDLLogger().Error("remove self version path failed", zap.Error(err))
 	}
 }

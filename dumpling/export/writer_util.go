@@ -23,7 +23,7 @@ import (
 
 const lengthLimit = 1048576
 
-var pool = sync.Pool{New: func() interface{} {
+var pool = sync.Pool{New: func() any {
 	return &bytes.Buffer{}
 }}
 

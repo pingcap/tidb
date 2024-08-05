@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,7 +80,7 @@ func TestShowTableRegion(t *testing.T) {
 	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
 	tk.MustGetErrMsg(
 		"split partition table t_regions partition (p1,p2) index idx between (0) and (20000) regions 2;",
-		plannercore.ErrPartitionClauseOnNonpartitioned.Error())
+		plannererrors.ErrPartitionClauseOnNonpartitioned.Error())
 
 	// Test show table regions.
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
@@ -92,14 +92,14 @@ func TestShowTableRegion(t *testing.T) {
 	// Test show table regions.
 	tk.MustGetErrMsg(
 		"show table t_regions_temporary_table regions",
-		plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
+		plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
 	// Test split table.
 	tk.MustGetErrMsg(
 		"split table t_regions_temporary_table between (-10000) and (10000) regions 4;",
-		plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+		plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
 	tk.MustGetErrMsg(
 		"split partition table t_regions_temporary_table partition (p1,p2) index idx between (0) and (20000) regions 2;",
-		plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+		plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
 	tk.MustExec("drop table if exists t_regions_temporary_table")
 	// Test pre split regions
 	tk.MustGetErrMsg(
@@ -112,14 +112,14 @@ func TestShowTableRegion(t *testing.T) {
 	// Test show table regions.
 	tk.MustGetErrMsg(
 		"show table t_regions_local_temporary_table regions",
-		plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
+		plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
 	// Test split table.
 	tk.MustGetErrMsg(
 		"split table t_regions_local_temporary_table between (-10000) and (10000) regions 4;",
-		plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+		plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
 	tk.MustGetErrMsg(
 		"split partition table t_regions_local_temporary_table partition (p1,p2) index idx between (0) and (20000) regions 2;",
-		plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+		plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
 	tk.MustExec("drop table if exists t_regions_local_temporary_table")
 	// Test pre split regions
 	tk.MustGetErrMsg(
@@ -468,7 +468,7 @@ func TestShowTableRegion(t *testing.T) {
 
 	// Test show table partition region on non-partition table.
 	err = tk.QueryToErr("show table t partition (p3,p4) index idx regions")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrPartitionClauseOnNonpartitioned))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrPartitionClauseOnNonpartitioned))
 
 	// Test scheduling info for un-partitioned table with placement policy
 	tk.MustExec("drop table if exists t1_scheduling")

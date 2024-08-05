@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "opts",
+    srcs = [
+        "get_pre_info_opts.go",
+        "precheck_opts.go",
+    ],
+    importpath = "github.com/pingcap/tidb/lightning/pkg/importer/opts",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/lightning/mydump"],
+)

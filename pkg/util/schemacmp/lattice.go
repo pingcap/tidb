@@ -24,7 +24,7 @@ import (
 // IncompatibleError is the error type for incompatible schema.
 type IncompatibleError struct {
 	Msg  string
-	Args []interface{}
+	Args []any
 }
 
 const (
@@ -55,42 +55,42 @@ func (e *IncompatibleError) Error() string {
 func typeMismatchError(a, b Lattice) *IncompatibleError {
 	return &IncompatibleError{
 		Msg:  ErrMsgTypeMismatch,
-		Args: []interface{}{a, b},
+		Args: []any{a, b},
 	}
 }
 
 func tupleLengthMismatchError(a, b int) *IncompatibleError {
 	return &IncompatibleError{
 		Msg:  ErrMsgTupleLengthMismatch,
-		Args: []interface{}{a, b},
+		Args: []any{a, b},
 	}
 }
 
-func distinctSingletonsErrors(a, b interface{}) *IncompatibleError {
+func distinctSingletonsErrors(a, b any) *IncompatibleError {
 	return &IncompatibleError{
 		Msg:  ErrMsgDistinctSingletons,
-		Args: []interface{}{a, b},
+		Args: []any{a, b},
 	}
 }
 
-func incompatibleTypeError(a, b interface{}) *IncompatibleError {
+func incompatibleTypeError(a, b any) *IncompatibleError {
 	return &IncompatibleError{
 		Msg:  ErrMsgIncompatibleType,
-		Args: []interface{}{a, b},
+		Args: []any{a, b},
 	}
 }
 
 func wrapTupleIndexError(i int, inner error) *IncompatibleError {
 	return &IncompatibleError{
 		Msg:  ErrMsgAtTupleIndex,
-		Args: []interface{}{i, inner},
+		Args: []any{i, inner},
 	}
 }
 
 func wrapMapKeyError(key string, inner error) *IncompatibleError {
 	return &IncompatibleError{
 		Msg:  ErrMsgAtMapKey,
-		Args: []interface{}{key, inner},
+		Args: []any{key, inner},
 	}
 }
 
@@ -98,7 +98,7 @@ func wrapMapKeyError(key string, inner error) *IncompatibleError {
 type Lattice interface {
 	// Unwrap returns the underlying object supporting the lattice. This
 	// operation is deep.
-	Unwrap() interface{}
+	Unwrap() any
 
 	// Compare this instance with another instance.
 	//
@@ -115,7 +115,7 @@ type Lattice interface {
 type Bool bool
 
 // Unwrap implements Lattice
-func (a Bool) Unwrap() interface{} {
+func (a Bool) Unwrap() any {
 	return bool(a)
 }
 
@@ -143,16 +143,16 @@ func (a Bool) Join(other Lattice) (Lattice, error) {
 	return a || b, nil
 }
 
-type singleton struct{ value interface{} }
+type singleton struct{ value any }
 
 // Unwrap implements Lattice
-func (a singleton) Unwrap() interface{} {
+func (a singleton) Unwrap() any {
 	return a.value
 }
 
 // Singleton wraps an unordered value. Distinct instances of Singleton are
 // incompatible.
-func Singleton(value interface{}) Lattice {
+func Singleton(value any) Lattice {
 	return singleton{value: value}
 }
 
@@ -197,7 +197,7 @@ func EqualitySingleton(value Equality) Lattice {
 }
 
 // Unwrap implements Lattice.
-func (a equalitySingleton) Unwrap() interface{} {
+func (a equalitySingleton) Unwrap() any {
 	return a.Equality
 }
 
@@ -231,7 +231,7 @@ func (a equalitySingleton) Join(other Lattice) (Lattice, error) {
 type BitSet uint
 
 // Unwrap implements Lattice.
-func (a BitSet) Unwrap() interface{} {
+func (a BitSet) Unwrap() any {
 	return uint(a)
 }
 
@@ -250,7 +250,7 @@ func (a BitSet) Compare(other Lattice) (int, error) {
 	default:
 		return 0, &IncompatibleError{
 			Msg:  ErrMsgNonInclusiveBitSets,
-			Args: []interface{}{a, b},
+			Args: []any{a, b},
 		}
 	}
 }
@@ -268,7 +268,7 @@ func (a BitSet) Join(other Lattice) (Lattice, error) {
 type Byte byte
 
 // Unwrap implements Lattice.
-func (a Byte) Unwrap() interface{} {
+func (a Byte) Unwrap() any {
 	return byte(a)
 }
 
@@ -312,7 +312,7 @@ func FieldTp(value byte) Lattice {
 }
 
 // Unwrap implements Lattice
-func (a fieldTp) Unwrap() interface{} {
+func (a fieldTp) Unwrap() any {
 	return a.value
 }
 
@@ -376,7 +376,7 @@ func (a fieldTp) Join(other Lattice) (Lattice, error) {
 type Int int
 
 // Unwrap implements Lattice.
-func (a Int) Unwrap() interface{} {
+func (a Int) Unwrap() any {
 	return int(a)
 }
 
@@ -412,7 +412,7 @@ func (a Int) Join(other Lattice) (Lattice, error) {
 type Int64 int64
 
 // Unwrap implements Lattice.
-func (a Int64) Unwrap() interface{} {
+func (a Int64) Unwrap() any {
 	return int64(a)
 }
 
@@ -448,7 +448,7 @@ func (a Int64) Join(other Lattice) (Lattice, error) {
 type Uint uint
 
 // Unwrap implements Lattice.
-func (a Uint) Unwrap() interface{} {
+func (a Uint) Unwrap() any {
 	return uint(a)
 }
 
@@ -485,8 +485,8 @@ func (a Uint) Join(other Lattice) (Lattice, error) {
 type Tuple []Lattice
 
 // Unwrap implements Lattice. The returned type is a `[]interface{}`.
-func (a Tuple) Unwrap() interface{} {
-	res := make([]interface{}, 0, len(a))
+func (a Tuple) Unwrap() any {
+	res := make([]any, 0, len(a))
 	for _, value := range a {
 		res = append(res, value.Unwrap())
 	}
@@ -527,7 +527,7 @@ func CombineCompareResult(x int, y int) (int, error) {
 	default:
 		return 0, &IncompatibleError{
 			Msg:  ErrMsgContradictingOrders,
-			Args: []interface{}{x, y},
+			Args: []any{x, y},
 		}
 	}
 }
@@ -561,7 +561,7 @@ func Maybe(inner Lattice) Lattice {
 }
 
 // MaybeSingletonInterface is a convenient function calling `Maybe(Singleton(value))`.
-func MaybeSingletonInterface(value interface{}) Lattice {
+func MaybeSingletonInterface(value any) Lattice {
 	if value == nil {
 		return Maybe(nil)
 	}
@@ -577,7 +577,7 @@ func MaybeSingletonString(s string) Lattice {
 }
 
 // Unwrap implements Lattice.
-func (a maybe) Unwrap() interface{} {
+func (a maybe) Unwrap() any {
 	if a.Lattice != nil {
 		return a.Lattice.Unwrap()
 	}
@@ -624,7 +624,7 @@ func (a maybe) Join(other Lattice) (Lattice, error) {
 type StringList []string
 
 // Unwrap implements Lattice.
-func (a StringList) Unwrap() interface{} {
+func (a StringList) Unwrap() any {
 	return []string(a)
 }
 
@@ -642,7 +642,7 @@ func (a StringList) Compare(other Lattice) (int, error) {
 		if a[i] != b[i] {
 			return 0, &IncompatibleError{
 				Msg:  ErrMsgStringListElemMismatch,
-				Args: []interface{}{i, a[i], b[i]},
+				Args: []any{i, a[i], b[i]},
 			}
 		}
 	}
@@ -701,8 +701,8 @@ type LatticeMap interface {
 type latticeMap struct{ LatticeMap }
 
 // Unwrap implements Lattice.
-func (a latticeMap) Unwrap() interface{} {
-	res := make(map[string]interface{})
+func (a latticeMap) Unwrap() any {
+	res := make(map[string]any)
 	// TODO: add err handle
 	_ = a.ForEach(func(key string, value Lattice) error {
 		res[key] = value.Unwrap()

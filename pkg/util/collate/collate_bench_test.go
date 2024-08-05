@@ -70,7 +70,7 @@ func BenchmarkUtf8mb40900AICI_CompareShort(b *testing.B) {
 }
 
 func BenchmarkUtf8mb40900Bin_CompareShort(b *testing.B) {
-	compare(b, &binCollator{}, short)
+	compare(b, &derivedBinCollator{}, short)
 }
 
 func BenchmarkUtf8mb4Bin_CompareMid(b *testing.B) {
@@ -90,7 +90,7 @@ func BenchmarkUtf8mb40900AICI_CompareMid(b *testing.B) {
 }
 
 func BenchmarkUtf8mb40900Bin_CompareMid(b *testing.B) {
-	compare(b, &binCollator{}, middle)
+	compare(b, &derivedBinCollator{}, middle)
 }
 
 func BenchmarkUtf8mb4Bin_CompareLong(b *testing.B) {
@@ -110,7 +110,7 @@ func BenchmarkUtf8mb40900AICI_CompareLong(b *testing.B) {
 }
 
 func BenchmarkUtf8mb40900Bin_CompareLong(b *testing.B) {
-	compare(b, &binCollator{}, long)
+	compare(b, &derivedBinCollator{}, long)
 }
 
 func BenchmarkUtf8mb4Bin_KeyShort(b *testing.B) {
@@ -130,7 +130,7 @@ func BenchmarkUtf8mb40900AICI_KeyShort(b *testing.B) {
 }
 
 func BenchmarkUtf8mb40900Bin_KeyShort(b *testing.B) {
-	key(b, &binCollator{}, short)
+	key(b, &derivedBinCollator{}, short)
 }
 
 func BenchmarkUtf8mb4Bin_KeyMid(b *testing.B) {
@@ -150,7 +150,7 @@ func BenchmarkUtf8mb40900AICI_KeyMid(b *testing.B) {
 }
 
 func BenchmarkUtf8mb40900Bin_KeyMid(b *testing.B) {
-	key(b, &binCollator{}, middle)
+	key(b, &derivedBinCollator{}, middle)
 }
 
 func BenchmarkUtf8mb4Bin_KeyLong(b *testing.B) {
@@ -170,5 +170,5 @@ func BenchmarkUtf8mb40900AICI_KeyLong(b *testing.B) {
 }
 
 func BenchmarkUtf8mb40900Bin_KeyLong(b *testing.B) {
-	key(b, &binCollator{}, long)
+	key(b, &derivedBinCollator{}, long)
 }

@@ -41,6 +41,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -241,8 +242,8 @@ func TestTiFlashManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Count)
 
-	// DeleteTiFlashPlacementRule
-	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
+	// DeleteTiFlashPlacementRules
+	require.NoError(t, DeleteTiFlashPlacementRules(ctx, []int64{1}))
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	require.Equal(t, 0, len(rules))

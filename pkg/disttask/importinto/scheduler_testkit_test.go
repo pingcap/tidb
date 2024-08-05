@@ -22,17 +22,16 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -48,11 +47,10 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
-	require.NoError(t, err)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 
 	// create job
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
 		"root", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
@@ -75,58 +73,61 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
-		Type:            proto.TaskTypeExample,
+		TaskBase: proto.TaskBase{
+			Type:  proto.TaskTypeExample,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            bs,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
 		StateUpdateTime: time.Now(),
 	}
 	manager, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
 	ext := importinto.ImportSchedulerExt{}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, importinto.StepImport, task.Step)
+	nextStep := ext.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.ImportStepImport, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
-	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
 	}
-	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	err = manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, nextStep, subtasks)
 	require.NoError(t, err)
-	gotSubtasks, err := manager.GetSubtasksForImportInto(ctx, taskID, importinto.StepImport)
+	task.Step = nextStep
+	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, proto.ImportStepImport)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
 		require.NoError(t, manager.FinishSubtask(ctx, s.ExecID, s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, importinto.StepPostProcess, task.Step)
+	task.Step = ext.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.ImportStepPostProcess, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
@@ -169,10 +170,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 func TestSchedulerExtGlobalSort(t *testing.T) {
 	// Domain start scheduler manager automatically, we need to disable it as
 	// we test import task management in this case.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/disableSchedulerManager", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/disableSchedulerManager"))
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -183,11 +181,11 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
-	require.NoError(t, err)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
 
 	// create job
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
 		"root", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
@@ -218,17 +216,19 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
-		Type:            proto.ImportInto,
+		TaskBase: proto.TaskBase{
+			Type:  proto.ImportInto,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            bs,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
 		StateUpdateTime: time.Now(),
 	}
 	manager, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -237,23 +237,24 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ext := importinto.ImportSchedulerExt{
 		GlobalSort: true,
 	}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, importinto.StepEncodeAndSort, task.Step)
+	nextStep := ext.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "global-sorting", gotJobInfo.Step)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
-	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
 	}
-	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	err = manager.SwitchTaskStep(ctx, task, proto.TaskStatePending, nextStep, subtasks)
+	task.Step = nextStep
 	require.NoError(t, err)
-	gotSubtasks, err := manager.GetSubtasksForImportInto(ctx, taskID, task.Step)
+	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	sortStepMeta := &importinto.ImportStepMeta{
 		SortedDataMeta: &external.SortedKVMeta{
@@ -290,27 +291,25 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	}
 
 	// to merge-sort stage
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
-	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, importinto.StepMergeSort, task.Step)
+	nextStep = ext.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.ImportStepMergeSort, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "global-sorting", gotJobInfo.Step)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
-	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
 	}
-	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	err = manager.SwitchTaskStep(ctx, task, proto.TaskStatePending, nextStep, subtasks)
 	require.NoError(t, err)
-	gotSubtasks, err = manager.GetSubtasksForImportInto(ctx, taskID, task.Step)
+	task.Step = nextStep
+	gotSubtasks, err = manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &importinto.MergeSortStepMeta{
 		KVGroup: "data",
@@ -328,33 +327,30 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	}
 
 	// to write-and-ingest stage
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs"))
-	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)")
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, importinto.StepWriteAndIngest, task.Step)
+	task.Step = ext.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.ImportStepWriteAndIngest, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "importing", gotJobInfo.Step)
 	// on next stage, to post-process stage
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, importinto.StepPostProcess, task.Step)
+	task.Step = ext.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.ImportStepPostProcess, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// next stage, done
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 }

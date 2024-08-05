@@ -19,9 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,6 +47,7 @@ func TestShowPlacement(t *testing.T) {
 	tk.MustExec("create placement policy pa1 " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1,cn-east-2\"" +
+		"SURVIVAL_PREFERENCES=\"[zone, dc, host]\"" +
 		"SCHEDULE=\"EVEN\"")
 	defer tk.MustExec("drop placement policy pa1")
 
@@ -80,26 +81,26 @@ func TestShowPlacement(t *testing.T) {
 	defer tk.MustExec("drop table if exists db2.t2")
 
 	tk.MustQuery("show placement").Check(testkit.Rows(
-		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" NULL",
 		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL",
 		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" NULL",
 		"DATABASE db2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" PENDING",
 		"TABLE db2.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" PENDING",
-		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
-		"TABLE test.t3 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" PENDING",
+		"TABLE test.t3 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" PENDING",
 		"TABLE test.t3 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" PENDING",
-		"TABLE test.t3 PARTITION p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
-		"TABLE test.t3 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"TABLE test.t3 PARTITION p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" PENDING",
+		"TABLE test.t3 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" PENDING",
 	))
 
 	tk.MustQuery("show placement like 'POLICY%'").Check(testkit.Rows(
-		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" NULL",
 		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL",
 		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" NULL",
 	))
 
 	tk.MustQuery("show placement like 'POLICY pa%'").Check(testkit.Rows(
-		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" NULL",
 		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL",
 	))
 
@@ -404,19 +405,19 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 
 	// before grant
 	err := tk1.ExecToErr("show placement for table test.t1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t1 partition p1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t2")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t3")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
 
 	err = tk1.ExecToErr("show placement for table db2.t1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
@@ -452,18 +453,18 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 		))
 
 		err = tk1.ExecToErr("show placement for table test.t2")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
+		require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
 
 		err = tk1.ExecToErr("show placement for table test.t3")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
+		require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
 
 		err = tk1.ExecToErr("show placement for table db2.t1")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+		require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 		// do revoke
 		tk.MustExec(fmt.Sprintf("revoke %s from 'user1'@'%%'", priv))
 		err = tk1.ExecToErr("show placement for table test.t1")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+		require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",

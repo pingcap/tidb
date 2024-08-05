@@ -15,22 +15,24 @@
 package ddl
 
 import (
-	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
+
+// DefaultTTLJobInterval is the default value for ttl job interval.
+const DefaultTTLJobInterval = "1h"
 
 func onTTLInfoRemove(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
@@ -97,7 +99,7 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 }
 
 func checkTTLInfoValid(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) error {
-	if err := checkTTLIntervalExpr(ctx, tblInfo.TTLInfo); err != nil {
+	if err := checkTTLIntervalExpr(tblInfo.TTLInfo); err != nil {
 		return err
 	}
 
@@ -108,20 +110,9 @@ func checkTTLInfoValid(ctx sessionctx.Context, schema model.CIStr, tblInfo *mode
 	return checkTTLInfoColumnType(tblInfo)
 }
 
-func checkTTLIntervalExpr(ctx sessionctx.Context, ttlInfo *model.TTLInfo) error {
-	// FIXME: use a better way to validate the interval expression in ttl
-	var nowAddIntervalExpr ast.ExprNode
-
-	unit := ast.TimeUnitType(ttlInfo.IntervalTimeUnit)
-	expr := fmt.Sprintf("select NOW() + INTERVAL %s %s", ttlInfo.IntervalExprStr, unit.String())
-	stmts, _, err := parser.New().ParseSQL(expr)
-	if err != nil {
-		// FIXME: the error information can be wrong, as it could indicate an unknown position to user.
-		return errors.Trace(err)
-	}
-	nowAddIntervalExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	_, err = expression.EvalAstExpr(ctx, nowAddIntervalExpr)
-	return err
+func checkTTLIntervalExpr(ttlInfo *model.TTLInfo) error {
+	_, err := cache.EvalExpireTime(time.Now(), ttlInfo.IntervalExprStr, ast.TimeUnitType(ttlInfo.IntervalTimeUnit))
+	return errors.Trace(err)
 }
 
 func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
@@ -213,7 +204,7 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      "1h",
+				JobInterval:      DefaultTTLJobInterval,
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue

@@ -74,7 +74,7 @@ func updateRecord(
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if err = col.HandleBadNull(&newData[i], sc, 0); err != nil {
+		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
 			return false, err
 		}
 	}
@@ -82,7 +82,7 @@ func updateRecord(
 	// Handle exchange partition
 	tbl := t.Meta()
 	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(sctx, newData, tbl); err != nil {
+		if err := checkRowForExchangePartition(sctx.GetTableCtx(), newData, tbl); err != nil {
 			return false, err
 		}
 	}
@@ -103,7 +103,7 @@ func updateRecord(
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
+				if err = t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
 					return false, err
 				}
 			}
@@ -144,7 +144,7 @@ func updateRecord(
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
-			v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+			v, err := expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return false, err
 			}
@@ -175,27 +175,29 @@ func updateRecord(
 			sh := memBuffer.Staging()
 			defer memBuffer.Cleanup(sh)
 
-			if err = t.RemoveRecord(sctx, h, oldData); err != nil {
+			if err = t.RemoveRecord(sctx.GetTableCtx(), h, oldData); err != nil {
 				return false, err
 			}
 
-			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
+			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx))
 			if err != nil {
 				return false, err
 			}
 			memBuffer.Release(sh)
 			return true, nil
 		}(); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-				return false, nil
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
+				return false, ec.HandleError(err)
 			}
 			return updated, err
 		}
 	} else {
 		// Update record to new value and update index.
-		if err := t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-				return false, nil
+		if err := t.UpdateRecord(sctx.GetTableCtx(), h, oldData, newData, modified, table.WithCtx(ctx)); err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
+				return false, ec.HandleError(err)
 			}
 			return false, err
 		}
@@ -244,7 +246,7 @@ func addUnchangedKeysForLockByRow(
 	count := 0
 	physicalID := t.Meta().ID
 	if pt, ok := t.(table.PartitionedTable); ok {
-		p, err := pt.GetPartitionByRow(sctx, row)
+		p, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return 0, err
 		}
@@ -304,20 +306,20 @@ func rebaseAutoRandomValue(
 	shardFmt := autoid.NewShardIDFormat(&col.FieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & shardFmt.IncrementalMask()
-	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
+	return t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
-	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
+	newErr := types.ErrDataTooLong.FastGen("Data too long for column '%v' at row %v", colName, rowIdx)
 	return newErr
 }
 
 // checkRowForExchangePartition is only used for ExchangePartition by non-partitionTable during write only state.
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
-func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tbl *model.TableInfo) error {
+func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, tbl *model.TableInfo) error {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {
@@ -327,8 +329,9 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 	if !ok {
 		return errors.Errorf("exchange partition process assert table partition failed")
 	}
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	err := p.CheckForExchangePartition(
-		sctx,
+		evalCtx,
 		pt.Meta().Partition,
 		row,
 		tbl.ExchangePartitionInfo.ExchangePartitionDefID,
@@ -338,15 +341,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 		return err
 	}
 	if variable.EnableCheckConstraint.Load() {
-		type CheckConstraintTable interface {
-			CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
-		}
-		cc, ok := pt.(CheckConstraintTable)
-		if !ok {
-			return errors.Errorf("exchange partition process assert check constraint failed")
-		}
-		err := cc.CheckRowConstraint(sctx, row)
-		if err != nil {
+		if err = table.CheckRowConstraintWithDatum(evalCtx, pt.WritableConstraint(), row); err != nil {
 			// TODO: make error include ExchangePartition info.
 			return err
 		}

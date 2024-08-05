@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dbutil
+package dbutil_test
 
 import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/dbutil/dbutiltest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,15 +87,15 @@ func TestIndex(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		tableInfo, err := GetTableInfoBySQL(testCase.sql, parser.New())
+		tableInfo, err := dbutiltest.GetTableInfoBySQL(testCase.sql, parser.New())
 		require.NoError(t, err)
 
-		indices := FindAllIndex(tableInfo)
+		indices := dbutil.FindAllIndex(tableInfo)
 		for i, index := range indices {
 			require.Equal(t, testCase.indices[i], index.Name.O)
 		}
 
-		cols := FindAllColumnWithIndex(tableInfo)
+		cols := dbutil.FindAllColumnWithIndex(tableInfo)
 		for j, col := range cols {
 			require.Equal(t, testCase.cols[j], col.Name.O)
 		}

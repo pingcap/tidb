@@ -42,8 +42,8 @@ func (ms *mockStatistics) GetScope(status string) ScopeFlag {
 	return scope
 }
 
-func (ms *mockStatistics) Stats(_ *SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, len(specificStatusScopes))
+func (ms *mockStatistics) Stats(_ *SessionVars) (map[string]any, error) {
+	m := make(map[string]any, len(specificStatusScopes))
 	m[testStatus] = testStatusVal
 
 	return m, nil

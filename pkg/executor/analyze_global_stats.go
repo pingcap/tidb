@@ -15,15 +15,12 @@
 package executor
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/types"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -33,20 +30,12 @@ type globalStatsKey struct {
 	indexID int64
 }
 
-type globalStatsInfo struct {
-	isIndex int
-	// When the `isIndex == 0`, histIDs will be the column IDs.
-	// Otherwise, histIDs will only contain the index ID.
-	histIDs      []int64
-	statsVersion int
-}
-
 // globalStatsMap is a map used to store which partition tables and the corresponding indexes need global-level stats.
 // The meaning of key in map is the structure that used to store the tableID and indexID.
 // The meaning of value in map is some additional information needed to build global-level stats.
-type globalStatsMap map[globalStatsKey]globalStatsInfo
+type globalStatsMap map[globalStatsKey]statstypes.GlobalStatsInfo
 
-func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap globalStatsMap) error {
+func (e *AnalyzeExec) handleGlobalStats(globalStatsMap globalStatsMap) error {
 	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
@@ -75,47 +64,15 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 						globalOpts = v2Options.FilledOpts
 					}
 				}
-				globalStatsI, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
+				err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
+					&info,
 					globalStatsID.tableID,
-					info.isIndex == 1,
-					info.histIDs,
 				)
 				if err != nil {
 					logutil.BgLogger().Warn("merge global stats failed",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
-					if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
-						// When we find some partition-level stats are missing, we need to report warning.
-						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
-					}
-					return err
-				}
-				globalStats := globalStatsI.(*globalstats.GlobalStats)
-				// Dump global-level stats to kv.
-				for i := 0; i < globalStats.Num; i++ {
-					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
-					if hg == nil {
-						// All partitions have no stats so global stats are not created.
-						continue
-					}
-					// fms for global stats doesn't need to dump to kv.
-					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID,
-						globalStats.Count,
-						globalStats.ModifyCount,
-						info.isIndex,
-						hg,
-						cms,
-						topN,
-						info.statsVersion,
-						1,
-						true,
-						util.StatsMetaHistorySourceAnalyze,
-					)
-					if err != nil {
-						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo),
-							zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", tableID))
-					}
 				}
 				return err
 			}()
@@ -140,7 +97,7 @@ func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statis
 	if !ok {
 		return nil
 	}
-	db, ok := is.SchemaByTable(table.Meta())
+	db, ok := infoschema.SchemaByTable(is, table.Meta())
 	if !ok {
 		return nil
 	}

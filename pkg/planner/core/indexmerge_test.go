@@ -18,17 +18,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
 
-func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
+func getIndexMergePathDigest(ctx expression.EvalContext, paths []*util.AccessPath, startIndex int) string {
 	if len(paths) == startIndex {
 		return "[]"
 	}
@@ -39,18 +42,26 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 		}
 		path := paths[i]
 		idxMergeDisgest += "{Idxs:["
-		for j := 0; j < len(path.PartialIndexPaths); j++ {
+		for j := 0; j < len(path.PartialAlternativeIndexPaths); j++ {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.PartialIndexPaths[j].Index.Name.L
+			idxMergeDisgest += "{"
+			// for every ONE index partial alternatives, output a set.
+			for k, one := range path.PartialAlternativeIndexPaths[j] {
+				if k != 0 {
+					idxMergeDisgest += ","
+				}
+				idxMergeDisgest += one.Index.Name.L
+			}
+			idxMergeDisgest += "}"
 		}
 		idxMergeDisgest += "],TbFilters:["
 		for j := 0; j < len(path.TableFilters); j++ {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.TableFilters[j].String()
+			idxMergeDisgest += path.TableFilters[j].StringWithCtx(ctx, errors.RedactLogDisable)
 		}
 		idxMergeDisgest += "]}"
 	}
@@ -76,7 +87,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		err = Preprocess(context.Background(), sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, is, &hint.QBHintHandler{})
+		builder, _ := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			testdata.OnRecord(func() {
@@ -86,9 +97,9 @@ func TestIndexMergePathGeneration(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
-		lp := p.(LogicalPlan)
+		lp := p.(base.LogicalPlan)
 		var ds *DataSource
 		for ds == nil {
 			switch v := lp.(type) {
@@ -99,10 +110,10 @@ func TestIndexMergePathGeneration(t *testing.T) {
 			}
 		}
 		ds.SCtx().GetSessionVars().SetEnableIndexMerge(true)
-		idxMergeStartIndex := len(ds.possibleAccessPaths)
-		_, err = lp.recursiveDeriveStats(nil)
+		idxMergeStartIndex := len(ds.PossibleAccessPaths)
+		_, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err)
-		result := getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex)
+		result := getIndexMergePathDigest(sctx.GetExprCtx().GetEvalCtx(), ds.PossibleAccessPaths, idxMergeStartIndex)
 		testdata.OnRecord(func() {
 			output[i] = result
 		})

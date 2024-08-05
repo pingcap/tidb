@@ -102,6 +102,10 @@ func getReqStartKey(req *tikvrpc.Request) ([]byte, error) {
 	case tikvrpc.CmdResolveLock, tikvrpc.CmdCheckTxnStatus, tikvrpc.CmdPessimisticRollback:
 		// TODO: add resource tag for those request. https://github.com/pingcap/tidb/issues/33621
 		return nil, nil
+	case tikvrpc.CmdFlush:
+		return req.Flush().GetMutations()[0].GetKey(), nil
+	case tikvrpc.CmdBufferBatchGet:
+		return req.BufferBatchGet().GetKeys()[0], nil
 	default:
 		return nil, errors.New("unknown request, check the new type RPC request here")
 	}

@@ -20,6 +20,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
@@ -38,7 +39,7 @@ type Enforcer interface {
 // GetEnforcerRules gets all candidate enforcer rules based
 // on required physical property.
 func GetEnforcerRules(g *memo.Group, prop *property.PhysicalProperty) (enforcers []Enforcer) {
-	if g.EngineType != memo.EngineTiDB {
+	if g.EngineType != pattern.EngineTiDB {
 		return
 	}
 	if !prop.IsSortItemEmpty() {
@@ -65,7 +66,7 @@ func (*OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.I
 	childPlan := child.GetPlan()
 	sort := plannercore.PhysicalSort{
 		ByItems: make([]*util.ByItems, 0, len(reqProp.SortItems)),
-	}.Init(childPlan.SCtx(), childPlan.StatsInfo(), childPlan.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	}.Init(childPlan.SCtx(), childPlan.StatsInfo(), childPlan.QueryBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	for _, item := range reqProp.SortItems {
 		item := &util.ByItems{
 			Expr: item.Col,

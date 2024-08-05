@@ -15,12 +15,12 @@
 package chunk
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -29,6 +29,9 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sys/cpu"
 )
+
+// ErrCannotAddBecauseSorted indicate that the SortPartition is sorted and prohibit inserting data.
+var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
 
 type rowContainerRecord struct {
 	inMemory *List
@@ -177,6 +180,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 			c.m.records.spillError = err
 			return
 		}
+		c.m.records.inMemory.GetMemTracker().HandleKillSignal()
 	}
 	c.m.records.inMemory.Clear()
 }
@@ -336,11 +340,14 @@ func (c *RowContainer) Close() (err error) {
 		c.actionSpill.cond.Broadcast()
 		c.actionSpill.SetFinished()
 	}
+	c.memTracker.Detach()
+	c.diskTracker.Detach()
 	if c.alreadySpilled() {
 		err = c.m.records.inDisk.Close()
 		c.m.records.inDisk = nil
 	}
 	c.m.records.inMemory.Clear()
+	c.m.records.inMemory = nil
 	return
 }
 
@@ -479,9 +486,6 @@ func (*baseSpillDiskAction) GetPriority() int64 {
 func (a *baseSpillDiskAction) WaitForTest() {
 	a.testWg.Wait()
 }
-
-// ErrCannotAddBecauseSorted indicate that the SortedRowContainer is sorted and prohibit inserting data.
-var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
 
 // SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
 type SortedRowContainer struct {

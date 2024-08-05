@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -285,15 +285,11 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	// create tiflash replica
 	{
 		is := dom.InfoSchema()
-		db, exists := is.SchemaByName(model.NewCIStr("test"))
-		require.True(t, exists)
-		for _, tblInfo := range db.Tables {
-			if tblInfo.Name.L == "show_warnings_expr_pushdown" {
-				tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-					Count:     1,
-					Available: true,
-				}
-			}
+		tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("show_warnings_expr_pushdown"))
+		require.NoError(t, err)
+		tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
 		}
 	}
 	tk.MustExec("set tidb_allow_mpp=0")
@@ -342,7 +338,7 @@ func TestShowStatsPrivilege(t *testing.T) {
 	err = tk1.ExecToErr("SHOW STATS_HISTOGRAMS")
 	require.ErrorContains(t, err, e)
 
-	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
+	eqErr := plannererrors.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
 	err = tk1.ExecToErr("SHOW STATS_HEALTHY")
 	require.EqualError(t, err, eqErr.Error())
 	tk.MustExec("grant select on mysql.* to show_stats")
@@ -520,7 +516,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery(`describe t`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`show columns from v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1,PAD SPACE"))
 	tk.MustExec(`drop sequence if exists seq`)
 	tk.MustExec(`create sequence seq`)
 	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
@@ -532,7 +528,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -675,7 +671,7 @@ func TestUnprivilegedShow(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("testshow"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -1046,12 +1042,17 @@ func TestShowCreatePlacementPolicy(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
+	tk.MustExec("CREATE PLACEMENT POLICY xyz2 FOLLOWERS=1 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz2").Check(testkit.Rows("xyz2 CREATE PLACEMENT POLICY `xyz2` FOLLOWERS=1 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
+	tk.MustExec("DROP PLACEMENT POLICY xyz2")
 	// non existent policy
 	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
 	require.Equal(t, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error(), err.Error())
 	// alter and try second example
 	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
+	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
 	tk.MustExec("DROP PLACEMENT POLICY xyz")
 }
 
@@ -1186,7 +1187,7 @@ func TestShowLimitReturnRow(t *testing.T) {
 	require.Equal(t, rows[0][0], "server_id")
 
 	tk.MustQuery("Show Collation where collation='utf8_bin'").Check(testkit.RowsWithSep("|", ""+
-		"utf8_bin utf8 83 Yes Yes 1"))
+		"utf8_bin utf8 83 Yes Yes 1 PAD SPACE"))
 
 	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
 	rows = result.Rows()
@@ -1204,8 +1205,8 @@ func TestShowBindingDigestField(t *testing.T) {
 	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
 	result := tk.MustQuery("show bindings;")
 	rows := result.Rows()[0]
-	require.Equal(t, len(rows), 12)
-	require.Equal(t, rows[10], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
+	require.Equal(t, len(rows), 11)
+	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
 	tk.MustExec("drop binding for select * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show bindings;")
 	require.Equal(t, len(result.Rows()), 0)
@@ -1213,8 +1214,8 @@ func TestShowBindingDigestField(t *testing.T) {
 	tk.MustExec("create global binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show global bindings;")
 	rows = result.Rows()[0]
-	require.Equal(t, len(rows), 12)
-	require.Equal(t, rows[10], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
+	require.Equal(t, len(rows), 11)
+	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
 	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show global bindings;")
 	require.Equal(t, len(result.Rows()), 0)

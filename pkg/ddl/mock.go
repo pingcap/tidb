@@ -115,6 +115,12 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int6
 	ticker := time.NewTicker(mockCheckVersInterval)
 	defer ticker.Stop()
 
+	failpoint.Inject("mockOwnerCheckAllVersionSlow", func(val failpoint.Value) {
+		if v, ok := val.(int); ok && v == int(jobID) {
+			time.Sleep(2 * time.Second)
+		}
+	})
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -138,6 +144,10 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int6
 			}
 		}
 	}
+}
+
+// SyncJobSchemaVerLoop implements SchemaSyncer.SyncJobSchemaVerLoop interface.
+func (*MockSchemaSyncer) SyncJobSchemaVerLoop(context.Context) {
 }
 
 // Close implements SchemaSyncer.Close interface.

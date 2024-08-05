@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
@@ -40,20 +41,20 @@ func TestLogFormat(t *testing.T) {
 		DB:            "Database",
 		Info:          "select * from table where a > 1",
 		CurTxnStartTS: 23333,
-		StatsInfo: func(interface{}) map[string]uint64 {
+		StatsInfo: func(any) map[string]uint64 {
 			return nil
 		},
 		StmtCtx:           stmtctx.NewStmtCtx(),
 		RefCountOfStmtCtx: &refCount,
 		MemTracker:        mem,
-		RedactSQL:         false,
+		RedactSQL:         "",
 		SessionAlias:      "alias123",
 	}
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8
 	logFields := GenLogFields(costTime, info, true)
 
-	assert.Len(t, logFields, 8)
+	assert.Len(t, logFields, 9)
 	assert.Equal(t, "cost_time", logFields[0].Key)
 	assert.Equal(t, "233s", logFields[0].String)
 	assert.Equal(t, "conn", logFields[1].Key)
@@ -68,6 +69,11 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, "2013265920 Bytes (1.88 GB)", logFields[5].String)
 	assert.Equal(t, "sql", logFields[6].Key)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
+
+	info.RedactSQL = errors.RedactLogMarker
+	logFields = GenLogFields(costTime, info, true)
+	assert.Equal(t, "select * from table where `a` > ‹1›", logFields[6].String)
+	info.RedactSQL = ""
 
 	logFields = GenLogFields(costTime, info, true)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)

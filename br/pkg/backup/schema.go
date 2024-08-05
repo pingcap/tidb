@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -40,6 +41,7 @@ type schemaInfo struct {
 	totalKvs   uint64
 	totalBytes uint64
 	stats      *util.JSONTable
+	statsIndex []*backuppb.StatsFileIndex
 }
 
 type iterFuncTp func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error
@@ -85,7 +87,7 @@ func (ss *Schemas) BackupSchemas(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	workerPool := utils.NewWorkerPool(concurrency, "Schemas")
+	workerPool := tidbutil.NewWorkerPool(concurrency, "Schemas")
 	errg, ectx := errgroup.WithContext(ctx)
 	startAll := time.Now()
 	op := metautil.AppendSchema
@@ -147,8 +149,10 @@ func (ss *Schemas) BackupSchemas(
 					}
 				}
 				if statsHandle != nil {
-					if err := schema.dumpStatsToJSON(statsHandle, backupTS); err != nil {
+					statsWriter := metaWriter.NewStatsWriter()
+					if err := schema.dumpStatsToJSON(ctx, statsWriter, statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
+						return errors.Trace(err)
 					}
 				}
 			}
@@ -209,15 +213,19 @@ func (s *schemaInfo) calculateChecksum(
 	return nil
 }
 
-func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle, backupTS uint64) error {
+func (s *schemaInfo) dumpStatsToJSON(ctx context.Context, statsWriter *metautil.StatsWriter, statsHandle *handle.Handle, backupTS uint64) error {
 	log.Info("dump stats to json", zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
-	jsonTable, err := statsHandle.DumpStatsToJSONBySnapshot(
-		s.dbInfo.Name.String(), s.tableInfo, backupTS, true)
-	if err != nil {
+	if err := statsHandle.PersistStatsBySnapshot(
+		ctx, s.dbInfo.Name.String(), s.tableInfo, backupTS, statsWriter.BackupStats,
+	); err != nil {
 		return errors.Trace(err)
 	}
 
-	s.stats = jsonTable
+	statsFileIndexes, err := statsWriter.BackupStatsDone(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.statsIndex = statsFileIndexes
 	return nil
 }
 
@@ -249,5 +257,6 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 		TotalKvs:   s.totalKvs,
 		TotalBytes: s.totalBytes,
 		Stats:      statsBytes,
+		StatsIndex: s.statsIndex,
 	}, nil
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -225,7 +226,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
 
 	rebuildMetaConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
-		_ = conn.Raw(func(dc interface{}) error {
+		_ = conn.Raw(func(any) error {
 			// return an `ErrBadConn` to ensure close the connection, but do not put it back to the pool.
 			// if we choose to use `Close`, it will always put the connection back to the pool.
 			return driver.ErrBadConn
@@ -980,7 +981,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 		if iter == nil {
 			iter = &rowIter{
 				rows: rows,
-				args: make([]interface{}, pkValNum),
+				args: make([]any, pkValNum),
 			}
 		}
 		err = iter.Decode(rowRec)
@@ -1145,8 +1146,23 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
-	if conf.SpecifiedTables || conf.SQL != "" {
+	if conf.SQL != "" {
 		return nil
+	}
+
+	ifSeqExists, err := CheckIfSeqExists(db)
+	if err != nil {
+		return err
+	}
+	var listType listTableType
+	if ifSeqExists {
+		listType = listTableByShowFullTables
+	} else {
+		listType = getListTableTypeByConf(conf)
+	}
+
+	if conf.SpecifiedTables {
+		return updateSpecifiedTablesMeta(tctx, db, conf.Tables, listType)
 	}
 	databases, err := prepareDumpingDatabases(tctx, conf, db)
 	if err != nil {
@@ -1159,17 +1175,6 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	}
 	if !conf.NoSequences {
 		tableTypes = append(tableTypes, TableTypeSequence)
-	}
-
-	ifSeqExists, err := CheckIfSeqExists(db)
-	if err != nil {
-		return err
-	}
-	var listType listTableType
-	if ifSeqExists {
-		listType = listTableByShowFullTables
-	} else {
-		listType = getListTableTypeByConf(conf)
 	}
 
 	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, listType, tableTypes...)
@@ -1542,8 +1547,8 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 }
 
 // setDefaultSessionParams is a step to set default params for session params.
-func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]interface{}) {
-	defaultSessionParams := map[string]interface{}{}
+func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]any) {
+	defaultSessionParams := map[string]any{}
 	if si.ServerType == version.ServerTypeTiDB && si.HasTiKV && si.ServerVersion.Compare(*enablePagingVersion) >= 0 {
 		defaultSessionParams["tidb_enable_paging"] = "ON"
 	}
@@ -1631,7 +1636,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 		return errors.Trace(err)
 	}
 	tikvHelper := &helper.Helper{}
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, dbInfos)
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, infoschema.DBInfoAsInfoSchema(dbInfos), nil)
 
 	tableInfoMap := make(map[string]map[string][]int64, len(conf.Tables))
 	for _, region := range regionsInfo.Regions {

@@ -160,7 +160,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 		isms  bool
 		query string
 	)
-	if err := simpleQuery(db, "SELECT @@default_master_connection", func(rows *sql.Rows) error {
+	if err := simpleQuery(db, "SELECT @@default_master_connection", func(*sql.Rows) error {
 		isms = true
 		return nil
 	}); err != nil {
@@ -177,7 +177,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 			return errors.Trace(err)
 		}
 		data := make([]sql.NullString, len(cols))
-		args := make([]interface{}, 0, len(cols))
+		args := make([]any, 0, len(cols))
 		for i := range data {
 			args = append(args, &data[i])
 		}

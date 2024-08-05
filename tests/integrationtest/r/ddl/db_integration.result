@@ -51,7 +51,7 @@ drop table test_zero_date;
 create table test_zero_date (a int);
 insert into test_zero_date values (0);
 alter table test_zero_date modify a date;
-Error 1292 (22007): Truncated incorrect date value: '0'
+Error 1292 (22007): Incorrect date value: '0'
 set session sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES';
 drop table test_zero_date;
 create table test_zero_date (a timestamp default 0);
@@ -59,7 +59,7 @@ Error 1067 (42000): Invalid default value for 'a'
 create table test_zero_date (a int);
 insert into test_zero_date values (0);
 alter table test_zero_date modify a date;
-Error 1292 (22007): Truncated incorrect date value: '0'
+Error 1292 (22007): Incorrect date value: '0'
 drop table if exists test_zero_date;
 set session sql_mode=default;
 drop table if exists t;
@@ -407,7 +407,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `c` int(10) DEFAULT NULL,
-  `c1` varchar(256) DEFAULT uuid()
+  `c1` varchar(256) DEFAULT (uuid())
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t1;
 create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c));
@@ -1291,3 +1291,15 @@ create temporary table t2(id int primary key, v int);
 select * from t2 where id=234;
 id	v
 commit;
+drop table if exists t;
+create table t(a int, b int as ((grouping(a))) stored);
+Error 1111 (HY000): Invalid use of group function
+create table t(a int);
+alter table t add column  b int as ((grouping(a))) stored;
+Error 1111 (HY000): Invalid use of group function
+drop table t;
+drop table if exists t;
+create table t (a bigint auto_random, b int, c char(255), primary key(a, b) clustered);
+select TIDB_ROW_ID_SHARDING_INFO from information_schema.tables where TABLE_SCHEMA = 'ddl__db_integration' and TABLE_NAME = 't';
+TIDB_ROW_ID_SHARDING_INFO
+PK_AUTO_RANDOM_BITS=5

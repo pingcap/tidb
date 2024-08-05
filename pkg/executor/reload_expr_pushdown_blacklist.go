@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // ReloadExprPushdownBlacklistExec indicates ReloadExprPushdownBlacklist executor.
@@ -41,7 +40,7 @@ func (e *ReloadExprPushdownBlacklistExec) Next(context.Context, *chunk.Chunk) er
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
 func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist")
 	if err != nil {
 		return err
@@ -348,6 +347,7 @@ var funcName2Alias = map[string]string{
 	"json_merge_preserve":        ast.JSONMergePreserve,
 	"json_pretty":                ast.JSONPretty,
 	"json_quote":                 ast.JSONQuote,
+	"json_schema_valid":          ast.JSONSchemaValid,
 	"json_search":                ast.JSONSearch,
 	"json_storage_size":          ast.JSONStorageSize,
 	"json_depth":                 ast.JSONDepth,

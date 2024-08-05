@@ -45,6 +45,7 @@ func TestMain(m *testing.M) {
 	opts := []goleak.Option{
 		// TODO: figure the reason and shorten this list
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
@@ -56,6 +57,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
+		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	callback := func(i int) int {
@@ -66,7 +69,7 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func match(t *testing.T, row []types.Datum, expected ...interface{}) {
+func match(t *testing.T, row []types.Datum, expected ...any) {
 	require.Len(t, row, len(expected))
 	for i := range row {
 		if _, ok := expected[i].(time.Time); ok {

@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/predicatecolumn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -162,9 +164,9 @@ func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 	}, util.FlagWrapTxn)
 }
 
-// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
-// Then GC worker will delete the old version of stats.
-func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error) {
+// UpdateStatsMetaVersionForGC update the version of mysql.stats_meta.
+// See more details in the interface definition.
+func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
@@ -220,33 +222,6 @@ func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, mo
 	return
 }
 
-// UpdateStatsMetaDelta updates the count and modify_count for the given table in mysql.stats_meta.
-func (s *statsReadWriter) UpdateStatsMetaDelta(tableID int64, count, delta int64) (err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		lockedTables, err := s.statsHandler.GetLockedTables(tableID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		isLocked := false
-		if len(lockedTables) > 0 {
-			isLocked = true
-		}
-		startTS, err := util.GetStartTS(sctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = UpdateStatsMeta(
-			sctx,
-			startTS,
-			variable.TableDelta{Count: count, Delta: delta},
-			tableID,
-			isLocked,
-		)
-		return err
-	}, util.FlagWrapTxn)
-	return
-}
-
 // TableStatsFromStorage loads table stats info from storage.
 func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
@@ -289,8 +264,8 @@ func (s *statsReadWriter) SaveStatsToStorage(
 	return
 }
 
-// saveMetaToStorage saves stats meta to the storage.
-func (s *statsReadWriter) saveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
+// SaveMetaToStorage saves stats meta to the storage.
+func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount)
@@ -456,6 +431,51 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 	return jsonTbl, fallbackTbls, nil
 }
 
+// PersistStatsBySnapshot dumps statistic to json and call the function for each partition statistic to persist.
+// Notice:
+//  1. It might call the function `persist` with nil jsontable.
+//  2. It is only used by BR, so partitions' statistic are always dumped.
+//
+// TODO: once we support column-level statistic dump, it should replace the `PersistStatsBySnapshot` and `DumpStatsToJSON`.
+func (s *statsReadWriter) PersistStatsBySnapshot(
+	ctx context.Context,
+	dbName string,
+	tableInfo *model.TableInfo,
+	snapshot uint64,
+	persist statstypes.PersistFunc,
+) error {
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		jsonTable, err := s.TableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return persist(ctx, jsonTable, tableInfo.ID)
+	}
+
+	for _, def := range pi.Definitions {
+		tbl, err := s.TableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tbl == nil {
+			continue
+		}
+		if err := persist(ctx, tbl, def.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// dump its global-stats if existed
+	tbl, err := s.TableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbl != nil {
+		return persist(ctx, tbl, tableInfo.ID)
+	}
+	return nil
+}
+
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*util.JSONTable, error) {
 	pruneMode, err := util.GetCurrentPruneMode(s.statsHandler.SPool())
@@ -543,7 +563,12 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 		if err != nil {
 			return err
 		}
-		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl)
+		// Note: Because we don't show this information in the session directly, so we can always use UTC here.
+		colStatsUsage, err := predicatecolumn.LoadColumnStatsUsageForTable(sctx, time.UTC, physicalID)
+		if err != nil {
+			return err
+		}
+		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl, colStatsUsage)
 		return err
 	})
 	if err != nil {
@@ -555,26 +580,65 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 // TestLoadStatsErr is only for test.
 type TestLoadStatsErr struct{}
 
-// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
-// In final, it will also udpate the stats cache.
-func (s *statsReadWriter) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
-	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
-	if err := s.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(s.statsHandler.Update(is))
-}
-
-// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
-func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
-	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
+// LoadStatsFromJSONConcurrently consumes concurrently the statistic task from `taskCh`.
+func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
+	ctx context.Context,
+	tableInfo *model.TableInfo,
+	taskCh chan *statstypes.PartitionStatisticLoadTask,
+	concurrencyForPartition int,
+) error {
 	nCPU := runtime.GOMAXPROCS(0)
 	if concurrencyForPartition == 0 {
 		concurrencyForPartition = (nCPU + 1) / 2 // default
 	}
 	concurrencyForPartition = min(concurrencyForPartition, nCPU) // for safety
 
-	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
+	var wg sync.WaitGroup
+	e := new(atomic.Pointer[error])
+	for i := 0; i < concurrencyForPartition; i++ {
+		wg.Add(1)
+		s.statsHandler.GPool().Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err := fmt.Errorf("%v", r)
+					e.CompareAndSwap(nil, &err)
+				}
+				wg.Done()
+			}()
+
+			for tbl := range taskCh {
+				if tbl == nil {
+					continue
+				}
+
+				loadFunc := s.loadStatsFromJSON
+				if intest.InTest && ctx.Value(TestLoadStatsErr{}) != nil {
+					loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *util.JSONTable) error)
+				}
+
+				err := loadFunc(tableInfo, tbl.PhysicalID, tbl.JSONTable)
+				if err != nil {
+					e.CompareAndSwap(nil, &err)
+					return
+				}
+				if e.Load() != nil {
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if e.Load() != nil {
+		return *e.Load()
+	}
+
+	return nil
+}
+
+// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
+func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
+	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
+	table, err := is.TableByName(context.Background(), model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -587,59 +651,40 @@ func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is info
 		}
 	} else {
 		// load partition statistics concurrently
-		taskCh := make(chan model.PartitionDefinition, len(pi.Definitions))
+		taskCh := make(chan *statstypes.PartitionStatisticLoadTask, len(pi.Definitions)+1)
 		for _, def := range pi.Definitions {
-			taskCh <- def
-		}
-		close(taskCh)
-		var wg sync.WaitGroup
-		e := new(atomic.Pointer[error])
-		for i := 0; i < concurrencyForPartition; i++ {
-			wg.Add(1)
-			s.statsHandler.GPool().Go(func() {
-				defer func() {
-					if r := recover(); r != nil {
-						err := fmt.Errorf("%v", r)
-						e.CompareAndSwap(nil, &err)
-					}
-					wg.Done()
-				}()
-
-				for def := range taskCh {
-					tbl := jsonTbl.Partitions[def.Name.L]
-					if tbl == nil {
-						continue
-					}
-
-					loadFunc := s.loadStatsFromJSON
-					if intest.InTest && ctx.Value(TestLoadStatsErr{}) != nil {
-						loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *util.JSONTable) error)
-					}
-
-					err := loadFunc(tableInfo, def.ID, tbl)
-					if err != nil {
-						e.CompareAndSwap(nil, &err)
-						return
-					}
-					if e.Load() != nil {
-						return
-					}
+			tbl := jsonTbl.Partitions[def.Name.L]
+			if tbl != nil {
+				taskCh <- &statstypes.PartitionStatisticLoadTask{
+					PhysicalID: def.ID,
+					JSONTable:  tbl,
 				}
-			})
-		}
-		wg.Wait()
-		if e.Load() != nil {
-			return *e.Load()
+			}
 		}
 
 		// load global-stats if existed
 		if globalStats, ok := jsonTbl.Partitions[util.TiDBGlobalStats]; ok {
-			if err := s.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
-				return errors.Trace(err)
+			taskCh <- &statstypes.PartitionStatisticLoadTask{
+				PhysicalID: tableInfo.ID,
+				JSONTable:  globalStats,
 			}
+		}
+		close(taskCh)
+		if err := s.LoadStatsFromJSONConcurrently(ctx, tableInfo, taskCh, concurrencyForPartition); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
+// In final, it will also udpate the stats cache.
+func (s *statsReadWriter) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
+	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
+	if err := s.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(s.statsHandler.Update(ctx, is))
 }
 
 func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *util.JSONTable) error {
@@ -648,27 +693,78 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		return errors.Trace(err)
 	}
 
-	for _, col := range tbl.Columns {
+	var outerErr error
+	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), 1, false, util.StatsMetaHistorySourceLoadStats)
-		if err != nil {
-			return errors.Trace(err)
+		if err := s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
+			outerErr = err
+			return true
 		}
+		return false
+	})
+	if outerErr != nil {
+		return outerErr
 	}
-	for _, idx := range tbl.Indices {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), 1, false, util.StatsMetaHistorySourceLoadStats)
-		if err != nil {
-			return errors.Trace(err)
+		if err := s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
+			outerErr = err
+			return true
 		}
+		return false
+	})
+	if outerErr != nil {
+		return outerErr
 	}
 	err = s.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return s.saveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+	err = s.SaveColumnStatsUsageToStorage(tbl.PhysicalID, jsonTbl.PredicateColumns)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+}
+
+// SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.
+func (s *statsReadWriter) SaveColumnStatsUsageToStorage(physicalID int64, predicateColumns []*util.JSONPredicateColumn) error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		colStatsUsage := make(map[model.TableItemID]statstypes.ColStatsTimeInfo, len(predicateColumns))
+		for _, col := range predicateColumns {
+			if col == nil {
+				continue
+			}
+			itemID := model.TableItemID{TableID: physicalID, ID: col.ID}
+			lastUsedAt, err := parseTimeOrNil(col.LastUsedAt)
+			if err != nil {
+				return err
+			}
+			lastAnalyzedAt, err := parseTimeOrNil(col.LastAnalyzedAt)
+			if err != nil {
+				return err
+			}
+			colStatsUsage[itemID] = statstypes.ColStatsTimeInfo{
+				LastUsedAt:     lastUsedAt,
+				LastAnalyzedAt: lastAnalyzedAt,
+			}
+		}
+		return predicatecolumn.SaveColumnStatsUsageForTable(sctx, colStatsUsage)
+	}, util.FlagWrapTxn)
+}
+
+func parseTimeOrNil(timeStr *string) (*types.Time, error) {
+	if timeStr == nil {
+		return nil, nil
+	}
+	// DefaultStmtNoWarningContext use UTC timezone.
+	parsedTime, err := types.ParseTime(types.DefaultStmtNoWarningContext, *timeStr, mysql.TypeTimestamp, types.MaxFsp)
+	if err != nil {
+		return nil, err
+	}
+	return &parsedTime, nil
 }

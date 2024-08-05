@@ -45,7 +45,6 @@ func TestPlanner(t *testing.T) {
 	defer pool.Close()
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-
 	p := &planner.Planner{}
 	pCtx := planner.PlanCtx{
 		Ctx:        ctx,

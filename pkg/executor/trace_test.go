@@ -59,7 +59,7 @@ func TestTraceExec(t *testing.T) {
 	require.GreaterOrEqual(t, len(rows), 1)
 }
 
-func rowsOrdered(rows [][]interface{}) bool {
+func rowsOrdered(rows [][]any) bool {
 	for idx := range rows {
 		if _, ok := rows[idx][1].(string); !ok {
 			return false

@@ -86,7 +86,7 @@ func onLockTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 				return ver, errors.Trace(err)
 			}
 			arg.IndexOfLock++
-			job.Args = []interface{}{arg}
+			job.Args = []any{arg}
 			if arg.IndexOfLock == len(arg.LockTables) {
 				// Finish this job.
 				job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, nil)
@@ -178,7 +178,7 @@ func unlockTables(d *ddlCtx, t *meta.Meta, job *model.Job, arg *LockTablesArg) (
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			// The table maybe has been dropped. just ignore this err and go on.
 			arg.IndexOfUnlock++
-			job.Args = []interface{}{arg}
+			job.Args = []any{arg}
 			return ver, nil
 		}
 		return ver, err
@@ -193,7 +193,7 @@ func unlockTables(d *ddlCtx, t *meta.Meta, job *model.Job, arg *LockTablesArg) (
 	}
 
 	arg.IndexOfUnlock++
-	job.Args = []interface{}{arg}
+	job.Args = []any{arg}
 	return ver, nil
 }
 

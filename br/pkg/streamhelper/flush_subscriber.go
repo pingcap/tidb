@@ -11,8 +11,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -21,6 +23,11 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+)
+
+const (
+	// clearSubscriberTimeOut is the timeout for clearing the subscriber.
+	clearSubscriberTimeOut = 1 * time.Minute
 )
 
 // FlushSubscriber maintains the state of subscribing to the cluster.
@@ -86,7 +93,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 	for id := range f.subscriptions {
 		_, ok := storeSet[id]
 		if !ok {
-			f.removeSubscription(id)
+			f.removeSubscription(ctx, id)
 		}
 	}
 	return nil
@@ -94,9 +101,18 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 
 // Clear clears all the subscriptions.
 func (f *FlushSubscriber) Clear() {
-	log.Info("Clearing.", zap.String("category", "log backup flush subscriber"))
+	timeout := clearSubscriberTimeOut
+	failpoint.Inject("FlushSubscriber.Clear.timeoutMs", func(v failpoint.Value) {
+		//nolint:durationcheck
+		timeout = time.Duration(v.(int)) * time.Millisecond
+	})
+	log.Info("Clearing.",
+		zap.String("category", "log backup flush subscriber"),
+		zap.Duration("timeout", timeout))
+	cx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	for id := range f.subscriptions {
-		f.removeSubscription(id)
+		f.removeSubscription(cx, id)
 	}
 }
 
@@ -133,15 +149,11 @@ type eventStream = logbackup.LogBackup_SubscribeFlushEventClient
 
 type joinHandle <-chan struct{}
 
-func (jh joinHandle) WaitTimeOut(dur time.Duration) {
-	var t <-chan time.Time
-	if dur > 0 {
-		t = time.After(dur)
-	}
+func (jh joinHandle) Wait(ctx context.Context) {
 	select {
 	case <-jh:
-	case <-t:
-		log.Warn("join handle timed out.")
+	case <-ctx.Done():
+		log.Warn("join handle timed out.", zap.StackSkip("caller", 1))
 	}
 }
 
@@ -172,6 +184,8 @@ type subscription struct {
 	// we need to try reconnect even there is a error cannot be retry.
 	storeBootAt uint64
 	output      chan<- spans.Valued
+
+	onDaemonExit func()
 }
 
 func (s *subscription) emitError(err error) {
@@ -215,7 +229,7 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 		zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt))
 	// We should shutdown the background task firstly.
 	// Once it yields some error during shuting down, the error won't be brought to next run.
-	s.close()
+	s.close(ctx)
 	s.clearError()
 
 	c, err := dialer.GetLogBackupClient(ctx, s.storeID)
@@ -228,6 +242,7 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 	})
 	if err != nil {
 		cancel()
+		_ = dialer.ClearCache(ctx, s.storeID)
 		return errors.Annotate(err, "failed to subscribe events")
 	}
 	lcx := logutil.ContextWithField(cx, zap.Uint64("store-id", s.storeID),
@@ -237,10 +252,10 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 	return nil
 }
 
-func (s *subscription) close() {
+func (s *subscription) close(ctx context.Context) {
 	if s.cancel != nil {
 		s.cancel()
-		s.background.WaitTimeOut(1 * time.Minute)
+		s.background.Wait(ctx)
 	}
 	// HACK: don't close the internal channel here,
 	// because it is a ever-sharing channel.
@@ -249,6 +264,16 @@ func (s *subscription) close() {
 func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 	storeID := s.storeID
 	logutil.CL(ctx).Info("Listen starting.", zap.Uint64("store", storeID))
+	defer func() {
+		if s.onDaemonExit != nil {
+			s.onDaemonExit()
+		}
+
+		if pData := recover(); pData != nil {
+			log.Warn("Subscriber paniked.", zap.Uint64("store", storeID), zap.Any("panic-data", pData), zap.Stack("stack"))
+			s.emitError(errors.Annotatef(berrors.ErrUnknown, "panic during executing: %v", pData))
+		}
+	}()
 	for {
 		// Shall we use RecvMsg for better performance?
 		// Note that the spans.Full requires the input slice be immutable.
@@ -263,6 +288,7 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 			return
 		}
 
+		log.Debug("Sending events.", zap.Int("size", len(msg.Events)))
 		for _, m := range msg.Events {
 			start, err := decodeKey(m.StartKey)
 			if err != nil {
@@ -276,12 +302,21 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 					logutil.Key("event", m.EndKey), logutil.ShortError(err))
 				continue
 			}
-			s.output <- spans.Valued{
+			failpoint.Inject("subscription.listenOver.aboutToSend", func() {})
+
+			evt := spans.Valued{
 				Key: spans.Span{
 					StartKey: start,
 					EndKey:   end,
 				},
 				Value: m.Checkpoint,
+			}
+			select {
+			case s.output <- evt:
+			case <-ctx.Done():
+				logutil.CL(ctx).Warn("Context canceled while sending events.",
+					zap.Uint64("store", storeID))
+				return
 			}
 		}
 		metrics.RegionCheckpointSubscriptionEvent.WithLabelValues(
@@ -293,12 +328,12 @@ func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore Store) {
 	f.subscriptions[toStore.ID] = newSubscription(toStore, f.eventsTunnel)
 }
 
-func (f *FlushSubscriber) removeSubscription(toStore uint64) {
+func (f *FlushSubscriber) removeSubscription(ctx context.Context, toStore uint64) {
 	subs, ok := f.subscriptions[toStore]
 	if ok {
 		log.Info("Removing subscription.", zap.String("category", "log backup subscription manager"),
 			zap.Uint64("store", toStore))
-		subs.close()
+		subs.close(ctx)
 		delete(f.subscriptions, toStore)
 	}
 }

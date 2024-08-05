@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tikverr "github.com/tikv/client-go/v2/error"
 	pderr "github.com/tikv/pd/client/errs"
 )
@@ -41,7 +43,7 @@ var (
 	ErrQueryInterrupted = dbterror.ClassTiKV.NewStd(errno.ErrQueryInterrupted)
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
-	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is setted.
+	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is set.
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(errno.ErrLockAcquireFailAndNoWaitSet)
 	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
 	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
@@ -116,8 +118,20 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerTimeout
 	}
 
-	if stderrs.Is(err, tikverr.ErrQueryInterrupted) {
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryInterrupted}) {
+		// TODO: This error is defined here, while others are using exeerrors as in sql killer. Maybe unify them?
 		return ErrQueryInterrupted
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.MaxExecTimeExceeded}) {
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryMemoryExceeded}) {
+		// connection id is unknown in client, which should be logged or filled by upper layers
+		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(-1)
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.ServerMemoryExceeded}) {
+		// connection id is unknown in client, which should be logged or filled by upper layers
+		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(-1)
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVServerBusy) {

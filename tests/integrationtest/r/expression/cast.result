@@ -78,6 +78,16 @@ select cast(col4 as time(31)) from t where col1 is null;
 Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
 select cast(col5 as time(31)) from t where col1 is null;
 Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+drop table if exists t;
+create table t(a varchar(50));
+insert into t values ('2020-01-01 12:00:00.123456 +0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456 -0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456');
+select cast(a as datetime(3)) from t;
+cast(a as datetime(3))
+2020-01-01 12:00:00.123
+2020-01-01 12:00:00.123
+2020-01-01 12:00:00.123
 drop table if exists t1;
 create table t1 (c1 text);
 insert into t1 values ('a');
@@ -108,3 +118,33 @@ select null as a union all select 'a' as a;
 a
 NULL
 a
+drop table if exists t0;
+create table t0(c0 tinyint(1) unsigned not null );
+insert into t0 values (1);
+select * from t0 where case 0 when t0.c0 > -1.194192591e9 then null else 1 end;
+c0
+1
+select t0.c0 > -1.194192591e9 from t0;
+t0.c0 > -1.194192591e9
+1
+select t0.c0 < -1.194192591e9 from t0;
+t0.c0 < -1.194192591e9
+0
+select -1.194192591e9 > t0.c0 from t0;
+-1.194192591e9 > t0.c0
+0
+select -1.194192591e9 < t0.c0 from t0;
+-1.194192591e9 < t0.c0
+1
+select t0.c0 > 1.194192591e9 from t0;
+t0.c0 > 1.194192591e9
+0
+select t0.c0 < 1.194192591e9 from t0;
+t0.c0 < 1.194192591e9
+1
+select 1.194192591e9 > t0.c0 from t0;
+1.194192591e9 > t0.c0
+1
+select 1.194192591e9 < t0.c0 from t0;
+1.194192591e9 < t0.c0
+0

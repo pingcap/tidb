@@ -1636,7 +1636,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 	}
 
 	errLackPrivilege := errors.New("ERROR 1142 (42000): SELECT command denied to user 'test'@'%' for table 'tidb'")
-	expectedResults := []interface{}{errLackPrivilege, 1, 0}
+	expectedResults := []any{errLackPrivilege, 1, 0}
 	for i, res := range expectedResults {
 		t.Logf("case #%d", i)
 		mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(errLackPrivilege)

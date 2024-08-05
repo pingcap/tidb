@@ -16,18 +16,21 @@ import (
 
 // Version information.
 var (
-	ReleaseVersion = getReleaseVersion()
-	BuildTS        = versioninfo.TiDBBuildTS
-	GitHash        = versioninfo.TiDBGitHash
-	GitBranch      = versioninfo.TiDBGitBranch
-	goVersion      = runtime.Version()
+	ReleaseVersion        = getReleaseVersion()
+	BuildTS               = versioninfo.TiDBBuildTS
+	GitHash               = versioninfo.TiDBGitHash
+	GitBranch             = versioninfo.TiDBGitBranch
+	goVersion             = runtime.Version()
+	ReleaseVersionForTest = "nightly-dirty"
 )
 
 func getReleaseVersion() string {
 	if mysql.TiDBReleaseVersion != "None" {
 		return mysql.TiDBReleaseVersion
 	}
-	return "v7.0.0-master"
+	// it's unreachable for normal path, only for realtikv tests
+	// we need to set the ReleaseVersion manually.
+	return ReleaseVersionForTest
 }
 
 // AppName is a name of a built binary.

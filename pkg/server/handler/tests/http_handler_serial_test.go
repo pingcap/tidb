@@ -327,7 +327,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "[schema:1146]Table which ID = 184 does not exist.", string(body))
 
-	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tbl, err := ts.domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
 	resp, err = ts.PostStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
@@ -438,6 +438,37 @@ func TestTiFlashReplica(t *testing.T) {
 	dbt.MustExec("truncate table pt")
 	dbt.MustExec("alter table pt set tiflash replica 0;")
 	checkFunc()
+}
+
+func TestDebugRoutes(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	debugRoutes := []string{
+		"/debug/pprof/",
+		"/debug/pprof/heap?debug=1",
+		"/debug/pprof/goroutine?debug=1",
+		"/debug/pprof/goroutine?debug=2",
+		"/debug/pprof/allocs?debug=1",
+		"/debug/pprof/block?debug=1",
+		"/debug/pprof/threadcreate?debug=1",
+		"/debug/pprof/cmdline",
+		"/debug/pprof/profile",
+		"/debug/pprof/mutex?debug=1",
+		"/debug/pprof/symbol",
+		"/debug/pprof/trace",
+		"/debug/pprof/profile",
+		"/debug/gogc",
+		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
+		"/debug/ballast-object-sz",
+	}
+	for _, route := range debugRoutes {
+		resp, err := ts.FetchStatus(route)
+		require.NoError(t, err, fmt.Sprintf("GET route %s failed", route))
+		require.Equal(t, http.StatusOK, resp.StatusCode, fmt.Sprintf("GET route %s failed", route))
+		require.NoError(t, resp.Body.Close())
+	}
 }
 
 func TestFailpointHandler(t *testing.T) {
@@ -641,7 +672,7 @@ func TestTTL(t *testing.T) {
 		require.Fail(t, "timeout for waiting job finished")
 	}
 
-	doTrigger := func(db, tb string) (map[string]interface{}, error) {
+	doTrigger := func(db, tb string) (map[string]any, error) {
 		resp, err := ts.PostStatus(fmt.Sprintf("/test/ttl/trigger/%s/%s", db, tb), "application/json", nil)
 		if err != nil {
 			return nil, err
@@ -658,7 +689,7 @@ func TestTTL(t *testing.T) {
 			return nil, errors.Errorf("http status: %s, %s", resp.Status, body)
 		}
 
-		var obj map[string]interface{}
+		var obj map[string]any
 		require.NoError(t, json.Unmarshal(body, &obj))
 		return obj, nil
 	}

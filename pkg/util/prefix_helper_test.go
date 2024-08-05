@@ -41,7 +41,7 @@ func TestPrefix(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	ctx := &mockContext{10000000, make(map[fmt.Stringer]interface{}), s, nil}
+	ctx := &mockContext{10000000, make(map[fmt.Stringer]any), s, nil}
 	err = ctx.fillTxn()
 	require.NoError(t, err)
 	txn, err := ctx.GetTxn()
@@ -84,16 +84,16 @@ func TestPrefixFilter(t *testing.T) {
 
 type mockContext struct {
 	prefix int
-	values map[fmt.Stringer]interface{}
+	values map[fmt.Stringer]any
 	kv.Storage
 	txn kv.Transaction
 }
 
-func (c *mockContext) SetValue(key fmt.Stringer, value interface{}) {
+func (c *mockContext) SetValue(key fmt.Stringer, value any) {
 	c.values[key] = value
 }
 
-func (c *mockContext) Value(key fmt.Stringer) interface{} {
+func (c *mockContext) Value(key fmt.Stringer) any {
 	value := c.values[key]
 	return value
 }

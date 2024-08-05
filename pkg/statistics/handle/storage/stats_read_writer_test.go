@@ -15,6 +15,7 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -22,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResetTableStats2KVForDrop(t *testing.T) {
+func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	h := do.StatsHandle()
@@ -45,7 +46,7 @@ func TestResetTableStats2KVForDrop(t *testing.T) {
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(
+	tbl, err := is.TableByName(context.Background(),
 		model.NewCIStr("test"), model.NewCIStr("t"),
 	)
 	require.NoError(t, err)
@@ -55,12 +56,12 @@ func TestResetTableStats2KVForDrop(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.Update(is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Reset one partition stats.
 	p0 := pi.Definitions[0]
-	err = h.ResetTableStats2KVForDrop(p0.ID)
+	err = h.UpdateStatsMetaVersionForGC(p0.ID)
 	require.NoError(t, err)
 
 	// Get partition stats from stats_meta table.

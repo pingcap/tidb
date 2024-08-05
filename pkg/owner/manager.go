@@ -23,7 +23,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -39,6 +38,12 @@ import (
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+// Listener is used to listen the ownerManager's owner state.
+type Listener interface {
+	OnBecomeOwner()
+	OnRetireOwner()
+}
 
 // Manager is used to campaign the owner and manage the owner information.
 type Manager interface {
@@ -62,9 +67,8 @@ type Manager interface {
 	RequireOwner(ctx context.Context) error
 	// CampaignCancel cancels one etcd campaign
 	CampaignCancel()
-
-	// SetBeOwnerHook sets a hook. The hook is called before becoming an owner.
-	SetBeOwnerHook(hook func())
+	// SetListener sets the listener, set before CampaignOwner.
+	SetListener(listener Listener)
 }
 
 const (
@@ -111,11 +115,12 @@ type ownerManager struct {
 	logCtx         context.Context
 	etcdCli        *clientv3.Client
 	cancel         context.CancelFunc
-	elec           unsafe.Pointer
+	elec           atomic.Pointer[concurrency.Election]
 	sessionLease   *atomicutil.Int64
 	wg             sync.WaitGroup
-	beOwnerHook    func()
 	campaignCancel context.CancelFunc
+
+	listener Listener
 }
 
 // NewOwnerManager creates a new Manager.
@@ -142,7 +147,7 @@ func (m *ownerManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *ownerManager) IsOwner() bool {
-	return atomic.LoadPointer(&m.elec) != unsafe.Pointer(nil)
+	return m.elec.Load() != nil
 }
 
 // Cancel implements Manager.Cancel interface.
@@ -156,8 +161,8 @@ func (*ownerManager) RequireOwner(_ context.Context) error {
 	return nil
 }
 
-func (m *ownerManager) SetBeOwnerHook(hook func()) {
-	m.beOwnerHook = hook
+func (m *ownerManager) SetListener(listener Listener) {
+	m.listener = listener
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
@@ -197,9 +202,9 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 
 // ResignOwner lets the owner start a new election.
 func (m *ownerManager) ResignOwner(ctx context.Context) error {
-	elec := (*concurrency.Election)(atomic.LoadPointer(&m.elec))
+	elec := m.elec.Load()
 	if elec == nil {
-		return errors.Errorf("This node is not a ddl owner, can't be resigned")
+		return errors.Errorf("This node is not a owner, can't be resigned")
 	}
 
 	childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
@@ -209,20 +214,25 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	logutil.Logger(m.logCtx).Warn("resign ddl owner success")
+	logutil.Logger(m.logCtx).Warn("resign owner success")
 	return nil
 }
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
-	if m.beOwnerHook != nil {
-		m.beOwnerHook()
+	m.elec.Store(elec)
+	logutil.Logger(m.logCtx).Info("become owner")
+	if m.listener != nil {
+		m.listener.OnBecomeOwner()
 	}
-	atomic.StorePointer(&m.elec, unsafe.Pointer(elec))
 }
 
 // RetireOwner make the manager to be a not owner.
 func (m *ownerManager) RetireOwner() {
-	atomic.StorePointer(&m.elec, nil)
+	m.elec.Store(nil)
+	logutil.Logger(m.logCtx).Info("retire owner")
+	if m.listener != nil {
+		m.listener.OnRetireOwner()
+	}
 }
 
 // CampaignCancel implements Manager.CampaignCancel interface.
@@ -327,8 +337,8 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 	var resp *clientv3.GetResponse
 	var err error
 	for i := 0; i < 3; i++ {
-		if util.IsContextDone(ctx) {
-			return "", nil, op, 0, errors.Trace(ctx.Err())
+		if err = ctx.Err(); err != nil {
+			return "", nil, op, 0, errors.Trace(err)
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
@@ -337,7 +347,7 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 		if err == nil {
 			break
 		}
-		logutil.BgLogger().Info("etcd-cli get owner info failed", zap.String("category", "ddl"), zap.String("key", ownerPath), zap.Int("retryCnt", i), zap.Error(err))
+		logutil.Logger(logCtx).Info("etcd-cli get owner info failed", zap.String("key", ownerPath), zap.Int("retryCnt", i), zap.Error(err))
 		time.Sleep(util.KeyOpRetryInterval)
 	}
 	if err != nil {
@@ -411,11 +421,11 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 		If(clientv3.Compare(clientv3.ModRevision(ownerKey), "=", modRevision)).
 		Then(clientv3.OpPut(ownerKey, string(newOwnerVal), leaseOp)).
 		Commit()
-	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
-		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Bool("isSuc", resp.Succeeded), zap.Error(err))
-	if !resp.Succeeded {
+	if err == nil && !resp.Succeeded {
 		err = errors.New("put owner key failed, cmp is false")
 	}
+	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
+		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Error(err))
 	metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.PutValue+"_"+metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }

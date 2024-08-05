@@ -1209,19 +1209,6 @@ select 8888888888888888888888888888888888888888888888888888888888888888888888888
 show warnings;
 Level	Code	Message
 Warning	1292	Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'
-set global tidb_disable_txn_auto_retry=false;
-drop table if exists t;
-create table t(a double auto_increment key, b int);
-insert into t values (146576794, 1);
-begin optimistic;
-insert into t(b) select 1;
-begin optimistic;
-insert into t values (146576795, 1);
-insert into t values (146576796, 1);
-commit;
-commit;
-Error 1062 (23000): Duplicate entry '146576795' for key 't.PRIMARY'
-set global tidb_disable_txn_auto_retry=default;
 drop table if exists t;
 create table t (id smallint auto_increment primary key);
 alter table t add column c1 int default 1;

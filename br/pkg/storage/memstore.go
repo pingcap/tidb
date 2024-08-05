@@ -252,9 +252,6 @@ func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (
 	}
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
-	if _, ok := s.dataStore[name]; ok {
-		return nil, errors.Errorf("the file already exists: %s", name)
-	}
 	theFile := new(memFile)
 	s.dataStore[name] = theFile
 	return &memFileWriter{
@@ -283,6 +280,11 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	s.dataStore[newFileName] = theFile
 	delete(s.dataStore, oldFileName)
 	return nil
+}
+
+// Close implements ExternalStorage interface.
+func (s *MemStorage) Close() {
+	s.dataStore = nil
 }
 
 // memFileReader is the struct to read data from an opend mem storage file

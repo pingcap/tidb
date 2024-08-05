@@ -33,11 +33,11 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -50,7 +50,7 @@ import (
 type baseBuiltinFunc struct {
 	bufAllocator columnBufferAllocator
 	args         []Expression
-	tp           *types.FieldType
+	tp           *types.FieldType `plan-cache-clone:"shallow"`
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
@@ -62,6 +62,10 @@ type baseBuiltinFunc struct {
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
+}
+
+func (*baseBuiltinFunc) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
+	return
 }
 
 // metadata returns the metadata of a function.
@@ -85,7 +89,7 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuiltinFunc) {
+func adjustNullFlagForReturnType(ctx EvalContext, funcName string, args []Expression, bf baseBuiltinFunc) {
 	if functionSetForReturnTypeAlwaysNotNull.Exist(funcName) {
 		bf.tp.AddFlag(mysql.NotNullFlag)
 	} else if functionSetForReturnTypeAlwaysNullable.Exist(funcName) {
@@ -93,7 +97,7 @@ func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuil
 	} else if functionSetForReturnTypeNotNullOnNotNull.Exist(funcName) {
 		returnNullable := false
 		for _, arg := range args {
-			if !mysql.HasNotNullFlag(arg.GetType().GetFlag()) {
+			if !mysql.HasNotNullFlag(arg.GetType(ctx).GetFlag()) {
 				returnNullable = true
 				break
 			}
@@ -106,7 +110,7 @@ func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuil
 	}
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
@@ -127,7 +131,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -164,7 +168,7 @@ func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalTyp
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs to be determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -189,7 +193,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -214,7 +218,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -222,7 +226,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 // argTps indicates the field types of the args, retType indicates the return type of the built-in function.
 // newBaseBuiltinFuncWithTp and newBaseBuiltinFuncWithFieldTypes are essentially the same, but newBaseBuiltinFuncWithFieldTypes uses FieldType to cast args.
 // If there are specific requirements for decimal/datetime/timestamp, newBaseBuiltinFuncWithFieldTypes should be used, such as if,ifnull and casewhen.
-func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -249,14 +253,14 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		// https://github.com/pingcap/tidb/issues/44196
 		// For decimal/datetime/timestamp/duration types, it is necessary to ensure that decimal are consistent with the output type,
 		// so adding a cast function here.
 		case types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
-			if !args[i].GetType().Equal(argTps[i]) {
+			if !args[i].GetType(ctx.GetEvalCtx()).Equal(argTps[i]) {
 				args[i] = BuildCastFunction(ctx, args[i], argTps[i])
 			}
 		}
@@ -275,7 +279,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -409,7 +413,9 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
-	b.ctor = from.ctor
+	if from.ctor != nil {
+		b.ctor = from.ctor.Clone()
+	}
 }
 
 func (*baseBuiltinFunc) Clone() builtinFunc {
@@ -476,6 +482,7 @@ type vecBuiltinFunc interface {
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
+	contextopt.RequireOptionalEvalProps
 	vecBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
@@ -549,7 +556,7 @@ func VerifyArgsWrapper(name string, l int) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+	getFunction(ctx BuildContext, args []Expression) (builtinFunc, error)
 	// verifyArgsByCount verifies the count of parameters.
 	verifyArgsByCount(l int) error
 }
@@ -897,6 +904,7 @@ var funcs = map[string]functionClass{
 	ast.JSONMergePreserve: &jsonMergePreserveFunctionClass{baseFunctionClass{ast.JSONMergePreserve, 2, -1}},
 	ast.JSONPretty:        &jsonPrettyFunctionClass{baseFunctionClass{ast.JSONPretty, 1, 1}},
 	ast.JSONQuote:         &jsonQuoteFunctionClass{baseFunctionClass{ast.JSONQuote, 1, 1}},
+	ast.JSONSchemaValid:   &jsonSchemaValidFunctionClass{baseFunctionClass{ast.JSONSchemaValid, 2, 2}},
 	ast.JSONSearch:        &jsonSearchFunctionClass{baseFunctionClass{ast.JSONSearch, 3, -1}},
 	ast.JSONStorageFree:   &jsonStorageFreeFunctionClass{baseFunctionClass{ast.JSONStorageFree, 1, 1}},
 	ast.JSONStorageSize:   &jsonStorageSizeFunctionClass{baseFunctionClass{ast.JSONStorageSize, 1, 1}},
@@ -1039,7 +1047,7 @@ func (c *builtinFuncCache[T]) getCache(ctxID uint64) (v T, ok bool) {
 
 func (c *builtinFuncCache[T]) getOrInitCache(ctx EvalContext, constructCache func() (T, error)) (T, error) {
 	intest.Assert(constructCache != nil)
-	ctxID := ctx.GetSessionVars().StmtCtx.CtxID()
+	ctxID := ctx.CtxID()
 	if item, ok := c.getCache(ctxID); ok {
 		return item, nil
 	}

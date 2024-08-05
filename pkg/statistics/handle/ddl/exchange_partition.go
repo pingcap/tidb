@@ -54,7 +54,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		// Update the global stats.
 		if modifyCountDelta != 0 || countDelta != 0 {
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			globalTableSchema, ok := is.SchemaByTable(globalTableInfo)
+			globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 			if !ok {
 				return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
 			}
@@ -123,7 +123,7 @@ func getCountsAndModifyCounts(
 func exchangePartitionLogFields(
 	globalTableSchemaName string,
 	globalTableInfo *model.TableInfo,
-	originalPartInfo model.PartitionDefinition,
+	originalPartDef model.PartitionDefinition,
 	originalTableInfo *model.TableInfo,
 	countDelta, modifyCountDelta,
 	partCount, partModifyCount,
@@ -135,8 +135,8 @@ func exchangePartitionLogFields(
 		zap.String("globalTableName", globalTableInfo.Name.O),
 		zap.Int64("countDelta", countDelta),
 		zap.Int64("modifyCountDelta", modifyCountDelta),
-		zap.Int64("partitionID", originalPartInfo.ID),
-		zap.String("partitionName", originalPartInfo.Name.O),
+		zap.Int64("partitionID", originalPartDef.ID),
+		zap.String("partitionName", originalPartDef.Name.O),
 		zap.Int64("partitionCount", partCount),
 		zap.Int64("partitionModifyCount", partModifyCount),
 		zap.Int64("tableID", originalTableInfo.ID),

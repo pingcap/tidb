@@ -23,12 +23,12 @@ import (
 )
 
 func TestNewCache(t *testing.T) {
-	ic := infoschema.NewCache(16)
+	ic := infoschema.NewCache(nil, 16)
 	require.NotNil(t, ic)
 }
 
 func TestInsert(t *testing.T) {
-	ic := infoschema.NewCache(3)
+	ic := infoschema.NewCache(nil, 3)
 	require.NotNil(t, ic)
 
 	is2 := infoschema.MockInfoSchemaWithSchemaVer(nil, 2)
@@ -100,7 +100,7 @@ func TestInsert(t *testing.T) {
 }
 
 func TestGetByVersion(t *testing.T) {
-	ic := infoschema.NewCache(2)
+	ic := infoschema.NewCache(nil, 2)
 	require.NotNil(t, ic)
 	is1 := infoschema.MockInfoSchemaWithSchemaVer(nil, 1)
 	ic.Insert(is1, 1)
@@ -115,7 +115,7 @@ func TestGetByVersion(t *testing.T) {
 }
 
 func TestGetLatest(t *testing.T) {
-	ic := infoschema.NewCache(16)
+	ic := infoschema.NewCache(nil, 16)
 	require.NotNil(t, ic)
 	require.Nil(t, ic.GetLatest())
 
@@ -135,7 +135,7 @@ func TestGetLatest(t *testing.T) {
 }
 
 func TestGetByTimestamp(t *testing.T) {
-	ic := infoschema.NewCache(16)
+	ic := infoschema.NewCache(nil, 16)
 	require.NotNil(t, ic)
 	require.Nil(t, ic.GetLatest())
 	require.Equal(t, 0, ic.Len())
@@ -180,7 +180,7 @@ func TestGetByTimestamp(t *testing.T) {
 }
 
 func TestReSize(t *testing.T) {
-	ic := infoschema.NewCache(2)
+	ic := infoschema.NewCache(nil, 2)
 	require.NotNil(t, ic)
 	is1 := infoschema.MockInfoSchemaWithSchemaVer(nil, 1)
 	ic.Insert(is1, 1)
@@ -214,7 +214,7 @@ func TestReSize(t *testing.T) {
 }
 
 func TestCacheWithSchemaTsZero(t *testing.T) {
-	ic := infoschema.NewCache(16)
+	ic := infoschema.NewCache(nil, 16)
 	require.NotNil(t, ic)
 
 	for i := 1; i <= 8; i++ {
@@ -268,7 +268,7 @@ func TestCacheWithSchemaTsZero(t *testing.T) {
 	require.Equal(t, 16, ic.Size())
 
 	// Test for there is a hole in the middle.
-	ic = infoschema.NewCache(16)
+	ic = infoschema.NewCache(nil, 16)
 
 	// mock for restart with full load the latest version schema.
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 100), 100)
@@ -290,4 +290,51 @@ func TestCacheWithSchemaTsZero(t *testing.T) {
 	checkFn(1, 84, false)
 	checkFn(85, 100, true)
 	require.Equal(t, 16, ic.Size())
+
+	// Test cache with schema version hole, which is cause by schema version doesn't has related schema-diff.
+	ic = infoschema.NewCache(nil, 16)
+	require.NotNil(t, ic)
+	for i := 1; i <= 8; i++ {
+		ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, int64(i)), uint64(i))
+	}
+	checkFn(1, 10, true)
+	// mock for schema version hole, schema-version 9 is missing.
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 10), 10)
+	checkFn(1, 7, true)
+	// without empty schema version map, get snapshot by ts 8, 9 will both failed.
+	checkFn(8, 9, false)
+	checkFn(10, 10, true)
+	// add empty schema version 9.
+	ic.InsertEmptySchemaVersion(9)
+	// after set empty schema version, get snapshot by ts 8, 9 will both success.
+	checkFn(1, 8, true)
+	checkFn(10, 10, true)
+	is := ic.GetBySnapshotTS(uint64(9))
+	require.NotNil(t, is)
+	// since schema version 9 is empty, so get by ts 9 will get schema which version is 8.
+	require.Equal(t, int64(8), is.SchemaMetaVersion())
+}
+
+func TestCacheEmptySchemaVersion(t *testing.T) {
+	ic := infoschema.NewCache(nil, 16)
+	require.NotNil(t, ic)
+	require.Equal(t, 0, len(ic.GetEmptySchemaVersions()))
+	for i := 0; i < 16; i++ {
+		ic.InsertEmptySchemaVersion(int64(i))
+	}
+	emptyVersions := ic.GetEmptySchemaVersions()
+	require.Equal(t, 16, len(emptyVersions))
+	for i := 0; i < 16; i++ {
+		_, ok := emptyVersions[int64(i)]
+		require.True(t, ok)
+	}
+	for i := 16; i < 20; i++ {
+		ic.InsertEmptySchemaVersion(int64(i))
+	}
+	emptyVersions = ic.GetEmptySchemaVersions()
+	require.Equal(t, 16, len(emptyVersions))
+	for i := 4; i < 20; i++ {
+		_, ok := emptyVersions[int64(i)]
+		require.True(t, ok)
+	}
 }

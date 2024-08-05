@@ -68,7 +68,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 			currType = *t
 			continue
 		}
-		mtp := MergeFieldType(currType.GetType(), t.GetType())
+		mtp := mergeFieldType(currType.GetType(), t.GetType())
 		isMixedSign = isMixedSign || (mysql.HasUnsignedFlag(currType.GetFlag()) != mysql.HasUnsignedFlag(t.GetFlag()))
 		currType.SetType(mtp)
 		currType.SetFlag(mergeTypeFlag(currType.GetFlag(), t.GetFlag()))
@@ -191,7 +191,7 @@ func InferParamTypeFromDatum(d *Datum, tp *FieldType) {
 }
 
 // InferParamTypeFromUnderlyingValue is used for plan cache to infer the type of a parameter from its underlying value.
-func InferParamTypeFromUnderlyingValue(value interface{}, tp *FieldType) {
+func InferParamTypeFromUnderlyingValue(value any, tp *FieldType) {
 	switch value.(type) {
 	case nil:
 		tp.SetType(mysql.TypeVarString)
@@ -218,7 +218,7 @@ func hasVariantFieldLength(tp *FieldType) bool {
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
+func DefaultTypeForValue(value any, tp *FieldType, char string, collate string) {
 	if value != nil {
 		tp.AddFlag(mysql.NotNullFlag)
 	}
@@ -367,12 +367,16 @@ func DefaultCharsetForType(tp byte) (defaultCharset string, defaultCollation str
 	return charset.CharsetBin, charset.CollationBin
 }
 
-// MergeFieldType merges two MySQL type to a new type.
+// mergeFieldType merges two MySQL type to a new type.
 // This is used in hybrid field type expression.
 // For example "select case c when 1 then 2 when 2 then 'tidb' from t;"
 // The result field type of the case expression is the merged type of the two when clause.
 // See https://github.com/mysql/mysql-server/blob/8.0/sql/field.cc#L1042
-func MergeFieldType(a byte, b byte) byte {
+//
+// This function doesn't handle the range bump: for example, when the unsigned long is merged with signed long,
+// the result should be longlong. However, this function returns long for this case. Please use `AggFieldType`
+// function if you need to handle the range bump.
+func mergeFieldType(a byte, b byte) byte {
 	ia := getFieldTypeIndex(a)
 	ib := getFieldTypeIndex(b)
 	return fieldTypeMergeRules[ia][ib]

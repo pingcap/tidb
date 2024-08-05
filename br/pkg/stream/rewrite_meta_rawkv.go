@@ -746,11 +746,11 @@ func (bdr *brDelRangeExecWrapper) PrepareParamsList(sz int) {
 }
 
 func (bdr *brDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
-	tableID, exists := bdr.globalTableIdMap[tableID]
+	newTableID, exists := bdr.globalTableIdMap[tableID]
 	if !exists {
-		log.Warn("failed to find the downstream id when rewrite delete range", zap.Int64("tableID", tableID))
+		log.Warn("failed to find the downstream id when rewrite delete range", zap.Int64("old tableID", tableID))
 	}
-	return tableID, exists
+	return newTableID, exists
 }
 
 func (bdr *brDelRangeExecWrapper) AppendParamsList(jobID, elemID int64, startKey, endKey string) {
