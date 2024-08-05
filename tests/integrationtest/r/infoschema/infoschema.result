@@ -159,3 +159,15 @@ pt2	p2
 pt2	p3
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt0' and table_schema = 'infoschema__infoschema';
 TABLE_NAME	PARTITION_NAME
+create database if not exists db1;
+create table db1.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
+create table db1.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);
+create database if not exists db2;
+create table db2.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
+create table db2.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);
+select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema = 'db1' order by TABLE_NAME;
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
+def	db1	PRIMARY	def	db1	table1	id	1	1	NULL	NULL	NULL
+def	db1	fk	def	db1	table2	id	1	1	db1	table1	id
+drop database db1;
+drop database db2;
