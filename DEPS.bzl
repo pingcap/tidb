@@ -4194,8 +4194,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:YAgGB92AiNCZdM5a65vdnJRX+gS+cc4OcUplWEU6O4w=",
-        version = "v0.0.0-20240708075102-05207d6819fb",
+        sum = "h1:Szw9YxqGGEneSniBd4ep09jgB77cKUy+AuhKOmdGPdE=",
+        version = "v0.0.0-20240725070735-fb162bf0aa3f",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
@@ -6195,8 +6195,8 @@ def go_deps():
         name = "org_uber_go_automaxprocs",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/automaxprocs",
-        sum = "h1:CpDZl6aOlLhReez+8S3eEotD7Jx0Os++lemPlMULQP0=",
-        version = "v1.4.0",
+        sum = "h1:kWazyxZUrS3Gs4qUpbwo5kEIMGe/DAvi5Z4tl2NW4j8=",
+        version = "v1.5.3",
     )
     go_repository(
         name = "org_uber_go_dig",
