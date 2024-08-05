@@ -1356,10 +1356,7 @@ func acquireLock(s sessiontypes.Session) bool {
 	}
 	mu := concurrency.NewMutex(etcdSession, bootstrapOwnerKey)
 	err = mu.Lock(context.Background())
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func releaseLock(s sessiontypes.Session) {
@@ -1458,16 +1455,13 @@ func upgrade(s sessiontypes.Session) {
 	}
 
 	var ver int64
-	for {
-		acquireLock(s)
-		ver, err = getBootstrapVersion(s)
-		terror.MustNil(err)
-		if ver >= currentBootstrapVersion {
-			// It is already bootstrapped/upgraded by a higher version TiDB server.
-			releaseLock(s)
-			return
-		}
-		break
+	acquireLock(s)
+	ver, err = getBootstrapVersion(s)
+	terror.MustNil(err)
+	if ver >= currentBootstrapVersion {
+		// It is already bootstrapped/upgraded by a higher version TiDB server.
+		releaseLock(s)
+		return
 	}
 	defer releaseLock(s)
 
