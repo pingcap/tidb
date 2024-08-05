@@ -62,13 +62,7 @@ func TestVectorColumnInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// MUST enable vector type first.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExecToErr("create table t(embedding VECTOR)")
-
 	// Create vector type column without specified dimension.
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 	tk.MustExec("create table t(embedding VECTOR)")
 
 	// SHOW CREATE TABLE
@@ -119,7 +113,6 @@ func TestFixedVector(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 
 	tk.MustExec("create table t(embedding VECTOR)")
 	tk.MustExec("insert into t values ('[1,2,3]')")
@@ -146,81 +139,12 @@ func TestFixedVector(t *testing.T) {
 	tk.MustGetErrMsg("alter table t modify column embedding VECTOR(16001)", "vector cannot have more than 16000 dimensions")
 }
 
-func TestVectorVariable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test;")
-
-	tk.MustExec("CREATE USER semroot")
-	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* TO semroot;`)
-	tk.MustExec("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* to semroot;")
-
-	sem.Disable()
-
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	sem.Enable()
-
-	// root cannot set global variable in SEMLevelBasic
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExecToErr("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	// semroot can set global variable in SEMLevelBasic
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semroot", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
-	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExec(`DROP TABLE t1;`)
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	sem.Enable()
-
-	// root cannot set global variable in SEMLevelStrict
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExecToErr("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	// semroot can set global variable in SEMLevelStrict
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semroot", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
-	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExec(`DROP TABLE t1;`)
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	sem.Disable()
-
-	// root can set global variable when SEM is disabled
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
-	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExec(`DROP TABLE t1;`)
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	// semroot can set global variable when SEM is disabled
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semroot", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
-	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=0;")
-	tk.MustExec(`DROP TABLE t1;`)
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-}
-
 func TestVector(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 
-	tk.MustExecToErr(`CREATE TABLE t1 (v VECTOR);`)
-
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 	tk.MustExec(`CREATE TABLE t1 (v VECTOR);`)
 	tk.MustExecToErr(`INSERT INTO t1 VALUES ('abc');`)
 	tk.MustExec(`INSERT INTO t1 VALUES ('[1,2.1,3.3]');`)
@@ -235,6 +159,7 @@ func TestVector(t *testing.T) {
 	tk.MustQuery("SELECT VEC_DIMS(NULL);").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("SELECT VEC_DIMS('[]');").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT VEC_DIMS('[5, 3, 2]');").Check(testkit.Rows("3"))
+
 	tk.MustQuery("SELECT VEC_FROM_TEXT('[]');").Check(testkit.Rows("[]"))
 
 	// Basic sort
@@ -274,7 +199,7 @@ func TestVectorOperators(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
+
 	tk.MustExec(`CREATE TABLE t(embedding VECTOR);`)
 	tk.MustExec(`INSERT INTO t VALUES
 		('[1, 2, 3]'),
@@ -334,7 +259,6 @@ func TestVectorConversion(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 	tk.MustExec(`CREATE TABLE t1 (val vector);`)
 
 	// CAST
@@ -454,7 +378,6 @@ func TestVectorAggregations(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 	tk.MustExec(`CREATE TABLE t(val VECTOR);`)
 	tk.MustExec(`INSERT INTO t VALUES
 		('[8.7, 5.7, 7.7, 9.8, 1.5]'),
@@ -490,7 +413,6 @@ func TestVectorWindow(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 	tk.MustExec(`DROP TABLE IF EXISTS t;`)
 	tk.MustExec(`CREATE TABLE t (embedding VECTOR);`)
 	tk.MustExec(`INSERT INTO t VALUES
@@ -544,7 +466,6 @@ func TestVectorSetOperation(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
 	tk.MustExec(`CREATE TABLE t1 (embedding VECTOR);`)
 	tk.MustExec(`INSERT INTO t1 VALUES
