@@ -3256,12 +3256,6 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
-	{Scope: ScopeGlobal, Name: TiDBEnableVectorType, Value: BoolToOnOff(DefTiDBEnableVectorType), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		EnableVectorType.Store(TiDBOptOn(s))
-		return nil
-	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return BoolToOnOff(EnableVectorType.Load()), nil
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLazyCursorFetch, Value: BoolToOnOff(DefTiDBEnableLazyCursorFetch), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableLazyCursorFetch = TiDBOptOn(val)
 		return nil
