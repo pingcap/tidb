@@ -53,6 +53,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -234,6 +235,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	}
 	cc.setConn(conn)
 	cc.salt = fastrand.Buf(20)
+	metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Inc()
 	return cc
 }
 
@@ -642,7 +644,6 @@ func (s *Server) registerConn(conn *clientConn) bool {
 		return false
 	}
 	s.clients[conn.connectionID] = conn
-	metrics.ConnGauge.WithLabelValues(conn.getCtx().GetSessionVars().ResourceGroupName).Inc()
 	return true
 }
 
