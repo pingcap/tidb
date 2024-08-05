@@ -71,24 +71,33 @@ func (sa *statsAnalyze) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance st
 }
 
 func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
-	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		startAnalyzeJob(sctx, job)
 		return nil
 	})
+	if err != nil {
+		statslogutil.StatsLogger().Warn("failed to start analyze job", zap.Error(err))
+	}
 }
 
 func (sa *statsAnalyze) UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64) {
-	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		updateAnalyzeJob(sctx, job, rowCount)
 		return nil
 	})
+	if err != nil {
+		statslogutil.StatsLogger().Warn("failed to update analyze job progress", zap.Error(err))
+	}
 }
 
 func (sa *statsAnalyze) FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType) {
-	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		finishAnalyzeJob(sctx, job, failReason, analyzeType)
 		return nil
 	})
+	if err != nil {
+		statslogutil.StatsLogger().Warn("failed to finish analyze job", zap.Error(err))
+	}
 }
 
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
