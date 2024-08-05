@@ -3438,10 +3438,6 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
-		err = InitMDLVariable(store)
-		if err != nil {
-			return nil, err
-		}
 		runInBootstrapSession(store, upgrade)
 	} else {
 		err = InitMDLVariable(store)

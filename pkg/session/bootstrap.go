@@ -1446,7 +1446,13 @@ func checkDistTask(s sessiontypes.Session, ver int64) {
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s sessiontypes.Session) {
-	err := forceToLeader(context.Background(), s)
+	// Do upgrade works then update bootstrap version.
+	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
+	}
+
+	err = forceToLeader(context.Background(), s)
 	if err != nil {
 		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
 	}
@@ -1467,12 +1473,6 @@ func upgrade(s sessiontypes.Session) {
 
 	checkDistTask(s, ver)
 	printClusterState(s, ver)
-
-	// Do upgrade works then update bootstrap version.
-	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
-	}
 
 	if isNull {
 		upgradeToVer99Before(s)
