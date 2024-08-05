@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -24,58 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
-
-func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
-	subJobs := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo.SubJobs
-	if len(subJobs) == 0 {
-		return nil
-	}
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	job := &model.Job{
-		SchemaID:        schema.ID,
-		TableID:         t.Meta().ID,
-		SchemaName:      schema.Name.L,
-		TableName:       t.Meta().Name.L,
-		Type:            model.ActionMultiSchemaChange,
-		BinlogInfo:      &model.HistoryInfo{},
-		Args:            nil,
-		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
-		ReorgMeta:       nil,
-		CDCWriteSource:  ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:         ctx.GetSessionVars().SQLMode,
-	}
-	if containsDistTaskSubJob(subJobs) {
-		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
-		if err != nil {
-			return err
-		}
-	} else {
-		job.ReorgMeta = NewDDLReorgMeta(ctx)
-	}
-
-	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	mergeAddIndex(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo)
-	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
-	err = d.DoDDLJob(ctx, job)
-	return d.callHookOnChanged(job, err)
-}
-
-func containsDistTaskSubJob(subJobs []*model.SubJob) bool {
-	for _, sub := range subJobs {
-		if sub.Type == model.ActionAddIndex ||
-			sub.Type == model.ActionAddPrimaryKey {
-			return true
-		}
-	}
-	return false
-}
 
 func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
@@ -88,7 +35,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				ver, err = w.runDDLJob(d, t, &proxyJob)
+				ver, _, err = w.runOneJobStep(d, t, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -111,7 +58,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job, i)
-			ver, err = w.runDDLJob(d, t, &proxyJob)
+			ver, _, err = w.runOneJobStep(d, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -137,7 +84,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			proxyJobVer, err := w.runDDLJob(d, t, &proxyJob)
+			proxyJobVer, _, err := w.runOneJobStep(d, t, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -186,7 +133,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job, i)
-		ver, err = w.runDDLJob(d, t, &proxyJob)
+		ver, _, err = w.runOneJobStep(d, t, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}

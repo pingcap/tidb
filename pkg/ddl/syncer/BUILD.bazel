@@ -43,6 +43,7 @@ go_test(
         "//pkg/domain/infosync",
         "//pkg/infoschema",
         "//pkg/parser/terror",
+        "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
         "//pkg/util",

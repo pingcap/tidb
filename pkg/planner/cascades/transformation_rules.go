@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -506,7 +508,7 @@ func NewRulePushSelDownSort() Transformation {
 // It will transform `sel->sort->x` to `sort->sel->x`.
 func (*PushSelDownSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	sort := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalSort)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	newSelExpr := memo.NewGroupExpr(sel)
@@ -542,7 +544,7 @@ func NewRulePushSelDownProjection() Transformation {
 // 3. just keep unchanged.
 func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
 	for _, expr := range proj.Exprs {
@@ -682,7 +684,7 @@ func NewRulePushSelDownWindow() Transformation {
 // 3. just keep unchanged.
 func (*PushSelDownWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	window := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	window := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalWindow)
 	windowSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
@@ -741,10 +743,10 @@ func NewRuleTransformLimitToTopN() Transformation {
 // OnTransform implements Transformation interface.
 // This rule will transform `Limit -> Sort -> x` to `TopN -> x`.
 func (*TransformLimitToTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
-	sort := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSort)
+	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
+	sort := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalSort)
 	childGroup := old.Children[0].GetExpr().Children[0]
-	topN := plannercore.LogicalTopN{
+	topN := logicalop.LogicalTopN{
 		ByItems: sort.ByItems,
 		Offset:  limit.Offset,
 		Count:   limit.Count,
@@ -773,7 +775,7 @@ func NewRulePushLimitDownProjection() Transformation {
 
 // Match implements Transformation interface.
 func (*PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
-	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
 			return false
@@ -785,8 +787,8 @@ func (*PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to pushes the Limit through Projection.
 func (*PushLimitDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	projExpr := memo.NewGroupExpr(proj)
@@ -823,11 +825,11 @@ func (r *PushLimitDownUnionAll) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will transform `Limit->UnionAll->X` to `Limit->UnionAll->Limit->X`.
 func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
 	unionAllSchema := old.Children[0].Group.Prop.Schema
 
-	newLimit := plannercore.LogicalLimit{
+	newLimit := logicalop.LogicalLimit{
 		Count: limit.Count + limit.Offset,
 	}.Init(limit.SCtx(), limit.QueryBlockOffset())
 
@@ -1162,10 +1164,10 @@ func NewRuleMergeAdjacentProjection() Transformation {
 // It will transform `proj->proj->x` to `proj->x`
 // or just keep the adjacent projections unchanged.
 func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	childGroup := old.Children[0].Group
-	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
-	if plannercore.ExprsHasSideEffects(child.Exprs) {
+	child := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
+	if expression.ExprsHasSideEffects(child.Exprs) {
 		return nil, false, false, nil
 	}
 
@@ -1176,11 +1178,11 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		}
 	}
 
-	newProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.QueryBlockOffset())
+	newProj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.QueryBlockOffset())
 	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
-		plannercore.ResolveExprAndReplace(newExpr, replace)
+		ruleutil.ResolveExprAndReplace(newExpr, replace)
 		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newExpr, child, childGroup.Prop.Schema)
 	}
 
@@ -1221,7 +1223,7 @@ func (r *PushTopNDownOuterJoin) Match(expr *memo.ExprIter) bool {
 	}
 }
 
-func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *memo.Group) *memo.Group {
+func pushTopNDownOuterJoinToChild(topN *logicalop.LogicalTopN, outerGroup *memo.Group) *memo.Group {
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
@@ -1231,7 +1233,7 @@ func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *mem
 		}
 	}
 
-	newTopN := plannercore.LogicalTopN{
+	newTopN := logicalop.LogicalTopN{
 		Count:   topN.Count + topN.Offset,
 		ByItems: make([]*util.ByItems, len(topN.ByItems)),
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
@@ -1248,7 +1250,7 @@ func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *mem
 // OnTransform implements Transformation interface.
 // This rule will transform `TopN->OuterJoin->(OuterChild, InnerChild)` to `TopN->OuterJoin->(TopN->OuterChild, InnerChild)`
 func (r *PushTopNDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	joinExpr := old.Children[0].GetExpr()
 	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
 	joinSchema := old.Children[0].Group.Prop.Schema
@@ -1291,7 +1293,7 @@ func NewRulePushTopNDownProjection() Transformation {
 
 // Match implements Transformation interface.
 func (*PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
-	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
 			return false
@@ -1303,12 +1305,12 @@ func (*PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to pushes the TopN through Projection.
 func (*PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	ctx := topN.SCtx()
-	newTopN := plannercore.LogicalTopN{
+	newTopN := logicalop.LogicalTopN{
 		Offset: topN.Offset,
 		Count:  topN.Count,
 	}.Init(ctx, topN.QueryBlockOffset())
@@ -1362,10 +1364,10 @@ func (r *PushTopNDownUnionAll) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
 func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
 
-	newTopN := plannercore.LogicalTopN{
+	newTopN := logicalop.LogicalTopN{
 		Count:   topN.Count + topN.Offset,
 		ByItems: topN.ByItems,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
@@ -1412,12 +1414,12 @@ func (r *PushTopNDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It transforms `TopN -> TiKVSingleGather` to `TopN(Final) -> TiKVSingleGather -> TopN(Partial)`.
 func (r *PushTopNDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	topNSchema := old.Children[0].Group.Prop.Schema
 	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
-	particalTopN := plannercore.LogicalTopN{
+	particalTopN := logicalop.LogicalTopN{
 		ByItems: topN.ByItems,
 		Count:   topN.Count + topN.Offset,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
@@ -1454,8 +1456,8 @@ func NewRuleMergeAdjacentTopN() Transformation {
 
 // Match implements Transformation interface.
 func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
-	topN := expr.GetExpr().ExprNode.(*plannercore.LogicalTopN)
-	child := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	topN := expr.GetExpr().ExprNode.(*logicalop.LogicalTopN)
+	child := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalTopN)
 
 	// We can use this rule when the sort columns of parent TopN is a prefix of child TopN.
 	if len(child.ByItems) < len(topN.ByItems) {
@@ -1472,12 +1474,12 @@ func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to merge adjacent TopN.
 func (*MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
-	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
+	child := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	childGroups := old.Children[0].GetExpr().Children
 
 	if child.Count <= topN.Offset {
-		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
+		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
 		tableDual.SetSchema(old.GetExpr().Schema())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
@@ -1485,7 +1487,7 @@ func (*MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 
 	offset := child.Offset + topN.Offset
 	count := uint64(math.Min(float64(child.Count-topN.Offset), float64(topN.Count)))
-	newTopN := plannercore.LogicalTopN{
+	newTopN := logicalop.LogicalTopN{
 		Count:   count,
 		Offset:  offset,
 		ByItems: child.ByItems,
@@ -1516,15 +1518,15 @@ func NewRuleMergeAggregationProjection() Transformation {
 
 // Match implements Transformation interface.
 func (*MergeAggregationProjection) Match(old *memo.ExprIter) bool {
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
-	return !plannercore.ExprsHasSideEffects(proj.Exprs)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
+	return !expression.ExprsHasSideEffects(proj.Exprs)
 }
 
 // OnTransform implements Transformation interface.
 // It will transform `Aggregation->Projection->X` to `Aggregation->X`.
 func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	oldAgg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].GetExpr().Schema()
 
 	ctx := oldAgg.SCtx()
@@ -1630,7 +1632,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 			Expr: f.Args[0],
 			Desc: desc,
 		})
-		top1 := plannercore.LogicalTopN{
+		top1 := logicalop.LogicalTopN{
 			ByItems: byItems,
 			Count:   1,
 		}.Init(ctx, agg.QueryBlockOffset())
@@ -1639,7 +1641,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		top1Group := memo.NewGroupWithSchema(top1Expr, childGroup.Prop.Schema)
 		childGroup = top1Group
 	} else {
-		li := plannercore.LogicalLimit{Count: 1}.Init(ctx, agg.QueryBlockOffset())
+		li := logicalop.LogicalLimit{Count: 1}.Init(ctx, agg.QueryBlockOffset())
 		liExpr := memo.NewGroupExpr(li)
 		liExpr.SetChildren(childGroup)
 		liGroup := memo.NewGroupWithSchema(liExpr, childGroup.Prop.Schema)
@@ -1708,12 +1710,12 @@ func NewRuleMergeAdjacentLimit() Transformation {
 // OnTransform implements Transformation interface.
 // This rule tries to merge adjacent limit.
 func (*MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
-	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
+	child := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalLimit)
 	childGroups := old.Children[0].GetExpr().Children
 
 	if child.Count <= limit.Offset {
-		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
+		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
 		tableDual.SetSchema(old.GetExpr().Schema())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
@@ -1721,7 +1723,7 @@ func (*MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gro
 
 	offset := child.Offset + limit.Offset
 	count := uint64(math.Min(float64(child.Count-limit.Offset), float64(limit.Count)))
-	newLimit := plannercore.LogicalLimit{
+	newLimit := logicalop.LogicalLimit{
 		Offset: offset,
 		Count:  count,
 	}.Init(limit.SCtx(), limit.QueryBlockOffset())
@@ -1748,15 +1750,15 @@ func NewRuleTransformLimitToTableDual() Transformation {
 
 // Match implements Transformation interface.
 func (*TransformLimitToTableDual) Match(expr *memo.ExprIter) bool {
-	limit := expr.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	limit := expr.GetExpr().ExprNode.(*logicalop.LogicalLimit)
 	return 0 == limit.Count
 }
 
 // OnTransform implements Transformation interface.
 // This rule tries to convert limit to tableDual.
 func (*TransformLimitToTableDual) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
-	tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(limit.SCtx(), limit.QueryBlockOffset())
+	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
+	tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(limit.SCtx(), limit.QueryBlockOffset())
 	tableDual.SetSchema(old.GetExpr().Schema())
 	tableDualExpr := memo.NewGroupExpr(tableDual)
 	return []*memo.GroupExpr{tableDualExpr}, true, true, nil
@@ -1791,7 +1793,7 @@ func (r *PushLimitDownOuterJoin) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to pushes the Limit through outer Join.
 func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
 	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
 	joinSchema := old.Children[0].Group.Prop.Schema
 	leftGroup := old.Children[0].GetExpr().Children[0]
@@ -1814,8 +1816,8 @@ func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*me
 	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
 }
 
-func (*PushLimitDownOuterJoin) pushLimitDownOuterJoinToChild(limit *plannercore.LogicalLimit, outerGroup *memo.Group) *memo.Group {
-	newLimit := plannercore.LogicalLimit{
+func (*PushLimitDownOuterJoin) pushLimitDownOuterJoinToChild(limit *logicalop.LogicalLimit, outerGroup *memo.Group) *memo.Group {
+	newLimit := logicalop.LogicalLimit{
 		Count: limit.Count + limit.Offset,
 	}.Init(limit.SCtx(), limit.QueryBlockOffset())
 	newLimitGroup := memo.NewGroupExpr(newLimit)
@@ -1849,12 +1851,12 @@ func (r *PushLimitDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It transforms `Limit -> TiKVSingleGather` to `Limit(Final) -> TiKVSingleGather -> Limit(Partial)`.
 func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
 	limitSchema := old.Children[0].Group.Prop.Schema
 	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
-	particalLimit := plannercore.LogicalLimit{
+	particalLimit := logicalop.LogicalLimit{
 		Count: limit.Count + limit.Offset,
 	}.Init(limit.SCtx(), limit.QueryBlockOffset())
 	partialLimitExpr := memo.NewGroupExpr(particalLimit)
@@ -2006,7 +2008,7 @@ func (*EliminateOuterJoinBelowProjection) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to eliminate outer join which below projection.
 func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	joinExpr := old.Children[0].GetExpr()
 	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
 
@@ -2235,7 +2237,7 @@ func NewRuleInjectProjectionBelowTopN() Transformation {
 
 // Match implements Transformation interface.
 func (*InjectProjectionBelowTopN) Match(expr *memo.ExprIter) bool {
-	topN := expr.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	topN := expr.GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	for _, item := range topN.ByItems {
 		if _, ok := item.Expr.(*expression.ScalarFunction); ok {
 			return true
@@ -2247,7 +2249,7 @@ func (*InjectProjectionBelowTopN) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will convert `TopN -> X` to `Projection -> TopN -> Projection -> X`.
 func (*InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	ectx := topN.SCtx().GetExprCtx().GetEvalCtx()
 	oldTopNSchema := old.GetExpr().Schema()
 
@@ -2256,7 +2258,7 @@ func (*InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*m
 	for i := range oldTopNSchema.Columns {
 		topProjExprs[i] = oldTopNSchema.Columns[i]
 	}
-	topProj := plannercore.LogicalProjection{
+	topProj := logicalop.LogicalProjection{
 		Exprs: topProjExprs,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
 	topProj.SetSchema(oldTopNSchema)
@@ -2283,13 +2285,13 @@ func (*InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*m
 		bottomProjSchema = append(bottomProjSchema, newCol)
 		newByItems = append(newByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
 	}
-	bottomProj := plannercore.LogicalProjection{
+	bottomProj := logicalop.LogicalProjection{
 		Exprs: bottomProjExprs,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
 	newSchema := expression.NewSchema(bottomProjSchema...)
 	bottomProj.SetSchema(newSchema)
 
-	newTopN := plannercore.LogicalTopN{
+	newTopN := logicalop.LogicalTopN{
 		ByItems: newByItems,
 		Offset:  topN.Offset,
 		Count:   topN.Count,
@@ -2406,7 +2408,7 @@ func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*me
 	}
 
 	// Construct GroupExpr, Group (Agg -> Proj -> Child).
-	proj := plannercore.LogicalProjection{
+	proj := logicalop.LogicalProjection{
 		Exprs: projExprs,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	projSchema := expression.NewSchema(projSchemaCols...)
@@ -2540,9 +2542,9 @@ func NewRuleMergeAdjacentWindow() Transformation {
 
 // Match implements Transformation interface.
 func (*MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
-	curWinPlan := expr.GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	curWinPlan := expr.GetExpr().ExprNode.(*logicalop.LogicalWindow)
 	nextGroupExpr := expr.Children[0].GetExpr()
-	nextWinPlan := nextGroupExpr.ExprNode.(*plannercore.LogicalWindow)
+	nextWinPlan := nextGroupExpr.ExprNode.(*logicalop.LogicalWindow)
 	nextGroupChildren := nextGroupExpr.Children
 	ctx := expr.GetExpr().ExprNode.SCtx()
 
@@ -2580,14 +2582,14 @@ func (*MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule will transform `window -> window -> x` to `window -> x`
 func (*MergeAdjacentWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	curWinPlan := old.GetExpr().ExprNode.(*plannercore.LogicalWindow)
-	nextWinPlan := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	curWinPlan := old.GetExpr().ExprNode.(*logicalop.LogicalWindow)
+	nextWinPlan := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalWindow)
 	ctx := old.GetExpr().ExprNode.SCtx()
 
 	newWindowFuncs := make([]*aggregation.WindowFuncDesc, 0, len(curWinPlan.WindowFuncDescs)+len(nextWinPlan.WindowFuncDescs))
 	newWindowFuncs = append(newWindowFuncs, curWinPlan.WindowFuncDescs...)
 	newWindowFuncs = append(newWindowFuncs, nextWinPlan.WindowFuncDescs...)
-	newWindowPlan := plannercore.LogicalWindow{
+	newWindowPlan := logicalop.LogicalWindow{
 		WindowFuncDescs: newWindowFuncs,
 		PartitionBy:     curWinPlan.PartitionBy,
 		OrderBy:         curWinPlan.OrderBy,

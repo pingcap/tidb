@@ -62,6 +62,11 @@ type BackfillSubTaskMeta struct {
 	TS             uint64   `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
+	// EleIDs stands for the index/column IDs to backfill with distributed framework.
+	// After the subtask is finished, EleIDs should have the same length as
+	// MetaGroups, and they are in the same order.
+	EleIDs []int64 `json:"ele_ids,omitempty"`
+
 	// Only used for adding one single index.
 	// Keep this for compatibility with v7.5.
 	external.SortedKVMeta `json:",inline"`
@@ -94,7 +99,7 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 
 	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := ddlObj.getTableByTxn((*asAutoIDRequirement)(ddlObj.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	_, tblIface, err := ddlObj.getTableByTxn(ddlObj.ddlCtx.getAutoIDRequirement(), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}

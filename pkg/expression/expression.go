@@ -15,8 +15,8 @@
 package expression
 
 import (
-	goJSON "encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -165,8 +165,6 @@ const (
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
-	fmt.Stringer
-	goJSON.Marshaler
 	VecExpr
 	CollationInfo
 
@@ -252,6 +250,8 @@ type Expression interface {
 
 	// MemoryUsage return the memory usage of Expression
 	MemoryUsage() int64
+
+	StringerWithCtx
 }
 
 // CNFExprs stands for a CNF expression.
@@ -866,7 +866,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.String()))
+		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -1227,4 +1227,19 @@ func Args2Expressions4Test(args ...any) []Expression {
 		exprs[i] = &Constant{Value: d, RetType: ft}
 	}
 	return exprs
+}
+
+// StringifyExpressionsWithCtx turns a slice of expressions into string
+func StringifyExpressionsWithCtx(ctx EvalContext, exprs []Expression) string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i, expr := range exprs {
+		sb.WriteString(expr.StringWithCtx(ctx, errors.RedactLogDisable))
+
+		if i != len(exprs)-1 {
+			sb.WriteString(" ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
 }

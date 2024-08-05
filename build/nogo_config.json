@@ -69,6 +69,14 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "printexpression": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "build/linter/printexpression/testdata/": "ignore test code"
+    }
+  },
   "printf": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -514,6 +522,7 @@
       "pkg/parser/goyacc/": "ignore goyacc code",
       "pkg/parser/ast/": "ignore parser/ast code",
       "pkg/parser/test_driver/": "ignore parser/test_driver code",
+      "pkg/planner/core/plan_clone_generated.go": "ignore plan_clone_generated code",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",

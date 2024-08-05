@@ -550,11 +550,10 @@ func TestSetVarFixControlWithBinding(t *testing.T) {
 	tk.MustExec(`create table t(id int, a varchar(100), b int, c int, index idx_ab(a, b))`)
 	tk.MustQuery(`explain select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))`).Check(
 		testkit.Rows(
-			`IndexLookUp_12 0.01 root  `,
-			`├─Selection_10(Build) 0.02 cop[tikv]  or(eq(test.t.a, "xx"), and(eq(test.t.a, "kk"), eq(test.t.b, 1)))`,
-			`│ └─IndexRangeScan_8 20.00 cop[tikv] table:t, index:idx_ab(a, b) range:["kk","kk"], ["xx","xx"], keep order:false, stats:pseudo`,
-			`└─Selection_11(Probe) 0.01 cop[tikv]  eq(test.t.c, 10)`,
-			`  └─TableRowIDScan_9 0.02 cop[tikv] table:t keep order:false, stats:pseudo`))
+			`IndexLookUp_11 0.01 root  `,
+			`├─IndexRangeScan_8(Build) 10.10 cop[tikv] table:t, index:idx_ab(a, b) range:["kk" 1,"kk" 1], ["xx","xx"], keep order:false, stats:pseudo`,
+			`└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.t.c, 10)`,
+			`  └─TableRowIDScan_9 10.10 cop[tikv] table:t keep order:false, stats:pseudo`))
 
 	tk.MustExec(`create global binding using select /*+ set_var(tidb_opt_fix_control='44389:ON') */ * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
@@ -610,5 +609,6 @@ func (p *mockSessionPool) Get() (pools.Resource, error) {
 	return p.se, nil
 }
 
-func (p *mockSessionPool) Put(pools.Resource) {
-}
+func (p *mockSessionPool) Put(pools.Resource) {}
+
+func (p *mockSessionPool) Close() {}

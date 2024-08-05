@@ -229,7 +229,7 @@ create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signe
 insert into t value(1,1,1, '{"b":[1,2,3,4]}');
 insert into t value(2,2,2, '{"b":[3,4,5,6]}');
 set tidb_analyze_version=2;
-analyze table t;
+analyze table t all columns;
 explain select * from t use index (iad) where a = 1;
 explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));
 
@@ -250,7 +250,7 @@ select * from t ignore index (mvi) where json_contains(j, '[]');
 drop table if exists t;
 create table t(a int, b json);
 insert into t value (1, '{"a":[1,2,3], "b": [2,3,4]}');
-analyze table t;
+analyze table t all columns;
 alter table t add index ibb( (cast(b->'$.b' as signed array)) );
 explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 
@@ -425,3 +425,91 @@ EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = 
 EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
 EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
 SET @@tidb_opt_fix_control = default;
+
+# Test deriving index filters for mv index paths
+drop table if exists t, t1;
+create table t (a int, b varchar(30), c float, j json, pk int primary key,
+key mvi1(c, (cast(j->'$.a' as unsigned array)), b),
+key mvi2(a, (cast(j->'$.c' as unsigned array))),
+key mvi3((cast(j->'$.d' as unsigned array)), c),
+key idx(b, c)
+);
+
+insert into t values (1, 'test', 1, '{"a":[3,4,5], "c":[7,8,9], "d":[10,11,12]}', 1);
+insert into t values (2, 'text', 1, '{"a":[4,5,6], "c":[10,11,12], "d":[13,14,15]}', 2);
+insert into t values (1, 'abcd', 1, '{"a":[7,8,9], "c":[13,14,15], "d":[16,17,18]}', 3);
+
+# case 1: union type index merge on single mv index from single condition
+SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+c = 1 and
+json_overlaps(j->'$.a', '[4,5,6]') and
+b not like '%test%';
+
+EXPLAIN format = brief SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+c = 1 and
+json_overlaps(j->'$.a', '[4,5,6]') and
+b not like '%test%';
+
+# case 2: intersection type index merge on single mv index from single condition
+SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+c = 1 and
+json_contains(j->'$.a', '[4,5]') and
+b not like '%test%';
+
+EXPLAIN format = brief SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+c = 1 and
+json_contains(j->'$.a', '[4,5]') and
+b not like '%test%';
+
+# case 3: intersection type index merge on multiple indexes from different conditions
+SELECT /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+a = 1 and
+b > 'abc' and
+b not like '%test%' and
+c = 10 and
+3 member of (j->'$.a') and
+3 member of (j->'$.c');
+
+EXPLAIN format=brief SELECT /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+a = 1 and
+b > 'abc' and
+b not like '%test%' and
+c = 10 and
+3 member of (j->'$.a') and
+3 member of (j->'$.c');
+
+# case 4: test prefix indexes
+create table t1 (
+a int,
+b varchar(30),
+c float,
+d tinytext,
+j json,
+key mvi1(b(3), (cast(j as unsigned array))),
+key mvi2((cast(j as unsigned array)), b),
+key mvi3((cast(j as unsigned array)), d(30)),
+key mvi4((cast(j as unsigned array)), d(255))
+);
+
+
+EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi1) */ * from t1 where
+c = 1 and
+json_contains(j, '[4,5]') and
+b = 'abcdefg';
+
+EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi2) */ * from t1 where
+c = 1 and
+json_contains(j, '[4,5]') and
+b = 'abcdefg' and
+b like '%test%';
+
+EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi3) */ * from t1 where
+c = 1 and
+json_contains(j, '[4,5]') and
+d not like '%test%';
+
+EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi4) */ * from t1 where
+c = 1 and
+json_contains(j, '[4,5]') and
+d not like '%test%';
+

@@ -21,8 +21,6 @@ import (
 var (
 	// DMHeartbeatSchema is the heartbeat schema name
 	DMHeartbeatSchema = "DM_HEARTBEAT"
-	// DMHeartbeatTable is heartbeat table name
-	DMHeartbeatTable = "HEARTBEAT"
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
 	InformationSchemaName = "INFORMATION_SCHEMA"
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.

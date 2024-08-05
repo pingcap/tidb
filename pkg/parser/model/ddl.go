@@ -456,7 +456,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
-		LocalMode:       parentJob.LocalMode,
 	}
 }
 
@@ -527,7 +526,7 @@ type Job struct {
 	// Now it's the TS when we actually start the job.
 	RealStartTS uint64 `json:"real_start_ts"`
 	// StartTS uses timestamp allocated by TSO.
-	// Now it's the TS when we put the job to TiKV queue.
+	// Now it's the TS when we put the job to job table.
 	StartTS uint64 `json:"start_ts"`
 	// DependencyID is the largest job ID before current job and current job depends on.
 	DependencyID int64 `json:"dependency_id"`
@@ -547,10 +546,15 @@ type Job struct {
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
 
-	// SeqNum is the total order in all DDLs, it's used to identify the order of
-	// moving the job into DDL history, not the order of the job execution.
-	// fast create table doesn't honor this field, there might duplicate seq_num in this case.
-	// TODO: deprecated it, as it forces 'moving jobs into DDL history' part to be serial.
+	// SeqNum is used to identify the order of moving the job into DDL history, it's
+	// not the order of the job execution. for jobs with dependency, or if they are
+	// run in the same session, their SeqNum will be in increasing order.
+	// when using fast create table, there might duplicate seq_num as any TiDB can
+	// execute the DDL in this case.
+	// since 8.3, we only honor previous semantic when DDL owner not changed, on
+	// owner change, new owner will start it from 1. as previous semantic forces
+	// 'moving jobs into DDL history' part to be serial, it hurts performance, and
+	// has very limited usage scenario.
 	SeqNum uint64 `json:"seq_num"`
 
 	// Charset is the charset when the DDL Job is created.
@@ -579,21 +583,46 @@ type Job struct {
 	// LocalMode = true means the job is running on the local TiDB that the client
 	// connects to, else it's run on the DDL owner.
 	// Only happens when tidb_enable_fast_create_table = on
+	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 }
 
-// InvolvingSchemaInfo returns the schema info involved in the job.
-// The value should be stored in lower case.
+// InvolvingSchemaInfo returns the schema info involved in the job. The value
+// should be stored in lower case. Only one type of the three member types
+// (Database&Table, Policy, ResourceGroup) should only be set in a
+// InvolvingSchemaInfo.
 type InvolvingSchemaInfo struct {
-	Database string `json:"database"`
-	Table    string `json:"table"`
+	Database      string                  `json:"database,omitempty"`
+	Table         string                  `json:"table,omitempty"`
+	Policy        string                  `json:"policy,omitempty"`
+	ResourceGroup string                  `json:"resource_group,omitempty"`
+	Mode          InvolvingSchemaInfoMode `json:"mode,omitempty"`
 }
 
+// InvolvingSchemaInfoMode is used by InvolvingSchemaInfo.Mode.
+type InvolvingSchemaInfoMode int
+
+// ExclusiveInvolving and SharedInvolving are considered like the exclusive lock
+// and shared lock when calculate DDL job dependencies. And we also implement the
+// fair lock semantic which means if we have job A/B/C arrive in order, and job B
+// (exclusive request object 0) is waiting for the running job A (shared request
+// object 0), and job C (shared request object 0) arrives, job C should also be
+// blocked until job B is finished although job A & C has no dependency.
 const (
-	// InvolvingAll means all schemas/tables are affected.
+	// ExclusiveInvolving is the default value to keep compatibility with old
+	// versions.
+	ExclusiveInvolving InvolvingSchemaInfoMode = iota
+	SharedInvolving
+)
+
+const (
+	// InvolvingAll means all schemas/tables are affected. It's used in
+	// InvolvingSchemaInfo.Database/Tables fields. When both the Database and Tables
+	// are InvolvingAll it also means all placement policies and resource groups are
+	// affected. Currently the only case is FLASHBACK CLUSTER.
 	InvolvingAll = "*"
 	// InvolvingNone means no schema/table is affected.
 	InvolvingNone = ""
@@ -992,6 +1021,7 @@ func (job *Job) MayNeedReorg() bool {
 }
 
 // IsRollbackable checks whether the job can be rollback.
+// TODO(lance6716): should make sure it's the same as convertJob2RollbackJob
 func (job *Job) IsRollbackable() bool {
 	switch job.Type {
 	case ActionDropIndex, ActionDropPrimaryKey:
@@ -1032,8 +1062,13 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	if len(job.InvolvingSchemaInfo) > 0 {
 		return job.InvolvingSchemaInfo
 	}
+	table := job.TableName
+	// for schema related DDL, such as 'drop schema xxx'
+	if len(job.SchemaName) > 0 && table == "" {
+		table = InvolvingAll
+	}
 	return []InvolvingSchemaInfo{
-		{Database: job.SchemaName, Table: job.TableName},
+		{Database: job.SchemaName, Table: table},
 	}
 }
 
@@ -1058,7 +1093,8 @@ const (
 	// is in `done` state and version synchronized, the job will be deleted from
 	// tidb_ddl_job table, and we insert a `synced` job to the history table and queue directly.
 	JobStateSynced JobState = 6
-	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
+	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but
+	// the DDL worker hasn't handled it.
 	JobStateCancelling JobState = 7
 	// JobStateQueueing means the job has not yet been started.
 	JobStateQueueing JobState = 8
@@ -1170,6 +1206,9 @@ type SchemaDiff struct {
 	OldSchemaID int64 `json:"old_schema_id"`
 	// RegenerateSchemaMap means whether to rebuild the schema map when applying to the schema diff.
 	RegenerateSchemaMap bool `json:"regenerate_schema_map"`
+	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
+	// infoschema should read latest meta directly.
+	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

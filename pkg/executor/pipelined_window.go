@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -41,8 +41,8 @@ type PipelinedWindowExec struct {
 	windowFuncs        []aggfuncs.AggFunc
 	slidingWindowFuncs []aggfuncs.SlidingWindowAggFunc
 	partialResults     []aggfuncs.PartialResult
-	start              *core.FrameBound
-	end                *core.FrameBound
+	start              *logicalop.FrameBound
+	end                *logicalop.FrameBound
 	groupChecker       *vecgroupchecker.VecGroupChecker
 
 	// childResult stores the child chunk. Note that even if remaining is 0, e.rows might still references rows in data[0].chk after returned it to upper executor, since there is no guarantee what the upper executor will do to the returned chunk, it might destroy the data (as in the benchmark test, it reused the chunk to pull data, and it will be chk.Reset(), causing panicking). So dataIdx, accumulated and dropped are added to ensure that chunk will only be returned if there is no row reference.

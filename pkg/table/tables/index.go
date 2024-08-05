@@ -158,15 +158,15 @@ out:
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOption) (kv.Handle, error) {
+	opt := table.NewCreateIdxOpt(opts...)
+	return c.create(sctx, txn, indexedValue, h, handleRestoreData, false, opt)
+}
+
+func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, untouched bool, opt *table.CreateIdxOpt) (kv.Handle, error) {
 	if c.Meta().Unique {
 		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
-	var opt table.CreateIdxOpt
-	for _, fn := range opts {
-		fn(&opt)
-	}
-
 	indexedValues := c.getIndexedValue(indexedValue)
 	ctx := opt.Ctx
 	if ctx != nil {
@@ -177,11 +177,12 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		ctx = context.TODO()
 	}
 	vars := sctx.GetSessionVars()
-	writeBufs := vars.GetWriteStmtBufs()
+	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	skipCheck := vars.StmtCtx.BatchCheck
-	sc := sctx.GetSessionVars().StmtCtx
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
-		key, distinct, err := c.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), value, h, writeBufs.IndexKeyBuf)
+		key, distinct, err := c.GenIndexKey(ec, loc, value, h, writeBufs.IndexKeyBuf)
 		if err != nil {
 			return nil, err
 		}
@@ -202,10 +203,10 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if txn.IsPipelined() {
 			// For pipelined DML, disable the untouched optimization to avoid extra RPCs for MemBuffer.Get().
 			// TODO: optimize this.
-			opt.Untouched = false
+			untouched = false
 		}
 
-		if opt.Untouched {
+		if untouched {
 			txn, err1 := sctx.Txn(true)
 			if err1 != nil {
 				return nil, err1
@@ -227,7 +228,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 						return nil, err
 					}
 					if keyFlags.HasPresumeKeyNotExists() {
-						opt.Untouched = false
+						untouched = false
 					}
 				}
 			}
@@ -238,18 +239,18 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		c.initNeedRestoreData.Do(func() {
 			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 		})
-		idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx.TimeZone(), c.tblInfo, c.idxInfo,
-			c.needRestoredData, distinct, opt.Untouched, value, h, c.phyTblID, handleRestoreData, nil)
-		err = sctx.GetSessionVars().StmtCtx.HandleError(err)
+		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
+			c.needRestoredData, distinct, untouched, value, h, c.phyTblID, handleRestoreData, nil)
+		err = ec.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
 
 		opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
-		if !distinct || skipCheck || opt.Untouched {
+		if !distinct || skipCheck || untouched {
 			val := idxVal
-			if opt.Untouched && (keyIsTempIdxKey || len(tempKey) > 0) {
+			if untouched && (keyIsTempIdxKey || len(tempKey) > 0) {
 				// Untouched key-values never occur in the storage and the temp index is not public.
 				// It is unnecessary to write the untouched temp index key-values.
 				continue
@@ -270,7 +271,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					return nil, err
 				}
 			}
-			if !opt.IgnoreAssertion && (!opt.Untouched) {
+			if !opt.IgnoreAssertion && (!untouched) {
 				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
 					err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				} else {
@@ -393,9 +394,10 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
 	indexedValues := c.getIndexedValue(indexedValue)
-	sc := ctx.GetSessionVars().StmtCtx
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
-		key, distinct, err := c.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), value, h, nil)
+		key, distinct, err := c.GenIndexKey(ec, loc, value, h, nil)
 		if err != nil {
 			return err
 		}

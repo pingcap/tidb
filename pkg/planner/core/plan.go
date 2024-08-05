@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -249,18 +250,18 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 type basePhysicalPlan struct {
 	baseimpl.Plan
 
-	childrenReqProps []*property.PhysicalProperty
+	childrenReqProps []*property.PhysicalProperty `plan-cache-clone:"shallow"`
 	self             base.PhysicalPlan
 	children         []base.PhysicalPlan
 
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
-	planCostVer2 costusage.CostVer2
+	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
+	probeParents []base.PhysicalPlan `plan-cache-clone:"shallow"`
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
@@ -268,15 +269,36 @@ type basePhysicalPlan struct {
 	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
-func (p *basePhysicalPlan) cloneWithSelf(newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
+func (p *basePhysicalPlan) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, bool) {
+	cloned := new(basePhysicalPlan)
+	*cloned = *p
+	cloned.SetSCtx(newCtx)
+	cloned.self = newSelf
+	cloned.children = make([]base.PhysicalPlan, 0, len(p.children))
+	for _, child := range p.children {
+		clonedChild, ok := child.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		clonedPP, ok := clonedChild.(base.PhysicalPlan)
+		if !ok {
+			return nil, false
+		}
+		cloned.children = append(cloned.children, clonedPP)
+	}
+	return cloned, true
+}
+
+func (p *basePhysicalPlan) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
 		Plan:                                 p.Plan,
 		self:                                 newSelf,
 		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		probeParents:                         p.probeParents,
 	}
+	base.SetSCtx(newCtx)
 	for _, child := range p.children {
-		cloned, err := child.Clone()
+		cloned, err := child.Clone(newCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -292,7 +314,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf base.PhysicalPlan) (*basePhysic
 }
 
 // Clone implements op.PhysicalPlan interface.
-func (p *basePhysicalPlan) Clone() (base.PhysicalPlan, error) {
+func (p *basePhysicalPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.self)
 }
 
@@ -361,10 +383,10 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 		return false
 	}
 	switch x := p.(type) {
-	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
-		*LogicalApply, *LogicalProjection, *LogicalWindow, *LogicalAggregation:
+	case *LogicalLock, *logicalop.LogicalLimit, *logicalop.LogicalSort, *LogicalSelection,
+		*LogicalApply, *logicalop.LogicalProjection, *logicalop.LogicalWindow, *LogicalAggregation:
 		return childMaxOneRow[0]
-	case *LogicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow:
 		return true
 	case *LogicalJoin:
 		switch x.JoinType {
@@ -375,28 +397,6 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 		}
 	}
 	return false
-}
-
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	selfSchema.Keys = nil
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-
-	// default implementation for plans has only one child: proprgate child keys
-	// multi-children plans are likely to have particular implementation.
-	if len(childSchema) == 1 {
-		for _, key := range childSchema[0].Keys {
-			indices := selfSchema.ColumnsIndices(key)
-			if indices == nil {
-				continue
-			}
-			newKey := make([]*expression.Column, 0, len(key))
-			for _, i := range indices {
-				newKey = append(newKey, selfSchema.Columns[i])
-			}
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		}
-	}
 }
 
 func newBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan, offset int) basePhysicalPlan {

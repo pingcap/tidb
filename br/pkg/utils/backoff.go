@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -169,12 +170,14 @@ func NewBackupSSTBackoffer() Backoffer {
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
-	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
-	if res.Strategy == RetryStrategy {
+	errs := multierr.Errors(err)
+	lastErr := errs[len(errs)-1]
+	res := HandleUnknownBackupError(lastErr.Error(), 0, bo.errContext)
+	if res.Strategy == StrategyRetry {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
-		e := errors.Cause(err)
+		e := errors.Cause(lastErr)
 		switch e { // nolint:errorlint
 		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed, berrors.ErrPDLeaderNotFound:
 			bo.delayTime = 2 * bo.delayTime
@@ -189,7 +192,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:
-				if isGRPCCancel(err) {
+				if isGRPCCancel(lastErr) {
 					bo.delayTime = 2 * bo.delayTime
 					bo.attempt--
 				} else {
@@ -275,5 +278,46 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 }
 
 func (bo *pdReqBackoffer) Attempt() int {
+	return bo.attempt
+}
+
+type DiskCheckBackoffer struct {
+	attempt      int
+	delayTime    time.Duration
+	maxDelayTime time.Duration
+}
+
+func NewDiskCheckBackoffer() Backoffer {
+	return &DiskCheckBackoffer{
+		attempt:      resetTSRetryTime,
+		delayTime:    resetTSWaitInterval,
+		maxDelayTime: resetTSMaxWaitInterval,
+	}
+}
+
+func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
+	e := errors.Cause(err)
+	switch e { // nolint:errorlint
+	case nil, context.Canceled, context.DeadlineExceeded, berrors.ErrKVDiskFull:
+		bo.delayTime = 0
+		bo.attempt = 0
+	case berrors.ErrPDInvalidResponse:
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt--
+	default:
+		bo.delayTime = 2 * bo.delayTime
+		if bo.attempt > 5 {
+			bo.attempt = 5
+		}
+		bo.attempt--
+	}
+
+	if bo.delayTime > bo.maxDelayTime {
+		return bo.maxDelayTime
+	}
+	return bo.delayTime
+}
+
+func (bo *DiskCheckBackoffer) Attempt() int {
 	return bo.attempt
 }

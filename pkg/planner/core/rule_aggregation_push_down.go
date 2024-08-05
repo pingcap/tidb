@@ -19,11 +19,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
@@ -362,7 +364,7 @@ func (*aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (push
 	partial, final, _ := BuildFinalModeAggregation(agg.SCtx(), &AggInfo{
 		AggFuncs:     agg.AggFuncs,
 		GroupByItems: agg.GroupByItems,
-		Schema:       agg.schema,
+		Schema:       agg.Schema(),
 	}, false, false)
 	if partial == nil {
 		pushedAgg = nil
@@ -392,7 +394,7 @@ func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, uni
 		PreferAggType:  agg.PreferAggType,
 		PreferAggToCop: agg.PreferAggToCop,
 	}.Init(ctx, agg.QueryBlockOffset())
-	newAgg.SetSchema(agg.schema.Clone())
+	newAgg.SetSchema(agg.Schema().Clone())
 	for _, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()
 		newArgs := make([]expression.Expression, 0, len(newAggFunc.Args))
@@ -424,7 +426,7 @@ func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, uni
 	// this will cause error during executor phase.
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			if ok, proj := ConvertAggToProj(newAgg, newAgg.schema); ok {
+			if ok, proj := ConvertAggToProj(newAgg, newAgg.Schema()); ok {
 				proj.SetChildren(unionChild)
 				return proj, nil
 			}
@@ -512,9 +514,9 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 					if join.JoinType == LeftOuterJoin {
-						resetNotNullFlag(join.schema, lChild.Schema().Len(), join.schema.Len())
+						util.ResetNotNullFlag(join.Schema(), lChild.Schema().Len(), join.Schema().Len())
 					} else if join.JoinType == RightOuterJoin {
-						resetNotNullFlag(join.schema, 0, lChild.Schema().Len())
+						util.ResetNotNullFlag(join.Schema(), 0, lChild.Schema().Len())
 					}
 					buildKeyInfo(join)
 					// count(a) -> ifnull(col#x, 0, 1) in rewriteExpr of agg function, since col#x is already the final
@@ -551,7 +553,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 						buildKeyInfo(join)
 					}
 				}
-			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
+			} else if proj, ok1 := child.(*logicalop.LogicalProjection); ok1 {
 				// push aggregation across projection
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
@@ -559,13 +561,13 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 				noSideEffects := true
 				newGbyItems := make([]expression.Expression, 0, len(agg.GroupByItems))
 				for _, gbyItem := range agg.GroupByItems {
-					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), gbyItem, proj.schema, proj.Exprs, true)
+					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), gbyItem, proj.Schema(), proj.Exprs, true)
 					if failed {
 						noSideEffects = false
 						break
 					}
 					newGbyItems = append(newGbyItems, groupBy)
-					if ExprsHasSideEffects(newGbyItems) {
+					if expression.ExprsHasSideEffects(newGbyItems) {
 						noSideEffects = false
 						break
 					}
@@ -579,14 +581,14 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
 						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 						for _, arg := range aggFunc.Args {
-							_, failed, newArg := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), arg, proj.schema, proj.Exprs, true)
+							_, failed, newArg := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), arg, proj.Schema(), proj.Exprs, true)
 							if failed {
 								noSideEffects = false
 								break
 							}
 							newArgs = append(newArgs, newArg)
 						}
-						if ExprsHasSideEffects(newArgs) {
+						if expression.ExprsHasSideEffects(newArgs) {
 							noSideEffects = false
 							break
 						}
@@ -596,14 +598,14 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 							oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
 							newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
 							for _, oby := range aggFunc.OrderByItems {
-								_, failed, byItem := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), oby.Expr, proj.schema, proj.Exprs, true)
+								_, failed, byItem := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), oby.Expr, proj.Schema(), proj.Exprs, true)
 								if failed {
 									noSideEffects = false
 									break
 								}
 								newOrderByItems = append(newOrderByItems, byItem)
 							}
-							if ExprsHasSideEffects(newOrderByItems) {
+							if expression.ExprsHasSideEffects(newOrderByItems) {
 								noSideEffects = false
 								break
 							}
@@ -687,13 +689,14 @@ func (*aggregationPushDownSolver) name() string {
 
 func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *LogicalJoin,
 	childIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+	evalCtx := oldAgg.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's functions[", oldAgg.TP(), oldAgg.ID()))
 		for i, aggFunc := range aggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are decomposable with join")
 		return buffer.String()
@@ -711,14 +714,15 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
-func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+	evalCtx := agg.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is eliminated, and %v_%v's functions changed into[", proj.TP(), proj.ID(), agg.TP(), agg.ID()))
 		for i, aggFunc := range agg.AggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -730,13 +734,14 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *Logical
 }
 
 func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+	evalCtx := union.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v functions[", agg.TP(), agg.ID()))
 		for i, aggFunc := range agg.AggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are decomposable with %v_%v", union.TP(), union.ID())
 		return buffer.String()

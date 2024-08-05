@@ -23,6 +23,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/tablecodec",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",

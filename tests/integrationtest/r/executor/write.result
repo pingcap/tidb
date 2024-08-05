@@ -1776,6 +1776,8 @@ a
 a
 b
 update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a;
+Level	Code	Message
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 select * from t;
 a
 a
@@ -2146,3 +2148,9 @@ Error 1364 (HY000): Field 'pk' doesn't have a default value
 replace t2 set c=default(a);
 Error 3105 (HY000): The value specified for generated column 'c' in table 't2' is not allowed.
 drop table t1, t2;
+drop table if exists t;
+create table t (a date default current_date);
+insert into t values();
+select count(1) from t where a = date(a);
+count(1)
+1

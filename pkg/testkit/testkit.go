@@ -116,9 +116,11 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
-
 	if intest.InTest {
-		if rand.Intn(10) >= 3 { // 70% chance to run infoschema v2
+		seed := uint64(time.Now().UnixNano())
+		tk.t.Logf("RefreshSession rand seed: %d", seed)
+		rng := rand.New(rand.NewSource(int64(seed)))
+		if rng.Intn(10) >= 3 { // 70% chance to run infoschema v2
 			tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
 		}
 	}
@@ -483,7 +485,7 @@ func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
 func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 	err := tk.ExecToErr(sql)
-	tk.require.Error(err)
+	tk.require.Error(err, "sql: %s", sql)
 	tk.require.Contains(err.Error(), errStr)
 }
 

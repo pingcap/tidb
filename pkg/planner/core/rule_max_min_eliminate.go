@@ -52,8 +52,8 @@ func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, a
 	for i := 1; i < len(aggs); i++ {
 		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.QueryBlockOffset())
 		join.SetChildren(plan, aggs[i])
-		join.schema = buildLogicalJoinSchema(InnerJoin, join)
-		join.cartesianJoin = true
+		join.SetSchema(buildLogicalJoinSchema(InnerJoin, join))
+		join.CartesianJoin = true
 		plan = join
 		joins = append(joins, join)
 	}
@@ -71,12 +71,12 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 		return a.checkColCanUseIndex(p.Children()[0], col, conditions)
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
-		for _, path := range p.possibleAccessPaths {
+		for _, path := range p.PossibleAccessPaths {
 			if path.IsIntHandlePath {
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
 				// and `col` is the handle column.
-				if p.handleCols != nil && col.EqualColumn(p.handleCols.GetCol(0)) {
+				if p.HandleCols != nil && col.EqualColumn(p.HandleCols.GetCol(0)) {
 					if _, filterConds := ranger.DetachCondsForColumn(p.SCtx().GetRangerCtx(), conditions, col); len(filterConds) != 0 {
 						return false
 					}
@@ -85,7 +85,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 			} else {
 				indexCols, indexColLen := path.FullIdxCols, path.FullIdxColLens
 				if path.IsCommonHandlePath {
-					indexCols, indexColLen = p.commonHandleCols, p.commonHandleLens
+					indexCols, indexColLen = p.CommonHandleCols, p.CommonHandleLens
 				}
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
@@ -121,15 +121,15 @@ func (a *maxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
 		newDs.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
-		newDs.schema = p.schema.Clone()
+		newDs.SetSchema(p.Schema().Clone())
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
-		newAccessPaths := make([]*util.AccessPath, 0, len(p.possibleAccessPaths))
-		for _, path := range p.possibleAccessPaths {
+		newAccessPaths := make([]*util.AccessPath, 0, len(p.PossibleAccessPaths))
+		for _, path := range p.PossibleAccessPaths {
 			newPath := *path
 			newAccessPaths = append(newAccessPaths, &newPath)
 		}
-		newDs.possibleAccessPaths = newAccessPaths
+		newDs.PossibleAccessPaths = newAccessPaths
 		return &newDs
 	}
 	// This won't happen, because we have checked the subtree.
@@ -157,13 +157,13 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 	for i, f := range agg.AggFuncs {
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
 		newAgg.SetChildren(a.cloneSubPlans(agg.Children()[0]))
-		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
+		newAgg.SetSchema(expression.NewSchema(agg.Schema().Columns[i]))
 		// Since LogicalAggregation doesn’t use the parent base.LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
 		var (
 			p   base.LogicalPlan
 			err error
 		)
-		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
+		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.Schema().Columns[0]}, opt); err != nil {
 			return nil, false
 		}
 		newAgg = p.(*LogicalAggregation)
@@ -179,7 +179,7 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *opt
 	ctx := agg.SCtx()
 
 	var sel *LogicalSelection
-	var sort *LogicalSort
+	var sort *logicalop.LogicalSort
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
@@ -196,14 +196,14 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *opt
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
-		sort = LogicalSort{}.Init(ctx, agg.QueryBlockOffset())
+		sort = logicalop.LogicalSort{}.Init(ctx, agg.QueryBlockOffset())
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: f.Args[0], Desc: desc})
 		sort.SetChildren(child)
 		child = sort
 	}
 
 	// Compose Limit operator.
-	li := LogicalLimit{Count: 1}.Init(ctx, agg.QueryBlockOffset())
+	li := logicalop.LogicalLimit{Count: 1}.Init(ctx, agg.QueryBlockOffset())
 	li.SetChildren(child)
 
 	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
@@ -264,7 +264,7 @@ func (*maxMinEliminator) name() string {
 	return "max_min_eliminate"
 }
 
-func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelection, sort *LogicalSort, limit *LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
+func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelection, sort *logicalop.LogicalSort, limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString("")
 		if sel != nil {

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -46,19 +47,19 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		hasOuterJoin      bool
 	)
 	join, isJoin := p.(*LogicalJoin)
-	if isJoin && join.preferJoinOrder {
+	if isJoin && join.PreferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
 		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
 		// We need to return the hint information to warn
-		joinOrderHintInfo = append(joinOrderHintInfo, join.hintInfo)
+		joinOrderHintInfo = append(joinOrderHintInfo, join.HintInfo)
 	}
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
-	if !isJoin || (join.preferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
+	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
 		if joinOrderHintInfo != nil {
 			// The leading hint can not work for some reasons. So clear it in the join node.
-			join.hintInfo = nil
+			join.HintInfo = nil
 		}
 		return &joinGroupResult{
 			group:              []base.LogicalPlan{p},
@@ -76,14 +77,14 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 	// `leftHasHint` and `rightHasHint` are used to record whether the left child and right child are set by the join method hint.
 	leftHasHint, rightHasHint := false, false
-	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.preferJoinType > uint(0) {
+	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.PreferJoinType > uint(0) {
 		// If the current join node has the join method hint, we should store the hint information and restore it when we have finished the join reorder process.
-		if join.leftPreferJoinType > uint(0) {
-			joinMethodHintInfo[join.Children()[0].ID()] = &joinMethodHint{join.leftPreferJoinType, join.hintInfo}
+		if join.LeftPreferJoinType > uint(0) {
+			joinMethodHintInfo[join.Children()[0].ID()] = &joinMethodHint{join.LeftPreferJoinType, join.HintInfo}
 			leftHasHint = true
 		}
-		if join.rightPreferJoinType > uint(0) {
-			joinMethodHintInfo[join.Children()[1].ID()] = &joinMethodHint{join.rightPreferJoinType, join.hintInfo}
+		if join.RightPreferJoinType > uint(0) {
+			joinMethodHintInfo[join.Children()[1].ID()] = &joinMethodHint{join.RightPreferJoinType, join.HintInfo}
 			rightHasHint = true
 		}
 	}
@@ -317,7 +318,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			}
 		}
 		if schemaChanged {
-			proj := LogicalProjection{
+			proj := logicalop.LogicalProjection{
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
 			}.Init(p.SCtx(), p.QueryBlockOffset())
 			// Clone the schema here, because the schema may be changed by column pruning rules.
@@ -538,13 +539,13 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 }
 
 func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*logicalop.LogicalProjection)
 	if !ok {
-		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj = logicalop.LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
 		proj.SetSchema(p.Schema().Clone())
 		proj.SetChildren(p)
 	}
-	return proj, proj.appendExpr(expr)
+	return proj, proj.AppendExpr(expr)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
@@ -618,7 +619,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base
 			newJoin := s.newCartesianJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
 			for i := len(s.otherConds) - 1; i >= 0; i-- {
 				cols := expression.ExtractColumns(s.otherConds[i])
-				if newJoin.schema.ColumnsIndices(cols) != nil {
+				if newJoin.Schema().ColumnsIndices(cols) != nil {
 					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
 					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
 				}
@@ -645,7 +646,7 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 	}
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
-		reordered: true,
+		Reordered: true,
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
@@ -671,14 +672,14 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 	lChild := newJoin.Children()[0]
 	rChild := newJoin.Children()[1]
 	if joinMethodHint, ok := s.joinMethodHintInfo[lChild.ID()]; ok {
-		newJoin.leftPreferJoinType = joinMethodHint.preferredJoinMethod
-		newJoin.hintInfo = joinMethodHint.joinMethodHintInfo
+		newJoin.LeftPreferJoinType = joinMethodHint.preferredJoinMethod
+		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
 	}
 	if joinMethodHint, ok := s.joinMethodHintInfo[rChild.ID()]; ok {
-		newJoin.rightPreferJoinType = joinMethodHint.preferredJoinMethod
-		newJoin.hintInfo = joinMethodHint.joinMethodHintInfo
+		newJoin.RightPreferJoinType = joinMethodHint.preferredJoinMethod
+		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
 	}
-	newJoin.setPreferredJoinType()
+	newJoin.SetPreferredJoinType()
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.

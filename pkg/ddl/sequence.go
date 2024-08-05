@@ -37,7 +37,7 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 	}
 
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+	err := checkTableNotExists(d, schemaID, tbInfo.Name.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -75,7 +75,7 @@ func createSequenceWithCheck(t *meta.Meta, job *model.Job, tbInfo *model.TableIn
 		} else {
 			sequenceBase = tbInfo.Sequence.Start + 1
 		}
-		return t.CreateSequenceAndSetSeqValue(job.SchemaID, job.SchemaName, tbInfo, sequenceBase)
+		return t.CreateSequenceAndSetSeqValue(job.SchemaID, tbInfo, sequenceBase)
 	default:
 		return dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
 	}

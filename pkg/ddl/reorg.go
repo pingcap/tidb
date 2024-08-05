@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -64,7 +65,7 @@ type reorgCtx struct {
 	// If the reorganization job is done, we will use this channel to notify outer.
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
-	doneCh chan error
+	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
 	jobState model.JobState
@@ -79,6 +80,13 @@ type reorgCtx struct {
 	references atomicutil.Int32
 }
 
+// reorgFnResult records the DDL owner TS before executing reorg function, in order to help
+// receiver determine if the result is from reorg function of previous DDL owner in this instance.
+type reorgFnResult struct {
+	ownerTS int64
+	err     error
+}
+
 func newReorgExprCtx() exprctx.ExprContext {
 	evalCtx := contextstatic.NewStaticEvalContext(
 		contextstatic.WithSQLMode(mysql.ModeNone),
@@ -86,9 +94,11 @@ func newReorgExprCtx() exprctx.ExprContext {
 		contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
 	)
 
+	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
+
 	return contextstatic.NewStaticExprContext(
 		contextstatic.WithEvalCtx(evalCtx),
-		contextstatic.WithUseCache(false),
+		contextstatic.WithPlanCacheTracker(&planCacheTracker),
 	)
 }
 
@@ -140,13 +150,13 @@ func (rc *reorgCtx) notifyJobState(state model.JobState) {
 }
 
 func (rc *reorgCtx) isReorgCanceled() bool {
-	return int32(model.JobStateCancelled) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
-		int32(model.JobStateCancelling) == atomic.LoadInt32((*int32)(&rc.jobState))
+	s := atomic.LoadInt32((*int32)(&rc.jobState))
+	return int32(model.JobStateCancelled) == s || int32(model.JobStateCancelling) == s
 }
 
 func (rc *reorgCtx) isReorgPaused() bool {
-	return int32(model.JobStatePaused) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
-		int32(model.JobStatePausing) == atomic.LoadInt32((*int32)(&rc.jobState))
+	s := atomic.LoadInt32((*int32)(&rc.jobState))
+	return int32(model.JobStatePaused) == s || int32(model.JobStatePausing) == s
 }
 
 func (rc *reorgCtx) setRowCount(count int64) {
@@ -248,11 +258,13 @@ func (w *worker) runReorgJob(
 			return dbterror.ErrCancelledDDLJob
 		}
 
+		beOwnerTS := w.ddlCtx.reorgCtx.getOwnerTS()
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			rc.doneCh <- reorgFn()
+			err := reorgFn()
+			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
 		}()
 	}
 
@@ -268,7 +280,16 @@ func (w *worker) runReorgJob(
 
 	// wait reorganization job done or timeout
 	select {
-	case err := <-rc.doneCh:
+	case res := <-rc.doneCh:
+		err := res.err
+		curTS := w.ddlCtx.reorgCtx.getOwnerTS()
+		if res.ownerTS != curTS {
+			d.removeReorgCtx(job.ID)
+			logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
+				zap.Int64("prevTS", res.ownerTS),
+				zap.Int64("curTS", curTS))
+			return dbterror.ErrWaitReorgTimeout
+		}
 		// Since job is cancelled，we don't care about its partial counts.
 		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
 			d.removeReorgCtx(job.ID)
@@ -330,33 +351,17 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
 		return nil
 	}
-	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
-	if ok {
-		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
-		if bc.GetCheckpointManager() == nil {
-			mgr, err := ingest.NewCheckpointManager(
-				w.ctx,
-				bc,
-				w.sessPool,
-				job.ID,
-				extractElemIDs(reorgInfo),
-				bc.GetLocalBackend().LocalStoreDir,
-				w.store.(kv.StorageWithPD).GetPDClient(),
-			)
-			if err != nil {
-				logutil.DDLIngestLogger().Warn("create checkpoint manager failed", zap.Error(err))
-			}
-			bc.AttachCheckpointManager(mgr)
-		}
-	}
-	start, end, pid, err := getCheckpointReorgHandle(sess, job)
+	start, pid, err := getImportedKeyFromCheckpoint(sess, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if pid > 0 {
+	if pid != reorgInfo.PhysicalTableID {
+		// Current physical ID does not match checkpoint physical ID.
+		// Don't overwrite reorgInfo.StartKey.
+		return nil
+	}
+	if len(start) > 0 {
 		reorgInfo.StartKey = start
-		reorgInfo.EndKey = end
-		reorgInfo.PhysicalTableID = pid
 	}
 	return nil
 }
@@ -939,8 +944,8 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 	return removeDDLReorgHandle(r.s, job, elements)
 }
 
-// CleanupDDLReorgHandles removes the job reorganization related handles.
-func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
+// cleanupDDLReorgHandles removes the job reorganization related handles.
+func cleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
 		// Job is given, but it is neither finished nor synced; do nothing
 		return

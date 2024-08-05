@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -50,8 +51,8 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert into s values(%d)", i*100))
 		}
 	}
-	tk.MustExec("analyze table t")
-	tk.MustExec("analyze table s")
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table s all columns")
 	// Test IndexNestedLoopHashJoin keepOrder.
 	tk.MustQuery("explain format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
 		"IndexHashJoin 100.00 root  left outer join, inner:TableReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
@@ -82,7 +83,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec(`insert into t values(2,1,0,1);`)
 	tk.MustExec(`insert into t values(2,2,0,0);`)
 
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 
 	// test semi join
 	tk.Session().GetSessionVars().InitChunkSize = 2
@@ -377,11 +378,6 @@ func TestExplainAnalyzeJoin(t *testing.T) {
 	require.Equal(t, 7, len(rows))
 	require.Regexp(t, "HashJoin.*", rows[0][0])
 	require.Regexp(t, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch and wait:.*}", rows[0][5])
-	// Test for index merge join.
-	rows = tk.MustQuery("explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
-	require.Len(t, rows, 9)
-	require.Regexp(t, "IndexMergeJoin_.*", rows[0][0])
-	require.Regexp(t, fmt.Sprintf(".*Concurrency:%v.*", tk.Session().GetSessionVars().IndexLookupJoinConcurrency()), rows[0][5])
 
 	// TestExplainAnalyzeIndexHashJoin
 	// Issue 43597
@@ -415,6 +411,9 @@ func TestIssue20270(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	enableHashJoinV2 := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(false)
+	defer join.SetEnableHashJoinV2(enableHashJoinV2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedInJoin2Chunk", "return(true)"))
 	err := tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
@@ -476,4 +475,226 @@ func TestIssue31129(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
 	require.NoError(t, failpoint.Disable(fpName1))
 	require.NoError(t, failpoint.Disable(fpName2))
+}
+
+func TestFinalizeCurrentSegPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create table t2 (a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(true)
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/finalizeCurrentSegPanic"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"finalizeCurrentSegPanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	err := tk.QueryToErr("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+	require.EqualError(t, err, "failpoint panic: finalizeCurrentSegPanic")
+}
+
+func TestSplitPartitionPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create table t2 (a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(true)
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/splitPartitionPanic"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"splitPartitionPanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	err := tk.QueryToErr("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+	require.EqualError(t, err, "failpoint panic: splitPartitionPanic")
+}
+
+func TestProcessOneProbeChunkPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create table t2 (a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(true)
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/processOneProbeChunkPanic"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"processOneProbeChunkPanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	err := tk.QueryToErr("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+	require.EqualError(t, err, "failpoint panic: processOneProbeChunkPanic")
+}
+
+func TestCreateTasksPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create table t2 (a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(true)
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/createTasksPanic"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"createTasksPanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	err := tk.QueryToErr("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+	require.EqualError(t, err, "failpoint panic: createTasksPanic")
+}
+
+func TestBuildHashTablePanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create table t2 (a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(true)
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/buildHashTablePanic"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"buildHashTablePanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	err := tk.QueryToErr("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+	require.EqualError(t, err, "failpoint panic: buildHashTablePanic")
+}
+
+func TestKillDuringProbe(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(true)
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedDuringProbe", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/killedDuringProbe"))
+	}()
+	// inner join
+	err := tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.c1 = t1.c1")
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	// left outer join with outer to build
+	err = tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	// left outer join with inner to build
+	err = tk.QueryToErr("select /*+ HASH_JOIN_BUILD(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	tk.MustExec("insert into t1 values(1,30),(2,40)")
+	// left outer join with inner to build
+	err = tk.QueryToErr("select /*+ HASH_JOIN_BUILD(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+}
+
+func TestKillDuringBuild(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	join.SetEnableHashJoinV2(true)
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedDuringBuild", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/killedDuringBuild"))
+	}()
+	// inner join
+	err := tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.c1 = t1.c1")
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	// left outer join with outer to build
+	err = tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t left join t1 on t.c1 = t1.c1")
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+	// left outer join with inner to build
+	err = tk.QueryToErr("select /*+ HASH_JOIN_BUILD(t) */ * from t left outer join t1 on t.c1 = t1.c1")
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+}
+
+func TestIssue54755(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(pk INTEGER AUTO_INCREMENT, col_int_nokey INTEGER, col_int_key INTEGER, col_varchar_key VARCHAR(1), col_varchar_nokey VARCHAR(1), PRIMARY KEY (pk), KEY (col_int_key), KEY (col_varchar_key, col_int_key))")
+	tk.MustExec("create table t2(pk INTEGER AUTO_INCREMENT, col_int_nokey INTEGER, col_int_key INTEGER, col_varchar_key VARCHAR(1), col_varchar_nokey VARCHAR(1), PRIMARY KEY (pk), KEY (col_int_key), KEY (col_varchar_key, col_int_key))")
+	tk.MustExec("insert into t1(col_int_key, col_int_nokey,col_varchar_key, col_varchar_nokey) values(4,2,'v','v'),(62,150,'v','v')")
+	tk.MustExec("insert into t2(col_int_key, col_int_nokey,col_varchar_key, col_varchar_nokey) values(8,null,'x','x'),(7,8,'d','d')")
+	join.SetEnableHashJoinV2(true)
+	defer func() {
+		join.SetEnableHashJoinV2(false)
+	}()
+	// right join
+	tk.MustQuery("select max(SQ1_alias2.col_int_nokey) as SQ1_field1 from ( t2 as SQ1_alias1 right join t1 as SQ1_alias2 on ( SQ1_alias2.col_varchar_key = SQ1_alias1.col_varchar_nokey ))").Check(testkit.Rows("150"))
+	// left join
+	tk.MustQuery("select max(SQ1_alias2.col_int_nokey) as SQ1_field1 from ( t1 as SQ1_alias2 left join t2 as SQ1_alias1 on ( SQ1_alias2.col_varchar_key = SQ1_alias1.col_varchar_nokey ))").Check(testkit.Rows("150"))
+}
+
+func TestIssue55016(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(10), b char(10))")
+	tk.MustExec("insert into t values('aa','a')")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	hashJoinV2Enable := []bool{true, false}
+	for _, enableHashJoinV2 := range hashJoinV2Enable {
+		join.SetEnableHashJoinV2(enableHashJoinV2)
+		tk.MustQuery("select count(*) from t t1 join t t2 on t1.a = t2.b and t2.a = t1.b").Check(testkit.Rows("0"))
+	}
 }

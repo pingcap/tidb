@@ -2962,6 +2962,12 @@ func TestDDL(t *testing.T) {
 		{"create table t (a int default (upper(substring_index(user(),'@',1))))", true, "CREATE TABLE `t` (`a` INT DEFAULT (UPPER(SUBSTRING_INDEX(USER(), _UTF8MB4'@', 1))))"},
 		{"create table t (a varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT (STR_TO_DATE(_UTF8MB4'1980-01-01', _UTF8MB4'%Y-%m-%d')))"},
 		{"create table t (a varchar(32) default str_to_date('1980-01-01','%Y-%m-%d'))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT (STR_TO_DATE(_UTF8MB4'1980-01-01', _UTF8MB4'%Y-%m-%d')))"},
+		{"create table t (j json default (json_object()))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_OBJECT()))"},
+		{"create table t (j json default (json_array()))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_ARRAY()))"},
+		{"create table t (j json default (json_quote()))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_QUOTE()))"},
+		{"create table t (j json default (json_object('foo', 5, 'bar', 'barfoo')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_OBJECT(_UTF8MB4'foo', 5, _UTF8MB4'bar', _UTF8MB4'barfoo')))"},
+		{"create table t (j json default (json_array(1,2,3)))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_ARRAY(1, 2, 3)))"},
+		{"create table t (j json default (json_quote('foobar')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_QUOTE(_UTF8MB4'foobar')))"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3807,6 +3813,9 @@ func TestDDL(t *testing.T) {
 		{"create resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"create resource group x ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 2000"},
 		{"create resource group x ru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 200000"},
+		{"create resource group x ru_per_sec=UNLIMITED", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
+		{"create resource group x ru_per_sec=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
+		{"create resource group x ru_per_sec='check'", false, ""},
 		{"create resource group x followers=0", false, ""},
 		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = TRUE"},
 		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 2000"},
@@ -3816,6 +3825,7 @@ func TestDDL(t *testing.T) {
 		{"create resource group x burstable = true ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
 		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
 		{"create resource group default ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
+		{"create resource group default ru_per_sec=UNLIMITED, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = TRUE"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION DRYRUN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = DRYRUN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10m' ACTION COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10m' ACTION = COOLDOWN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(ACTION KILL EXEC_ELAPSED='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
@@ -3829,6 +3839,7 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=1000 background (task_types='br,lightning')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH EXACT DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{`create resource group x ru_per_sec=UNLIMITED QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		// This case is expected in parser test but not in actual ddl job.
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
 		{"create resource group x ru_per_sec=1000 QUERY=(EXEC_ELAPSED '10s')", false, ""},
@@ -3843,6 +3854,10 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
 		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=UNLIMITED", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
+		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=unlimited, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec='check', BURSTABLE", false, ""},
 		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 3000"},
 		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
 		// This case is expected in parser test but not in actual ddl job.
@@ -3861,6 +3876,7 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=( ACTION KILL EXEC_ELAPSED '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' WATCH = SIMILAR DURATION = '10m' ACTION = COOLDOWN)"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
+		{"alter resource group x ru_per_sec=UNLIMITED QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
 		// This case is expected in parser test but not in actual ddl job.
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT EXEC_ELAPSED '10s'", false, ""},
@@ -4758,6 +4774,19 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
 
 	require.Equal(t, "no_index_merge_join", hints[1].HintName.L)
+	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
+
+	// Test HYPO_INDEX
+	stmt, _, err = p.Parse("select /*+ HYPO_INDEX(t1, a), HYPO_INDEX(t3, a, b, c) */ * from t1, t2, t3", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "hypo_index", hints[0].HintName.L)
+	require.Equal(t, hints[0].Tables[0].TableName.L, "t1")
+
+	require.Equal(t, "hypo_index", hints[1].HintName.L)
 	require.Equal(t, hints[1].Tables[0].TableName.L, "t3")
 }
 
@@ -7530,6 +7559,21 @@ func TestCompatTypes(t *testing.T) {
 		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMTEXT)"},
 		{`CREATE TABLE t(id INT PRIMARY KEY, c1 MIDDLEINT)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMINT)"},
 		{`CREATE TABLE t(id INT PRIMARY KEY, c1 NUMERIC)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestVector(t *testing.T) {
+	table := []testCase{
+		{"CREATE TABLE t (a VECTOR)", true, "CREATE TABLE `t` (`a` VECTOR)"},
+		{"CREATE TABLE t (a VECTOR<FLOAT>)", true, "CREATE TABLE `t` (`a` VECTOR)"},
+		{"CREATE TABLE t (a VECTOR(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
+		{"CREATE TABLE t (a VECTOR<FLOAT>(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
+		{"CREATE TABLE t (a VECTOR<INT>)", false, ""},
+		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
+		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},
+		{"CREATE TABLE t (a VECTOR(5)<FLOAT>)", false, ""},
 	}
 
 	RunTest(t, table, false)

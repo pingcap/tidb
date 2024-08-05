@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -176,11 +178,17 @@ func TestIssue30289(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
-	require.EqualError(t, err, "issue30289 build return error")
+	useHashJoinV2 := []bool{true, false}
+	for _, hashJoinV2 := range useHashJoinV2 {
+		join.SetEnableHashJoinV2(hashJoinV2)
+		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+		require.EqualError(t, err, "issue30289 build return error")
+	}
 }
 
 func TestIssue51998(t *testing.T) {
@@ -191,11 +199,17 @@ func TestIssue51998(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
-	require.EqualError(t, err, "issue51998 build return error")
+	useHashJoinV2 := []bool{true, false}
+	for _, hashJoinV2 := range useHashJoinV2 {
+		join.SetEnableHashJoinV2(hashJoinV2)
+		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+		require.EqualError(t, err, "issue51998 build return error")
+	}
 }
 
 func TestIssue29498(t *testing.T) {
@@ -607,20 +621,26 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
-	// tk.Session() should be marked as MemoryTop1Tracker but not killed.
-	tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	defer join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	useHashJoinV2 := []bool{true, false}
+	for _, hashJoinV2 := range useHashJoinV2 {
+		join.SetEnableHashJoinV2(hashJoinV2)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
+		// tk.Session() should be marked as MemoryTop1Tracker but not killed.
+		tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
 
-	// try to trigger the kill top1 logic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2", `return(true)`))
-	time.Sleep(1 * time.Second)
+		// try to trigger the kill top1 logic
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2", `return(true)`))
+		time.Sleep(1 * time.Second)
 
-	// no error should be returned
-	tk.MustQuery("select count(*) from t1")
-	tk.MustQuery("select count(*) from t1")
+		// no error should be returned
+		tk.MustQuery("select count(*) from t1")
+		tk.MustQuery("select count(*) from t1")
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
+	}
 }
 
 func TestIssue50393(t *testing.T) {
@@ -699,4 +719,44 @@ func TestIssue53221(t *testing.T) {
 	require.ErrorContains(t, err, "Empty pattern is invalid")
 
 	tk.MustExec("drop table if exists t")
+}
+
+func TestIndexReaderIssue53871AndIssue54160(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b), index idx2(c))")
+	tk.MustExec(" insert into t () values (), (), (), (), (), (), (), ();")
+	for i := 0; i < 9; i++ {
+		tk.MustExec("insert into t (b) select b from t;")
+	}
+	tk.MustExec(`update t set b = rand() * 10000, c = rand() * 10000;`)
+	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("4096")) // full scan to resolve uncommitted lock.
+	tk.MustQuery("select count(b) from t use index(idx2);").Check(testkit.Rows("4096"))
+	tk.MustQuery("select count(*) from t ignore index(idx, idx2)").Check(testkit.Rows("4096"))
+	tk.MustExec("analyze table t")
+	// Test Index Lookup Reader query.
+	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b > 0;").Rows()
+	require.Len(t, rows, 3)
+	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 1, .*", fmt.Sprintf("%v", rows[0]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
+	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+	// Test Index Merge Reader query.
+	rows = tk.MustQuery("explain analyze select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where b > 5000 or c > 5000;").Rows()
+	require.Len(t, rows, 4)
+	require.Regexp(t, ".*IndexMerge.*table_task:{num:2, .*", fmt.Sprintf("%v", rows[0]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:2, total_time:.*", fmt.Sprintf("%v", rows[3]))
+}
+
+func TestCalculateBatchSize(t *testing.T) {
+	require.Equal(t, 20000, executor.CalculateBatchSize(50000, 1024, 20000))
+	require.Equal(t, 20000, executor.CalculateBatchSize(18000, 1024, 20000))
+	require.Equal(t, 8192, executor.CalculateBatchSize(5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(10, 1024, 258))
+	require.Equal(t, 1024, executor.CalculateBatchSize(0, 1024, 20000))
 }

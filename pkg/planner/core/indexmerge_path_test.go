@@ -70,8 +70,8 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 		p := logicalP.Children()[0]
 		ds, ok = p.(*core.DataSource)
 	}
-	cnfs := ds.GetAllConds()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	cnfs := ds.AllConds
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),

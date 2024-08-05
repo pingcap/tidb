@@ -105,6 +105,33 @@ func (rf *ReferenceCount) UnFreeze() {
 	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
 }
 
+// ReservedRowIDAlloc is used to reserve autoID for the auto_increment column.
+type ReservedRowIDAlloc struct {
+	base int64
+	max  int64
+}
+
+// Reset resets the base and max of reserved rowIDs.
+func (r *ReservedRowIDAlloc) Reset(base int64, max int64) {
+	r.base = base
+	r.max = max
+}
+
+// Consume consumes a reserved rowID.
+// If the second return value is false, it means the reserved rowID is exhausted.
+func (r *ReservedRowIDAlloc) Consume() (int64, bool) {
+	if r.base < r.max {
+		r.base++
+		return r.base, true
+	}
+	return 0, false
+}
+
+// Exhausted returns whether the reserved rowID is exhausted.
+func (r *ReservedRowIDAlloc) Exhausted() bool {
+	return r.base >= r.max
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -223,8 +250,8 @@ type StatementContext struct {
 	// InsertID is the given insert ID of an auto_increment column.
 	InsertID uint64
 
-	BaseRowID int64
-	MaxRowID  int64
+	// ReservedRowIDAlloc is used to alloc auto ID from the reserved IDs.
+	ReservedRowIDAlloc ReservedRowIDAlloc
 
 	// Copied from SessionVars.TimeZone.
 	Priority     mysql.PriorityEnum
@@ -433,14 +460,30 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		ctxID: contextutil.GenContextID(),
+		ctxID:               contextutil.GenContextID(),
+		CTEStorageMap:       sc.CTEStorageMap,
+		LockTableIDs:        sc.LockTableIDs,
+		TableStats:          sc.TableStats,
+		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
+		WarnHandler:         sc.WarnHandler,
+		ExtraWarnHandler:    sc.ExtraWarnHandler,
+		IndexUsageCollector: sc.IndexUsageCollector,
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
-	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
-	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	if h, ok := sc.WarnHandler.(interface{ Reset() }); ok && sc.WarnHandler != nil {
+		h.Reset()
+	} else {
+		sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
+	if h, ok := sc.ExtraWarnHandler.(interface{ Reset() }); ok && sc.ExtraWarnHandler != nil {
+		h.Reset()
+	} else {
+		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
 }
 
 // CtxID returns the context id of the statement
@@ -956,8 +999,7 @@ func (sc *StatementContext) resetMuForRetry() {
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
 	sc.resetMuForRetry()
-	sc.MaxRowID = 0
-	sc.BaseRowID = 0
+	sc.ReservedRowIDAlloc.Reset(0, 0)
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()

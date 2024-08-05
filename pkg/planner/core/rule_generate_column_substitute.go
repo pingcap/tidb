@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -66,18 +68,18 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 	// detect the read_from_storage(tiflash) hints, since virtual column will
 	// block the mpp task spreading (only supporting MPP table scan), causing
 	// mpp plan fail the cost comparison with tikv index plan.
-	if ds.preferStoreType&h.PreferTiFlash != 0 {
+	if ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return
 	}
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
-	for _, p := range ds.possibleAccessPaths {
+	for _, p := range ds.PossibleAccessPaths {
 		if p.IsTablePath() {
 			continue
 		}
 		for _, idxPart := range p.Index.Columns {
-			colInfo := ds.tableInfo.Columns[idxPart.Offset]
+			colInfo := ds.TableInfo.Columns[idxPart.Offset]
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
-				s := ds.schema.Columns
+				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)
 				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
 					exprToColumn[col.VirtualExpr] = col
@@ -101,12 +103,13 @@ func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candi
 
 func appendSubstituteColumnStep(lp base.LogicalPlan, candidateExpr expression.Expression, col *expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string { return "" }
+	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString("expression:")
-		buffer.WriteString(candidateExpr.String())
+		buffer.WriteString(candidateExpr.StringWithCtx(ectx, errors.RedactLogDisable))
 		buffer.WriteString(" substituted by")
 		buffer.WriteString(" column:")
-		buffer.WriteString(col.String())
+		buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
 		return buffer.String()
 	}
 	opt.AppendStepToCurrent(lp.ID(), lp.TP(), reason, action)
@@ -185,14 +188,14 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 		for _, cond := range x.Conditions {
 			substituteExpression(cond, lp, exprToColumn, x.Schema(), opt)
 		}
-	case *LogicalProjection:
+	case *logicalop.LogicalProjection:
 		for i := range x.Exprs {
 			tp = x.Exprs[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
 				tryToSubstituteExpr(&x.Exprs[i], lp, candidateExpr, tp, x.Children()[0].Schema(), column, opt)
 			}
 		}
-	case *LogicalSort:
+	case *logicalop.LogicalSort:
 		for i := range x.ByItems {
 			tp = x.ByItems[i].Expr.GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
@@ -204,7 +207,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 			for i := 0; i < len(aggFunc.Args); i++ {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()
 				for candidateExpr, column := range exprToColumn {
-					if aggFunc.Args[i].Equal(lp.SCtx().GetExprCtx().GetEvalCtx(), candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
+					if aggFunc.Args[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
 						x.Schema().ColumnIndex(column) != -1 {
 						aggFunc.Args[i] = column
 						appendSubstituteColumnStep(lp, candidateExpr, column, opt)
@@ -215,7 +218,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 		for i := 0; i < len(x.GroupByItems); i++ {
 			tp = x.GroupByItems[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
-				if x.GroupByItems[i].Equal(lp.SCtx().GetExprCtx().GetEvalCtx(), candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
+				if x.GroupByItems[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
 					x.Schema().ColumnIndex(column) != -1 {
 					x.GroupByItems[i] = column
 					appendSubstituteColumnStep(lp, candidateExpr, column, opt)
