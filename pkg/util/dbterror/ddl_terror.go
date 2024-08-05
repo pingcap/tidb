@@ -495,7 +495,7 @@ var (
 	ErrUnsupportedDistTask = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation,
 		parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw,
 			"tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first."), nil))
-	// ErrGlobalIndexNotExplicitlySet
+	// ErrGlobalIndexNotExplicitlySet is for Global index when not explicitly said GLOBAL (or CONVERT TO GLOBAL INDEX)
 	ErrGlobalIndexNotExplicitlySet = ClassDDL.NewStd(mysql.ErrGlobalIndexNotExplicitlySet)
 )
 
