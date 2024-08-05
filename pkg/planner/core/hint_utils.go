@@ -369,7 +369,6 @@ func genHintTblFromPhysicalPlans(
 			continue
 		}
 		hintTbls[i].QBName = tblQBName
-
 	}
 	return hintTbls, &hintQBName
 }
