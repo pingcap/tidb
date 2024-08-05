@@ -532,7 +532,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldDat
 		}
 	}
 	// rebuild index
-	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, opt.GetCreateIdxOpt())
+	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, opt.SkipWriteUntouchedIndices, opt.GetCreateIdxOpt())
 	if err != nil {
 		return err
 	}
@@ -607,7 +607,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldDat
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opt *table.CreateIdxOpt) error {
+func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, skipUntouchedIndices bool, opt *table.CreateIdxOpt) error {
 	for _, idx := range t.deletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
@@ -641,13 +641,7 @@ func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction
 			untouched = false
 			break
 		}
-		// If txn is auto commit and index is untouched, no need to write index value.
-		// If InHandleForeignKeyTrigger or ForeignKeyTriggerCtx.HasFKCascades is true indicate we may have
-		// foreign key cascade need to handle later, then we still need to write index value,
-		// otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
-		sessVars := ctx.GetSessionVars()
-		if untouched && !sessVars.InTxn() &&
-			!sessVars.StmtCtx.InHandleForeignKeyTrigger && !sessVars.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
+		if untouched && skipUntouchedIndices {
 			continue
 		}
 		newVs, err := idx.FetchValues(newData, nil)
