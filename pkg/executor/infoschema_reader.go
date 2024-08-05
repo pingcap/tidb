@@ -1319,7 +1319,6 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				rows = append(rows, record)
 			}
 		}
-
 	}
 	e.rows = rows
 	return nil
