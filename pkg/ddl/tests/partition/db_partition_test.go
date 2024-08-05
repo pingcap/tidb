@@ -1791,6 +1791,9 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 	tk.MustExec("ALTER TABLE e3 EXCHANGE PARTITION p1 WITH TABLE e2;")
 	tk.MustQuery("select * from e3 partition(p0)").Check(testkit.Rows())
+	tk.MustQuery("select * from e3 partition(p1)").Check(testkit.Rows())
+	tk.MustQuery("select * from e3 partition(p2)").Check(testkit.Rows())
+	tk.MustQuery("select * from e3 partition(p3)").Check(testkit.Rows())
 	tk.MustQuery("select * from e2").Check(testkit.Rows("1", "5"))
 
 	// validation test for hash partition
@@ -3635,17 +3638,13 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	// Clustered table where PKIsHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) clustered)`)
 	tk.MustContainErrMsg(`alter table t drop primary key`, "Unsupported drop primary key when the table is using clustered index")
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `The index needs to be global, but it is not explicitly set as such`)
-	// TODO: get the following error back
-	//, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// Clustered table where IsCommonHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), c int, primary key (a,c) clustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `The index needs to be global, but it is not explicitly set as such`)
-	// TODO: restore this error?
-	//tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// It can be clustered if the PK contains all the partitioning columns.
@@ -3772,27 +3771,31 @@ func TestGlobalIndexExplicitOption(t *testing.T) {
 	defer func() {
 		tk.MustExec("set tidb_enable_global_index=default")
 	}()
+	tk.MustContainErrMsg(`create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 
 	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:1503]A PRIMARY KEY must include all columns in the table's partitioning function")
+	tk.MustExec(`create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3 convert to global index`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustExec(`drop table t`)
 	tk.MustExec("set tidb_enable_global_index=ON")
+	tk.MustExec(`create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3`)
+	tk.MustExec(`drop table t`)
 	tk.MustContainErrMsg(`create table t (a int key global, b int) partition by hash(b) partitions 3`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
-	tk.MustContainErrMsg(`create table t (a int unique, b int) partition by hash(b) partitions 3`, "The index needs to be global, but it is not explicitly set as such")
-	tk.MustContainErrMsg(`create table t (a int unique key, b int) partition by hash(b) partitions 3`, "The index needs to be global, but it is not explicitly set as such")
-	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "The index needs to be global, but it is not explicitly set as such")
-	tk.MustExec(`create table t (a int primary key nonclustered global, b int) partition by hash(b) partitions 3`)
+	tk.MustContainErrMsg(`create table t (a int unique, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed, since the unique index is not including all partitioning columns, but GLOBAL is not given as IndexOption")
+	tk.MustContainErrMsg(`create table t (a int unique key, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed, since the unique index is not including all partitioning columns, but GLOBAL is not given as IndexOption")
+	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed, since the unique index is not including all partitioning columns, but GLOBAL is not given as IndexOption")
 	createTable := "CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`b`) PARTITIONS 3"
+	tk.MustExec(createTable)
 	res := tk.MustQuery(`show create table t`)
 	res.Check(testkit.Rows("t " + createTable))
 	tk.MustExec(`drop table t`)
-	tk.MustExec(createTable)
-	tk.MustQuery(`show create table t`).Check(res.Rows())
-	tk.MustExec(`drop table t`)
-	tk.MustExec(`create table t (a int key nonclustered global, b int) partition by hash(b) partitions 3`)
-	tk.MustQuery(`show create table t`).Check(res.Rows())
-	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed, since the unique index is not including all partitioning columns, but GLOBAL is not given as IndexOption")
+	tk.MustExec(`alter table t partition by hash(b) partitions 3 convert to global index`)
 }

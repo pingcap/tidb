@@ -749,19 +749,19 @@ func TestAddGlobalIndex(t *testing.T) {
 	// normal index
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
-	tk.MustExec("alter table t add unique index idx(a)")
+	tk.MustExec("alter table t add unique index idx(a) global")
 
 	// meets duplicate
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
 	tk.MustExec("insert into t values (1, 2), (1, 3)")
 	// Duplicate
-	tk.MustExecToErr("alter table t add unique index idx(a)")
+	tk.MustExecToErr("alter table t add unique index idx(a)i global")
 
 	// with multi schema change
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
-	tk.MustExec("alter table t add unique index idx(a), add index idx1(b)")
+	tk.MustExec("alter table t add unique index idx(a) global, add index idx1(b)")
 }
 
 // checkGlobalIndexRow reads one record from global index and check. Only support int handle.

@@ -316,7 +316,6 @@ func BuildIndexInfo(
 	indexName model.CIStr,
 	isPrimary bool,
 	isUnique bool,
-	isGlobal bool,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	state model.SchemaState,
@@ -330,14 +329,6 @@ func BuildIndexInfo(
 		return nil, errors.Trace(err)
 	}
 
-	// TODO: How to handle Global indexes?
-	if isGlobal && (indexOption == nil || !indexOption.Global) {
-		// TODO: Fix error message
-		return nil, errors.New("needs Global Index, but GLOBAL index option was not set")
-	} else if !isGlobal && indexOption != nil && indexOption.Global {
-		// TODO: Fix error message
-		return nil, errors.New("GLOBAL index option is set, but cannot be Global Index")
-	}
 	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
@@ -345,7 +336,6 @@ func BuildIndexInfo(
 		State:   state,
 		Primary: isPrimary,
 		Unique:  isUnique,
-		Global:  isGlobal,
 		MVIndex: mvIndex,
 	}
 
@@ -360,6 +350,7 @@ func BuildIndexInfo(
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
+		idxInfo.Global = indexOption.Global
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = model.IndexTypeBtree
@@ -671,13 +662,13 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, errors.Trace(err)
 			}
 			// TODO: Handle global[i] vs indexOption[i].Global!
+			// Should we even keep the global in the job args?
 			indexInfo, err = BuildIndexInfo(
 				nil,
 				tblInfo.Columns,
 				indexName,
 				isPK,
 				uniques[i],
-				global[i],
 				indexPartSpecifications[i],
 				indexOption[i],
 				model.StateNone,

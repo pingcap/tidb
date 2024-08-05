@@ -4695,7 +4695,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	global := false
 	if unique && tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
 		if err != nil {
@@ -4711,7 +4710,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 				// TODO: create a better error!
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("GLOBAL IndexOption not set!")
 			}
-			global = true
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4723,7 +4721,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == model.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique, global,
+		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
@@ -4740,7 +4738,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		Type:           model.ActionAddIndex,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, indexOption != nil && indexOption.Global},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		Charset:        chs,
 		Collate:        coll,
