@@ -325,7 +325,6 @@ func TestVectorAssignVariable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 	tk.MustExec(`SET @a = VEC_FROM_TEXT('[1,2,3]');`)
 	tk.MustQuery(`SELECT @a;`).Check(testkit.Rows("[1,2,3]"))
 }
@@ -335,7 +334,6 @@ func TestVectorControlFlow(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 
 	// IF
 	tk.MustQuery("SELECT IF(VEC_FROM_TEXT('[1, 2, 3]'), 1, 0);").Check(testkit.Rows("1"))
@@ -358,7 +356,6 @@ func TestVectorStringCompare(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 
 	tk.MustExec("DROP TABLE IF EXISTS t1;")
 	tk.MustExec("CREATE TABLE t1 (val vector);")
@@ -509,7 +506,6 @@ func TestVectorArithmatic(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 	tk.MustExec(`CREATE TABLE t(embedding VECTOR);`)
 	tk.MustExec(`INSERT INTO t VALUES
 		('[1, 2, 3]'),
