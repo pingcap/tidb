@@ -1079,12 +1079,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
-		for i := range createdTables {
+		for _, createdTable := range createdTables {
 			// Set the keyspace info for the checksum requests
-			createdTables[i].RewriteRule.OldKeyspace = oldKeyspace
-			createdTables[i].RewriteRule.NewKeyspace = newKeyspace
+			createdTable.RewriteRule.OldKeyspace = oldKeyspace
+			createdTable.RewriteRule.NewKeyspace = newKeyspace
 
-			for _, rule := range createdTables[i].RewriteRule.Data {
+			for _, rule := range createdTable.RewriteRule.Data {
 				rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)
 				rule.NewKeyPrefix = codec.EncodeKey(rule.NewKeyPrefix)
 			}
@@ -1092,8 +1092,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if cfg.tiflashRecorder != nil {
-		for i := range createdTables {
-			cfg.tiflashRecorder.Rewrite(createdTables[i].OldTable.Info.ID, createdTables[i].Table.ID)
+		for _, createdTable := range createdTables {
+			cfg.tiflashRecorder.Rewrite(createdTable.OldTable.Info.ID, createdTable.Table.ID)
 		}
 	}
 

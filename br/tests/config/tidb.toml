@@ -1,5 +1,5 @@
 # config of tidb
-
+split-table = false
 # Schema lease duration
 # There are lot of ddl in the tests, setting this
 # to 360s to test whther BR is gracefully shutdown.

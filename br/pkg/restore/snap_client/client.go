@@ -677,7 +677,7 @@ func (rc *SnapClient) CreateTables(
 	tables []*metautil.Table,
 	newTS uint64,
 ) ([]*CreatedTable, error) {
-	log.Info("start create tables")
+	log.Info("start create tables", zap.Int("total count", len(tables)))
 	rc.generateRebasedTables(tables)
 
 	// try to restore tables in batch

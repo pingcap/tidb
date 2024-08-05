@@ -16,6 +16,7 @@ package snapclient_test
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -131,7 +132,18 @@ func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamParti
 	}
 
 	require.Equal(t, len(upstreamPartitionIDs), triggerID)
+	disorderTables(createdTables)
 	return createdTables
+}
+
+func disorderTables(createdTables []*snapclient.CreatedTable) {
+	// Each position will be replaced by a random table
+	for i := range createdTables {
+		randIndex := rand.Int() % len(createdTables)
+		tmp := createdTables[i]
+		createdTables[i] = createdTables[randIndex]
+		createdTables[randIndex] = tmp
+	}
 }
 
 func file(tableID int64, startRow, endRow int, totalKvs, totalBytes uint64, cf string) *backuppb.File {
