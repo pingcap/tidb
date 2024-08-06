@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "telemetryv2",
+    srcs = [
+        "telemetry.go",
+        "vector_search.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/telemetryv2",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/metrics",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/types",
+    ],
+)

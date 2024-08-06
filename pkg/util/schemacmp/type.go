@@ -166,6 +166,8 @@ func (a typ) getStandardDefaultValue() interface{} {
 		return "0000"
 	case mysql.TypeJSON:
 		return "null"
+	case mysql.TypeTiDBVectorFloat32:
+		return "[]"
 	case mysql.TypeEnum:
 		return a.Tuple[fieldTypeTupleIndexElems].(StringList)[0]
 	case mysql.TypeString:

@@ -94,6 +94,7 @@ func InitMetrics() {
 	InitTTLMetrics()
 	InitDistTaskMetrics()
 	InitGlobalSortMetrics()
+	InitVectorSearchMetrics()
 	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
@@ -281,6 +282,8 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	RegisterVectorSearchMetrics()
 }
 
 var mode struct {

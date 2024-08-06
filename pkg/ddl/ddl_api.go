@@ -1341,7 +1341,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	if v.Kind() == types.KindBinaryLiteral || v.Kind() == types.KindMysqlBit {
-		if types.IsTypeBlob(tp) || tp == mysql.TypeJSON {
+		if types.IsTypeBlob(tp) || tp == mysql.TypeJSON || tp == mysql.TypeTiDBVectorFloat32 {
 			// BLOB/TEXT/JSON column cannot have a default value.
 			// Skip the unnecessary decode procedure.
 			return v.GetString(), false, err
@@ -2565,6 +2565,36 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return err
 	}
 
+	{
+		hasVectorIndex := false
+		for _, col := range tbInfo.Columns {
+			if col.VectorIndex != nil {
+				hasVectorIndex = true
+				break
+			}
+		}
+
+		// Assign tabel level property HasVectorIndex.
+		// This is used by optimizer to fast check whether vector index
+		// specific rules should be applied.
+		// Note that Vector index can be only added when table is created, so that
+		// this is currently only place to assign the property.
+		tbInfo.HasVectorIndex = hasVectorIndex
+
+		if hasVectorIndex {
+			if tbInfo.TiFlashReplica == nil {
+				replicas, err := infoschema.GetTiFlashStoreCount(ctx)
+				if err == nil && replicas > 0 {
+					tbInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+						Count:          1,
+						LocationLabels: make([]string, 0),
+						Available:      false,
+					}
+				}
+			}
+		}
+	}
+
 	onExist := OnExistError
 	if s.IfNotExists {
 		onExist = OnExistIgnore
@@ -3084,7 +3114,8 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 
 func isValidKeyPartitionColType(fieldType types.FieldType) bool {
 	switch fieldType.GetType() {
-	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry:
+	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry,
+		mysql.TypeTiDBVectorFloat32:
 		return false
 	default:
 		return true
@@ -4139,6 +4170,11 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 	}
 
 	originDefVal, err := generateOriginDefaultValue(col.ToInfo(), ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = checkVectorIndexForColumnAdd(col)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -5212,6 +5248,37 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	return nil
 }
 
+// checkVectorIndexForColumnModify checks Vector Index constraints for ADD COLUMN.
+func checkVectorIndexForColumnAdd(newCol *table.Column) error {
+	if newCol.VectorIndex != nil {
+		return errors.Errorf("currently HNSW index can be only defined when creating the table")
+	}
+	return nil
+}
+
+// checkVectorIndexForColumnModify checks Vector Index constraints for MODIFY COLUMN.
+func checkVectorIndexForColumnModify(oldCol *table.Column, newCol *table.Column) error {
+	if oldCol.VectorIndex == nil && newCol.VectorIndex == nil {
+		return nil
+	}
+	if oldCol.VectorIndex == nil && newCol.VectorIndex != nil {
+		return errors.Errorf("currently HNSW index can be only defined when creating the table")
+	}
+	if oldCol.VectorIndex != nil && newCol.VectorIndex == nil {
+		return errors.Errorf("currently HNSW index can not be removed")
+	}
+	if oldCol.FieldType.GetFlen() != newCol.FieldType.GetFlen() {
+		return errors.New("cannot modify vector column's dimention when HNSW index is defined")
+	}
+	if oldCol.FieldType.GetType() != newCol.FieldType.GetType() {
+		return errors.New("cannot modify column data type when HNSW index is defined")
+	}
+	if *(oldCol.VectorIndex) != *(newCol.VectorIndex) {
+		return errors.New("currently HNSW index cannot be modified")
+	}
+	return nil
+}
+
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
 // or change by reorg. It returns error if the two types are incompatible and correlated change are not
 // supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
@@ -5294,7 +5361,25 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 		return errors.Trace(err)
 	}
 	col.Comment, err = validateCommentLength(ctx.GetSessionVars(), col.Name.L, &col.Comment, dbterror.ErrTooLongFieldComment)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Sync parsed HNSW index definition in the comment
+	vi, err := model.ParseVectorIndexDefFromComment(col.Comment)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if vi != nil {
+		if !col.FieldType.EvalType().IsVectorKind() || col.FieldType.GetFlen() <= 0 {
+			return errors.Errorf("HNSW index can only be defined on fixed-dimention vector columns")
+		}
+		vi.Dimension = uint64(col.FieldType.GetFlen())
+	}
+
+	col.VectorIndex = vi
+
+	return nil
 }
 
 // ProcessColumnOptions process column options.
@@ -5546,6 +5631,11 @@ func GetModifiableColumnJob(
 	}
 
 	if err = ProcessColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Currently there are some limits when modifying column with HNSW index.
+	if err = checkVectorIndexForColumnModify(col, newCol); err != nil {
 		return nil, errors.Trace(err)
 	}
 

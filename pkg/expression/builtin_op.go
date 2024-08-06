@@ -487,6 +487,13 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
 			}
+		case types.ETVectorFloat32:
+			sig = &builtinVectorFloat32IsTrueSig{bf, c.keepNull}
+			// if c.keepNull {
+			// 	sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsTrueWithNull)
+			// } else {
+			// 	sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsTrue)
+			// }
 		default:
 			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
@@ -513,6 +520,13 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 			}
+		case types.ETVectorFloat32:
+			sig = &builtinVectorFloat32IsFalseSig{bf, c.keepNull}
+			// if c.keepNull {
+			// 	sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsFalseWithNull)
+			// } else {
+			// 	sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsFalse)
+			// }
 		default:
 			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
@@ -595,6 +609,31 @@ func (b *builtinIntIsTrueSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 1, false, nil
 }
 
+type builtinVectorFloat32IsTrueSig struct {
+	baseBuiltinFunc
+	keepNull bool
+}
+
+func (b *builtinVectorFloat32IsTrueSig) Clone() builtinFunc {
+	newSig := &builtinVectorFloat32IsTrueSig{keepNull: b.keepNull}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinVectorFloat32IsTrueSig) evalInt(row chunk.Row) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalVectorFloat32(b.ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
+	if isNull || input.IsZeroValue() {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
 type builtinRealIsFalseSig struct {
 	baseBuiltinFunc
 	keepNull bool
@@ -665,6 +704,31 @@ func (b *builtinIntIsFalseSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, nil
 	}
 	if isNull || input != 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type builtinVectorFloat32IsFalseSig struct {
+	baseBuiltinFunc
+	keepNull bool
+}
+
+func (b *builtinVectorFloat32IsFalseSig) Clone() builtinFunc {
+	newSig := &builtinVectorFloat32IsFalseSig{keepNull: b.keepNull}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinVectorFloat32IsFalseSig) evalInt(row chunk.Row) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalVectorFloat32(b.ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	if b.keepNull && isNull {
+		return 0, true, nil
+	}
+	if isNull || !input.IsZeroValue() {
 		return 0, false, nil
 	}
 	return 1, false, nil
@@ -744,7 +808,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinUnaryNotJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotJSON)
 	default:
-		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
+		return nil, errors.Errorf("%s is not supported for unary not operator", argTp)
 	}
 	return sig, nil
 }
@@ -1044,8 +1108,11 @@ func (c *isNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	case types.ETString:
 		sig = &builtinStringIsNullSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StringIsNull)
+	case types.ETVectorFloat32:
+		sig = &builtinVectorFloat32IsNullSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_VectorFloat32IsNull)
 	default:
-		panic("unexpected types.EvalType")
+		return nil, errors.Errorf("%s is not supported for ISNULL()", argTp)
 	}
 	return sig, nil
 }
@@ -1132,6 +1199,21 @@ func (b *builtinStringIsNullSig) Clone() builtinFunc {
 
 func (b *builtinStringIsNullSig) evalInt(row chunk.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalString(b.ctx, row)
+	return evalIsNull(isNull, err)
+}
+
+type builtinVectorFloat32IsNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinVectorFloat32IsNullSig) Clone() builtinFunc {
+	newSig := &builtinVectorFloat32IsNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinVectorFloat32IsNullSig) evalInt(row chunk.Row) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalVectorFloat32(b.ctx, row)
 	return evalIsNull(isNull, err)
 }
 

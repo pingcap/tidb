@@ -68,6 +68,7 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/telemetry"
+	"github.com/pingcap/tidb/pkg/telemetryv2"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -1913,6 +1914,28 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 			}
 		}
 	}, "handleEvolvePlanTasksLoop")
+}
+
+// TelemetryV2ReportLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
+func (do *Domain) TelemetryV2ReportLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("TelemetryV2ReportLoop exited.")
+		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryV2ReportLoop", nil, false)
+
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-time.After(telemetryv2.UpdateInterval):
+				telemetryv2.ApplyUpdates(ctx)
+			}
+		}
+	}, "TelemetryV2ReportLoop")
 }
 
 // TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once

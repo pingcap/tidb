@@ -56,6 +56,7 @@ var (
 	_ builtinFunc = &builtinInTimeSig{}
 	_ builtinFunc = &builtinInDurationSig{}
 	_ builtinFunc = &builtinInJSONSig{}
+	_ builtinFunc = &builtinInVectorFloat32Sig{}
 	_ builtinFunc = &builtinRowSig{}
 	_ builtinFunc = &builtinSetStringVarSig{}
 	_ builtinFunc = &builtinSetIntVarSig{}
@@ -152,6 +153,11 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	case types.ETJson:
 		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_InJson)
+	case types.ETVectorFloat32:
+		sig = &builtinInVectorFloat32Sig{baseBuiltinFunc: bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_InVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IN()", args[0].GetType().EvalType())
 	}
 	return sig, nil
 }
@@ -680,6 +686,39 @@ func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
+type builtinInVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinInVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinInVectorFloat32Sig) evalInt(row chunk.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalVectorFloat32(b.ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, err
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalVectorFloat32(b.ctx, row)
+		if err != nil {
+			return 0, true, err
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		result := arg0.Compare(evaledArg)
+		if result == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
 type rowFunctionClass struct {
 	baseFunctionClass
 }
@@ -1184,6 +1223,10 @@ func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = &builtinValuesDurationSig{bf, c.offset}
 	case types.ETJson:
 		sig = &builtinValuesJSONSig{bf, c.offset}
+	case types.ETVectorFloat32:
+		sig = &builtinValuesVectorFloat32Sig{bf, c.offset}
+	default:
+		return nil, errors.Errorf("%s is not supported for VALUES()", c.tp.EvalType())
 	}
 	return sig, nil
 }
@@ -1408,6 +1451,34 @@ func (b *builtinValuesJSONSig) evalJSON(_ chunk.Row) (types.BinaryJSON, bool, er
 		return row.GetJSON(b.offset), false, nil
 	}
 	return types.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
+type builtinValuesVectorFloat32Sig struct {
+	baseBuiltinFunc
+
+	offset int
+}
+
+func (b *builtinValuesVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinValuesVectorFloat32Sig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalVectorFloat32 evals a builtinValuesVectorFloat32Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesVectorFloat32Sig) evalVectorFloat32(_ chunk.Row) (types.VectorFloat32, bool, error) {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return types.ZeroVectorFloat32, true, nil
+		}
+		return row.GetVectorFloat32(b.offset), false, nil
+	}
+	return types.ZeroVectorFloat32, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type bitCountFunctionClass struct {

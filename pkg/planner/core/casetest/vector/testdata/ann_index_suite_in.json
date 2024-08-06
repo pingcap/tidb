@@ -1,0 +1,48 @@
+[
+  {
+    "name": "TestTiFlashANNIndex",
+    "cases": [
+      "explain select * from t1;",
+      "explain select * from t1 where a<1;",
+      "explain select * from t1 where vec = '[1,1,1]'",
+      "explain select * from t1 where vec_cosine_distance(vec, '[1,1,1]') < 0.1",
+      "explain select vec_cosine_distance(vec, '[1,1,1]') as dis from t1 having dis < 0.1",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+      "explain select * from t1 order by vec_cosine_distance(vec, vec_from_text('[1,1,1]')) limit 1",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') desc limit 1",
+      "explain select * from t1 order by vec_cosine_distance(vec, vec_from_text('[1,1,1]')) desc limit 1",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')+1 limit 1",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]'),vec limit 1",
+      "explain select * from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 1",
+      "explain select * from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 1",
+      "explain select * from t1 order by vec_l2_distance(c, '[1,1,1]') limit 1",
+      "explain select * from t1 order by vec_l2_distance(d, '[1,1,1]') limit 1",
+      "explain select * from t1 order by vec_cosine_distance(d, '[1,1,1]') limit 1",
+      "explain select * from t1 order by vec_l1_distance(d, '[1,1,1]') limit 1",
+      "explain select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+      "explain select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 1",
+      "explain select vec_cosine_distance(vec, '[1,1,1]') as d, vec, a, b from t1 order by d limit 1",
+      "explain select * from t1 where a=0 order by vec_cosine_distance(vec, '[1,1,1]') limit 1"
+    ]
+  },
+  {
+    "name": "TestTiFlashANNIndexForPartition",
+    "cases": [
+      "explain select * from t1;",
+      "explain select * from t1 where a<1;",
+      "explain select * from t1 where vec = '[1,1,1]'",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') desc limit 1",
+      "explain select * from t1 order by vec_cosine_distance(vec, vec_from_text('[1,1,1]')) desc limit 1",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')+1 limit 1",
+      "explain select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+      "explain select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 1",
+      "explain select vec_cosine_distance(vec, '[1,1,1]') as d, vec, a, b from t1 order by d limit 1",
+      "explain select * from t1 where a=0 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+      "explain select * from t1 where store_id between 80 and 120 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
+      "explain select * from t1 partition (p0) order by vec_cosine_distance(vec, '[1,1,1]') limit 1"
+    ]
+  }
+]

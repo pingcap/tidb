@@ -217,6 +217,9 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	if aggFunc.Name == ast.AggFuncApproxPercentile {
 		return false
 	}
+	if checkVectorAggPushDown(aggFunc) != nil {
+		return false
+	}
 	ret := true
 	switch storeType {
 	case kv.TiFlash:
@@ -229,6 +232,22 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
 	}
 	return ret
+}
+
+// checkVectorAggPushDown returns error if this aggregate function is not supported to push down.
+// - The aggregate function is not calculated over a Vector column (returns nil)
+// - The aggregate function is calculated over a Vector column and the function is supported (returns nil)
+// - The aggregate function is calculated over a Vector column and the function is not supported (returns error)
+func checkVectorAggPushDown(aggFunc *AggFuncDesc) error {
+	switch aggFunc.Name {
+	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow:
+		return nil
+	default:
+		if aggFunc.Args[0].GetType().GetType() == mysql.TypeTiDBVectorFloat32 {
+			return errors.Errorf("Aggregate function %s is not supported for VectorFloat32", aggFunc.Name)
+		}
+	}
+	return nil
 }
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
