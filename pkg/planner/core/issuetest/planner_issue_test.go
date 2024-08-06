@@ -112,3 +112,13 @@ func TestIssue54535(t *testing.T) {
 			"      └─HashAgg_13(Probe) 79840080.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
 			"        └─TableRowIDScan_11 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
 }
+
+func Test55169(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_enable_inl_join_inner_multi_pattern='ON';")
+	tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
+	tk.MustExec("create table t2(col_1 int, col_2 int, index idx_2(col_1));")
+	tk.MustExec("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;")
+}
