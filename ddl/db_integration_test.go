@@ -29,6 +29,7 @@ import (
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/schematracker"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -4417,4 +4418,69 @@ func TestReorganizePartitionWarning(t *testing.T) {
 	tk.MustExec("create table t (id bigint, b varchar(20), index idxb(b)) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));")
 	tk.MustExec("alter table t reorganize partition p0 into (partition p01 values less than (10), partition p02 values less than (20));")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+}
+
+func TestIssue52680(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue52680 (id bigint primary key auto_increment) auto_id_cache=1;")
+	tk.MustExec("insert into issue52680 values(default),(default);")
+	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2"))
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	ti := tbl.Meta()
+	require.NoError(t, err)
+	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, ok)
+
+	util.EmulatorGCDisable()
+	defer util.EmulatorGCEnable()
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	testSteps := []struct {
+		sql    string
+		expect meta.AutoIDGroup
+	}{
+		{sql: "", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "drop table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
+		{sql: "recover table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+	}
+	for _, step := range testSteps {
+		if step.sql != "" {
+			tk.MustExec(step.sql)
+		}
+
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		idAcc := m.GetAutoIDAccessors(dbInfo.ID, ti.ID)
+		ids, err := idAcc.Get()
+		require.NoError(t, err)
+		require.Equal(t, ids, step.expect)
+		txn.Rollback()
+	}
+
+	tk.MustQuery("show table issue52680 next_row_id").Check(testkit.Rows(
+		"test issue52680 id 1 _TIDB_ROWID",
+		"test issue52680 id 3 AUTO_INCREMENT",
+	))
+
+	is = dom.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	require.NoError(t, err)
+	ti1 := tbl1.Meta()
+	require.Equal(t, ti1.ID, ti.ID)
+
+	tk.MustExec("insert into issue52680 values(default);")
+	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2", "3"))
 }
