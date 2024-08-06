@@ -194,17 +194,6 @@ func NewProfileHandler(tool *handler.TikvHandlerTool) *ProfileHandler {
 	return &ProfileHandler{tool}
 }
 
-// DDLHookHandler is the handler for use pre-defined ddl callback.
-// It's convenient to provide some APIs for integration tests.
-type DDLHookHandler struct {
-	store kv.Storage
-}
-
-// NewDDLHookHandler creates a new DDLHookHandler.
-func NewDDLHookHandler(store kv.Storage) *DDLHookHandler {
-	return &DDLHookHandler{store}
-}
-
 // ValueHandler is the handler for get value.
 type ValueHandler struct {
 }
@@ -1993,33 +1982,6 @@ func (h *TestHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 	if err != nil {
 		handler.WriteError(w, errors.Annotate(err, "resolveLocks failed"))
 	}
-}
-
-// ServeHTTP handles request of resigning ddl owner.
-func (h DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		handler.WriteError(w, errors.Errorf("This api only support POST method"))
-		return
-	}
-
-	dom, err := session.GetDomain(h.store)
-	if err != nil {
-		log.Error("failed to get session domain", zap.Error(err))
-		handler.WriteError(w, err)
-	}
-
-	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
-	if err != nil {
-		log.Error("failed to get customized hook", zap.Error(err))
-		handler.WriteError(w, err)
-	}
-	callback := newCallbackFunc(dom)
-
-	dom.DDL().SetHook(callback)
-	handler.WriteData(w, "success!")
-
-	ctx := req.Context()
-	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
 }
 
 // ServeHTTP handles request of set server labels.

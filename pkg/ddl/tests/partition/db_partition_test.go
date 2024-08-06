@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1339,7 +1338,7 @@ func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexInsertInDropPartition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1356,16 +1355,14 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 	tk.MustExec("alter table test_global add unique index idx_b (b);")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
 			tk2.MustExec("insert into test_global values (9, 9, 9)")
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -1376,7 +1373,7 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1393,16 +1390,14 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 	tk.MustExec("alter table test_global add unique index idx_b (b);")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
 			tk2.MustExec("update test_global set a = 2 where a = 11")
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -1497,7 +1492,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1517,11 +1512,7 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originalHook)
-
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1529,15 +1520,14 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 			err := tk1.ExecToErr("update test_global set a = 2 where a = 11")
 			assert.NotNil(t, err)
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table test_global truncate partition p1")
 	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("11 11 11", "12 12 12"))
 }
 
 func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1553,12 +1543,8 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originalHook)
-
 	var err error
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1566,14 +1552,13 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 			err = tk1.ExecToErr("update test_global set a = 1 where a = 12")
 			assert.NotNil(t, err)
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table test_global truncate partition p1")
 }
 
 func TestGlobalIndexReaderAndIndexLookUpInTruncatePartition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1591,8 +1576,7 @@ func TestGlobalIndexReaderAndIndexLookUpInTruncatePartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1603,14 +1587,13 @@ func TestGlobalIndexReaderAndIndexLookUpInTruncatePartition(t *testing.T) {
 			tk1.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("11 11 11", "12 12 12"))
 			tk1.MustQuery("select * from test_global use index(idx_b) order by b").Check(testkit.Rows("11 11 11", "12 12 12"))
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table test_global truncate partition p1")
 }
 
 func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1631,8 +1614,7 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 	tk.MustExec("analyze table test_global")
 
 	var err error
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1640,14 +1622,13 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 			err = tk1.ExecToErr("insert into test_global values(2, 2, 2)")
 			assert.NotNil(t, err)
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table test_global truncate partition p1")
 }
 
 func TestGlobalIndexReaderInDropPartition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1665,8 +1646,7 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	var indexScanResult *testkit.Result
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1674,8 +1654,7 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 
 			indexScanResult = tk1.MustQuery("select b from test_global use index(idx_b)").Sort()
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table test_global drop partition p1")
 
@@ -1683,7 +1662,7 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 }
 
 func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1701,8 +1680,7 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	var indexLookupResult *testkit.Result
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1710,8 +1688,7 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 			tk1.MustExec("analyze table test_global")
 			indexLookupResult = tk1.MustQuery("select * from test_global use index(idx_b)").Sort()
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table test_global drop partition p1")
 
@@ -2752,18 +2729,13 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	tk.MustExec(`create table test.t (a int primary key) partition by range (a) (
 		partition p0 values less than (10),
 		partition p1 values less than (maxvalue));`)
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{}
-	dom.DDL().SetHook(hook)
 	injected := false
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.SnapshotVer == 0 && !injected {
 			injected = true
 			time.Sleep(30 * time.Millisecond)
 		}
-	}
+	})
 	var errCount atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
@@ -2940,7 +2912,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 }
 
 func TestIssue40135Ver2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2953,11 +2925,10 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', index(a)) PARTITION BY HASH (a) PARTITIONS 6")
 	tk.MustExec("insert into t40135 values (1, 'md'), (2, 'ma'), (3, 'md'), (4, 'ma'), (5, 'md'), (6, 'ma')")
 	one := true
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			tk3.MustExec("delete from t40135 where a = 1")
 		}
@@ -2968,8 +2939,7 @@ func TestIssue40135Ver2(t *testing.T) {
 				wg.Done()
 			}()
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
 	wg.Wait()
 	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: table is partition table")

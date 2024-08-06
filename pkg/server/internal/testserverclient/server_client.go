@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -3014,7 +3013,6 @@ func runTestInSchemaState(
 	ctx := context.Background()
 	MustExec(ctx, t, conn, "use test_db_state")
 
-	callback := &callback.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
 	dbt := cli.getNewDB(t, func(config *mysql.Config) {
@@ -3080,12 +3078,11 @@ func runTestInSchemaState(
 	}
 	if isOnJobUpdated {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	} else {
-		callback.OnJobRunBeforeExported = cbFunc1
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	}
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	d.SetHook(callback)
 	MustExec(ctx, t, conn, dropColumnSQL)
 	require.NoError(t, checkErr)
 
@@ -3100,8 +3097,6 @@ func runTestInSchemaState(
 			cli.CheckRows(t, rs, expectQuery.rows[0])
 		}
 	}
-	d.SetHook(originalCallback)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 }
 
 func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
