@@ -115,4 +115,5 @@ func TestIssue54535(t *testing.T) {
 	tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
 	tk.MustExec("create table t2(col_1 int, col_2 int, index idx_2(col_1));")
 	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(distinct col_2 order by col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
 }
