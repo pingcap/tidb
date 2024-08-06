@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -1946,11 +1947,11 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	e15 := external.GetTableByName(t, tk, "test", "e15")
 	partition := e15.Meta().Partition
 
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
 
 	e16 := external.GetTableByName(t, tk, "test", "e16")
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustGetErrCode("alter table e15 exchange partition p0 with table e16", errno.ErrTablesDifferentMetadata)
@@ -1964,11 +1965,11 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	e15 = external.GetTableByName(t, tk, "test", "e15")
 	partition = e15.Meta().Partition
 
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
 
 	e16 = external.GetTableByName(t, tk, "test", "e16")
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
@@ -1999,11 +2000,11 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	e15 = external.GetTableByName(t, tk, "test", "e15")
 	partition = e15.Meta().Partition
 
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
 
 	e16 = external.GetTableByName(t, tk, "test", "e16")
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
@@ -2079,7 +2080,7 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 }
 
 func TestExchangePartitionHook(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// why use tkCancel, not tk.
 	tkCancel := testkit.NewTestKit(t, store)
@@ -2099,16 +2100,12 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustExec(`insert into pt values (0), (4), (7)`)
 	tk.MustExec("insert into nt values (1)")
 
-	hook := &callback.TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
-
-	hookFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.Type == model.ActionExchangeTablePartition && job.SchemaState != model.StateNone {
 			tkCancel.MustExec("use test")
 			tkCancel.MustGetErrCode("insert into nt values (5)", errno.ErrRowDoesNotMatchGivenPartitionSet)
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&hookFunc)
+	})
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
@@ -2768,12 +2765,11 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 		}
 	}
 	var errCount atomic.Int32
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
 			errCount.Add(1)
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	})
 	done1 := make(chan error, 1)
 	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)
@@ -2800,9 +2796,9 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	t1 := external.GetTableByName(t, tk, "test_partition2", "t1")
 	partition := t1.Meta().Partition
 	require.Equal(t, 2, len(partition.Definitions))
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
 	require.NoError(t, err)
 	t1 = external.GetTableByName(t, tk, "test_partition2", "t1")
 	require.True(t, t1.Meta().TiFlashReplica.Available)
@@ -2863,7 +2859,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, schemaName, "t")
 	p := tbl.GetPartitionedTable()
 	for _, pid := range p.GetAllPartitionIDs() {
-		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+		require.NoError(t, domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), pid, true))
 	}
 	// Reload
 	tbl = external.GetTableByName(t, tk, schemaName, "t")
@@ -2901,7 +2897,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	tbl = external.GetTableByName(t, tk, schemaName, "t")
 	p = tbl.GetPartitionedTable()
 	for _, pid := range p.GetAllPartitionIDs() {
-		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+		require.NoError(t, domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), pid, true))
 	}
 	tbl = external.GetTableByName(t, tk, schemaName, "t")
 	p = tbl.GetPartitionedTable()
@@ -2921,7 +2917,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	require.Nil(t, tbl.Meta().TiFlashReplica)
 	tk.MustExec(`alter table t set tiflash replica 1`)
 	tbl = external.GetTableByName(t, tk, schemaName, "t")
-	require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, true))
+	require.NoError(t, domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, true))
 	tbl = external.GetTableByName(t, tk, schemaName, "t")
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.True(t, tbl.Meta().TiFlashReplica.Available)
@@ -2930,7 +2926,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	tbl = external.GetTableByName(t, tk, schemaName, "t")
 	p = tbl.GetPartitionedTable()
 	for _, pid := range p.GetAllPartitionIDs() {
-		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+		require.NoError(t, domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), pid, true))
 	}
 	p = tbl.GetPartitionedTable()
 	require.NotNil(t, tbl.Meta().TiFlashReplica)

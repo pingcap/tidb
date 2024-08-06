@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package logicalop_test
 
 import (
 	"context"
@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -41,7 +42,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
+func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -50,7 +51,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
-	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
+	logicalPlan, err := plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	// Obtain the leaf plan
@@ -59,7 +60,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 		leafPlan = leafPlan.Children()[0]
 	}
 
-	logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
+	logicalMemTable := leafPlan.(*logicalop.LogicalMemTable)
 	return logicalMemTable
 }
 
@@ -2037,8 +2038,22 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
-		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTablesExtractor)
-		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
-		require.Equal(t, ca.colPredicates, columnsTableExtractor.ColPredicates, "SQL: %v", ca.sql)
+		var base *plannercore.InfoSchemaBaseExtractor
+		switch ex := logicalMemTable.Extractor.(type) {
+		case *plannercore.InfoSchemaBaseExtractor:
+			base = ex
+		case *plannercore.InfoSchemaTablesExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaPartitionsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaStatisticsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaSchemataExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		default:
+			require.Failf(t, "unexpected extractor type", "%T", ex)
+		}
+		require.Equal(t, ca.skipRequest, base.SkipRequest, "SQL: %v", ca.sql)
+		require.Equal(t, ca.colPredicates, base.ColPredicates, "SQL: %v", ca.sql)
 	}
 }

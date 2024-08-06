@@ -66,6 +66,10 @@ type ProbeV2 interface {
 	NeedScanRowTable() bool
 	// InitForScanRowTable do some pre-work before ScanRowTable, it must be called before ScanRowTable
 	InitForScanRowTable()
+	// Return probe collsion
+	GetProbeCollision() uint64
+	// Reset probe collsion
+	ResetProbeCollision()
 }
 
 type offsetAndLength struct {
@@ -130,6 +134,16 @@ type baseJoinProbe struct {
 	tmpChk        *chunk.Chunk
 	rowIndexInfos []*matchedRowInfo
 	selected      []bool
+
+	probeCollision uint64
+}
+
+func (j *baseJoinProbe) GetProbeCollision() uint64 {
+	return j.probeCollision
+}
+
+func (j *baseJoinProbe) ResetProbeCollision() {
+	j.probeCollision = 0
 }
 
 func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {

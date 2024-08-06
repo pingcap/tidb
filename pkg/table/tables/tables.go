@@ -46,10 +46,10 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
@@ -273,9 +273,23 @@ func initTableIndices(t *TableCommon) error {
 
 		// Use partition ID for index, because TableCommon may be table or partition.
 		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		intest.AssertFunc(func() bool {
+			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
+			// However, we have an assumption that the specific type of each element in it should always be `*index`.
+			// We have this assumption because some codes access the inner method of `*index`,
+			// and they use `asIndex` to cast `table.Index` to `*index`.
+			_, ok := idx.(*index)
+			intest.Assert(ok, "index should be type of `*index`")
+			return true
+		})
 		t.indices = append(t.indices, idx)
 	}
 	return nil
+}
+
+// asIndex casts a table.Index to *index which is the actual type of index in TableCommon.
+func asIndex(idx table.Index) *index {
+	return idx.(*index)
 }
 
 func initTableCommonWithIndices(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
@@ -378,30 +392,6 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 	return t.writableConstraints
 }
 
-// CheckRowConstraint verify row check constraints.
-func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
-	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		ectx := ctx.GetExprCtx().GetEvalCtx()
-		row := chunk.MutRowFromDatums(rowToCheck).ToRow()
-		return checkRowConstraint(ectx, constraints, row)
-	}
-	return nil
-}
-
-// checkRowConstraint verify row check constraints.
-func checkRowConstraint(ctx exprctx.EvalContext, constraints []*table.Constraint, rowToCheck chunk.Row) error {
-	for _, constraint := range constraints {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
-		if err != nil {
-			return err
-		}
-		if ok == 0 && !isNull {
-			return table.ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
-		}
-	}
-	return nil
-}
-
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	return t.fullHiddenColsAndVisibleColumns
@@ -450,7 +440,12 @@ func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (t *TableCommon) UpdateRecord(ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
+	opt := table.NewUpdateRecordOpt(opts...)
+	return t.updateRecord(ctx, h, oldData, newData, touched, opt)
+}
+
+func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool, opt *table.UpdateRecordOpt) error {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
@@ -461,8 +456,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	defer memBuffer.Cleanup(sh)
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
-		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+		if tmpTable, sizeLimit, ok := addTemporaryTable(sctx, m); ok {
+			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
@@ -479,7 +474,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	mutateBuffers := sctx.GetMutateBuffers()
 	encodeRowBuffer := mutateBuffers.GetEncodeRowBufferWithCap(numColsCap)
 	checkRowBuffer := mutateBuffers.GetCheckRowBufferWithCap(numColsCap)
-	if shouldWriteBinlog(sctx, t.meta) {
+	binlogSupport, shouldWriteBinlog := getBinlogSupport(sctx, t.meta)
+	if shouldWriteBinlog {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
@@ -522,7 +518,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 		checkRowBuffer.AddColVal(value)
-		if shouldWriteBinlog(sctx, t.meta) && !t.canSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -531,13 +527,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	// check data constraint
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err = checkRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err = table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
 			return err
 		}
 	}
-	sessVars := sctx.GetSessionVars()
 	// rebuild index
-	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, opt.GetCreateIdxOpt())
 	if err != nil {
 		return err
 	}
@@ -580,36 +575,39 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 
 	memBuffer.Release(sh)
-	if shouldWriteBinlog(sctx, t.meta) {
+	if shouldWriteBinlog {
 		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h.IntValue()))
 			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h.IntValue()))
 		}
-		err = t.addUpdateBinlog(sctx, binlogOldRow, binlogNewRow, binlogColIDs)
+		err = t.addUpdateBinlog(sctx, binlogSupport, binlogOldRow, binlogNewRow, binlogColIDs)
 		if err != nil {
 			return err
 		}
 	}
-	colSizeBuffer := mutateBuffers.GetColSizeDeltaBufferWithCap(len(t.Cols()))
-	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(tc, newData[id])
-		if err != nil {
-			continue
+
+	if s, ok := sctx.GetStatisticsSupport(); ok {
+		colSizeBuffer := mutateBuffers.GetColSizeDeltaBufferWithCap(len(t.Cols()))
+		for id, col := range t.Cols() {
+			size, err := codec.EstimateValueSize(tc, newData[id])
+			if err != nil {
+				continue
+			}
+			newLen := size - 1
+			size, err = codec.EstimateValueSize(tc, oldData[id])
+			if err != nil {
+				continue
+			}
+			oldLen := size - 1
+			colSizeBuffer.AddColSizeDelta(col.ID, int64(newLen-oldLen))
 		}
-		newLen := size - 1
-		size, err = codec.EstimateValueSize(tc, oldData[id])
-		if err != nil {
-			continue
-		}
-		oldLen := size - 1
-		colSizeBuffer.AddColSizeDelta(col.ID, int64(newLen-oldLen))
+		s.UpdatePhysicalTableDelta(t.physicalTableID, 0, 1, colSizeBuffer)
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSizeBuffer)
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
+func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opt *table.CreateIdxOpt) error {
 	for _, idx := range t.deletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
@@ -656,7 +654,7 @@ func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction
 		if err != nil {
 			return err
 		}
-		if err := t.buildIndexForRow(ctx, h, newVs, newData, idx, txn, untouched, opts...); err != nil {
+		if err := t.buildIndexForRow(ctx, h, newVs, newData, asIndex(idx), txn, untouched, opt); err != nil {
 			return err
 		}
 	}
@@ -673,22 +671,6 @@ func FindPrimaryIndex(tblInfo *model.TableInfo) *model.IndexInfo {
 		}
 	}
 	return pkIdx
-}
-
-// CommonAddRecordCtx is used in `AddRecord` to avoid memory malloc for some temp slices.
-// This is useful in lightning parse row data to key-values pairs. This can gain upto 5%  performance
-// improvement in lightning's local mode.
-type CommonAddRecordCtx struct {
-	colIDs []int64
-	row    []types.Datum
-}
-
-// commonAddRecordKey is used as key in `sessionctx.Context.Value(key)`
-type commonAddRecordKey struct{}
-
-// String implement `stringer.String` for CommonAddRecordKey
-func (c commonAddRecordKey) String() string {
-	return "_common_add_record_context_key"
 }
 
 // TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
@@ -733,51 +715,42 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) tableutil.TempTable {
-	tempTable := sctx.TxnRecordTempTable(tblInfo)
-	tempTable.SetModified(true)
-	return tempTable
+func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) (tbctx.TemporaryTableHandler, int64, bool) {
+	if s, ok := sctx.GetTemporaryTableSupport(); ok {
+		if h, ok := s.AddTemporaryTableToTxn(tblInfo); ok {
+			return h, s.GetTemporaryTableSizeLimit(), ok
+		}
+	}
+	return tbctx.TemporaryTableHandler{}, 0, false
 }
 
 // The size of a temporary table is calculated by accumulating the transaction size delta.
-func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transaction) {
-	txnSizeNow := txn.Size()
-	delta := txnSizeNow - txnSizeBefore
-
-	oldSize := t.GetSize()
-	newSize := oldSize + int64(delta)
-	t.SetSize(newSize)
+func handleTempTableSize(t tbctx.TemporaryTableHandler, txnSizeBefore int, txn kv.Transaction) {
+	t.UpdateTxnDeltaSize(txn.Size() - txnSizeBefore)
 }
 
-func checkTempTableSize(ctx table.MutateContext, tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error {
-	tmpTableSize := tmpTable.GetSize()
-	if tempTableData := ctx.GetSessionVars().TemporaryTableData; tempTableData != nil {
-		tmpTableSize += tempTableData.GetTableSize(tblInfo.ID)
+func checkTempTableSize(tmpTable tbctx.TemporaryTableHandler, sizeLimit int64) error {
+	if tmpTable.GetCommittedSize()+tmpTable.GetDirtySize() > sizeLimit {
+		return table.ErrTempTableFull.GenWithStackByArgs(tmpTable.Meta().Name.O)
 	}
-
-	if tmpTableSize > ctx.GetSessionVars().TMPTableSize {
-		return table.ErrTempTableFull.GenWithStackByArgs(tblInfo.Name.O)
-	}
-
 	return nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	// TODO: optimize the allocation (and calculation) of opt.
+	opt := table.NewAddRecordOpt(opts...)
+	return t.addRecord(sctx, r, opt)
+}
+
+func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *table.AddRecordOpt) (recordID kv.Handle, err error) {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return nil, err
 	}
-
-	// TODO: optimize the allocation (and calculation) of opt.
-	var opt table.AddRecordOpt
-	for _, fn := range opts {
-		fn.ApplyOn(&opt)
-	}
-
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
-		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+		if tmpTable, sizeLimit, ok := addTemporaryTable(sctx, m); ok {
+			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return nil, err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
@@ -838,11 +811,12 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			// The reserved ID could be used in the future within this statement, by the
 			// following AddRecord() operation.
 			// Make the IDs continuous benefit for the performance of TiKV.
-			sessVars := sctx.GetSessionVars()
-			stmtCtx := sessVars.StmtCtx
-			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
-			if err != nil {
-				return nil, err
+			if reserved, ok := sctx.GetReservedRowIDAlloc(); ok {
+				var baseRowID, maxRowID int64
+				if baseRowID, maxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID)); err != nil {
+					return nil, err
+				}
+				reserved.Reset(baseRowID, maxRowID)
 			}
 		}
 
@@ -914,8 +888,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 	}
 	// check data constraint
-	err = t.CheckRowConstraint(sctx, r)
-	if err != nil {
+	if err = table.CheckRowConstraintWithDatum(evalCtx, t.WritableConstraint(), r); err != nil {
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
@@ -978,17 +951,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		return nil, err
 	}
 
-	var createIdxOpts []table.CreateIdxOptFunc
-	if len(opts) > 0 {
-		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
-		for _, fn := range opts {
-			if raw, ok := fn.(table.CreateIdxOptFunc); ok {
-				createIdxOpts = append(createIdxOpts, raw)
-			}
-		}
-	}
 	// Insert new entries into indices.
-	h, err := t.addIndices(sctx, recordID, r, txn, createIdxOpts)
+	h, err := t.addIndices(sctx, recordID, r, txn, opt.GetCreateIdxOpt())
 	if err != nil {
 		return h, err
 	}
@@ -1004,27 +968,26 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 
 	memBuffer.Release(sh)
 
-	if shouldWriteBinlog(sctx, t.meta) {
+	binlogSupport, shouldWriteBinlog := getBinlogSupport(sctx, t.meta)
+	if shouldWriteBinlog {
 		// For insert, TiDB and Binlog can use same row and schema.
-		err = t.addInsertBinlog(sctx, recordID, encodeRowBuffer)
+		err = t.addInsertBinlog(sctx, binlogSupport, recordID, encodeRowBuffer)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if sessVars.TxnCtx == nil {
-		return recordID, nil
-	}
-
-	colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
-	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(tc, r[id])
-		if err != nil {
-			continue
+	if s, ok := sctx.GetStatisticsSupport(); ok {
+		colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
+		for id, col := range t.Cols() {
+			size, err := codec.EstimateValueSize(tc, r[id])
+			if err != nil {
+				continue
+			}
+			colSizeBuffer.AddColSizeDelta(col.ID, int64(size-1))
 		}
-		colSizeBuffer.AddColSizeDelta(col.ID, int64(size-1))
+		s.UpdatePhysicalTableDelta(t.physicalTableID, 1, 1, colSizeBuffer)
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSizeBuffer)
 	return recordID, nil
 }
 
@@ -1047,7 +1010,7 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 }
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
-func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opts []table.CreateIdxOptFunc) (kv.Handle, error) {
+func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opt *table.CreateIdxOpt) (kv.Handle, error) {
 	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
@@ -1077,7 +1040,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
-		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
+		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
 			}
@@ -1233,8 +1196,8 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	}
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
-		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
-			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
+		if tmpTable, sizeLimit, ok := addTemporaryTable(ctx, m); ok {
+			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
@@ -1271,7 +1234,8 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	}
 	memBuffer.Release(sh)
 
-	if shouldWriteBinlog(ctx, t.meta) {
+	binlogSupport, shouldWriteBinlog := getBinlogSupport(ctx, t.meta)
+	if shouldWriteBinlog {
 		cols := t.DeletableCols()
 		colIDs := make([]int64, 0, len(cols)+1)
 		for _, col := range cols {
@@ -1290,30 +1254,29 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		} else {
 			binlogRow = r
 		}
-		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
-	}
-	if ctx.GetSessionVars().TxnCtx == nil {
-		return nil
+		err = t.addDeleteBinlog(ctx, binlogSupport, binlogRow, colIDs)
 	}
 
-	// a reusable buffer to save malloc
-	// Note: The buffer should not be referenced or modified outside this function.
-	// It can only act as a temporary buffer for the current function call.
-	colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
-	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(tc, r[id])
-		if err != nil {
-			continue
+	if s, ok := ctx.GetStatisticsSupport(); ok {
+		// a reusable buffer to save malloc
+		// Note: The buffer should not be referenced or modified outside this function.
+		// It can only act as a temporary buffer for the current function call.
+		colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
+		for id, col := range t.Cols() {
+			size, err := codec.EstimateValueSize(tc, r[id])
+			if err != nil {
+				continue
+			}
+			colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
 		}
-		colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
+		s.UpdatePhysicalTableDelta(
+			t.physicalTableID, -1, 1, colSizeBuffer,
+		)
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(
-		t.physicalTableID, -1, 1, colSizeBuffer,
-	)
 	return err
 }
 
-func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, encodeRowBuffer *tbctx.EncodeRowBuffer) error {
+func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, h kv.Handle, encodeRowBuffer *tbctx.EncodeRowBuffer) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	handleData, err := h.Data()
@@ -1330,13 +1293,13 @@ func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, enco
 		return err
 	}
 	bin := append(pk, value...)
-	mutation := ctx.GetBinlogMutation(t.tableID)
+	mutation := support.GetBinlogMutation(t.tableID)
 	mutation.InsertedRows = append(mutation.InsertedRows, bin)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
 	return nil
 }
 
-func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, oldRow, newRow []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, oldRow, newRow []types.Datum, colIDs []int64) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	old, err := tablecodec.EncodeOldRow(loc, oldRow, colIDs, nil, nil)
@@ -1350,13 +1313,13 @@ func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, oldRow, newRow []
 		return err
 	}
 	bin := append(old, newVal...)
-	mutation := ctx.GetBinlogMutation(t.tableID)
+	mutation := support.GetBinlogMutation(t.tableID)
 	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Update)
 	return nil
 }
 
-func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, r []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, r []types.Datum, colIDs []int64) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	data, err := tablecodec.EncodeOldRow(loc, r, colIDs, nil, nil)
@@ -1364,7 +1327,7 @@ func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, r []types.Datum, 
 	if err != nil {
 		return err
 	}
-	mutation := ctx.GetBinlogMutation(t.tableID)
+	mutation := support.GetBinlogMutation(t.tableID)
 	mutation.DeletedRows = append(mutation.DeletedRows, data)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteRow)
 	return nil
@@ -1458,14 +1421,9 @@ func (t *TableCommon) removeRowIndex(ctx table.MutateContext, h kv.Handle, vals 
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
-	var opts []table.CreateIdxOptFunc
-	opts = append(opts, popts...)
-	if untouched {
-		opts = append(opts, table.IndexIsUntouched)
-	}
+func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
 	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
-	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
+	if _, err := idx.create(ctx, txn, vals, h, rsData, untouched, opt); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			tablecodec.TruncateIndexValues(t.meta, idx.Meta(), vals)
@@ -1604,11 +1562,10 @@ func GetColDefaultValue(ctx exprctx.BuildContext, col *table.Column, defaultVals
 func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (kv.IntHandle,
 	error) {
 	if mctx != nil {
-		if stmtCtx := mctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+		if reserved, ok := mctx.GetReservedRowIDAlloc(); ok {
 			// First try to alloc if the statement has reserved auto ID.
-			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
-				stmtCtx.BaseRowID++
-				return kv.IntHandle(stmtCtx.BaseRowID), nil
+			if rowID, ok := reserved.Consume(); ok {
+				return kv.IntHandle(rowID), nil
 			}
 		}
 	}
@@ -1638,7 +1595,7 @@ func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table
 			// shard = 0010000000000000000000000000000000000000000000000000000000000000
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
-		shard := mctx.GetSessionVars().GetCurrentShard(int(n))
+		shard := mctx.GetRowIDShardGenerator().GetCurrentShard(int(n))
 		base = shardFmt.Compose(shard, base)
 		maxID = shardFmt.Compose(shard, maxID)
 	}
@@ -1660,16 +1617,8 @@ func (t *TableCommon) Allocators(ctx table.AllocatorContext) autoid.Allocators {
 	if ctx == nil {
 		return t.allocs
 	}
-
-	// Use an independent allocator for global temporary tables.
-	if t.meta.TempTableType == model.TempTableGlobal {
-		if tbl := ctx.TxnRecordTempTable(t.meta); tbl != nil {
-			if alloc := tbl.GetAutoIDAllocator(); alloc != nil {
-				return autoid.NewAllocators(false, alloc)
-			}
-		}
-		// If the session is not in a txn, for example, in "show create table", use the original allocator.
-		// Otherwise the would be a nil pointer dereference.
+	if alloc, ok := ctx.AlternativeAllocators(t.meta); ok {
+		return alloc
 	}
 	return t.allocs
 }
@@ -1679,19 +1628,11 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-func shouldWriteBinlog(ctx table.MutateContext, tblInfo *model.TableInfo) bool {
-	failpoint.Inject("forceWriteBinlog", func() {
-		// Just to cover binlog related code in this package, since the `BinlogClient` is
-		// still nil, mutations won't be written to pump on commit.
-		failpoint.Return(true)
-	})
-	if !ctx.BinlogEnabled() {
-		return false
+func getBinlogSupport(ctx table.MutateContext, tblInfo *model.TableInfo) (tbctx.BinlogSupport, bool) {
+	if tblInfo.TempTableType != model.TempTableNone || ctx.InRestrictedSQL() {
+		return nil, false
 	}
-	if tblInfo.TempTableType != model.TempTableNone {
-		return false
-	}
-	return !ctx.InRestrictedSQL()
+	return ctx.GetBinlogSupport()
 }
 
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {

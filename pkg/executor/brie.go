@@ -796,7 +796,7 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *mode
 	originQueryString := gs.se.Value(sessionctx.QueryString)
 	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
 	gs.se.SetValue(sessionctx.QueryString, ConstructResultOfShowCreatePlacementPolicy(policy))
-	d := domain.GetDomain(gs.se).DDL()
+	d := domain.GetDomain(gs.se).DDLExecutor()
 	// the default behaviour is ignoring duplicated policy during restore.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }

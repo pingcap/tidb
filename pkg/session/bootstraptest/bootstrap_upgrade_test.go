@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -257,8 +256,8 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
-	dom.Close()
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -322,7 +321,6 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.SupportUpgradeHTTPOpVer, ver)
-	dom.Close()
 
 	// Start the upgrade test.
 	// Current cluster state is normal.
@@ -331,6 +329,8 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 	require.Equal(t, false, isUpgrading)
 	upgradeHandler := handler.NewClusterUpgradeHandler(store)
 	upgradeHandler.StartUpgrade()
+
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -419,24 +419,23 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table test.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			se := session.CreateSessionAndSetID(t, store)
 			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
 			ch <- struct{}{}
 			jobID = job.ID
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	go func() {
 		_, err = execute(context.Background(), seV, "alter table test.upgrade_tbl add index idx(a)")
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -501,8 +500,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table mysql.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			se := session.CreateSessionAndSetID(t, store)
 			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
@@ -512,8 +510,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 			job.AdminOperator = model.AdminCommandBySystem
 			jobID = job.ID
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	var once sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) {
 		if job != nil && job.ID == jobID {
@@ -525,9 +522,10 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -587,9 +585,9 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	}()
 
 	<-ch
-	dom.Close()
 	// Make sure upgrade is successful.
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -765,8 +763,8 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	ver, err := session.GetBootstrapVersion(seV)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
-	dom.Close()
 	startUpgrade(store)
+	dom.Close()
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()

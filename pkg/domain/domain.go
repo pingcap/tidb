@@ -142,11 +142,12 @@ type Domain struct {
 	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
+	ddlExecutor     ddl.Executor
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *sessionPool
+	sysSessionPool  util.SessionPool
 	exit            chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
@@ -165,7 +166,12 @@ type Domain struct {
 	// TODO: use Run for each process in future pr
 	wg            *util.WaitGroupEnhancedWrapper
 	statsUpdating atomicutil.Int32
-	cancelFns     struct {
+	// this is the parent context of DDL, and also used by other loops such as closestReplicaReadCheckLoop.
+	// there are other top level contexts in the domain, such as the ones used in
+	// InitDistTaskLoop and loadStatsWorker, domain only stores the cancelFns of them.
+	// TODO unify top level context.
+	ctx       context.Context
+	cancelFns struct {
 		mu  sync.Mutex
 		fns []context.CancelFunc
 	}
@@ -272,7 +278,7 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 // 3. currentSchemaVersion(before loading)
 // 4. the changed table IDs if it is not full load
 // 5. an error if any
-func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
+func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	beginTime := time.Now()
 	defer func() {
 		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
@@ -293,7 +299,6 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		schemaTs = 0
 	}
 
-	enableV2 := variable.SchemaCacheSize.Load() > 0
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -309,18 +314,18 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
-		if enableV2 == isV2 {
-			return is, true, 0, nil, nil
-		}
+		return is, true, 0, nil, nil
 	}
 
-	var isV1V2Switch bool
+	var oldIsV2 bool
+	enableV2 := variable.SchemaCacheSize.Load() > 0
 	currentSchemaVersion := int64(0)
 	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
-		isV2, _ := infoschema.IsV2(oldInfoSchema)
-		isV1V2Switch = enableV2 != isV2
+		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
 	}
+	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
+	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
 
 	// TODO: tryLoadSchemaDiffs has potential risks of failure. And it becomes worse in history reading cases.
 	// It is only kept because there is no alternative diff/partial loading solution.
@@ -330,8 +335,8 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 3. There are less 100 diffs.
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
-	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
+	if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
+		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(builder, m, currentSchemaVersion, neededSchemaVersion, startTS)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
@@ -367,11 +372,11 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
-	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	is := newISBuilder.Build(startTS)
+	is := builder.Build(startTS)
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
 		zap.Bool("isV2", isV2),
@@ -483,7 +488,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		var tables []*model.TableInfo
 		var err error
 		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
-			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndSpecialAttributeInfo(m, di.ID)
+			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndTheMustLoadedTableInfo(m, di.ID)
 			if err != nil {
 				done <- err
 				return
@@ -503,7 +508,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo)
 			}
 		}
-		di.Tables = make([]*model.TableInfo, 0, len(tables))
+		diTables := make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
 			if tbl.State != model.StatePublic {
 				// schema is not public, can't be used outside.
@@ -521,17 +526,28 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 				// haven't been deleted from the repair table list.
 				// Since the repairment is done and table is visible, we should load it.
 			}
-			di.Tables = append(di.Tables, tbl)
+			diTables = append(diTables, tbl)
 		}
+		di.Deprecated.Tables = diTables
 	}
 	done <- nil
+}
+
+// shouldUseV2 decides whether to use infoschema v2.
+// When loading snapshot, infoschema should keep the same as before to avoid v1/v2 switch.
+// Otherwise, it is decided by enabledV2.
+func shouldUseV2(enableV2 bool, oldIsV2 bool, isSnapshot bool) (useV2 bool, isV1V2Switch bool) {
+	if isSnapshot {
+		return oldIsV2, false
+	}
+	return enableV2, enableV2 != oldIsV2
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+func (do *Domain) tryLoadSchemaDiffs(builder *infoschema.Builder, m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -548,17 +564,35 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
+
+	failpoint.Inject("MockTryLoadDiffError", func(val failpoint.Value) {
+		switch val.(string) {
+		case "exchangepartition":
+			if diffs[0].Type == model.ActionExchangeTablePartition {
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+			}
+		case "renametable":
+			if diffs[0].Type == model.ActionRenameTable {
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+			}
+		case "dropdatabase":
+			if diffs[0].Type == model.ActionDropSchema {
+				failpoint.Return(nil, nil, nil, errors.New("mock error"))
+			}
+		}
+	})
+
+	err := builder.InitWithOldInfoSchema(do.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
+
 	builder.WithStore(do.store).SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
 		if diff.RegenerateSchemaMap {
-			do.infoCache.Data = infoschema.NewData()
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		ids, err := builder.ApplyDiff(m, diff)
@@ -601,7 +635,7 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
 		return is, nil
 	}
-	is, _, _, _, err := do.loadInfoSchema(snapshotTS)
+	is, _, _, _, err := do.loadInfoSchema(snapshotTS, true)
 	infoschema_metrics.LoadSchemaCounterSnapshot.Inc()
 	return is, err
 }
@@ -633,9 +667,15 @@ func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
 }
 
+// DDLExecutor gets the ddl executor from domain.
+func (do *Domain) DDLExecutor() ddl.Executor {
+	return do.ddlExecutor
+}
+
 // SetDDL sets DDL to domain, it's only used in tests.
-func (do *Domain) SetDDL(d ddl.DDL) {
+func (do *Domain) SetDDL(d ddl.DDL, executor ddl.Executor) {
 	do.ddl = d
+	do.ddlExecutor = executor
 }
 
 // InfoSyncer gets infoSyncer from domain.
@@ -696,12 +736,12 @@ func (do *Domain) Reload() error {
 	}
 
 	version := ver.Ver
-	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version)
+	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version, false)
 	if err != nil {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
 			// use the latest available version to create domain
 			version--
-			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
+			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version, false)
 		}
 	}
 	if err != nil {
@@ -1181,9 +1221,21 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store:             store,
-		exit:              make(chan struct{}),
-		sysSessionPool:    newSessionPool(capacity, factory),
+		store: store,
+		exit:  make(chan struct{}),
+		sysSessionPool: util.NewSessionPool(
+			capacity, factory,
+			func(r pools.Resource) {
+				_, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				infosync.StoreInternalSession(r)
+			},
+			func(r pools.Resource) {
+				_, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				infosync.DeleteInternalSession(r)
+			},
+		),
 		statsLease:        statsLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
@@ -1235,12 +1287,19 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	return cli, err
 }
 
-// Init initializes a domain.
+// Init initializes a domain. after return, session can be used to do DMLs but not
+// DDLs which can be used after domain Start.
 func (do *Domain) Init(
 	ddlLease time.Duration,
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
-	ddlInjector func(ddl.DDL) *schematracker.Checker,
+	ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker,
 ) error {
+	// TODO there are many place set ddlLease to 0, remove them completely, we want
+	//  UT and even local uni-store to run similar code path as normal.
+	if ddlLease == 0 {
+		ddlLease = time.Second
+	}
+
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
@@ -1269,18 +1328,8 @@ func (do *Domain) Init(
 		}
 	}
 
-	// TODO: Here we create new sessions with sysFac in DDL,
-	// which will use `do` as Domain instead of call `domap.Get`.
-	// That's because `domap.Get` requires a lock, but before
-	// we initialize Domain finish, we can't require that again.
-	// After we remove the lazy logic of creating Domain, we
-	// can simplify code here.
-	sysFac := func() (pools.Resource, error) {
-		return sysExecutorFactory(do)
-	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
-
 	ctx, cancelFunc := context.WithCancel(context.Background())
+	do.ctx = ctx
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
@@ -1291,7 +1340,8 @@ func (do *Domain) Init(
 	}
 	callback = newCallbackFunc(do)
 	d := do.ddl
-	do.ddl = ddl.NewDDL(
+	eBak := do.ddlExecutor
+	do.ddl, do.ddlExecutor = ddl.NewDDL(
 		ctx,
 		ddl.WithEtcdClient(do.etcdClient),
 		ddl.WithStore(do.store),
@@ -1305,12 +1355,14 @@ func (do *Domain) Init(
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			do.ddl = d
+			do.ddlExecutor = eBak
 		}
 	})
 	if ddlInjector != nil {
-		checker := ddlInjector(do.ddl)
+		checker := ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
 		checker.CreateTestDB(nil)
 		do.ddl = checker
+		do.ddlExecutor = checker
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
@@ -1343,9 +1395,6 @@ func (do *Domain) Init(
 				}
 				do.isLostConnectionToPD.Store(0)
 			}
-
-			do.wg.Add(1)
-			go do.serverIDKeeper()
 		} else {
 			// set serverID for standalone deployment to enable 'KILL'.
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
@@ -1367,19 +1416,6 @@ func (do *Domain) Init(
 		return err
 	}
 
-	// step 4: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
-	err = do.ddl.Start(sysCtxPool)
-	if err != nil {
-		return err
-	}
-	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
-
-	// TODO there are many place set ddlLease to 0, remove them completely, we want
-	//  UT and even local uni-store to run similar code path as normal.
-	if ddlLease == 0 {
-		ddlLease = time.Second
-	}
-
 	sub := time.Since(startReloadTime)
 	// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
 	// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
@@ -1390,10 +1426,39 @@ func (do *Domain) Init(
 			return err
 		}
 	}
+	return nil
+}
+
+// Start starts the domain. After start, DDLs can be executed using session, see
+// Init also.
+func (do *Domain) Start() error {
+	gCfg := config.GetGlobalConfig()
+	if gCfg.EnableGlobalKill && do.etcdClient != nil {
+		do.wg.Add(1)
+		go do.serverIDKeeper()
+	}
+
+	// TODO: Here we create new sessions with sysFac in DDL,
+	// which will use `do` as Domain instead of call `domap.Get`.
+	// That's because `domap.Get` requires a lock, but before
+	// we initialize Domain finish, we can't require that again.
+	// After we remove the lazy logic of creating Domain, we
+	// can simplify code here.
+	sysFac := func() (pools.Resource, error) {
+		return do.sysExecutorFactory(do)
+	}
+	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
+
+	// start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
+	err := do.ddl.Start(sysCtxPool)
+	if err != nil {
+		return err
+	}
+	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
-		do.loadSchemaInLoop(ctx, ddlLease)
+		do.loadSchemaInLoop(do.ctx, do.ddl.GetLease())
 	}, "loadSchemaInLoop")
 	do.wg.Run(do.mdlCheckLoop, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
@@ -1401,16 +1466,18 @@ func (do *Domain) Init(
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
+	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
+	pdCli := do.GetPDClient()
 	if pdCli != nil {
 		do.wg.Run(func() {
-			do.closestReplicaReadCheckLoop(ctx, pdCli)
+			do.closestReplicaReadCheckLoop(do.ctx, pdCli)
 		}, "closestReplicaReadCheckLoop")
 	}
 
-	err = do.initLogBackup(ctx, pdCli)
+	err = do.initLogBackup(do.ctx, pdCli)
 	if err != nil {
 		return err
 	}
@@ -1671,84 +1738,8 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 	}
 }
 
-type sessionPool struct {
-	resources chan pools.Resource
-	factory   pools.Factory
-	mu        struct {
-		sync.RWMutex
-		closed bool
-	}
-}
-
-func newSessionPool(capacity int, factory pools.Factory) *sessionPool {
-	return &sessionPool{
-		resources: make(chan pools.Resource, capacity),
-		factory:   factory,
-	}
-}
-
-func (p *sessionPool) Get() (resource pools.Resource, err error) {
-	var ok bool
-	select {
-	case resource, ok = <-p.resources:
-		if !ok {
-			err = errors.New("session pool closed")
-		}
-	default:
-		resource, err = p.factory()
-	}
-
-	// Put the internal session to the map of SessionManager
-	failpoint.Inject("mockSessionPoolReturnError", func() {
-		err = errors.New("mockSessionPoolReturnError")
-	})
-
-	if nil == err {
-		_, ok = resource.(sessionctx.Context)
-		intest.Assert(ok)
-		infosync.StoreInternalSession(resource)
-	}
-
-	return
-}
-
-func (p *sessionPool) Put(resource pools.Resource) {
-	_, ok := resource.(sessionctx.Context)
-	intest.Assert(ok)
-
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	// Delete the internal session to the map of SessionManager
-	infosync.DeleteInternalSession(resource)
-	if p.mu.closed {
-		resource.Close()
-		return
-	}
-
-	select {
-	case p.resources <- resource:
-	default:
-		resource.Close()
-	}
-}
-
-func (p *sessionPool) Close() {
-	p.mu.Lock()
-	if p.mu.closed {
-		p.mu.Unlock()
-		return
-	}
-	p.mu.closed = true
-	close(p.resources)
-	p.mu.Unlock()
-
-	for r := range p.resources {
-		r.Close()
-	}
-}
-
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *sessionPool {
+func (do *Domain) SysSessionPool() util.SessionPool {
 	return do.sysSessionPool
 }
 
@@ -2241,7 +2232,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
 	if err != nil {
 		return err
 	}
@@ -2318,7 +2309,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.NextConnID, do.ReleaseConnID)
 	if err != nil {
 		return err
 	}
@@ -2741,12 +2732,11 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 	}
 
 	// update locally
-	sysSessionPool := do.SysSessionPool()
-	ctx, err := sysSessionPool.Get()
+	ctx, err := do.sysSessionPool.Get()
 	if err != nil {
 		return err
 	}
-	defer sysSessionPool.Put(ctx)
+	defer do.sysSessionPool.Put(ctx)
 	return do.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 }
 
@@ -2811,12 +2801,6 @@ func (do *Domain) ReleaseConnID(connID uint64) {
 	do.connIDAllocator.Release(connID)
 }
 
-// GetAutoAnalyzeProcID returns processID for auto analyze
-// TODO: support IDs for concurrent auto-analyze
-func (do *Domain) GetAutoAnalyzeProcID() uint64 {
-	return do.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
-}
-
 const (
 	serverIDEtcdPath               = "/tidb/server_id"
 	refreshServerIDRetryCnt        = 3
@@ -2825,9 +2809,6 @@ const (
 	retrieveServerIDSessionTimeout = 10 * time.Second
 
 	acquire32BitsServerIDRetryCnt = 3
-
-	// reservedConnXXX must be within [0, globalconn.ReservedCount)
-	reservedConnAnalyze = 0
 )
 
 var (
@@ -3132,8 +3113,10 @@ func (do *Domain) StopAutoAnalyze() {
 }
 
 // InitInstancePlanCache initializes the instance level plan cache for this Domain.
-func (do *Domain) InitInstancePlanCache(softMemLimit, hardMemLimit int64) {
-	do.instancePlanCache = NewInstancePlanCache(softMemLimit, hardMemLimit)
+func (do *Domain) InitInstancePlanCache() {
+	softLimit := variable.InstancePlanCacheTargetMemSize.Load()
+	hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
+	do.instancePlanCache = NewInstancePlanCache(softLimit, hardLimit)
 	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
 }
 
@@ -3154,6 +3137,15 @@ func (do *Domain) planCacheEvictTrigger() {
 	for {
 		select {
 		case <-ticker.C:
+			// update limits
+			softLimit := variable.InstancePlanCacheTargetMemSize.Load()
+			hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
+			curSoft, curHard := do.instancePlanCache.GetLimits()
+			if curSoft != softLimit || curHard != hardLimit {
+				do.instancePlanCache.SetLimits(softLimit, hardLimit)
+			}
+
+			// trigger the eviction
 			do.instancePlanCache.Evict()
 			// TODO: update the metrics
 		case <-do.exit:

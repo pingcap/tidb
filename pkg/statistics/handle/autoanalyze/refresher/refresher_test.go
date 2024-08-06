@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -32,9 +31,9 @@ import (
 )
 
 func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -84,9 +83,9 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 }
 
 func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -104,9 +103,9 @@ func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
 }
 
 func TestIgnoreNilOrPseudoStatsOfNonPartitionedTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -124,9 +123,9 @@ func TestIgnoreNilOrPseudoStatsOfNonPartitionedTable(t *testing.T) {
 }
 
 func TestIgnoreTinyTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 10
+	statistics.AutoAnalyzeMinCnt = 10
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -168,9 +167,9 @@ func TestIgnoreTinyTable(t *testing.T) {
 }
 
 func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -322,11 +321,11 @@ func insertFailedJobForPartitionWithStartTime(
 }
 
 func TestRebuildTableAnalysisJobQueue(t *testing.T) {
-	old := exec.AutoAnalyzeMinCnt
+	old := statistics.AutoAnalyzeMinCnt
 	defer func() {
-		exec.AutoAnalyzeMinCnt = old
+		statistics.AutoAnalyzeMinCnt = old
 	}()
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -399,7 +398,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Test Table not analyzed",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, unanalyzedColumns, unanalyzedIndices),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, unanalyzedColumns, unanalyzedIndices),
 				ColAndIdxExistenceMap: bothUnanalyzedMap,
 			},
 			autoAnalyzeRatio: 0.5,
@@ -408,7 +407,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Based on change percentage",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, (exec.AutoAnalyzeMinCnt+1)*2, analyzedColumns, analyzedIndices),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, analyzedColumns, analyzedIndices),
 				ColAndIdxExistenceMap: bothAnalyzedMap,
 				LastAnalyzeVersion:    1,
 			},
@@ -568,7 +567,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 					},
 					ColAndIdxExistenceMap: unanalyzedMap,
 				},
@@ -578,7 +577,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 					},
 					ColAndIdxExistenceMap: unanalyzedMap,
 				},
@@ -624,7 +623,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   1,
 					Name: "p0",
 				}: {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, (exec.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -646,7 +645,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   2,
 					Name: "p1",
 				}: {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -706,7 +705,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   1,
 					Name: "p0",
 				}: {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -728,7 +727,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					ID:   2,
 					Name: "p1",
 				}: {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -817,14 +816,14 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 			ID:   1,
 			Name: "p0",
 		}: {
-			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
+			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 		},
 		{
 			ID:   2,
 			Name: "p1",
 		}: {
-			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, exec.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
+			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
 				2: {
 					StatsVer: 2,
 				},

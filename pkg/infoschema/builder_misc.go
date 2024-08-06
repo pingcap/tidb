@@ -114,8 +114,17 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 	}
 
 	// Maintain foreign key reference information.
+	if b.enableV2 {
+		rs := b.ListTablesWithSpecialAttribute(ForeignKeysAttribute)
+		for _, db := range rs {
+			for _, tbl := range db.TableInfos {
+				info.addReferredForeignKeys(model.NewCIStr(db.DBName), tbl)
+			}
+		}
+		return
+	}
 	for _, di := range dbInfos {
-		for _, t := range di.Tables {
+		for _, t := range di.Deprecated.Tables {
 			b.infoSchema.addReferredForeignKeys(di.Name, t)
 		}
 	}

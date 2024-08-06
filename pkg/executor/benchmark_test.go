@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -278,7 +279,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *logicalop.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
 	win := new(core.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
@@ -476,8 +477,8 @@ func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 		ast.AggFuncBitXor,
 	}
 	numFuncs := []int{1, 5}
-	frames := []*core.WindowFrame{
-		{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{Type: ast.CurrentRow}},
+	frames := []*logicalop.WindowFrame{
+		{Type: ast.Rows, Start: &logicalop.FrameBound{UnBounded: true}, End: &logicalop.FrameBound{Type: ast.CurrentRow}},
 	}
 	sortTypes := []bool{false, true}
 	concs := []int{1, 2, 3, 4, 5, 6}
@@ -513,7 +514,7 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 func baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFunc := ast.AggFuncMax
-	frame := &core.WindowFrame{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{UnBounded: true}}
+	frame := &logicalop.WindowFrame{Type: ast.Rows, Start: &logicalop.FrameBound{UnBounded: true}, End: &logicalop.FrameBound{UnBounded: true}}
 	cas := testutil.DefaultWindowTestCase()
 	cas.Rows = 10000
 	cas.Ndv = 10
@@ -552,10 +553,10 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 	}
 	row := 100000
 	ndv := 100
-	frame := &core.WindowFrame{
+	frame := &logicalop.WindowFrame{
 		Type:  frameType,
-		Start: &core.FrameBound{Type: ast.Preceding, Num: 10},
-		End:   &core.FrameBound{Type: ast.Following, Num: 10},
+		Start: &logicalop.FrameBound{Type: ast.Preceding, Num: 10},
+		End:   &logicalop.FrameBound{Type: ast.Following, Num: 10},
 	}
 	for _, windowFunc := range windowFuncs {
 		cas := testutil.DefaultWindowTestCase()

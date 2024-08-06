@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -583,9 +584,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
-	// Special handle for "select for update statement" in pessimistic transaction.
-	if isPessimistic && a.isSelectForUpdate {
-		return a.handlePessimisticSelectForUpdate(ctx, e)
+	if a.isSelectForUpdate {
+		if sctx.GetSessionVars().UseLowResolutionTSO() {
+			return nil, errors.New("can not execute select for update statement when 'tidb_low_resolution_tso' is set")
+		}
+		// Special handle for "select for update statement" in pessimistic transaction.
+		if isPessimistic {
+			return a.handlePessimisticSelectForUpdate(ctx, e)
+		}
 	}
 
 	a.prepareFKCascadeContext(e)
@@ -847,7 +853,7 @@ func isNoResultPlan(p base.Plan) bool {
 	// the Projection has two expressions and two columns in the schema, but we should
 	// not return the result of the two expressions.
 	switch raw := p.(type) {
-	case *plannercore.LogicalProjection:
+	case *logicalop.LogicalProjection:
 		if raw.CalculateNoDelay {
 			return true
 		}
@@ -985,8 +991,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
-		lowResolutionTSO := sctx.GetSessionVars().LowResolutionTSO
-		if lowResolutionTSO {
+		if sctx.GetSessionVars().UseLowResolutionTSO() {
 			return nil, errors.New("can not execute write statement when 'tidb_low_resolution_tso' is set")
 		}
 	}

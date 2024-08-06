@@ -414,16 +414,12 @@ type PlanCacheValue struct {
 // Since PlanCacheValue.Plan is not read-only, to solve the concurrency problem when sharing the same PlanCacheValue
 // across multiple sessions, we need to clone the PlanCacheValue for each session.
 func (v *PlanCacheValue) CloneForInstancePlanCache(ctx context.Context, newCtx base.PlanContext) (*PlanCacheValue, bool) {
-	phyPlan, ok := v.Plan.(base.PhysicalPlan)
+	clonedPlan, ok := v.Plan.CloneForPlanCache(newCtx)
 	if !ok {
 		return nil, false
 	}
-	clonedPlan, err := phyPlan.Clone(newCtx)
-	if err != nil {
-		return nil, false
-	}
 	if intest.InTest && ctx.Value(PlanCacheKeyTestClone{}) != nil {
-		ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(phyPlan, clonedPlan)
+		ctx.Value(PlanCacheKeyTestClone{}).(func(plan, cloned base.Plan))(v.Plan, clonedPlan)
 	}
 	cloned := new(PlanCacheValue)
 	*cloned = *v
@@ -519,16 +515,6 @@ func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 // PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
 // Don't forget to reset this executor when the prior plan is invalid.
 type PointGetExecutorCache struct {
-	// Special (or tricky) optimization for PointGet Plan.
-	// Store the PointGet Plan in PlanCacheStmt directly to bypass the LRU Cache to gain some performance improvement.
-	// There is around 3% improvement, BenchmarkPreparedPointGet: 6450 ns/op --> 6250 ns/op.
-	pointPlan      base.Plan
-	pointPlanHints *hint.StmtHints
-	columnNames    types.NameSlice
-
-	// the cache key for this statement, have to check whether the cache key changes before reusing this plan for safety.
-	planCacheKey string
-
 	ColumnInfos any
 	// Executor is only used for point get scene.
 	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
@@ -21,15 +21,16 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
 	Offset           uint64
@@ -40,7 +41,7 @@ type LogicalLimit struct {
 
 // Init initializes LogicalLimit.
 func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
 	return &p
 }
 
@@ -51,7 +52,7 @@ func (p *LogicalLimit) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	} else {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
@@ -132,7 +133,7 @@ func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	p.SetStats(deriveLimitStats(childStats[0], float64(p.Count)))
+	p.SetStats(util.DeriveLimitStats(childStats[0], float64(p.Count)))
 	return p.StatsInfo(), nil
 }
 
@@ -142,7 +143,7 @@ func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return getLimitPhysicalPlans(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalLimit(p, prop)
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
@@ -176,4 +177,14 @@ func (p *LogicalLimit) convertToTopN(opt *optimizetrace.LogicalOptimizeOp) *Logi
 	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, PreferLimitToCop: p.PreferLimitToCop}.Init(p.SCtx(), p.QueryBlockOffset())
 	appendConvertTopNTraceStep(p, topn, opt)
 	return topn
+}
+
+func appendConvertTopNTraceStep(p base.LogicalPlan, topN *LogicalTopN, opt *optimizetrace.LogicalOptimizeOp) {
+	reason := func() string {
+		return ""
+	}
+	action := func() string {
+		return fmt.Sprintf("%v_%v is converted into %v_%v", p.TP(), p.ID(), topN.TP(), topN.ID())
+	}
+	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
 }

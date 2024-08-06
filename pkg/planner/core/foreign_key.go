@@ -186,8 +186,10 @@ func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 			fkChecks = append(fkChecks, fkCheck)
 		}
 	}
-	p.FKChecks = fkChecks
-	p.FKCascades = fkCascades
+	if len(fkChecks) > 0 || len(fkCascades) > 0 {
+		p.FKChecks = fkChecks
+		p.FKCascades = fkCascades
+	}
 	return nil
 }
 
@@ -254,8 +256,10 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 			fkChecks[tid] = append(fkChecks[tid], childFKChecks...)
 		}
 	}
-	updt.FKChecks = fkChecks
-	updt.FKCascades = fkCascades
+	if len(fkChecks) > 0 || len(fkCascades) > 0 {
+		updt.FKChecks = fkChecks
+		updt.FKCascades = fkCascades
+	}
 	return nil
 }
 
@@ -285,8 +289,10 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 			}
 		}
 	}
-	del.FKChecks = fkChecks
-	del.FKCascades = fkCascades
+	if len(fkChecks) > 0 || len(fkCascades) > 0 {
+		del.FKChecks = fkChecks
+		del.FKCascades = fkCascades
+	}
 	return nil
 }
 

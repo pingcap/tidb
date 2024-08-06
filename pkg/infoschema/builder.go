@@ -546,9 +546,9 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 	b.infoSchema.delSchema(di)
 
 	// Copy the sortedTables that contain the table we are going to drop.
-	tableIDs := make([]int64, 0, len(di.Tables))
-	bucketIdxMap := make(map[int]struct{}, len(di.Tables))
-	for _, tbl := range di.Tables {
+	tableIDs := make([]int64, 0, len(di.Deprecated.Tables))
+	bucketIdxMap := make(map[int]struct{}, len(di.Deprecated.Tables))
+	for _, tbl := range di.Deprecated.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 		// TODO: If the table ID doesn't exist.
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
@@ -707,7 +707,7 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 
 	newTbl, ok := b.infoSchema.TableByID(tableID)
 	if ok {
-		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
+		dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, newTbl.Meta())
 	}
 	return affected, nil
 }
@@ -768,17 +768,19 @@ func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, t
 }
 
 func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64) {
-	for i, tblInfo := range dbInfo.Tables {
+	tables := dbInfo.Deprecated.Tables
+	for i, tblInfo := range tables {
 		if tblInfo.ID == tableID {
-			if i == len(dbInfo.Tables)-1 {
-				dbInfo.Tables = dbInfo.Tables[:i]
+			if i == len(tables)-1 {
+				tables = tables[:i]
 			} else {
-				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
+				tables = append(tables[:i], tables[i+1:]...)
 			}
 			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break
 		}
 	}
+	dbInfo.Deprecated.Tables = tables
 }
 
 // Build builds and returns the built infoschema.
@@ -793,12 +795,12 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
-func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) {
+func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
 	isV2, _ := IsV2(oldSchema)
 	if b.enableV2 != isV2 {
-		return nil, errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
+		return errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
 	}
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
@@ -816,7 +818,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
-	return b, nil
+	return nil
 }
 
 // getSchemaAndCopyIfNecessary creates a new schemaTables instance when a table in the database has changed.
@@ -858,7 +860,7 @@ func (b *Builder) sortAllTablesByID() {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) error {
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
@@ -866,21 +868,40 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.initMisc(dbInfos, policies, resourceGroups)
 
+	if b.enableV2 {
+		// We must not clear the historial versions like b.infoData = NewData(), because losing
+		// the historial versions would cause applyDiff get db not exist error and fail, then
+		// infoschema reloading retries with full load every time.
+		// See https://github.com/pingcap/tidb/issues/53442
+		//
+		// We must reset it, otherwise the stale tables remain and cause bugs later.
+		// For example, schema version 59:
+		//         107: t1
+		//         112: t2 (partitions p0=113, p1=114, p2=115)
+		// operation: alter table t2 exchange partition p0 with table t1
+		// schema version 60 if we do not reset:
+		//         107: t1   <- stale
+		//         112: t2 (partition p0=107, p1=114, p2=115)
+		//         113: t1
+		// See https://github.com/pingcap/tidb/issues/54796
+		b.infoData.resetBeforeFullLoad(schemaVersion)
+	}
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	b.sortAllTablesByID()
 
-	return b, nil
+	return nil
 }
 
 func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
@@ -908,9 +929,9 @@ type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
-		tables: make(map[string]table.Table, len(di.Tables)),
+		tables: make(map[string]table.Table, len(di.Deprecated.Tables)),
 	}
-	for _, t := range di.Tables {
+	for _, t := range di.Deprecated.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
@@ -987,18 +1008,18 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
+func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
 	builder := &Builder{
 		Requirement:  r,
 		infoschemaV2: NewInfoSchemaV2(r, infoData),
 		dirtyDB:      make(map[string]bool),
 		factory:      factory,
 		infoData:     infoData,
+		enableV2:     useV2,
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
 	if schemaCacheSize > 0 {
 		infoData.tableCache.SetCapacity(schemaCacheSize)
-		builder.enableV2 = true
 	}
 	return builder
 }

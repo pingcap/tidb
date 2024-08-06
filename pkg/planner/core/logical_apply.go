@@ -88,7 +88,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	if err != nil {
 		return nil, err
 	}
-	addConstOneForEmptyProjection(la.Children()[1])
 
 	la.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(la.Children()[1], la.Children()[0].Schema())
 	for _, col := range la.CorCols {
@@ -100,7 +99,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	if err != nil {
 		return nil, err
 	}
-	addConstOneForEmptyProjection(la.Children()[0])
 	la.mergeSchema()
 	return la, nil
 }

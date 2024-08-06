@@ -230,7 +230,7 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 
 // Column represents a column.
 type Column struct {
-	RetType *types.FieldType
+	RetType *types.FieldType `plan-cache-clone:"shallow"`
 	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
@@ -517,6 +517,10 @@ func (col *Column) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
+	if col.hashcode != nil {
+		newCol.hashcode = make([]byte, len(col.hashcode))
+		copy(newCol.hashcode, col.hashcode)
+	}
 	return &newCol
 }
 

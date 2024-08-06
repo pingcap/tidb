@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -25,28 +26,28 @@ import (
 var (
 	_ base.LogicalPlan = &LogicalJoin{}
 	_ base.LogicalPlan = &LogicalAggregation{}
-	_ base.LogicalPlan = &LogicalProjection{}
+	_ base.LogicalPlan = &logicalop.LogicalProjection{}
 	_ base.LogicalPlan = &LogicalSelection{}
 	_ base.LogicalPlan = &LogicalApply{}
-	_ base.LogicalPlan = &LogicalMaxOneRow{}
-	_ base.LogicalPlan = &LogicalTableDual{}
+	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
+	_ base.LogicalPlan = &logicalop.LogicalTableDual{}
 	_ base.LogicalPlan = &DataSource{}
 	_ base.LogicalPlan = &TiKVSingleGather{}
 	_ base.LogicalPlan = &LogicalTableScan{}
 	_ base.LogicalPlan = &LogicalIndexScan{}
 	_ base.LogicalPlan = &LogicalUnionAll{}
-	_ base.LogicalPlan = &LogicalSort{}
+	_ base.LogicalPlan = &logicalop.LogicalSort{}
 	_ base.LogicalPlan = &LogicalLock{}
-	_ base.LogicalPlan = &LogicalLimit{}
-	_ base.LogicalPlan = &LogicalWindow{}
+	_ base.LogicalPlan = &logicalop.LogicalLimit{}
+	_ base.LogicalPlan = &logicalop.LogicalWindow{}
 	_ base.LogicalPlan = &LogicalExpand{}
 	_ base.LogicalPlan = &LogicalUnionScan{}
-	_ base.LogicalPlan = &LogicalMemTable{}
-	_ base.LogicalPlan = &LogicalShow{}
-	_ base.LogicalPlan = &LogicalShowDDLJobs{}
+	_ base.LogicalPlan = &logicalop.LogicalMemTable{}
+	_ base.LogicalPlan = &logicalop.LogicalShow{}
+	_ base.LogicalPlan = &logicalop.LogicalShowDDLJobs{}
 	_ base.LogicalPlan = &LogicalCTE{}
-	_ base.LogicalPlan = &LogicalCTETable{}
-	_ base.LogicalPlan = &LogicalSequence{}
+	_ base.LogicalPlan = &logicalop.LogicalCTETable{}
+	_ base.LogicalPlan = &logicalop.LogicalSequence{}
 )
 
 // ExtractNotNullFromConds extracts not-null columns from conditions.

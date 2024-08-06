@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -152,8 +153,17 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
-	names  types.NameSlice
+	names  types.NameSlice `plan-cache-clone:"shallow"`
 	baseimpl.Plan
+}
+
+// CloneWithNewCtx clones the baseSchemaProducer with new context.
+func (s *baseSchemaProducer) CloneWithNewCtx(newCtx base.PlanContext) *baseSchemaProducer {
+	cloned := new(baseSchemaProducer)
+	cloned.Plan = *s.Plan.CloneWithNewCtx(newCtx)
+	cloned.schema = s.schema.Clone()
+	cloned.names = s.names
+	return cloned
 }
 
 // OutputNames returns the outputting names of each column.
@@ -211,9 +221,9 @@ func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expressio
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
 	if joinType == LeftOuterJoin {
-		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == RightOuterJoin {
-		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
 }
@@ -231,9 +241,9 @@ func BuildPhysicalJoinSchema(joinType JoinType, join base.PhysicalPlan) *express
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
 	if joinType == LeftOuterJoin {
-		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == RightOuterJoin {
-		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
 }

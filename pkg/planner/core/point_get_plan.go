@@ -22,7 +22,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -72,18 +71,25 @@ const GlobalWithoutColumnPos = -1
 // This plan is much faster to build and to execute because it avoids the optimization and coprocessor cost.
 type PointGetPlan struct {
 	baseimpl.Plan
+
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []base.PhysicalPlan
+	// explicit partition selection
+	PartitionNames []model.CIStr
+
 	dbName           string
 	schema           *expression.Schema
-	TblInfo          *model.TableInfo
-	IndexInfo        *model.IndexInfo
+	TblInfo          *model.TableInfo `plan-cache-clone:"shallow"`
+	IndexInfo        *model.IndexInfo `plan-cache-clone:"shallow"`
 	PartitionIdx     *int
 	Handle           kv.Handle
 	HandleConstant   *expression.Constant
-	handleFieldType  *types.FieldType
+	handleFieldType  *types.FieldType `plan-cache-clone:"shallow"`
 	HandleColOffset  int
 	IndexValues      []types.Datum
 	IndexConstants   []*expression.Constant
-	ColsFieldType    []*types.FieldType
+	ColsFieldType    []*types.FieldType `plan-cache-clone:"shallow"`
 	IdxCols          []*expression.Column
 	IdxColLens       []int
 	AccessConditions []expression.Expression
@@ -91,23 +97,17 @@ type PointGetPlan struct {
 	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
-	outputNames      []*types.FieldName
+	outputNames      []*types.FieldName `plan-cache-clone:"shallow"`
 	LockWaitTime     int64
-	Columns          []*model.ColumnInfo
+	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost             float64
 
 	// required by cost model
 	planCostInit bool
 	planCost     float64
-	planCostVer2 costusage.CostVer2
+	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
-
-	// probeParents records the IndexJoins and Applys with this operator in their inner children.
-	// Please see comments in PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
-	// explicit partition selection
-	PartitionNames []model.CIStr
 }
 
 // GetEstRowCountForDisplay implements PhysicalPlan interface.
@@ -424,16 +424,22 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 type BatchPointGetPlan struct {
 	baseSchemaProducer
 
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []base.PhysicalPlan
+	// explicit partition selection
+	PartitionNames []model.CIStr
+
 	ctx              base.PlanContext
 	dbName           string
-	TblInfo          *model.TableInfo
-	IndexInfo        *model.IndexInfo
+	TblInfo          *model.TableInfo `plan-cache-clone:"shallow"`
+	IndexInfo        *model.IndexInfo `plan-cache-clone:"shallow"`
 	Handles          []kv.Handle
-	HandleType       *types.FieldType
+	HandleType       *types.FieldType       `plan-cache-clone:"shallow"`
 	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*expression.Constant // record all Parameters for Plan-Cache
-	IndexColTypes    []*types.FieldType
+	IndexColTypes    []*types.FieldType       `plan-cache-clone:"shallow"`
 	AccessConditions []expression.Expression
 	IdxCols          []*expression.Column
 	IdxColLens       []int
@@ -448,21 +454,15 @@ type BatchPointGetPlan struct {
 	Desc          bool
 	Lock          bool
 	LockWaitTime  int64
-	Columns       []*model.ColumnInfo
+	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost          float64
 
 	// required by cost model
 	planCostInit bool
 	planCost     float64
-	planCostVer2 costusage.CostVer2
+	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
-
-	// probeParents records the IndexJoins and Applys with this operator in their inner children.
-	// Please see comments in PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
-	// explicit partition selection
-	PartitionNames []model.CIStr
 }
 
 // GetEstRowCountForDisplay implements PhysicalPlan interface.
@@ -962,8 +962,7 @@ func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock b
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 			sessVars := ctx.GetSessionVars()
-			if !sessVars.IsAutocommit() || sessVars.InTxn() || (config.GetGlobalConfig().
-				PessimisticTxn.PessimisticAutoCommit.Load() && !sessVars.BulkDMLEnabled) {
+			if sessVars.PessimisticLockEligible() {
 				lock = true
 				waitTime = sessVars.LockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {

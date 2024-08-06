@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -204,11 +205,6 @@ type TxnCtxNoNeedToRestore struct {
 	StartTS     uint64
 	StaleReadTs uint64
 
-	// ShardStep indicates the max size of continuous rowid shard in one transaction.
-	ShardStep    int
-	shardRemain  int
-	currentShard int64
-
 	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
 	unchangedKeys map[string]struct{}
 
@@ -270,24 +266,62 @@ type SavepointRecord struct {
 	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
-// GetCurrentShard returns the shard for the next `count` IDs.
-func (s *SessionVars) GetCurrentShard(count int) int64 {
-	tc := s.TxnCtx
-	if s.shardRand == nil {
-		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
-	}
-	if tc.shardRemain <= 0 {
-		tc.updateShard(s.shardRand)
-		tc.shardRemain = tc.ShardStep
-	}
-	tc.shardRemain -= count
-	return tc.currentShard
+// RowIDShardGenerator is used to generate shard for row id.
+type RowIDShardGenerator struct {
+	// shardRand is used for generated rand shard
+	shardRand *rand.Rand
+	// shardStep indicates the max size of continuous rowid shard in one transaction.
+	shardStep    int
+	shardRemain  int
+	currentShard int64
 }
 
-func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
+// NewRowIDShardGenerator creates a new RowIDShardGenerator.
+func NewRowIDShardGenerator(shardRand *rand.Rand, step int) *RowIDShardGenerator {
+	intest.AssertNotNil(shardRand)
+	return &RowIDShardGenerator{
+		shardRand: shardRand,
+		shardStep: step,
+	}
+}
+
+// SetShardStep sets the step of shard
+func (s *RowIDShardGenerator) SetShardStep(step int) {
+	s.shardStep = step
+	s.shardRemain = 0
+}
+
+// GetShardStep returns the shard step
+func (s *RowIDShardGenerator) GetShardStep() int {
+	return s.shardStep
+}
+
+// GetCurrentShard returns the shard for the next `count` IDs.
+func (s *RowIDShardGenerator) GetCurrentShard(count int) int64 {
+	if s.shardRemain <= 0 {
+		s.updateShard(s.shardRand)
+		s.shardRemain = s.GetShardStep()
+	}
+	s.shardRemain -= count
+	return s.currentShard
+}
+
+func (s *RowIDShardGenerator) updateShard(shardRand *rand.Rand) {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], shardRand.Uint64())
-	tc.currentShard = int64(murmur3.Sum32(buf[:]))
+	s.currentShard = int64(murmur3.Sum32(buf[:]))
+}
+
+// GetRowIDShardGenerator shard row id generator
+func (s *SessionVars) GetRowIDShardGenerator() *RowIDShardGenerator {
+	if s.shardGenerator != nil {
+		return s.shardGenerator
+	}
+
+	intest.Assert(s.TxnCtx.StartTS > 0)
+	r := rand.New(rand.NewSource(int64(s.TxnCtx.StartTS))) // #nosec G404
+	s.shardGenerator = NewRowIDShardGenerator(r, int(s.ShardAllocateStep))
+	return s.shardGenerator
 }
 
 // AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
@@ -1091,8 +1125,9 @@ type SessionVars struct {
 	// TxnMode indicates should be pessimistic or optimistic.
 	TxnMode string
 
-	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
-	LowResolutionTSO bool
+	// lowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
+	// Do not use it directly, use the `UseLowResolutionTSO` method below.
+	lowResolutionTSO bool
 
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the value is 0, timeouts are not enabled.
@@ -1408,9 +1443,6 @@ type SessionVars struct {
 	// PreparedPlanCacheSize controls the size of prepared plan cache.
 	PreparedPlanCacheSize uint64
 
-	// EnableInstancePlanCache indicates whether to enable instance plan cache.
-	EnableInstancePlanCache bool
-
 	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
 	EnablePreparedPlanCacheMemoryMonitor bool
 
@@ -1515,8 +1547,8 @@ type SessionVars struct {
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
 
-	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
-	shardRand *rand.Rand
+	// shardGenerator indicates to generate shard for row id.
+	shardGenerator *RowIDShardGenerator
 
 	// Resource group name
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
@@ -3909,4 +3941,20 @@ func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
 	default:
 		return tipb.TiFlashPreAggMode_ForcePreAgg, false
 	}
+}
+
+// UseLowResolutionTSO indicates whether low resolution tso could be used for execution.
+func (s *SessionVars) UseLowResolutionTSO() bool {
+	return !s.InRestrictedSQL && s.lowResolutionTSO
+}
+
+// PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current
+// statement execution. There are cases the `for update` clause should not take effect, like autocommit
+// statements with “pessimistic-auto-commit disabled.
+func (s *SessionVars) PessimisticLockEligible() bool {
+	if !s.IsAutocommit() || s.InTxn() || (config.GetGlobalConfig().
+		PessimisticTxn.PessimisticAutoCommit.Load() && !s.BulkDMLEnabled) {
+		return true
+	}
+	return false
 }

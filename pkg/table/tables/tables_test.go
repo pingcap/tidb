@@ -111,7 +111,7 @@ func TestBasic(t *testing.T) {
 	_, err = tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(2, "abc"))
 	require.Error(t, err)
 
-	require.Nil(t, tb.UpdateRecord(context.Background(), ctx.GetTableCtx(), rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}))
+	require.Nil(t, tb.UpdateRecord(ctx.GetTableCtx(), rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}))
 
 	err = tables.IterRecords(tb, ctx, tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
@@ -690,11 +690,15 @@ func TestViewColumns(t *testing.T) {
 	for _, testCase := range testCases {
 		tk.MustQuery(testCase.query).Check(testkit.RowsWithSep("|", testCase.expected...))
 	}
+	tk.MustExec("create view v1 as select (select a from t) as col from dual")
+	tk.MustQuery("select column_name, table_name from information_schema.columns where table_name='v1'").Check(
+		testkit.RowsWithSep("|", "col|v1"))
 	tk.MustExec("drop table if exists t")
 	for _, testCase := range testCases {
 		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
 		tk.MustQuery("show warnings").Sort().Check(testkit.RowsWithSep("|",
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
+			"Warning|1356|View 'test.v1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
 

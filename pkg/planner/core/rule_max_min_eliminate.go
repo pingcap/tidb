@@ -179,7 +179,7 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *opt
 	ctx := agg.SCtx()
 
 	var sel *LogicalSelection
-	var sort *LogicalSort
+	var sort *logicalop.LogicalSort
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
@@ -196,14 +196,14 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *opt
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
-		sort = LogicalSort{}.Init(ctx, agg.QueryBlockOffset())
+		sort = logicalop.LogicalSort{}.Init(ctx, agg.QueryBlockOffset())
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: f.Args[0], Desc: desc})
 		sort.SetChildren(child)
 		child = sort
 	}
 
 	// Compose Limit operator.
-	li := LogicalLimit{Count: 1}.Init(ctx, agg.QueryBlockOffset())
+	li := logicalop.LogicalLimit{Count: 1}.Init(ctx, agg.QueryBlockOffset())
 	li.SetChildren(child)
 
 	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
@@ -264,7 +264,7 @@ func (*maxMinEliminator) name() string {
 	return "max_min_eliminate"
 }
 
-func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelection, sort *LogicalSort, limit *LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
+func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelection, sort *logicalop.LogicalSort, limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString("")
 		if sel != nil {

@@ -1548,10 +1548,9 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 		}
 		last := len(schemas) - 1
 		if last < 0 || schemas[last].Name.O != tableSchema {
-			schemas = append(schemas, &model.DBInfo{
-				Name:   model.CIStr{O: tableSchema},
-				Tables: make([]*model.TableInfo, 0, len(tables[tableSchema])),
-			})
+			dbInfo := &model.DBInfo{Name: model.CIStr{O: tableSchema}}
+			dbInfo.Deprecated.Tables = make([]*model.TableInfo, 0, len(tables[tableSchema]))
+			schemas = append(schemas, dbInfo)
 			last++
 		}
 		var partition *model.PartitionInfo
@@ -1566,7 +1565,7 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 				}
 			}
 		}
-		schemas[last].Tables = append(schemas[last].Tables, &model.TableInfo{
+		schemas[last].Deprecated.Tables = append(schemas[last].Deprecated.Tables, &model.TableInfo{
 			ID:        tidbTableID,
 			Name:      model.CIStr{O: tableName},
 			Partition: partition,

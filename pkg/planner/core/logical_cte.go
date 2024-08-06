@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -131,7 +132,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 	newPred := make([]expression.Expression, 0, len(predicates))
 	for i := range pushedPredicates {
 		newPred = append(newPred, pushedPredicates[i].Clone())
-		ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
+		ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
 	}
 	p.Cte.pushDownPredicates = append(p.Cte.pushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
 	return predicates, p.Self()
@@ -152,9 +153,9 @@ func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
+	var topN *logicalop.LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
+		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
 	}
 	if topN != nil {
 		return topN.AttachChild(p, opt)

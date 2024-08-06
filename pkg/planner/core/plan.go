@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -260,7 +261,7 @@ type basePhysicalPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
+	probeParents []base.PhysicalPlan `plan-cache-clone:"shallow"`
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
@@ -284,17 +285,6 @@ func (p *basePhysicalPlan) cloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 			return nil, false
 		}
 		cloned.children = append(cloned.children, clonedPP)
-	}
-	for _, probe := range p.probeParents {
-		clonedProbe, ok := probe.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		clonedPP, ok := clonedProbe.(base.PhysicalPlan)
-		if !ok {
-			return nil, false
-		}
-		cloned.probeParents = append(cloned.probeParents, clonedPP)
 	}
 	return cloned, true
 }
@@ -393,10 +383,10 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 		return false
 	}
 	switch x := p.(type) {
-	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
-		*LogicalApply, *LogicalProjection, *LogicalWindow, *LogicalAggregation:
+	case *LogicalLock, *logicalop.LogicalLimit, *logicalop.LogicalSort, *LogicalSelection,
+		*LogicalApply, *logicalop.LogicalProjection, *logicalop.LogicalWindow, *LogicalAggregation:
 		return childMaxOneRow[0]
-	case *LogicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow:
 		return true
 	case *LogicalJoin:
 		switch x.JoinType {

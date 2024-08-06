@@ -456,7 +456,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
-		LocalMode:       parentJob.LocalMode,
 	}
 }
 
@@ -527,7 +526,7 @@ type Job struct {
 	// Now it's the TS when we actually start the job.
 	RealStartTS uint64 `json:"real_start_ts"`
 	// StartTS uses timestamp allocated by TSO.
-	// Now it's the TS when we put the job to TiKV queue.
+	// Now it's the TS when we put the job to job table.
 	StartTS uint64 `json:"start_ts"`
 	// DependencyID is the largest job ID before current job and current job depends on.
 	DependencyID int64 `json:"dependency_id"`
@@ -584,6 +583,7 @@ type Job struct {
 	// LocalMode = true means the job is running on the local TiDB that the client
 	// connects to, else it's run on the DDL owner.
 	// Only happens when tidb_enable_fast_create_table = on
+	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
 
 	// SQLMode for executing DDL query.
