@@ -839,23 +839,14 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		if helper == nil {
 			return nil
 		}
-<<<<<<< HEAD
 		rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, outerJoinKeys)
 		innerTask = p.constructInnerTableScanTask(wrapper, helper.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
-=======
-		rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-<<<<<<< HEAD
 			innerTask2 = p.constructInnerTableScanTask(wrapper, helper.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
-=======
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 		}
 		ranges = helper.chosenRanges
 	} else {
@@ -889,21 +880,13 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
-<<<<<<< HEAD
 		innerTask = p.constructInnerTableScanTask(wrapper, ranges, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
-=======
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-<<<<<<< HEAD
 			innerTask2 = p.constructInnerTableScanTask(wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
-=======
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 		}
 	}
 	var (
@@ -964,11 +947,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
 		}
 	}
-<<<<<<< HEAD
 	innerTask := p.constructInnerIndexScanTask(wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, helper.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
-=======
-	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
@@ -983,11 +962,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if !wrapper.hasDitryWrite {
-<<<<<<< HEAD
 		innerTask2 := p.constructInnerIndexScanTask(wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, helper.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
-=======
-		innerTask2 := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 		if innerTask2 != nil {
 			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		}
@@ -1041,13 +1016,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 }
 
 // constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
-<<<<<<< HEAD
 func (p *LogicalJoin) constructInnerTableScanTask(
-=======
-func constructInnerTableScanTask(
-	p *LogicalJoin,
-	prop *property.PhysicalProperty,
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 	wrapper *indexJoinInnerChildWrapper,
 	ranges ranger.Ranges,
 	_ []*expression.Column,
@@ -1120,7 +1089,6 @@ func constructInnerTableScanTask(
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
-<<<<<<< HEAD
 	t := copTask.convertToRootTask(ds.SCtx())
 	reader := t.p
 	t.p = p.constructInnerByWrapper(wrapper, reader)
@@ -1136,57 +1104,23 @@ func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrappe
 			child = p.constructInnerProj(x, child)
 		case *LogicalSelection:
 			child = p.constructInnerSel(x, child)
-=======
-	return constructIndexJoinInnerSideTask(p, prop, copTask, ds, nil, wrapper)
-}
-
-func constructInnerByZippedChildren(prop *property.PhysicalProperty, zippedChildren []base.LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
-	for i := len(zippedChildren) - 1; i >= 0; i-- {
-		switch x := zippedChildren[i].(type) {
-		case *LogicalUnionScan:
-			child = constructInnerUnionScan(prop, x, child)
-		case *logicalop.LogicalProjection:
-			child = constructInnerProj(prop, x, child)
-		case *LogicalSelection:
-			child = constructInnerSel(prop, x, child)
-		case *LogicalAggregation:
-			child = constructInnerAgg(prop, x, child)
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 		}
 	}
 	return child
 }
 
-<<<<<<< HEAD
 func (*LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
-=======
-func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
-	if logicalAgg == nil {
-		return child
-	}
-	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), prop)
-	physicalHashAgg.SetSchema(logicalAgg.Schema().Clone())
-	physicalHashAgg.SetChildren(child)
-	return physicalHashAgg
-}
-
-func constructInnerSel(prop *property.PhysicalProperty, sel *LogicalSelection, child base.PhysicalPlan) base.PhysicalPlan {
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 	if sel == nil {
 		return child
 	}
 	physicalSel := PhysicalSelection{
 		Conditions: sel.Conditions,
-	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), prop)
+	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), nil)
 	physicalSel.SetChildren(child)
 	return physicalSel
 }
 
-<<<<<<< HEAD
 func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
-=======
-func constructInnerProj(prop *property.PhysicalProperty, proj *logicalop.LogicalProjection, child base.PhysicalPlan) base.PhysicalPlan {
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 	if proj == nil {
 		return child
 	}
@@ -1194,32 +1128,22 @@ func constructInnerProj(prop *property.PhysicalProperty, proj *logicalop.Logical
 		Exprs:                proj.Exprs,
 		CalculateNoDelay:     proj.CalculateNoDelay,
 		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
-	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), prop)
+	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), nil)
 	physicalProj.SetChildren(child)
 	physicalProj.SetSchema(proj.schema)
 	return physicalProj
 }
 
-<<<<<<< HEAD
 func (*LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
-=======
-func constructInnerUnionScan(prop *property.PhysicalProperty, us *LogicalUnionScan, reader base.PhysicalPlan) base.PhysicalPlan {
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 	if us == nil {
 		return reader
 	}
 	// Use `reader.StatsInfo()` instead of `us.StatsInfo()` because it should be more accurate. No need to specify
 	// childrenReqProps now since we have got reader already.
 	physicalUnionScan := PhysicalUnionScan{
-<<<<<<< HEAD
 		Conditions: us.conditions,
 		HandleCols: us.handleCols,
 	}.Init(us.SCtx(), reader.StatsInfo(), us.QueryBlockOffset(), nil)
-=======
-		Conditions: us.Conditions,
-		HandleCols: us.HandleCols,
-	}.Init(us.SCtx(), reader.StatsInfo(), us.QueryBlockOffset(), prop)
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan
 }
@@ -1274,13 +1198,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 }
 
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
-<<<<<<< HEAD
 func (p *LogicalJoin) constructInnerIndexScanTask(
-=======
-func constructInnerIndexScanTask(
-	p *LogicalJoin,
-	prop *property.PhysicalProperty,
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 	wrapper *indexJoinInnerChildWrapper,
 	path *util.AccessPath,
 	ranges ranger.Ranges,
@@ -1457,7 +1375,6 @@ func constructInnerIndexScanTask(
 	if usedStats != nil && usedStats.GetUsedInfo(is.physicalTableID) != nil {
 		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
 	}
-<<<<<<< HEAD
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
 	t := cop.convertToRootTask(ds.SCtx())
@@ -1504,41 +1421,11 @@ func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
 		if ret != 0 {
 			return ret
-=======
-	finalStats := ds.TableStats.ScaleByExpectCnt(rowCount)
-	if err := is.addPushedDownSelection(cop, ds, tmpPath, finalStats); err != nil {
-		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
-		return nil
-	}
-	return constructIndexJoinInnerSideTask(p, prop, cop, ds, path, wrapper)
-}
-
-// construct the inner join task by inner child plan tree
-// The Logical include two parts: logicalplan->physicalplan, physicalplan->task
-// Step1: whether agg can be pushed down to coprocessor
-//
-//	Step1.1: If the agg can be pushded down to coprocessor, we will build a copTask and attach the agg to the copTask
-//	There are two kinds of agg: stream agg and hash agg. Stream agg depends on some conditions, such as the group by cols
-//
-// Step2: build other inner plan node to task
-func constructIndexJoinInnerSideTask(p *LogicalJoin, prop *property.PhysicalProperty, dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
-	var la *LogicalAggregation
-	var canPushAggToCop bool
-	if len(wrapper.zippedChildren) > 0 {
-		la, canPushAggToCop = wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*LogicalAggregation)
-		if la != nil && la.HasDistinct() {
-			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-			if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
-				canPushAggToCop = false
-			}
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 		}
 	}
 	return 0
 }
 
-<<<<<<< HEAD
 // BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
 func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx PlanContext, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
@@ -1554,13 +1441,6 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx PlanContext, row chunk.Ro
 			return nil, err
 		}
 		exprs = append(exprs, newExpr) // nozero
-=======
-	// If the bottom plan is not aggregation or the aggregation can't be pushed to coprocessor, we will construct a root task directly.
-	if !canPushAggToCop {
-		result := dsCopTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
-		result.SetPlan(constructInnerByZippedChildren(prop, wrapper.zippedChildren, result.GetPlan()))
-		return result
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 	}
 	// We already limit range mem usage when buildTemplateRange for inner table of IndexJoin in optimizer phase, so we
 	// don't need and shouldn't limit range mem usage when we refill inner ranges during the execution phase.
@@ -1644,52 +1524,6 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 		ijHelper.curNotUsedIndexCols = append(ijHelper.curNotUsedIndexCols, idxCol)
 		ijHelper.curNotUsedColLens = append(ijHelper.curNotUsedColLens, colLens[i])
 	}
-<<<<<<< HEAD
-=======
-
-	// build physical agg and attach to task
-	var aggTask base.Task
-	// build stream agg and change ds keep order to true
-	if preferStream {
-		newGbyItems := make([]expression.Expression, len(la.GroupByItems))
-		copy(newGbyItems, la.GroupByItems)
-		newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
-		copy(newAggFuncs, la.AggFuncs)
-		streamAgg := basePhysicalAgg{
-			GroupByItems: newGbyItems,
-			AggFuncs:     newAggFuncs,
-		}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), prop)
-		streamAgg.SetSchema(la.Schema().Clone())
-		// change to keep order for index scan and dsCopTask
-		if dsCopTask.indexPlan != nil {
-			// get the index scan from dsCopTask.indexPlan
-			physicalIndexScan, _ := dsCopTask.indexPlan.(*PhysicalIndexScan)
-			if physicalIndexScan == nil && len(dsCopTask.indexPlan.Children()) == 1 {
-				physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
-			}
-			if physicalIndexScan != nil {
-				physicalIndexScan.KeepOrder = true
-				dsCopTask.keepOrder = true
-				aggTask = streamAgg.Attach2Task(dsCopTask)
-			}
-		}
-	}
-
-	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
-	if aggTask == nil {
-		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), prop)
-		physicalHashAgg.SetSchema(la.Schema().Clone())
-		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
-	}
-
-	// build other inner plan node to task
-	result, ok := aggTask.(*RootTask)
-	if !ok {
-		return nil
-	}
-	result.SetPlan(constructInnerByZippedChildren(prop, wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p))
-	return result
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
 }
 
 // findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
