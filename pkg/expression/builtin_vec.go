@@ -97,7 +97,10 @@ func (b *builtinVecFromTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row
 
 	vec, err := types.ParseVectorFloat32(v)
 	if err != nil {
-		return res, false, err
+		return types.ZeroVectorFloat32, false, err
+	}
+	if err = vec.CheckDimsFitColumn(b.tp.GetFlen()); err != nil {
+		return types.ZeroVectorFloat32, isNull, err
 	}
 
 	return vec, false, nil

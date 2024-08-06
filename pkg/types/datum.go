@@ -927,7 +927,7 @@ func (d *Datum) compareMysqlTime(ctx Context, time Time) (int, error) {
 	}
 }
 
-func (d *Datum) compareVectorFloat32(sc Context, vec VectorFloat32) (int, error) {
+func (d *Datum) compareVectorFloat32(ctx Context, vec VectorFloat32) (int, error) {
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -1796,15 +1796,23 @@ func (d *Datum) convertToMysqlJSON(_ *FieldType) (ret Datum, err error) {
 	return ret, errors.Trace(err)
 }
 
-func (d *Datum) convertToVectorFloat32(_ Context, _ *FieldType) (ret Datum, err error) {
+func (d *Datum) convertToVectorFloat32(_ Context, target *FieldType) (ret Datum, err error) {
 	switch d.k {
 	case KindVectorFloat32:
+		v := d.GetVectorFloat32()
+		if err = v.CheckDimsFitColumn(target.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
 		ret = *d
 	case KindString, KindBytes:
 		var v VectorFloat32
-		if v, err = ParseVectorFloat32(d.GetString()); err == nil {
-			ret.SetVectorFloat32(v)
+		if v, err = ParseVectorFloat32(d.GetString()); err != nil {
+			return ret, errors.Trace(err)
 		}
+		if err = v.CheckDimsFitColumn(target.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		ret.SetVectorFloat32(v)
 	default:
 		return invalidConv(d, mysql.TypeTiDBVectorFloat32)
 	}

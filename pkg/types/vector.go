@@ -21,6 +21,7 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
 func init() {
@@ -53,6 +54,28 @@ func InitVectorFloat32(dims int) VectorFloat32 {
 	data := make([]byte, 4+dims*4)
 	binary.LittleEndian.PutUint32(data, uint32(dims))
 	return VectorFloat32{data: data}
+}
+
+// CheckVectorDimValid checks if the vector's dimension is valid.
+func CheckVectorDimValid(dim int) error {
+	const (
+		maxVectorDimension = 16383
+	)
+	if dim < 0 {
+		return errors.Errorf("dimensions for type vector must be at least 0")
+	}
+	if dim > maxVectorDimension {
+		return errors.Errorf("vector cannot have more than %d dimensions", maxVectorDimension)
+	}
+	return nil
+}
+
+// CheckDimsFitColumn checks if the vector has the expected dimension, which is defined by the column type or cast type.
+func (v VectorFloat32) CheckDimsFitColumn(expectedFlen int) error {
+	if expectedFlen != types.UnspecifiedLength && v.Len() != expectedFlen {
+		return errors.Errorf("vector has %d dimensions, does not fit VECTOR(%d)", v.Len(), expectedFlen)
+	}
+	return nil
 }
 
 // Len returns the length (dimension) of the vector.
@@ -139,7 +162,12 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 		return ZeroVectorFloat32, errors.Errorf("Invalid vector text: %s", s)
 	}
 
-	vec := InitVectorFloat32(len(values))
+	dim := len(values)
+	if err := CheckVectorDimValid(dim); err != nil {
+		return ZeroVectorFloat32, err
+	}
+
+	vec := InitVectorFloat32(dim)
 	copy(vec.Elements(), values)
 	return vec, nil
 }
