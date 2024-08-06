@@ -800,7 +800,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
-				var tableInfo []byte
+				tableInfo := []byte("")
 				if cfg.TikvImporter.AddIndexBySQL {
 					// see comments in FileCheckpointsDB.Initialize
 					tableInfo, err = json.Marshal(table.Desired)

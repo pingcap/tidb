@@ -87,7 +87,7 @@ func TestNormalOperations(t *testing.T) {
 	initializeStmt = s.mock.
 		ExpectPrepare("INSERT INTO `mock-schema`\\.`table_v\\d+`")
 	initializeStmt.ExpectExec().
-		WithArgs(123, "`db1`.`t2`", sqlmock.AnyArg(), int64(2), []byte(nil)).
+		WithArgs(123, "`db1`.`t2`", sqlmock.AnyArg(), int64(2), []byte("")).
 		WillReturnResult(sqlmock.NewResult(8, 1))
 	s.mock.ExpectCommit()
 
