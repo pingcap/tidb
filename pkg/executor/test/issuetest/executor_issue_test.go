@@ -178,9 +178,7 @@ func TestIssue30289(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	defer func() {
-		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	useHashJoinV2 := []bool{true, false}
@@ -199,9 +197,7 @@ func TestIssue51998(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	defer func() {
-		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	useHashJoinV2 := []bool{true, false}
@@ -621,8 +617,6 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
-	defer join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 	useHashJoinV2 := []bool{true, false}
 	for _, hashJoinV2 := range useHashJoinV2 {
 		join.SetEnableHashJoinV2(hashJoinV2)

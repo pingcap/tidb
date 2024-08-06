@@ -2038,8 +2038,22 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
-		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTablesExtractor)
-		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
-		require.Equal(t, ca.colPredicates, columnsTableExtractor.ColPredicates, "SQL: %v", ca.sql)
+		var base *plannercore.InfoSchemaBaseExtractor
+		switch ex := logicalMemTable.Extractor.(type) {
+		case *plannercore.InfoSchemaBaseExtractor:
+			base = ex
+		case *plannercore.InfoSchemaTablesExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaPartitionsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaStatisticsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaSchemataExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		default:
+			require.Failf(t, "unexpected extractor type", "%T", ex)
+		}
+		require.Equal(t, ca.skipRequest, base.SkipRequest, "SQL: %v", ca.sql)
+		require.Equal(t, ca.colPredicates, base.ColPredicates, "SQL: %v", ca.sql)
 	}
 }
