@@ -503,7 +503,7 @@ func NewImportControllerWithPauser(
 
 		errorSummaries:    makeErrorSummaries(log.FromContext(ctx)),
 		checkpointsDB:     cpdb,
-		saveCpCh:          make(chan saveCp),
+		saveCpCh:          make(chan saveCp, cfg.App.RegionConcurrency),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
 		// Currently, TiDB add index acceration doesn't support multiple tables simultaneously.
 		// So we use a single worker to ensure at most one table is adding index at the same time.
@@ -877,8 +877,7 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 		}
 	}()
 
-	for scp := range rc.saveCpCh {
-		lock.Lock()
+	coalesceSaveRequests := func(scp saveCp) {
 		cpd, ok := coalesed[scp.tableName]
 		if !ok {
 			cpd = checkpoints.NewTableCheckpointDiff()
@@ -888,13 +887,24 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 		if scp.waitCh != nil {
 			waiters = append(waiters, scp.waitCh)
 		}
+	}
+	for scp := range rc.saveCpCh {
+		lock.Lock()
+		coalesceSaveRequests(scp)
+		for i := 0; i < len(rc.saveCpCh); i++ {
+			select {
+			case scp := <-rc.saveCpCh:
+				coalesceSaveRequests(scp)
+			default:
+				break
+			}
+		}
+		lock.Unlock()
 
 		if len(hasCheckpoint) == 0 {
 			rc.checkpointsWg.Add(1)
 			hasCheckpoint <- struct{}{}
 		}
-
-		lock.Unlock()
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
 		failpoint.Inject("FailIfImportedChunk", func() {
