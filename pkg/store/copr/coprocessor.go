@@ -207,6 +207,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 
 	if it.req.KeepOrder {
+<<<<<<< HEAD
 		// Don't set high concurrency for the keep order case. It wastes a lot of memory and gains nothing.
 		// TL;DR
 		// Because for a keep order coprocessor request, the cop tasks are handled one by one, if we set a
@@ -232,6 +233,8 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 				}
 			})
 		}
+=======
+>>>>>>> 9fee330077e (store/copr: partly revert pr/35975, do it correctly this time (#55196))
 		if it.smallTaskConcurrency > 20 {
 			it.smallTaskConcurrency = 20
 		}
