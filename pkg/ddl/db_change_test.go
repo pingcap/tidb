@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -799,7 +800,7 @@ func runTestInSchemaState(
 	}
 	tk.MustExec(alterTableSQL)
 	require.NoError(t, checkErr)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(t, store)
