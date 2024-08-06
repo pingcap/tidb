@@ -288,7 +288,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	utilfuncp.AddSelection(p, lCh, leftRet, 0, opt)
 	utilfuncp.AddSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
-	buildKeyInfo(p)
+	ruleutil.BuildKeyInfoPortal(p)
 	return ret, p.Self()
 }
 
