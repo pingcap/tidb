@@ -1014,9 +1014,17 @@ func (local *local) WriteToTiKV(
 		}
 	})
 
-	annotateErr := func(in error, peer *metapb.Peer) error {
+	annotateErr := func(in error, peer *metapb.Peer, msg string) error {
 		// annotate the error with peer/store/region info to help debug.
-		return errors.Annotatef(in, "peer %d, store %d, region %d, epoch %s", peer.Id, peer.StoreId, region.Region.Id, region.Region.RegionEpoch.String())
+		return errors.Annotatef(
+			in,
+			"peer %d, store %d, region %d, epoch %s, %s",
+			peer.Id,
+			peer.StoreId,
+			region.Region.Id,
+			region.Region.RegionEpoch.String(),
+			msg,
+		)
 	}
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
 	allPeers := make([]*metapb.Peer, 0, len(region.Region.GetPeers()))
@@ -1024,12 +1032,12 @@ func (local *local) WriteToTiKV(
 	for _, peer := range region.Region.GetPeers() {
 		cli, err := local.getImportClient(ctx, peer.StoreId)
 		if err != nil {
-			return nil, Range{}, stats, annotateErr(err, peer)
+			return nil, Range{}, stats, annotateErr(err, peer, "when create client")
 		}
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return nil, Range{}, stats, annotateErr(err, peer)
+			return nil, Range{}, stats, annotateErr(err, peer, "when open write stream")
 		}
 
 		// Bind uuid for this write request
@@ -1039,7 +1047,7 @@ func (local *local) WriteToTiKV(
 			},
 		}
 		if err = wstream.Send(req); err != nil {
-			return nil, Range{}, stats, annotateErr(err, peer)
+			return nil, Range{}, stats, annotateErr(err, peer, "when send meta")
 		}
 		req.Chunk = &sst.WriteRequest_Batch{
 			Batch: &sst.WriteBatch{
@@ -1074,7 +1082,12 @@ func (local *local) WriteToTiKV(
 			}
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
-				return annotateErr(err, allPeers[i])
+				if err == io.EOF {
+					// if it's EOF, need RecvMsg to get the error
+					dummy := &sst.WriteResponse{}
+					err = clients[i].RecvMsg(dummy)
+				}
+				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
 		return nil
@@ -1128,10 +1141,10 @@ func (local *local) WriteToTiKV(
 	for i, wStream := range clients {
 		resp, closeErr := wStream.CloseAndRecv()
 		if closeErr != nil {
-			return nil, Range{}, stats, annotateErr(closeErr, allPeers[i])
+			return nil, Range{}, stats, annotateErr(closeErr, allPeers[i], "when close write stream")
 		}
 		if resp.Error != nil {
-			return nil, Range{}, stats, annotateErr(errors.New(resp.Error.Message), allPeers[i])
+			return nil, Range{}, stats, annotateErr(errors.New(resp.Error.Message), allPeers[i], "when close write stream")
 		}
 		if leaderID == region.Region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
