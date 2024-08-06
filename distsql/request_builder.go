@@ -45,7 +45,7 @@ type RequestBuilder struct {
 	kv.Request
 	is  infoschema.InfoSchema
 	err error
-	// When SetDAGRequest is called, builder will also this field.
+	// When SetDAGRequest is called, builder will also set this field.
 	dag *tipb.DAGRequest
 }
 
