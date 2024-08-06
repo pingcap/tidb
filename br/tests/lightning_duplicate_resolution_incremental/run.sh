@@ -37,7 +37,7 @@ while [ $counter -lt 10 ]; do
     sleep 1
 done
 
-if [ $counter -ge 60 ]; then
+if [ $counter -ge 10 ]; then
   echo "fail to wait for lightning 1 starts"
   exit 1
 fi
