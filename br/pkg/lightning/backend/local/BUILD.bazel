@@ -23,6 +23,7 @@ go_library(
     deps = [
         "//br/pkg/checksum",
         "//br/pkg/errors",
+<<<<<<< HEAD:br/pkg/lightning/backend/local/BUILD.bazel
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
@@ -36,6 +37,8 @@ go_library(
         "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/tikv",
         "//br/pkg/lightning/verification",
+=======
+>>>>>>> 0805e850d41 (br: handle region leader miss (#52822)):pkg/lightning/backend/local/BUILD.bazel
         "//br/pkg/logutil",
         "//br/pkg/membuf",
         "//br/pkg/pdutil",
