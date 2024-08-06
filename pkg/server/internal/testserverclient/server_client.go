@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -2930,7 +2929,7 @@ type expectQuery struct {
 	rows []string
 }
 
-func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain) {
+func (cli *TestServerClient) RunTestIssue53634(t *testing.T) {
 	cli.RunTests(t, func(config *mysql.Config) {
 		config.MaxAllowedPacket = 1024
 	}, func(dbt *testkit.DBTestKit) {
@@ -2962,11 +2961,11 @@ func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain)
 		sqls[4] = sqlWithErr{nil, "commit"}
 		dropColumnSQL := "alter table stock drop column cct_1"
 		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
-		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
+		runTestInSchemaState(t, conn, cli, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
 	})
 }
 
-func (cli *TestServerClient) RunTestIssue54254(t *testing.T, dom *domain.Domain) {
+func (cli *TestServerClient) RunTestIssue54254(t *testing.T) {
 	cli.RunTests(t, func(config *mysql.Config) {
 		config.MaxAllowedPacket = 1024
 	}, func(dbt *testkit.DBTestKit) {
@@ -2995,7 +2994,7 @@ func (cli *TestServerClient) RunTestIssue54254(t *testing.T, dom *domain.Domain)
 		sqls[4] = sqlWithErr{nil, "commit"}
 		addColumnSQL := "alter table stock add column cct_1 int"
 		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
-		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
+		runTestInSchemaState(t, conn, cli, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
 	})
 }
 
@@ -3003,7 +3002,6 @@ func runTestInSchemaState(
 	t *testing.T,
 	conn *sql.Conn,
 	cli *TestServerClient,
-	dom *domain.Domain,
 	state model.SchemaState,
 	isOnJobUpdated bool,
 	dropColumnSQL string,
