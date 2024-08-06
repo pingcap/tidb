@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/servicescope"
-	"github.com/pingcap/tidb/pkg/util/size"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -1345,30 +1344,24 @@ var defaultSysVars = []*SysVar{
 			EnableInstancePlanCache.Store(TiDBOptOn(val))
 			return nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheTargetMemSize, Value: strconv.Itoa(int(size.MB * 100)), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32,
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheTargetMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheTargetMemSize)), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(InstancePlanCacheTargetMemSize.Load(), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v, err := strconv.ParseInt(val, 10, 64)
-			if err != nil {
-				return err
-			}
+			v := TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize))
 			if v > InstancePlanCacheMaxMemSize.Load() {
 				return errors.New("tidb_instance_plan_cache_target_mem_size must be less than tidb_instance_plan_cache_max_mem_size")
 			}
 			InstancePlanCacheTargetMemSize.Store(v)
 			return nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheMaxMemSize, Value: strconv.Itoa(int(size.MB * 120)), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32,
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheMaxMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheMaxMemSize)), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(InstancePlanCacheMaxMemSize.Load(), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v, err := strconv.ParseInt(val, 10, 64)
-			if err != nil {
-				return err
-			}
+			v := TidbOptInt64(val, int64(DefTiDBInstancePlanCacheMaxMemSize))
 			if v < InstancePlanCacheTargetMemSize.Load() {
 				return errors.New("tidb_instance_plan_cache_max_mem_size must be greater than tidb_instance_plan_cache_target_mem_size")
 			}

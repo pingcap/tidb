@@ -1423,6 +1423,8 @@ const (
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
+	DefTiDBInstancePlanCacheTargetMemSize          = 100 * size.MB
+	DefTiDBInstancePlanCacheMaxMemSize             = 120 * size.MB
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
@@ -1569,8 +1571,8 @@ var (
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableInstancePlanCache           = atomic.NewBool(false)
-	InstancePlanCacheTargetMemSize    = atomic.NewInt64(int64(size.MB * 100))
-	InstancePlanCacheMaxMemSize       = atomic.NewInt64(int64(size.MB * 120))
+	InstancePlanCacheTargetMemSize    = atomic.NewInt64(int64(DefTiDBInstancePlanCacheTargetMemSize))
+	InstancePlanCacheMaxMemSize       = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable             = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	DDLForce2Queue                    = atomic.NewBool(false)
