@@ -83,8 +83,11 @@ create database infoschema__infoschema_2;
 use infoschema__infoschema_2;
 create table t2 (a int, b char(255), index idx(b, a));
 insert into t2 values (1, 'aaa');
+--sorted_result
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_schema = 'infoschema__infoschema';
+--sorted_result
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't1';
+--sorted_result
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't2' and table_schema = 'infoschema__infoschema_2';
 
 # TestSchemataColumns
