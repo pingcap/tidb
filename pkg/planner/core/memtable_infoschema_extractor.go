@@ -203,8 +203,7 @@ func (e *InfoSchemaTablesExtractor) ListSchemasAndTables(
 	if len(tableIDs) > 0 {
 		tableMap := make(map[int64]*model.TableInfo, len(tableIDs))
 		findTablesByID(is, tableIDs, tableNames, tableMap)
-		schemaSlice, tableSlice := findSchemasForTables(is, schemas, maps.Values(tableMap))
-		return schemaSlice, tableSlice, nil
+		return findSchemasForTables(ctx, is, schemas, maps.Values(tableMap))
 	}
 	if len(tableNames) > 0 {
 		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
@@ -231,8 +230,7 @@ func (e *InfoSchemaPartitionsExtractor) ListSchemasAndTables(
 	if len(partIDs) > 0 {
 		tableMap := make(map[int64]*model.TableInfo, len(partIDs))
 		findTablesByPartID(is, partIDs, tableNames, tableMap)
-		schemaSlice, tableSlice := findSchemasForTables(is, schemas, maps.Values(tableMap))
-		return schemaSlice, tableSlice, nil
+		return findSchemasForTables(ctx, is, schemas, maps.Values(tableMap))
 	}
 	if len(tableNames) > 0 {
 		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
@@ -424,7 +422,7 @@ func listTablesForEachSchema(
 	for _, s := range schemas {
 		tables, err := is.SchemaTableInfos(ctx, s)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, errors.Trace(err)
 		}
 		for _, t := range tables {
 			schemaSlice = append(schemaSlice, s)
@@ -435,15 +433,23 @@ func listTablesForEachSchema(
 }
 
 func findSchemasForTables(
+	ctx context.Context,
 	is infoschema.InfoSchema,
 	schemas []model.CIStr,
 	tableSlice []*model.TableInfo,
-) ([]model.CIStr, []*model.TableInfo) {
+) ([]model.CIStr, []*model.TableInfo, error) {
 	schemaSlice := make([]model.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
 		found := false
 		for _, s := range schemas {
-			if is.TableExists(s, tbl.Name) {
+			isTbl, err := is.TableByName(ctx, s, tbl.Name)
+			if err != nil {
+				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+					continue
+				}
+				return nil, nil, errors.Trace(err)
+			}
+			if isTbl.Meta().ID == tbl.ID {
 				schemaSlice = append(schemaSlice, s)
 				found = true
 				break
@@ -460,7 +466,7 @@ func findSchemasForTables(
 			remains = append(remains, tbl)
 		}
 	}
-	return schemaSlice, remains
+	return schemaSlice, remains, nil
 }
 
 func parseIDs(ids []model.CIStr) []int64 {
