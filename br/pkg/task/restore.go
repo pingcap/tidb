@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -552,15 +554,6 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	return nil
 }
 
-func GetTiDBConfig(g glue.Glue, storage kv.Storage) (splitTable bool, err error) {
-	se, err := g.CreateSession(storage)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-	return utils.GetSplitTable(execCtx), nil
-}
-
 func CheckNewCollationEnable(
 	backupNewCollationEnable string,
 	g glue.Glue,
@@ -776,12 +769,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 	codec := mgr.GetStorage().GetCodec()
-
-	// Get TiDB config
-	splitTable, err := GetTiDBConfig(g, mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	// need retrieve these configs from tikv if not set in command.
 	kvConfigs := &pconfig.KVConfig{
@@ -1127,7 +1114,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
-		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, kvConfigs.SplitRegionOnTable.Value || splitTable,
+		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
+		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
+		// If the command is from BRIE SQL, the ddl.EnableSplitTableRegion is TiDB config split-table.
+		kvConfigs.SplitRegionOnTable.Value || atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
 		updateCh,
 	); err != nil {
 		return errors.Trace(err)

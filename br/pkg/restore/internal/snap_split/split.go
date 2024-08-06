@@ -44,6 +44,7 @@ func (rs *RegionSplitter) ExecuteSplit(
 		return nil
 	}
 
+	log.Info("execute split sorted keys", zap.Int("keys count", len(sortedSplitKeys)))
 	return rs.executeSplitByRanges(ctx, sortedSplitKeys)
 }
 

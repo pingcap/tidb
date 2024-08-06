@@ -25,20 +25,6 @@ var (
 	logBackupTaskCount = atomic.NewInt32(0)
 )
 
-func GetSplitTable(ctx sqlexec.RestrictedSQLExecutor) bool {
-	varStr := "show config where name = 'split-table' and value = 'true' and type = 'tidb'"
-	rows, _, err := ctx.ExecRestrictedSQL(
-		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
-		nil,
-		varStr,
-	)
-	if err != nil {
-		log.Warn("failed to get split table, use default value", logutil.ShortError(err))
-		return true
-	}
-	return len(rows) > 0
-}
-
 func GetRegionSplitInfo(ctx sqlexec.RestrictedSQLExecutor) (uint64, int64) {
 	return GetSplitSize(ctx), GetSplitKeys(ctx)
 }

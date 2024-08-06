@@ -50,6 +50,7 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/version",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/kv",

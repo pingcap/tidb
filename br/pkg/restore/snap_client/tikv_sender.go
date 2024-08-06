@@ -82,8 +82,7 @@ func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, u
 	return newFiles
 }
 
-// SortAndValidateFileRanges sort, merge and validate files by tables and yields
-// tables with range.
+// SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
 	createdTables []*CreatedTable,
 	allFiles []*backuppb.File,
