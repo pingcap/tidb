@@ -795,33 +795,34 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model
 		return nil, nil // something wrong?
 	}
 
-retry:
-	dbInfo, ok := is.SchemaByName(schema)
-	if !ok {
+	// Ascend is much more difficult than Descend.
+	// So the data is taken out first and then dedup in Descend order.
+	var tableItems []tableItem
+	is.byName.Ascend(tableItem{dbName: schema.L}, func(item tableItem) bool {
+		if item.dbName != schema.L {
+			return false
+		}
+		if is.infoSchema.schemaMetaVersion >= item.schemaVersion {
+			tableItems = append(tableItems, item)
+		}
+		return true
+	})
+	if len(tableItems) == 0 {
 		return nil, nil
 	}
-	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
-	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
-	// the meta region leader is slow.
-	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-	m := meta.NewSnapshotMeta(snapshot)
-	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			return nil, nil
-		}
-		// Flashback statement could cause such kind of error.
-		// In theory that error should be handled in the lower layer, like client-go.
-		// But it's not done, so we retry here.
-		if strings.Contains(err.Error(), "in flashback progress") {
-			select {
-			case <-time.After(200 * time.Millisecond):
-			case <-ctx.Done():
-				return nil, ctx.Err()
+	tblInfos := make([]*model.TableNameInfo, 0, len(tableItems))
+	var curr *tableItem
+	for i := len(tableItems) - 1; i >= 0; i-- {
+		item := &tableItems[i]
+		if curr == nil || curr.tableName != tableItems[i].tableName {
+			curr = item
+			if !item.tomb {
+				tblInfos = append(tblInfos, &model.TableNameInfo{
+					ID:   item.tableID,
+					Name: model.NewCIStr(item.tableName),
+				})
 			}
-			goto retry
 		}
-		return nil, errors.Trace(err)
 	}
 	return tblInfos, nil
 }
