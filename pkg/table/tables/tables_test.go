@@ -934,6 +934,71 @@ func TestTxnAssertion(t *testing.T) {
 	testUntouchedIndexImpl("OFF", true)
 }
 
+func TestSkipWriteUntouchedIndices(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (a int primary key, b int, c int, key idx_b(b), key idx_c(c))")
+	tk.MustExec("insert into t values(1, 2, 3)")
+	tk.MustExec("insert into t values(4, 5, 6)")
+	defer tk.MustExec("rollback")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	ctx := tk.Session().GetTableCtx()
+
+	for _, c := range []struct {
+		opts   []table.UpdateRecordOption
+		isSkip bool
+	}{
+		{
+			opts:   nil, // by default, should not skip untouched indices
+			isSkip: false,
+		},
+		{
+			opts:   []table.UpdateRecordOption{table.SkipWriteUntouchedIndices},
+			isSkip: true,
+		},
+	} {
+		tk.MustExec("rollback")
+		tk.MustExec("begin")
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err)
+		memBuffer := txn.GetMemBuffer()
+		oldLen := memBuffer.Len()
+		h := kv.IntHandle(1)
+		require.NoError(t, tbl.UpdateRecord(ctx, h, types.MakeDatums(1, 2, 3), types.MakeDatums(1, 12, 3), []bool{false, true, false}, c.opts...))
+		newLen := memBuffer.Len()
+		if c.isSkip {
+			// 1 row overridden. 1 index deleted and re-added.
+			require.Equal(t, oldLen+3, newLen)
+		} else {
+			// 1 row overridden. 1 index deleted and re-added, 1 index rewritten even if unchanged.
+			require.Equal(t, oldLen+4, newLen)
+		}
+
+		checkIndexWrittenInMemBuf := func(idx int, val types.Datum, exists bool, isDel bool) {
+			ec := errctx.StrictNoWarningContext
+			key, distinct, err := tbl.Indices()[idx].GenIndexKey(ec, time.UTC, []types.Datum{val}, h, nil)
+			require.NoError(t, err)
+			require.False(t, distinct)
+			indexVal, err := memBuffer.Get(context.TODO(), key)
+			if !exists {
+				require.True(t, kv.ErrNotExist.Equal(err))
+				return
+			}
+			require.NoError(t, err)
+			if isDel {
+				require.Equal(t, []byte{}, indexVal)
+			}
+		}
+
+		checkIndexWrittenInMemBuf(0, types.NewIntDatum(2), true, true)
+		checkIndexWrittenInMemBuf(0, types.NewIntDatum(12), true, false)
+		checkIndexWrittenInMemBuf(1, types.NewIntDatum(3), !c.isSkip, false)
+	}
+}
+
 func TestDupKeyCheckMode(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

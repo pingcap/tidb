@@ -32,7 +32,7 @@ func TestV2Basic(t *testing.T) {
 	defer func() {
 		r.Store().Close()
 	}()
-	is := NewInfoSchemaV2(r, NewData())
+	is := NewInfoSchemaV2(r, nil, NewData())
 
 	schemaName := model.NewCIStr("testDB")
 	tableName := model.NewCIStr("test")
