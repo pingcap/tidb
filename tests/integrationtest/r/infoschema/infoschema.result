@@ -67,6 +67,7 @@ SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE
 count(*)
 2
 drop table mysql.t1, mysql.t2, mysql.t3;
+drop table test.t1;
 create table infoschema__infoschema.t4(a int, INDEX i1 (a));
 create table infoschema__infoschema.t5(a int, INDEX i1 (a));
 insert into infoschema__infoschema.t4 values(1);
@@ -177,12 +178,12 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 infoschema__infoschema	t1	a
 infoschema__infoschema	t1	b
-test	t1	c1
-test	t1	c2
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't2' and table_schema = 'infoschema__infoschema_2';
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 infoschema__infoschema_2	t2	a
 infoschema__infoschema_2	t2	b
+drop table infoschema__infoschema.t1;
+drop table infoschema__infoschema_2.t2;
 use infoschema__infoschema;
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema_2';
 SCHEMA_NAME
@@ -203,3 +204,14 @@ def	db1	PRIMARY	def	db1	table1	id	1	1	NULL	NULL	NULL
 def	db1	fk	def	db1	table2	id	1	1	db1	table1	id
 drop database db1;
 drop database db2;
+create temporary table temp_table (a int, index idx(a));
+select count(1) from information_schema.tables where table_schema = 'infoschema__infoschema';
+count(1)
+0
+select count(1) from information_schema.tables where table_name = 'temp_table';
+count(1)
+0
+select count(1) from information_schema.statistics where table_name = 'temp_table';
+count(1)
+0
+drop table temp_table;

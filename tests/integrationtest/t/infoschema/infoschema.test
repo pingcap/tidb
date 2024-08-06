@@ -33,6 +33,7 @@ desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_S
 SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
 SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE_NAME = 't2') and TABLE_SCHEMA = 'mysql';
 drop table mysql.t1, mysql.t2, mysql.t3;
+drop table test.t1;
 
 # TestTablesColumn
 create table infoschema__infoschema.t4(a int, INDEX i1 (a));
@@ -89,6 +90,8 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't1';
 --sorted_result
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't2' and table_schema = 'infoschema__infoschema_2';
+drop table infoschema__infoschema.t1;
+drop table infoschema__infoschema_2.t2;
 
 # TestSchemataColumns
 use infoschema__infoschema;
@@ -106,3 +109,10 @@ create table db2.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id
 select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema = 'db1' order by TABLE_NAME;
 drop database db1;
 drop database db2;
+
+# TestTemporaryTableShouldNotAppear
+create temporary table temp_table (a int, index idx(a));
+select count(1) from information_schema.tables where table_schema = 'infoschema__infoschema';
+select count(1) from information_schema.tables where table_name = 'temp_table';
+select count(1) from information_schema.statistics where table_name = 'temp_table';
+drop table temp_table;
