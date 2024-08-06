@@ -292,7 +292,7 @@ const (
 	// such as generated columns composed indexes.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
 
-	// TiDBBuildSamplingStatsConcurrency is used to control the concurrency of build sampling stats task.
+	// TiDBBuildSamplingStatsConcurrency is used to control the concurrency of building stats using sampling.
 	// 1. The number of concurrent workers to merge FMSketches and Sample Data from different regions.
 	// 2. The number of concurrent workers to build TopN and Histogram concurrently.
 	TiDBBuildSamplingStatsConcurrency = "tidb_build_sampling_stats_concurrency"
@@ -304,6 +304,7 @@ const (
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
 	// TiDBAnalyzeDistSQLScanConcurrency is the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
+	// For auto analyze, the value is controlled by tidb_sysproc_scan_concurrency variable.
 	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
 
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
