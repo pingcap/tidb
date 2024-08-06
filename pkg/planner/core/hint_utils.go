@@ -383,7 +383,7 @@ func genHintTblFromPhysicalPlans(
 	minQBOffset := slices.Min(qbOffsets)
 	var hintQBNamePtr *model.CIStr
 	if (minQBOffset > 1 && nodeType == h.TypeSelect) ||
-		(minQBOffset > 0 && (nodeType == h.TypeUpdate) || nodeType == h.TypeDelete) {
+		(minQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
 		hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
 		if err != nil {
 			return nil, nil
