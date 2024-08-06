@@ -16,6 +16,7 @@ package types
 
 import (
 	"encoding/binary"
+	"math"
 	"strconv"
 	"unsafe"
 
@@ -151,15 +152,27 @@ func ZeroCopyDeserializeVectorFloat32(b []byte) (VectorFloat32, []byte, error) {
 // ParseVectorFloat32 parses a string into a vector.
 func ParseVectorFloat32(s string) (VectorFloat32, error) {
 	var values []float32
+	var valueError error
 	// We explicitly use a JSON float parser to reject other JSON types.
 	parser := jsoniter.ParseString(jsoniter.ConfigDefault, s)
 	parser.ReadArrayCB(func(parser *jsoniter.Iterator) bool {
 		v := parser.ReadFloat64()
+		if math.IsNaN(v) {
+			valueError = errors.Errorf("NaN not allowed in vector")
+			return false
+		}
+		if math.IsInf(v, 0) {
+			valueError = errors.Errorf("infinite value not allowed in vector")
+			return false
+		}
 		values = append(values, float32(v))
 		return true
 	})
 	if parser.Error != nil {
 		return ZeroVectorFloat32, errors.Errorf("Invalid vector text: %s", s)
+	}
+	if valueError != nil {
+		return ZeroVectorFloat32, valueError
 	}
 
 	dim := len(values)

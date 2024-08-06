@@ -162,7 +162,7 @@ var kind2Str = map[byte]string{
 	KindMaxValue:      "max_value",
 	KindRaw:           "raw",
 	KindMysqlJSON:     "json",
-	KindVectorFloat32: "vector<float>",
+	KindVectorFloat32: "vector",
 }
 
 // TypeStr converts tp to a string.
