@@ -121,12 +121,15 @@ func extractHintTableForJoinNode(
 	parentOffset int,
 ) (
 	int,
+	bool,
 	*ast.HintTable,
 ) {
-	qbOffset := joinNode.QueryBlockOffset()
+	selfOffset := joinNode.QueryBlockOffset()
+	qbOffset := selfOffset
 	if qbOffset == -1 {
-		return -1, nil
+		return -1, false, nil
 	}
+	guessQBOffset := false
 	var dbName, tableName *model.CIStr
 	if qbOffset != parentOffset {
 		var blockAsNames []ast.HintTable
@@ -134,20 +137,26 @@ func extractHintTableForJoinNode(
 			blockAsNames = *p
 		}
 		if qbOffset >= len(blockAsNames) {
-			return -1, nil
+			return -1, false, nil
 		}
 		hintTable := blockAsNames[qbOffset]
 		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 		dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
+		// TODO
+		if selfOffset > 1 && qbOffset == -1 {
+			guessQBOffset = true
+			qbOffset = selfOffset - 1
+		}
 	}
 	if tableName == nil || tableName.L == "" {
+		guessQBOffset = false
 		qbOffset = joinNode.QueryBlockOffset()
 		dbName, tableName = extractTableAsName(joinNode)
 	}
 	if tableName == nil || tableName.L == "" {
-		return -1, nil
+		return -1, guessQBOffset, nil
 	}
-	return qbOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
+	return qbOffset, guessQBOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 }
 
 func getJoinMethodHintsForSinglePhysicalJoin(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res []*ast.TableOptimizerHint) {
@@ -349,10 +358,18 @@ func genHintTblFromPhysicalPlans(
 ) ([]ast.HintTable, *model.CIStr) {
 	hintTbls := make([]ast.HintTable, 0, len(orderedJoinGroup))
 	qbOffsets := make([]int, 0, len(orderedJoinGroup))
+	guessQBOffsets := make(map[int]struct{})
 	for _, plan := range orderedJoinGroup {
-		qbOffset, ht := extractHintTableForJoinNode(sctx, plan, parentOffset)
+		qbOffset, guessOffset, ht := extractHintTableForJoinNode(sctx, plan, parentOffset)
 		if qbOffset < 0 || ht == nil {
 			continue
+		}
+		// TODO
+		if guessOffset {
+			if _, ok := guessQBOffsets[qbOffset]; ok {
+				continue
+			}
+			guessQBOffsets[qbOffset] = struct{}{}
 		}
 		qbOffsets = append(qbOffsets, qbOffset)
 		hintTbls = append(hintTbls, *ht)
@@ -365,7 +382,8 @@ func genHintTblFromPhysicalPlans(
 	// minimum QB offset among the tables.
 	minQBOffset := slices.Min(qbOffsets)
 	var hintQBNamePtr *model.CIStr
-	if minQBOffset > 1 {
+	if (minQBOffset > 1 && nodeType == h.TypeSelect) ||
+		(minQBOffset > 0 && (nodeType == h.TypeUpdate) || nodeType == h.TypeDelete) {
 		hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
 		if err != nil {
 			return nil, nil
@@ -373,7 +391,8 @@ func genHintTblFromPhysicalPlans(
 		hintQBNamePtr = &hintQBName
 	}
 	for i := range hintTbls {
-		if qbOffsets[i] <= 1 {
+		if (qbOffsets[i] <= 1 && nodeType == h.TypeSelect) ||
+			(qbOffsets[i] == 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
 			continue
 		}
 		tblQBName, err := h.GenerateQBName(nodeType, qbOffsets[i])
