@@ -193,7 +193,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 }
 
 func TestCancelFlashbackCluster(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	time.Sleep(10 * time.Millisecond)
@@ -210,7 +210,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// Try canceled on StateDeleteOnly, cancel success
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		return job.SchemaState == model.StateDeleteOnly
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
@@ -223,7 +223,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 
 	// Try canceled on StateWriteReorganization, cancel failed
-	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook = newCancelJobHook(t, store, func(job *model.Job) bool {
 		return job.SchemaState == model.StateWriteReorganization
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
