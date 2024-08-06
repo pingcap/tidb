@@ -181,8 +181,8 @@ test	t1	c1
 test	t1	c2
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't2' and table_schema = 'infoschema__infoschema_2';
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
-infoschema__infoschema_2	t2	b
 infoschema__infoschema_2	t2	a
+infoschema__infoschema_2	t2	b
 use infoschema__infoschema;
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema_2';
 SCHEMA_NAME

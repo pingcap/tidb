@@ -252,17 +252,15 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 }
 
 func getAutoIncrementID(
-	ctx context.Context,
 	is infoschema.InfoSchema,
 	sctx sessionctx.Context,
-	schema model.CIStr,
 	tblInfo *model.TableInfo,
-) (int64, error) {
-	tbl, err := is.TableByName(ctx, schema, tblInfo.Name)
-	if err != nil {
-		return 0, err
+) int64 {
+	tbl, ok := is.TableByID(tblInfo.ID)
+	if !ok {
+		return 0
 	}
-	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1, nil
+	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
@@ -583,7 +581,6 @@ func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
-	ctx context.Context,
 	sctx sessionctx.Context,
 	loc *time.Location,
 	checker privilege.Manager,
@@ -610,14 +607,10 @@ func (e *memtableRetriever) setDataFromOneTable(
 		} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
 			createOptions = "cached=on"
 		}
-		var err error
 		var autoIncID any
 		hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 		if hasAutoIncID {
-			autoIncID, err = getAutoIncrementID(ctx, e.is, sctx, schema, table)
-			if err != nil {
-				return rows, err
-			}
+			autoIncID = getAutoIncrementID(e.is, sctx, table)
 		}
 		tableType := "BASE TABLE"
 		if util.IsSystemView(schema.L) {
@@ -737,7 +730,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		return errors.Trace(err)
 	}
 	for i, table := range tables {
-		rows, err = e.setDataFromOneTable(ctx, sctx, loc, checker, schemas[i], table, rows, useStatsCache)
+		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
 		if err != nil {
 			return errors.Trace(err)
 		}

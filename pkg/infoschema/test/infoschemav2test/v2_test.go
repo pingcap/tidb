@@ -310,7 +310,7 @@ func TestTrace(t *testing.T) {
 
 	// Evict the table cache and check the trace information can catch this calling.
 	raw.EvictTable("test", "t_trace")
-	tk.MustQuery("trace select * from information_schema.tables").CheckContain("infoschema.loadTableInfo")
+	tk.MustQuery("trace select * from information_schema.tables where table_schema='test' and table_name='t_trace'").CheckContain("infoschema.loadTableInfo")
 }
 
 func BenchmarkTableByName(t *testing.B) {
