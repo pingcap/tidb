@@ -39,6 +39,7 @@ func TestPlanCacheClone(t *testing.T) {
 	tk1.MustExec(`use test`)
 	tk2.MustExec(`use test`)
 	tk1.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), unique key(d))`)
+	tk1.MustExec(`create table t1 (a int, b int, c int, d int)`)
 
 	for i := -20; i < 20; i++ {
 		tk1.MustExec(fmt.Sprintf("insert into t values (%v,%v,%v,%v)", i, rand.Intn(20), rand.Intn(20), -i))
@@ -181,13 +182,41 @@ func TestPlanCacheClone(t *testing.T) {
 		`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d in (?,?)'`,
 		`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+
+	// Insert
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 values (?, ?, ?, ?)'`,
+		`set @a=1, @b=2`, `execute st using @a, @a, @a, @a`, `execute st using @b, @b, @b, @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 select * from t where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 select * from t where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Delete
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'delete from t1 where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'delete from t1 where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Update
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'update t1 set a=a+1 where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'update t1 set a=a+1 where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
 }
 
 func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exec1, exec2 string) {
+	isDML := false
+	if strings.Contains(prep, "insert") || strings.Contains(prep, "update") || strings.Contains(prep, "delete") {
+		isDML = true
+	}
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
 	tk1.MustExecWithContext(ctx, prep)
 	tk1.MustExecWithContext(ctx, set)
-	tk1.MustQueryWithContext(ctx, exec1) // generate the first cached plan
+	if isDML {
+		tk1.MustExecWithContext(ctx, exec1)
+	} else {
+		tk1.MustQueryWithContext(ctx, exec1) // generate the first cached plan
+	}
 
 	tk2.MustExecWithContext(ctx, prep)
 	tk2.MustExecWithContext(ctx, set)
@@ -198,7 +227,11 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 			".ctx",
 			"*collate"))
 	})
-	tk2.MustQueryWithContext(ctx, exec2)
+	if isDML {
+		tk2.MustExecWithContext(ctx, exec2)
+	} else {
+		tk2.MustQueryWithContext(ctx, exec2)
+	}
 	require.True(t, checked)
 }
 
