@@ -2626,8 +2626,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	rows, pkInserts, pkUpdates, pkDeletes int,
 	reorgRand *rand.Rand,
 	getNewPK func(map[string]struct{}, string, *rand.Rand) string,
-	getValues func(string, bool, *rand.Rand) string) {
-
+	getValues func(string, bool, *rand.Rand) string,
+) {
 	pkMap := make(map[string]struct{}, rows)
 	pkArray := make([]string, 0, len(pkMap))
 	// Generate a start set:
