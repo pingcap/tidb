@@ -43,7 +43,7 @@ func main() {
 	// Extract the package info from /tmp/go-build2662369829/b1382/importcfg.link
 	pkg := getPackageInfo(dir)
 
-	const prefix = filepath.Join("github.com", "pingcap", "tidb")
+	var prefix = filepath.Join("github.com", "pingcap", "tidb")
 	if !strings.HasPrefix(pkg, prefix) {
 		os.Exit(-3)
 	}
