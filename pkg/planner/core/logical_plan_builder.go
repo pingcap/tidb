@@ -4865,7 +4865,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	case util2.MetricSchemaName.L:
 		p.Extractor = newMetricTableExtractor()
 	case util2.InformationSchemaName.L:
-		switch strings.ToUpper(tableInfo.Name.O) {
+		switch upTbl := strings.ToUpper(tableInfo.Name.O); upTbl {
 		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
 			p.Extractor = &ClusterTableExtractor{}
 		case infoschema.TableClusterLog:
@@ -4895,20 +4895,34 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TikvRegionPeersExtractor{}
 		case infoschema.TableColumns:
 			p.Extractor = &ColumnsTableExtractor{}
-		case infoschema.TableTables,
-			infoschema.TableReferConst,
+		case infoschema.TableTables:
+			ex := &InfoSchemaTablesExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TablePartitions:
+			ex := &InfoSchemaPartitionsExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableStatistics:
+			ex := &InfoSchemaStatisticsExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableSchemata:
+			ex := &InfoSchemaSchemataExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableReferConst,
 			infoschema.TableKeyColumn,
-			infoschema.TableStatistics,
-			infoschema.TablePartitions,
 			infoschema.TableSequences,
 			infoschema.TableCheckConstraints,
 			infoschema.TableTiDBCheckConstraints,
 			infoschema.TableTiDBIndexUsage,
 			infoschema.TableTiDBIndexes,
 			infoschema.TableViews,
-			infoschema.TableConstraints,
-			infoschema.TableSchemata:
-			p.Extractor = &InfoSchemaTablesExtractor{}
+			infoschema.TableConstraints:
+			ex := &InfoSchemaBaseExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
 		case infoschema.TableTiKVRegionStatus:
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
 		}
