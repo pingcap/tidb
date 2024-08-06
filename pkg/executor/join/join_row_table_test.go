@@ -24,6 +24,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHeapObjectCanMove(t *testing.T) {
+	require.Equal(t, false, heapObjectsCanMove())
+}
+
 func TestFixedOffsetInRowLayout(t *testing.T) {
 	require.Equal(t, 8, sizeOfNextPtr)
 	require.Equal(t, 8, sizeOfLengthField)
