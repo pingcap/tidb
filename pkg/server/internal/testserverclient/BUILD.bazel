@@ -17,6 +17,7 @@ go_library(
         "//pkg/sessionctx/sessionstates",
         "//pkg/testkit",
         "//pkg/testkit/testenv",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util",
         "//pkg/util/versioninfo",
         "@com_github_go_sql_driver_mysql//:mysql",

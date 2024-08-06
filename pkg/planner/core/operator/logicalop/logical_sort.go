@@ -12,32 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
+	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
-	logicalop.BaseLogicalPlan
+	BaseLogicalPlan
 
 	ByItems []*util.ByItems
 }
 
 // Init initializes LogicalSort.
 func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
-	ls.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSort, &ls, offset)
+	ls.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeSort, &ls, offset)
 	return &ls
 }
 
@@ -47,7 +48,7 @@ func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
 func (ls *LogicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	eCtx := ls.SCtx().GetExprCtx().GetEvalCtx()
-	return explainByItems(eCtx, buffer, ls.ByItems).String()
+	return util.ExplainByItems(eCtx, buffer, ls.ByItems).String()
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
@@ -70,7 +71,7 @@ func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column)
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	var cols []*expression.Column
-	ls.ByItems, cols = pruneByItems(ls, ls.ByItems, opt)
+	ls.ByItems, cols = utilfuncp.PruneByItems(ls, ls.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
 	ls.Children()[0], err = ls.Children()[0].PruneColumns(parentUsedCols, opt)
@@ -92,7 +93,7 @@ func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 	}
 	if topN == nil {
 		return ls.BaseLogicalPlan.PushDownTopN(nil, opt)
-	} else if topN.isLimit() {
+	} else if topN.IsLimit() {
 		topN.ByItems = ls.ByItems
 		appendSortPassByItemsTraceStep(ls, topN, opt)
 		return ls.Children()[0].PushDownTopN(topN, opt)
@@ -126,23 +127,7 @@ func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (ls *LogicalSort) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if prop.TaskTp == property.RootTaskType {
-		if MatchItems(prop, ls.ByItems) {
-			ret := make([]base.PhysicalPlan, 0, 2)
-			ret = append(ret, getPhysicalSort(ls, prop))
-			ns := getNominalSort(ls, prop)
-			if ns != nil {
-				ret = append(ret, ns)
-			}
-			return ret, true, nil
-		}
-	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
-		if canPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
-			ps := getNominalSortSimple(ls, prop)
-			return []base.PhysicalPlan{ps}, true, nil
-		}
-	}
-	return nil, true, nil
+	return utilfuncp.ExhaustPhysicalPlans4LogicalSort(ls, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -173,3 +158,34 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
+
+func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := sort.SCtx().GetExprCtx().GetEvalCtx()
+	action := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v passes ByItems[", sort.TP(), sort.ID()))
+		for i, item := range sort.ByItems {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
+		return buffer.String()
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v is Limit originally", topN.TP(), topN.ID())
+	}
+	opt.AppendStepToCurrent(sort.ID(), sort.TP(), reason, action)
+}
+
+func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
+	cols := make([]*expression.Column, 0, len(items))
+	for _, item := range items {
+		col, ok := item.Expr.(*expression.Column)
+		if !ok {
+			break
+		}
+		cols = append(cols, col)
+	}
+	return cols
+}

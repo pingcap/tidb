@@ -63,14 +63,14 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
 		}
 	}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
 			// cancel flashback job
 			job.State = model.JobStateCancelled
 			job.Error = dbterror.ErrCancelledDDLJob
 		}
-	}
+	})
 	dom.DDL().SetHook(hook)
 
 	time.Sleep(10 * time.Millisecond)
@@ -79,6 +79,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)), errno.ErrCancelledDDLJob)
 	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
@@ -203,7 +204,6 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 
 func TestCancelFlashbackCluster(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	originHook := dom.DDL().GetHook()
 	tk := testkit.NewTestKit(t, store)
 
 	time.Sleep(10 * time.Millisecond)
@@ -223,7 +223,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		return job.SchemaState == model.StateDeleteOnly
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustExec("set global tidb_ttl_job_enable = on")
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)), errno.ErrCancelledDDLJob)
 	hook.MustCancelDone(t)
@@ -236,15 +236,13 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		return job.SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 	hook.MustCancelFailed(t)
 
 	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
 	assert.NoError(t, err)
 	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
-
-	dom.DDL().SetHook(originHook)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))

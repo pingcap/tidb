@@ -188,6 +188,23 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
+func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
+	for _, idxCol := range idxCols {
+		col := model.FindColumnInfo(cols, idxCol.Name.L)
+		if col == nil {
+			err = dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", idxCol.Name.L)
+			return
+		}
+		var l int
+		l, err = getIndexColumnLength(col, idxCol.Length)
+		if err != nil {
+			return
+		}
+		colLen += l
+	}
+	return
+}
+
 func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumnLen int) error {
 	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
@@ -1629,8 +1646,6 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		}
 		idxRecords[w.recordIdx[i]].skip = found && idxRecords[w.recordIdx[i]].skip
 	}
-	// Constrains is already checked.
-	w.tblCtx.GetSessionVars().StmtCtx.BatchCheck = true
 	return nil
 }
 
@@ -1824,7 +1839,12 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 			}
 
 			handle, err := w.indexes[i%len(w.indexes)].Create(
-				w.tblCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
+				w.tblCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData,
+				table.WithIgnoreAssertion,
+				table.FromBackfill,
+				// Constrains is already checked in batchCheckUniqueKey
+				table.DupKeyCheckSkip,
+			)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.

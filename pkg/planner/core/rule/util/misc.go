@@ -14,7 +14,9 @@
 
 package util
 
-import "github.com/pingcap/tidb/pkg/expression"
+import (
+	"github.com/pingcap/tidb/pkg/expression"
+)
 
 // ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
 func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {

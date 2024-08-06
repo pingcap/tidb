@@ -655,9 +655,9 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 				if sizeHint > remain {
 					sizeHint = remain
 				}
-				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint)
+				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint, table.DupKeyCheckDefault)
 			} else {
-				err = w.addRecord(ctx, row)
+				err = w.addRecord(ctx, row, table.DupKeyCheckDefault)
 			}
 			if err != nil {
 				return err
@@ -670,11 +670,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	}
 }
 
-func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
+func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
 	if row == nil {
 		return nil
 	}
-	return w.addRecord(ctx, row)
+	return w.addRecord(ctx, row, dupKeyCheck)
 }
 
 // GetInfilePath get infile path.

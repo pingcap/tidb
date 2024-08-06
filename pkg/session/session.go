@@ -1163,12 +1163,7 @@ func sqlForLog(sql string) string {
 	return executor.QueryReplacer.Replace(sql)
 }
 
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
-func (s *session) sysSessionPool() sessionPool {
+func (s *session) sysSessionPool() util.SessionPool {
 	return domain.GetDomain(s).SysSessionPool()
 }
 
@@ -3256,7 +3251,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = tbl.id
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, "", tblInfo)
+		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3289,7 +3284,7 @@ func InitMDLTable(store kv.Storage) error {
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = ddl.MDLTableID
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, "", tblInfo)
+		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3610,8 +3605,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	}
 
 	// init the instance plan cache
-	// TODO: introduce 2 new variable to control these 2 mem limits.
-	dom.InitInstancePlanCache(1000000, 1000000)
+	dom.InitInstancePlanCache()
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze

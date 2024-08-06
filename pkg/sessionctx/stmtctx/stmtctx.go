@@ -194,7 +194,6 @@ type StatementContext struct {
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
 
-	BatchCheck            bool
 	IgnoreExplainIDSuffix bool
 	MultiSchemaInfo       *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction

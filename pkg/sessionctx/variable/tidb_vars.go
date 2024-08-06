@@ -839,6 +839,14 @@ const (
 	// TiDBSessionPlanCacheSize controls the size of session plan cache.
 	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
+	// TiDBEnableInstancePlanCache indicates whether to enable instance plan cache.
+	// If this variable is false, session-level plan cache will be used.
+	TiDBEnableInstancePlanCache = "tidb_enable_instance_plan_cache"
+	// TiDBInstancePlanCacheTargetMemSize indicates the target memory size of instance plan cache.
+	TiDBInstancePlanCacheTargetMemSize = "tidb_instance_plan_cache_target_mem_size"
+	// TiDBInstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
+	TiDBInstancePlanCacheMaxMemSize = "tidb_instance_plan_cache_max_mem_size"
+
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
 
@@ -1415,6 +1423,8 @@ const (
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
+	DefTiDBInstancePlanCacheTargetMemSize          = 100 * size.MB
+	DefTiDBInstancePlanCacheMaxMemSize             = 120 * size.MB
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
@@ -1560,6 +1570,9 @@ var (
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	EnableInstancePlanCache           = atomic.NewBool(false)
+	InstancePlanCacheTargetMemSize    = atomic.NewInt64(int64(DefTiDBInstancePlanCacheTargetMemSize))
+	InstancePlanCacheMaxMemSize       = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable             = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	DDLForce2Queue                    = atomic.NewBool(false)

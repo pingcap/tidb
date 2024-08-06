@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
@@ -215,7 +216,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 	// it has count(), we have split it into sum()+count(), since sum() returns decimal
 	// we have to return a project operator that casts decimal to bigint
-	proj := LogicalProjection{
+	proj := logicalop.LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, column := range topAggSchema.Columns {

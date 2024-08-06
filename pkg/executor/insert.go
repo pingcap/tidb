@@ -108,9 +108,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 				if sizeHint > remain {
 					sizeHint = remain
 				}
-				err = e.addRecordWithAutoIDHint(ctx, row, sizeHint)
+				err = e.addRecordWithAutoIDHint(ctx, row, sizeHint, table.DupKeyCheckDefault)
 			} else {
-				err = e.addRecord(ctx, row)
+				err = e.addRecord(ctx, row, table.DupKeyCheckDefault)
 			}
 			if err != nil {
 				return err
@@ -282,7 +282,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			err := e.addRecord(ctx, newRows[i])
+			err := e.addRecord(ctx, newRows[i], table.DupKeyCheckDefault)
 			if err != nil {
 				return err
 			}
