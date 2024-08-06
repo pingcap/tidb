@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -931,4 +932,223 @@ func TestTxnAssertion(t *testing.T) {
 	testUntouchedIndexImpl("STRICT", true)
 	testUntouchedIndexImpl("OFF", false)
 	testUntouchedIndexImpl("OFF", true)
+}
+
+func TestDupKeyCheckMode(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (a int primary key auto_increment, b int, c int, unique key idx_b(b), key idx_c(c))")
+	tk.MustExec("insert into t values(1, 2, 3)")
+	tk.MustExec("insert into t values(11, 12, 13)")
+	defer tk.MustExec("rollback")
+
+	prepareTxn := func(txnMode string) kv.Transaction {
+		tk.MustExec("rollback")
+		tk.MustExec("begin " + txnMode)
+		tk.MustExec("insert into t values(21, 22, 23)")
+		tk.MustExec("insert into t values(31, 32, 33)")
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err)
+		return txn
+	}
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	ctx := tk.Session().GetTableCtx()
+	getHandleFlags := func(h kv.Handle, memBuffer kv.MemBuffer) kv.KeyFlags {
+		key := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), h)
+		flags, err := memBuffer.GetFlags(key)
+		require.NoError(t, err)
+		return flags
+	}
+
+	expectAddRecordDupKeyErr := func(row []types.Datum, opts ...table.AddRecordOption) {
+		_, err := tbl.AddRecord(ctx, row, opts...)
+		require.True(t, kv.ErrKeyExists.Equal(err))
+	}
+
+	expectAddRecordSucc := func(row []types.Datum, opts ...table.AddRecordOption) kv.Handle {
+		h, err := tbl.AddRecord(ctx, row, opts...)
+		require.NoError(t, err)
+		require.Equal(t, kv.IntHandle(row[0].GetInt64()), h)
+		return h
+	}
+
+	expectUpdateRecordDupKeyErr := func(rows [][]types.Datum, touched []bool, opts ...table.UpdateRecordOption) {
+		h := kv.IntHandle(rows[0][0].GetInt64())
+		err = tbl.UpdateRecord(ctx, h, rows[0], rows[1], touched, opts...)
+		require.True(t, kv.ErrKeyExists.Equal(err))
+	}
+
+	expectUpdateRecordSucc := func(rows [][]types.Datum, touched []bool, opts ...table.UpdateRecordOption) kv.Handle {
+		h := kv.IntHandle(rows[0][0].GetInt64())
+		err = tbl.UpdateRecord(ctx, h, rows[0], rows[1], touched, opts...)
+		require.NoError(t, err)
+		return h
+	}
+
+	getUniqueKeyFlags := func(h kv.Handle, val types.Datum, memBuffer kv.MemBuffer) kv.KeyFlags {
+		key, distinct, err := tbl.Indices()[0].GenIndexKey(errctx.StrictNoWarningContext, time.UTC, []types.Datum{val}, h, nil)
+		require.NoError(t, err)
+		require.True(t, distinct)
+		flags, err := memBuffer.GetFlags(key)
+		require.NoError(t, err)
+		return flags
+	}
+
+	getNormalIndexFlags := func(h kv.Handle, val types.Datum, memBuffer kv.MemBuffer) kv.KeyFlags {
+		key, distinct, err := tbl.Indices()[1].GenIndexKey(errctx.StrictNoWarningContext, time.UTC, []types.Datum{val}, h, nil)
+		require.NoError(t, err)
+		require.False(t, distinct)
+		flags, err := memBuffer.GetFlags(key)
+		require.NoError(t, err)
+		return flags
+	}
+
+	for _, txnMode := range []string{"optimistic", "pessimistic"} {
+		t.Run(txnMode+" DupKeyCheckDefault(check in place)", func(t *testing.T) {
+			defer tk.MustExec("rollback")
+			memBuffer := prepareTxn(txnMode).GetMemBuffer()
+			oldLen, oldSize := memBuffer.Len(), memBuffer.Size()
+			tk.Session().GetSessionVars().PresumeKeyNotExists = false
+			tk.Session().GetSessionVars().StmtCtx.SetErrLevels(errctx.LevelMap{errctx.ErrGroupDupKey: errctx.LevelWarn})
+
+			// AddRecord should check dup key in store and memory buffer
+			for _, row := range [][]types.Datum{
+				types.MakeDatums(1, 5, 6),
+				types.MakeDatums(100, 2, 300),
+				types.MakeDatums(21, 31, 41),
+				types.MakeDatums(200, 22, 23),
+			} {
+				expectAddRecordDupKeyErr(row, table.DupKeyCheckDefault)
+				// default mode should be DupKeyCheckDefault
+				expectAddRecordDupKeyErr(row)
+				require.Equal(t, oldLen, memBuffer.Len())
+				require.Equal(t, oldSize, memBuffer.Size())
+			}
+
+			// UpdateRecord should check dup key in store and memory buffer
+			for _, row := range [][][]types.Datum{
+				{types.MakeDatums(1, 2, 3), types.MakeDatums(1, 12, 13)},
+			} {
+				expectUpdateRecordDupKeyErr(row, []bool{false, true, false}, table.DupKeyCheckDefault)
+				// default mode should be DupKeyCheckDefault
+				expectUpdateRecordDupKeyErr(row, []bool{false, true, false})
+				require.Equal(t, oldLen, memBuffer.Len())
+				require.Equal(t, oldSize, memBuffer.Size())
+			}
+		})
+
+		t.Run(txnMode+" DupKeyCheckDefault(lazy)", func(t *testing.T) {
+			defer tk.MustExec("rollback")
+			memBuffer := prepareTxn(txnMode).GetMemBuffer()
+			oldLen, oldSize := memBuffer.Len(), memBuffer.Size()
+			tk.Session().GetSessionVars().PresumeKeyNotExists = true
+			tk.Session().GetSessionVars().StmtCtx.SetErrLevels(errctx.LevelMap{})
+
+			// AddRecord should check dup key in memory buffer
+			for _, row := range [][]types.Datum{
+				types.MakeDatums(21, 31, 41),
+				types.MakeDatums(200, 22, 23),
+			} {
+				expectAddRecordDupKeyErr(row, table.DupKeyCheckDefault)
+				// if DupKeyCheckMode mode specified, table.DupKeyCheckDefault should be used
+				expectAddRecordDupKeyErr(row)
+				require.Equal(t, oldLen, memBuffer.Len())
+				require.Equal(t, oldSize, memBuffer.Size())
+			}
+
+			// UpdateRecord should check dup key in memory buffer
+			for _, row := range [][][]types.Datum{
+				{types.MakeDatums(21, 22, 23), types.MakeDatums(21, 32, 35)},
+			} {
+				expectUpdateRecordDupKeyErr(row, []bool{false, true, false}, table.DupKeyCheckDefault)
+				// default mode should be DupKeyCheckDefault
+				expectUpdateRecordDupKeyErr(row, []bool{false, true, false})
+				require.Equal(t, oldLen, memBuffer.Len())
+				require.Equal(t, oldSize, memBuffer.Size())
+			}
+
+			// AddRecord should not check dup key in store
+			curLen := oldLen
+			for _, row := range [][]types.Datum{
+				types.MakeDatums(1, 12, 13),
+			} {
+				h := expectAddRecordSucc(row, table.DupKeyCheckDefault)
+				// 1 row and 2 indices added
+				require.Equal(t, curLen+3, memBuffer.Len())
+				curLen = memBuffer.Len()
+				// the new row should contain a flag to presume key not exists.
+				flags := getHandleFlags(h, memBuffer)
+				require.True(t, flags.HasPresumeKeyNotExists())
+				// new unique key contain a flag to presume key not exists.
+				flags = getUniqueKeyFlags(h, row[1], memBuffer)
+				require.True(t, flags.HasPresumeKeyNotExists())
+				// normal index should not contain a flag to presume key not exists.
+				flags = getNormalIndexFlags(h, row[2], memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+			}
+
+			// UpdateRecord should not check dup key in store
+			for _, row := range [][][]types.Datum{
+				{types.MakeDatums(11, 12, 13), types.MakeDatums(11, 2, 33)},
+			} {
+				h := expectUpdateRecordSucc(row, []bool{false, true, true}, table.DupKeyCheckDefault)
+				// 1 row overridden. 2 indexes deleted and re-added.
+				require.Equal(t, curLen+4, memBuffer.Len())
+				curLen = memBuffer.Len()
+				// the update row should not contain a flag to presume key not exists.
+				flags := getHandleFlags(h, memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+				// new unique key contain a flag to presume key not exists.
+				flags = getUniqueKeyFlags(h, row[1][1], memBuffer)
+				require.True(t, flags.HasPresumeKeyNotExists())
+				// normal index should not contain a flag to presume key not exists.
+				flags = getNormalIndexFlags(h, row[1][2], memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+			}
+		})
+
+		t.Run(txnMode+" DupKeyCheckSkip", func(t *testing.T) {
+			defer tk.MustExec("rollback")
+			memBuffer := prepareTxn(txnMode).GetMemBuffer()
+			curLen := memBuffer.Len()
+
+			// AddRecord should not check dup key in store and memory buffer
+			for _, row := range [][]types.Datum{
+				types.MakeDatums(1, 2, 13),
+			} {
+				h := expectAddRecordSucc(row, table.DupKeyCheckSkip)
+				// 1 row and 2 indexes added
+				require.Equal(t, curLen+3, memBuffer.Len())
+				curLen = memBuffer.Len()
+				// should not contain the flag to presume key not exists for `DupKeyCheckSkip`
+				flags := getHandleFlags(h, memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+				flags = getUniqueKeyFlags(h, row[1], memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+				flags = getNormalIndexFlags(h, row[2], memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+			}
+
+			tk.MustExec("rollback")
+			memBuffer = prepareTxn(txnMode).GetMemBuffer()
+			curLen = memBuffer.Len()
+			for _, row := range [][][]types.Datum{
+				{types.MakeDatums(1, 2, 3), types.MakeDatums(1, 12, 13)},
+			} {
+				h := expectUpdateRecordSucc(row, []bool{false, true, true}, table.DupKeyCheckSkip)
+				// 1 row added. 2 indices old values overwritten as tombstone and new keys added.
+				require.Equal(t, curLen+5, memBuffer.Len())
+				curLen = memBuffer.Len()
+				// should not contain the flag to presume key not exists for `DupKeyCheckSkip`
+				flags := getHandleFlags(h, memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+				flags = getUniqueKeyFlags(h, row[1][1], memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+				flags = getNormalIndexFlags(h, row[1][2], memBuffer)
+				require.False(t, flags.HasPresumeKeyNotExists())
+			}
+		})
+	}
 }

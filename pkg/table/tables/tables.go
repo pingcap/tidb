@@ -893,7 +893,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 	}
 	key := t.RecordKey(recordID)
 	var setPresume bool
-	if !sctx.GetSessionVars().StmtCtx.BatchCheck {
+	if opt.DupKeyCheck != table.DupKeyCheckSkip {
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			_, err = txn.Get(ctx, key)
@@ -1013,7 +1013,7 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opt *table.CreateIdxOpt) (kv.Handle, error) {
 	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
-	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := opt.DupKeyCheck == table.DupKeyCheckSkip
 	for _, v := range t.Indices() {
 		if !IsIndexWritable(v) {
 			continue
