@@ -313,6 +313,24 @@ func TestTrace(t *testing.T) {
 	tk.MustQuery("trace select * from information_schema.tables where table_schema='test' and table_name='t_trace'").CheckContain("infoschema.loadTableInfo")
 }
 
+func TestCachedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+	tk.MustExec("create table t_cache (id int key auto_increment)")
+	tk.MustExec("insert into t_cache values (1)")
+	tk.MustExec("alter table t_cache cache")
+	is := dom.InfoSchema()
+	ok, raw := infoschema.IsV2(is)
+	require.True(t, ok)
+
+	// Cover a case that after cached table evict and load, table.Table goes wrong.
+	raw.EvictTable("test", "t_cache")
+	tk.MustExec("insert into t_cache values (2)") // no panic here
+	tk.MustQuery("select * from t_cache").Check(testkit.Rows("1", "2"))
+}
+
 func BenchmarkTableByName(t *testing.B) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

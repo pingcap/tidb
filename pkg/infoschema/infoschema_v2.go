@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -532,16 +532,18 @@ var _ InfoSchema = &infoschemaV2{}
 type infoschemaV2 struct {
 	*infoSchema // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
 	r           autoid.Requirement
+	factory     func() (pools.Resource, error)
 	ts          uint64
 	*Data
 }
 
 // NewInfoSchemaV2 create infoschemaV2.
-func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
+func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) infoschemaV2 {
 	return infoschemaV2{
 		infoSchema: newInfoSchema(),
 		Data:       infoData,
 		r:          r,
+		factory:    factory,
 	}
 }
 
@@ -627,7 +629,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(context.Background(), is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := is.loadTableInfo(context.Background(), id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil || ret == nil {
 		return nil, false
 	}
@@ -710,7 +712,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(ctx, is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := is.loadTableInfo(ctx, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1008,7 +1010,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	return is.SchemaByName(model.NewCIStr(name))
 }
 
-func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
+func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
 	failpoint.Inject("mockLoadTableInfoError", func(_ failpoint.Value) {
 		failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
@@ -1016,7 +1018,7 @@ func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tb
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:
-		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
+		snapshot := is.r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
@@ -1046,9 +1048,8 @@ func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tb
 
 		ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 		ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
-		allocs := autoid.NewAllocatorsFromTblInfo(r, dbID, tblInfo)
-		// TODO: handle cached table!!!
-		ret, err := tables.TableFromMeta(allocs, tblInfo)
+		allocs := autoid.NewAllocatorsFromTblInfo(is.r, dbID, tblInfo)
+		ret, err := tableFromMeta(allocs, is.factory, tblInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
