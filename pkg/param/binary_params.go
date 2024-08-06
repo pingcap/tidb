@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
+// ErrUnknownFieldType is returned when datatype of the binary param is unknown
 var ErrUnknownFieldType = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 
 // BinaryParam stores the information decoded from the binary protocol
