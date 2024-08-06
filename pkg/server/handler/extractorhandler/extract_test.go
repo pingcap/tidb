@@ -61,6 +61,7 @@ func TestExtractHandlerInfoSchemaV2(t *testing.T) {
 }
 
 func testExtractHandler(t *testing.T, store kv.Storage) {
+	server2.RunInGoTestChan = make(chan struct{})
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
 	cfg := util.NewTestConfig()
