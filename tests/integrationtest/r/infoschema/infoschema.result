@@ -67,6 +67,7 @@ SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE
 count(*)
 2
 drop table mysql.t1, mysql.t2, mysql.t3;
+drop table test.t1;
 create table infoschema__infoschema.t4(a int, INDEX i1 (a));
 create table infoschema__infoschema.t5(a int, INDEX i1 (a));
 insert into infoschema__infoschema.t4 values(1);
@@ -177,8 +178,6 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 infoschema__infoschema	t1	a
 infoschema__infoschema	t1	b
-test	t1	c1
-test	t1	c2
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't2' and table_schema = 'infoschema__infoschema_2';
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 infoschema__infoschema_2	t2	b

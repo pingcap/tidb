@@ -33,6 +33,7 @@ desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_S
 SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
 SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE_NAME = 't2') and TABLE_SCHEMA = 'mysql';
 drop table mysql.t1, mysql.t2, mysql.t3;
+drop table test.t1;
 
 # TestTablesColumn
 create table infoschema__infoschema.t4(a int, INDEX i1 (a));
