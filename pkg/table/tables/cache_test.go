@@ -559,3 +559,25 @@ func TestRenewLeaseABAFailPoint(t *testing.T) {
 	tk.MustQuery("select * from t_lease").Check(testkit.Rows("1 2"))
 	require.False(t, lastReadFromCache(tk))
 }
+
+func TestIssue49847(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("alter table t cache")
+	tk.MustExec("begin")
+	tk.MustQuery("select  * from t where id > 323").Check(testkit.Rows())
+	cacheUsed := false
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select  * from t where id > 323").Check(testkit.Rows())
+		if lastReadFromCache(tk) {
+			cacheUsed = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	tk.MustExec("rollback")
+	require.True(t, cacheUsed)
+}
