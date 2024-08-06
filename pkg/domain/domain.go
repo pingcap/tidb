@@ -3113,8 +3113,10 @@ func (do *Domain) StopAutoAnalyze() {
 }
 
 // InitInstancePlanCache initializes the instance level plan cache for this Domain.
-func (do *Domain) InitInstancePlanCache(softMemLimit, hardMemLimit int64) {
-	do.instancePlanCache = NewInstancePlanCache(softMemLimit, hardMemLimit)
+func (do *Domain) InitInstancePlanCache() {
+	softLimit := variable.InstancePlanCacheTargetMemSize.Load()
+	hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
+	do.instancePlanCache = NewInstancePlanCache(softLimit, hardLimit)
 	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
 }
 
@@ -3135,6 +3137,15 @@ func (do *Domain) planCacheEvictTrigger() {
 	for {
 		select {
 		case <-ticker.C:
+			// update limits
+			softLimit := variable.InstancePlanCacheTargetMemSize.Load()
+			hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
+			curSoft, curHard := do.instancePlanCache.GetLimits()
+			if curSoft != softLimit || curHard != hardLimit {
+				do.instancePlanCache.SetLimits(softLimit, hardLimit)
+			}
+
+			// trigger the eviction
 			do.instancePlanCache.Evict()
 			// TODO: update the metrics
 		case <-do.exit:

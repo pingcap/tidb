@@ -36,8 +36,6 @@ func TestPlanCacheClone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk1.Session().GetSessionVars().EnableInstancePlanCache = true
-	tk2.Session().GetSessionVars().EnableInstancePlanCache = true
 	tk1.MustExec(`use test`)
 	tk2.MustExec(`use test`)
 	tk1.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), unique key(d))`)
@@ -186,14 +184,15 @@ func TestPlanCacheClone(t *testing.T) {
 }
 
 func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exec1, exec2 string) {
-	tk1.MustExec(prep)
-	tk1.MustExec(set)
-	tk1.MustQuery(exec1) // generate the first cached plan
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
+	tk1.MustExecWithContext(ctx, prep)
+	tk1.MustExecWithContext(ctx, set)
+	tk1.MustQueryWithContext(ctx, exec1) // generate the first cached plan
 
-	tk2.MustExec(prep)
-	tk2.MustExec(set)
+	tk2.MustExecWithContext(ctx, prep)
+	tk2.MustExecWithContext(ctx, set)
 	checked := false
-	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
+	ctx = context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
 		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned,
 			".ctx",
