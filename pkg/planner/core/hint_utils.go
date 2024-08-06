@@ -159,21 +159,35 @@ func extractHintTableForJoinNode(
 	return qbOffset, guessQBOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 }
 
-func getJoinMethodHintsForSinglePhysicalJoin(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) *ast.TableOptimizerHint {
+func getJoinMethodHintsForSinglePhysicalJoin(
+	sctx base.PlanContext,
+	joinType string,
+	parentOffset int,
+	nodeType h.NodeType,
+	onlyFirstTbl bool,
+	children ...base.PhysicalPlan,
+) *ast.TableOptimizerHint {
 	if parentOffset == -1 {
 		return nil
 	}
 	hintTbls, hintQBName := genHintTblFromPhysicalPlans(sctx, children, parentOffset, nodeType)
-	if len(hintTbls) == 0 {
+	effectiveHintTbls := slices.DeleteFunc(slices.Clone(hintTbls), func(ht *ast.HintTable) bool {
+		return ht == nil
+	})
+	if len(effectiveHintTbls) == 0 {
+		return nil
+	}
+
+	if onlyFirstTbl && hintTbls[0] == nil {
 		return nil
 	}
 
 	newHint := &ast.TableOptimizerHint{
 		HintName: model.NewCIStr(joinType),
-		Tables:   []ast.HintTable{hintTbls[0]},
+		Tables:   []ast.HintTable{*effectiveHintTbls[0]},
 	}
 
-	if len(hintTbls) == len(children) && hintQBName != nil {
+	if !slices.Contains(hintTbls, nil) && hintQBName != nil {
 		newHint.QBName = *hintQBName
 	}
 
@@ -308,12 +322,28 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			h.HintSMJ,
 			p.QueryBlockOffset(),
 			nodeType,
+			false,
 			pp.children...,
 		)
 		if hint != nil {
 			res = append(res, hint)
 		}
 	case *PhysicalHashJoin:
+		// For semi join, hash_join_[build|probe] is not supported. See getHashJoins() for details.
+		if pp.JoinType.IsSemiJoin() {
+			hint := getJoinMethodHintsForSinglePhysicalJoin(
+				p.SCtx(),
+				h.HintHJ,
+				p.QueryBlockOffset(),
+				nodeType,
+				false,
+				pp.children...,
+			)
+			if hint != nil {
+				res = append(res, hint)
+			}
+			break
+		}
 		var buildSideChild, probeSideChild base.PhysicalPlan
 		if pp.RightIsBuildSide() {
 			buildSideChild = pp.children[1]
@@ -327,7 +357,9 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			h.HintHashJoinBuild,
 			p.QueryBlockOffset(),
 			nodeType,
+			true,
 			buildSideChild,
+			probeSideChild,
 		)
 		if hint != nil {
 			res = append(res, hint)
@@ -338,7 +370,9 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				h.HintHashJoinProbe,
 				p.QueryBlockOffset(),
 				nodeType,
+				true,
 				probeSideChild,
+				buildSideChild,
 			)
 			if hint != nil {
 				res = append(res, hint)
@@ -350,7 +384,9 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			h.HintINLJ,
 			p.QueryBlockOffset(),
 			nodeType,
+			true,
 			pp.children[pp.InnerChildIdx],
+			pp.children[1-pp.InnerChildIdx],
 		)
 		if hint != nil {
 			res = append(res, hint)
@@ -361,7 +397,9 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			h.HintINLMJ,
 			p.QueryBlockOffset(),
 			nodeType,
+			true,
 			pp.children[pp.InnerChildIdx],
+			pp.children[1-pp.InnerChildIdx],
 		)
 		if hint != nil {
 			res = append(res, hint)
@@ -372,7 +410,9 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			h.HintINLHJ,
 			p.QueryBlockOffset(),
 			nodeType,
+			true,
 			pp.children[pp.InnerChildIdx],
+			pp.children[1-pp.InnerChildIdx],
 		)
 		if hint != nil {
 			res = append(res, hint)
@@ -399,13 +439,18 @@ func genJoinOrderHintFromRootPhysicalJoin(
 
 	// 2. Generate the leading hint based on the ordered operators.
 	hintTbls, hintQBName := genHintTblFromPhysicalPlans(p.SCtx(), orderedJoinGroup, p.QueryBlockOffset(), nodeType)
-	if len(hintTbls) != len(orderedJoinGroup) {
+	if slices.Contains(hintTbls, nil) {
 		return nil
 	}
 
+	// convert hintTbls from []*ast.HintTable to []ast.HintTable
+	hintTblVals := make([]ast.HintTable, 0, len(hintTbls))
+	for _, ht := range hintTbls {
+		hintTblVals = append(hintTblVals, *ht)
+	}
 	res := &ast.TableOptimizerHint{
 		HintName: model.NewCIStr(h.HintLeading),
-		Tables:   hintTbls,
+		Tables:   hintTblVals,
 	}
 	if hintQBName != nil {
 		res.QBName = *hintQBName
@@ -418,32 +463,42 @@ func genHintTblFromPhysicalPlans(
 	orderedJoinGroup []base.PhysicalPlan,
 	parentOffset int,
 	nodeType h.NodeType,
-) ([]ast.HintTable, *model.CIStr) {
-	hintTbls := make([]ast.HintTable, 0, len(orderedJoinGroup))
+) ([]*ast.HintTable, *model.CIStr) {
+	hintTbls := make([]*ast.HintTable, 0, len(orderedJoinGroup))
 	qbOffsets := make([]int, 0, len(orderedJoinGroup))
 	guessQBOffsets := make(map[int]struct{})
+
+	// Note that qbOffsets[x] is -1 if and only if hintTbls[x] is nil; qbOffsets[x] >=0 if and only if hintTbls[x] is
+	// not nil
 	for _, plan := range orderedJoinGroup {
 		qbOffset, guessOffset, ht := extractHintTableForJoinNode(sctx, plan, parentOffset)
 		if qbOffset < 0 || ht == nil {
-			continue
+			qbOffsets = append(qbOffsets, -1)
+			hintTbls = append(hintTbls, nil)
 		}
 		// TODO
 		if guessOffset {
 			if _, ok := guessQBOffsets[qbOffset]; ok {
-				continue
+				qbOffsets = append(qbOffsets, -1)
+				hintTbls = append(hintTbls, nil)
 			}
 			guessQBOffsets[qbOffset] = struct{}{}
 		}
 		qbOffsets = append(qbOffsets, qbOffset)
-		hintTbls = append(hintTbls, *ht)
+		hintTbls = append(hintTbls, ht)
 	}
-	if len(hintTbls) == 0 {
+
+	effectiveQBOffsets := slices.DeleteFunc(slices.Clone(qbOffsets), func(i int) bool {
+		return i == -1
+	})
+	if len(effectiveQBOffsets) == 0 {
 		return nil, nil
 	}
-	// Current join reorder will break QB offset in the operator, e.g. setting them to -1.
+
+	// Current join reorder will break QB offset of the join operator, e.g. setting them to -1.
 	// So we are unable to get the correct QB offset for the join order hint from the join operator, now we use the
 	// minimum QB offset among the tables.
-	minQBOffset := slices.Min(qbOffsets)
+	minQBOffset := slices.Min(effectiveQBOffsets)
 	var hintQBNamePtr *model.CIStr
 	if (minQBOffset > 1 && nodeType == h.TypeSelect) ||
 		(minQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
@@ -453,7 +508,10 @@ func genHintTblFromPhysicalPlans(
 		}
 		hintQBNamePtr = &hintQBName
 	}
-	for i := range hintTbls {
+	for i, hintTbl := range hintTbls {
+		if hintTbl == nil {
+			continue
+		}
 		if (qbOffsets[i] <= 1 && nodeType == h.TypeSelect) ||
 			(qbOffsets[i] == 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
 			continue
