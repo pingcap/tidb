@@ -147,7 +147,7 @@ type Domain struct {
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *sessionPool
+	sysSessionPool  util.SessionPool
 	exit            chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
@@ -1221,9 +1221,21 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store:             store,
-		exit:              make(chan struct{}),
-		sysSessionPool:    newSessionPool(capacity, factory),
+		store: store,
+		exit:  make(chan struct{}),
+		sysSessionPool: util.NewSessionPool(
+			capacity, factory,
+			func(r pools.Resource) {
+				_, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				infosync.StoreInternalSession(r)
+			},
+			func(r pools.Resource) {
+				_, ok := r.(sessionctx.Context)
+				intest.Assert(ok)
+				infosync.DeleteInternalSession(r)
+			},
+		),
 		statsLease:        statsLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
@@ -1726,84 +1738,8 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 	}
 }
 
-type sessionPool struct {
-	resources chan pools.Resource
-	factory   pools.Factory
-	mu        struct {
-		sync.RWMutex
-		closed bool
-	}
-}
-
-func newSessionPool(capacity int, factory pools.Factory) *sessionPool {
-	return &sessionPool{
-		resources: make(chan pools.Resource, capacity),
-		factory:   factory,
-	}
-}
-
-func (p *sessionPool) Get() (resource pools.Resource, err error) {
-	var ok bool
-	select {
-	case resource, ok = <-p.resources:
-		if !ok {
-			err = errors.New("session pool closed")
-		}
-	default:
-		resource, err = p.factory()
-	}
-
-	// Put the internal session to the map of SessionManager
-	failpoint.Inject("mockSessionPoolReturnError", func() {
-		err = errors.New("mockSessionPoolReturnError")
-	})
-
-	if nil == err {
-		_, ok = resource.(sessionctx.Context)
-		intest.Assert(ok)
-		infosync.StoreInternalSession(resource)
-	}
-
-	return
-}
-
-func (p *sessionPool) Put(resource pools.Resource) {
-	_, ok := resource.(sessionctx.Context)
-	intest.Assert(ok)
-
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	// Delete the internal session to the map of SessionManager
-	infosync.DeleteInternalSession(resource)
-	if p.mu.closed {
-		resource.Close()
-		return
-	}
-
-	select {
-	case p.resources <- resource:
-	default:
-		resource.Close()
-	}
-}
-
-func (p *sessionPool) Close() {
-	p.mu.Lock()
-	if p.mu.closed {
-		p.mu.Unlock()
-		return
-	}
-	p.mu.closed = true
-	close(p.resources)
-	p.mu.Unlock()
-
-	for r := range p.resources {
-		r.Close()
-	}
-}
-
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *sessionPool {
+func (do *Domain) SysSessionPool() util.SessionPool {
 	return do.sysSessionPool
 }
 
@@ -2796,12 +2732,11 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 	}
 
 	// update locally
-	sysSessionPool := do.SysSessionPool()
-	ctx, err := sysSessionPool.Get()
+	ctx, err := do.sysSessionPool.Get()
 	if err != nil {
 		return err
 	}
-	defer sysSessionPool.Put(ctx)
+	defer do.sysSessionPool.Put(ctx)
 	return do.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 }
 
@@ -3178,8 +3113,10 @@ func (do *Domain) StopAutoAnalyze() {
 }
 
 // InitInstancePlanCache initializes the instance level plan cache for this Domain.
-func (do *Domain) InitInstancePlanCache(softMemLimit, hardMemLimit int64) {
-	do.instancePlanCache = NewInstancePlanCache(softMemLimit, hardMemLimit)
+func (do *Domain) InitInstancePlanCache() {
+	softLimit := variable.InstancePlanCacheTargetMemSize.Load()
+	hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
+	do.instancePlanCache = NewInstancePlanCache(softLimit, hardLimit)
 	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
 }
 
@@ -3200,6 +3137,15 @@ func (do *Domain) planCacheEvictTrigger() {
 	for {
 		select {
 		case <-ticker.C:
+			// update limits
+			softLimit := variable.InstancePlanCacheTargetMemSize.Load()
+			hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
+			curSoft, curHard := do.instancePlanCache.GetLimits()
+			if curSoft != softLimit || curHard != hardLimit {
+				do.instancePlanCache.SetLimits(softLimit, hardLimit)
+			}
+
+			// trigger the eviction
 			do.instancePlanCache.Evict()
 			// TODO: update the metrics
 		case <-do.exit:

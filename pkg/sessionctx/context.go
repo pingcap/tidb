@@ -74,6 +74,10 @@ type InstancePlanCache interface {
 	Evict() (evicted bool)
 	// MemUsage returns the total memory usage of this plan cache.
 	MemUsage() int64
+	// GetLimits returns the soft and hard memory limits of this plan cache.
+	GetLimits() (softLimit, hardLimit int64)
+	// SetLimits sets the soft and hard memory limits of this plan cache.
+	SetLimits(softLimit, hardLimit int64)
 }
 
 // Context is an interface for transaction and executive args environment.

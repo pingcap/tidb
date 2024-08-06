@@ -121,7 +121,8 @@ type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more b
 
 // commonMutateOpt is the common options for mutating a table.
 type commonMutateOpt struct {
-	Ctx context.Context
+	Ctx         context.Context
+	DupKeyCheck DupKeyCheckMode
 }
 
 // AddRecordOpt contains the options will be used when adding a record.
@@ -240,6 +241,37 @@ func (skipWriteUntouchedIndices) ApplyUpdateRecordOpt(opt *UpdateRecordOpt) {
 // - https://github.com/pingcap/tidb/pull/12609
 // - https://github.com/pingcap/tidb/issues/39419
 var SkipWriteUntouchedIndices UpdateRecordOption = skipWriteUntouchedIndices{}
+
+// DupKeyCheckMode indicates how to check the duplicated key when adding/updating a record/index.
+type DupKeyCheckMode uint8
+
+const (
+	// DupKeyCheckDefault indicates using the default behavior.
+	// Currently, this means to use the return value `ctx.LazyCheckKeyNotExists()`.
+	// If the above method returns true, it will only check the duplicated key in the memory buffer,
+	// otherwise, it will also check the duplicated key in the storage.
+	// TODO: add `DupKeyCheckLazy` to indicate only checking the duplicated key in the memory buffer.
+	// After `DupKeyCheckLazy` added, `DupKeyCheckDefault` will be renamed to `DupKeyCheckInPlace` to force check
+	// the duplicated key in place.
+	DupKeyCheckDefault DupKeyCheckMode = iota
+	// DupKeyCheckSkip indicates skipping the duplicated key check.
+	DupKeyCheckSkip
+)
+
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (m DupKeyCheckMode) ApplyAddRecordOpt(opt *AddRecordOpt) {
+	opt.DupKeyCheck = m
+}
+
+// ApplyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (m DupKeyCheckMode) ApplyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.DupKeyCheck = m
+}
+
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (m DupKeyCheckMode) ApplyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.DupKeyCheck = m
+}
 
 type columnAPI interface {
 	// Cols returns the columns of the table which is used in select, including hidden columns.
