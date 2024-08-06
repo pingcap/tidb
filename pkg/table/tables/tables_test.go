@@ -111,7 +111,7 @@ func TestBasic(t *testing.T) {
 	_, err = tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(2, "abc"))
 	require.Error(t, err)
 
-	require.Nil(t, tb.UpdateRecord(context.Background(), ctx.GetTableCtx(), rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}))
+	require.Nil(t, tb.UpdateRecord(ctx.GetTableCtx(), rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}))
 
 	err = tables.IterRecords(tb, ctx, tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
