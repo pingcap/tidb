@@ -335,12 +335,16 @@ func executeHashJoinExec(t *testing.T, hashJoinExec *HashJoinV2Exec) []*chunk.Ch
 	require.NoError(t, err)
 	results := make([]*chunk.Chunk, 0)
 	chk := exec.NewFirstChunk(hashJoinExec)
+	totalNum := 0
 	for {
 		err = hashJoinExec.Next(tmpCtx, chk)
 		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
+		totalNum += chk.NumRows()
+		// log.Info(fmt.Sprintf("xzxdebug totalNum %d", totalNum))
+		// time.Sleep(5 * time.Millisecond)
 		results = append(results, chk)
 		chk = exec.NewFirstChunk(hashJoinExec)
 	}

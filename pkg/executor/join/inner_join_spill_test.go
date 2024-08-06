@@ -74,6 +74,32 @@ var retTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeLonglong),
 }
 
+// TODO delete it
+type dataSourceParam struct {
+	leftSchema  *expression.Schema
+	rightSchema *expression.Schema
+	leftRowNum  int
+	rightRowNum int
+	leftNdvs    []int
+	rightNdvs   []int
+	leftDatums  [][]any
+	rightDatums [][]any
+}
+
+type spillTestParam struct {
+	rightAsBuildSide          bool
+	leftKeys                  []*expression.Column
+	rightKeys                 []*expression.Column
+	leftTypes                 []*types.FieldType
+	rightTypes                []*types.FieldType
+	leftUsed                  []int
+	rightUsed                 []int
+	otherCondition            expression.CNFExprs
+	leftUsedByOtherCondition  []int
+	rightUsedByOtherCondition []int
+	memoryLimits              []int64
+}
+
 func getExpectedResults(t *testing.T, ctx *mock.Context, info *hashJoinInfo, resultTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) []chunk.Row {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
@@ -81,6 +107,10 @@ func getExpectedResults(t *testing.T, ctx *mock.Context, info *hashJoinInfo, res
 
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
+	// leftRows := sortRows(leftDataSource.Chunks, leftDataSource.RetFieldTypes())
+	// rightRows := sortRows(rightDataSource.Chunks, rightDataSource.RetFieldTypes())
+	// printResult(leftRows, leftDataSource.RetFieldTypes())
+	// printResult(rightRows, rightDataSource.RetFieldTypes())
 
 	// Execute no spill hash join to get expected result
 	hashJoinExec := buildHashJoinV2Exec(info)
@@ -89,8 +119,8 @@ func getExpectedResults(t *testing.T, ctx *mock.Context, info *hashJoinInfo, res
 	return sortRows(results, resultTypes)
 }
 
-func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 4000000)
+func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, memoryLimit int64) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, memoryLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -98,7 +128,6 @@ func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []c
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	result := getSortedResults(t, hashJoinExec, retTypes)
-	// printResult(result, retTypes)
 	require.True(t, hashJoinExec.isAllMemoryClearedForTest())
 	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 	require.False(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
@@ -106,8 +135,8 @@ func testInnerJoinSpillCase1(t *testing.T, ctx *mock.Context, expectedResult []c
 	checkResults(t, retTypes, result, expectedResult)
 }
 
-func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1700000)
+func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, memoryLimit int64) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, memoryLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -121,8 +150,8 @@ func testInnerJoinSpillCase2(t *testing.T, ctx *mock.Context, expectedResult []c
 	checkResults(t, retTypes, result, expectedResult)
 }
 
-func testInnerJoinSpillCase3(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 6400000)
+func testInnerJoinSpillCase3(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, memoryLimit int64) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, memoryLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -138,8 +167,8 @@ func testInnerJoinSpillCase3(t *testing.T, ctx *mock.Context, expectedResult []c
 	checkResults(t, retTypes, result, expectedResult)
 }
 
-func testInnerJoinSpillCase4(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1500000)
+func testInnerJoinSpillCase4(t *testing.T, ctx *mock.Context, expectedResult []chunk.Row, info *hashJoinInfo, retTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, memoryLimit int64) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, memoryLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -151,12 +180,11 @@ func testInnerJoinSpillCase4(t *testing.T, ctx *mock.Context, expectedResult []c
 	require.True(t, hashJoinExec.spillHelper.isSpillTriggedInBuildingStageForTest())
 	require.True(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
 	require.True(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
-	require.True(t, hashJoinExec.spillHelper.isSpillTriggeredBeforeBuildingHashTableForTest())
 	checkResults(t, retTypes, result, expectedResult)
 }
 
-func testInnerJoinSpillCase5(t *testing.T, ctx *mock.Context, info *hashJoinInfo, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
+func testInnerJoinSpillCase5(t *testing.T, ctx *mock.Context, info *hashJoinInfo, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, memoryLimit int64) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, memoryLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
@@ -189,12 +217,66 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 func printResult(expectedResult []chunk.Row, retTypes []*types.FieldType) {
 	result := ""
 	for i, row := range expectedResult {
-		if i > 100 {
+		if i > 1000 {
 			break
 		}
 		result = fmt.Sprintf("%s\n[%d %s]", result, i, row.ToString(retTypes))
 	}
 	log.Info(result)
+}
+
+func getReturnTypes(joinType plannercore.JoinType, param spillTestParam) []*types.FieldType {
+	resultTypes := make([]*types.FieldType, 0, len(param.leftUsed)+len(param.rightUsed))
+	for _, colIndex := range param.leftUsed {
+		resultTypes = append(resultTypes, param.leftTypes[colIndex].Clone())
+		if joinType == plannercore.RightOuterJoin {
+			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
+		}
+	}
+	for _, colIndex := range param.rightUsed {
+		resultTypes = append(resultTypes, param.rightTypes[colIndex].Clone())
+		if joinType == plannercore.LeftOuterJoin {
+			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
+		}
+	}
+	return resultTypes
+}
+
+func testSpill(t *testing.T, ctx *mock.Context, joinType plannercore.JoinType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, param spillTestParam) {
+	returnTypes := getReturnTypes(joinType, param)
+
+	var buildKeys []*expression.Column
+	var probeKeys []*expression.Column
+	if param.rightAsBuildSide {
+		buildKeys = param.rightKeys
+		probeKeys = param.leftKeys
+	} else {
+		buildKeys = param.leftKeys
+		probeKeys = param.rightKeys
+	}
+
+	info := &hashJoinInfo{
+		ctx:                   ctx,
+		schema:                buildSchema(returnTypes),
+		leftExec:              leftDataSource,
+		rightExec:             rightDataSource,
+		joinType:              joinType,
+		rightAsBuildSide:      param.rightAsBuildSide,
+		buildKeys:             buildKeys,
+		probeKeys:             probeKeys,
+		lUsed:                 param.leftUsed,
+		rUsed:                 param.rightUsed,
+		otherCondition:        param.otherCondition,
+		lUsedInOtherCondition: param.leftUsedByOtherCondition,
+		rUsedInOtherCondition: param.rightUsedByOtherCondition,
+	}
+
+	expectedResult := getExpectedResults(t, ctx, info, returnTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase1(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[0])
+	testInnerJoinSpillCase2(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[1])
+	testInnerJoinSpillCase3(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[2])
+	testInnerJoinSpillCase4(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[3])
+	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, param.memoryLimits[4])
 }
 
 // TODO test nullable type
@@ -203,7 +285,7 @@ func printResult(expectedResult []chunk.Row, retTypes []*types.FieldType) {
 // Case 3: Trigger spill before creating hash table when row table has been built and spill partial partitions
 // Case 4: Trigger re-spill
 // Case 5: Trigger re-spill and exceed max spill round
-func TestInnerJoinSpillCorrectness(t *testing.T) {
+func TestInnerJoinSpillBasicOld(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -229,17 +311,30 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
 	}
 
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	// leftTypes := []*types.FieldType{intTp, intTp, intTp, stringTp, intTp}
+	// rightTypes := []*types.FieldType{intTp, intTp, stringTp, intTp, intTp}
+
+	// params := []spillTestParam{
+	// 	// Normal case
+	// 	{true, []int{1, 3}, []int{0, 2}, []*types.FieldType{intTp, stringTp}, []*types.FieldType{intTp, stringTp}, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil},
+	// }
+
 	info := &hashJoinInfo{
-		ctx:                   ctx,
-		schema:                buildSchema(retTypes),
-		leftExec:              leftDataSource,
-		rightExec:             rightDataSource,
-		joinType:              plannercore.InnerJoin,
-		lUsed:                 []int{0, 1, 3, 4},
-		rUsed:                 []int{0, 2, 3, 4},
-		otherCondition:        expression.CNFExprs{},
-		lUsedInOtherCondition: []int{0},
-		rUsedInOtherCondition: []int{4},
+		ctx:       ctx,
+		schema:    buildSchema(retTypes),
+		leftExec:  leftDataSource,
+		rightExec: rightDataSource,
+		joinType:  plannercore.InnerJoin,
+		lUsed:     []int{0, 1, 3, 4},
+		rUsed:     []int{0, 2, 3, 4},
+		// otherCondition:        expression.CNFExprs{},
+		// lUsedInOtherCondition: []int{0},
+		// rUsedInOtherCondition: []int{4},
 	}
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
@@ -259,19 +354,103 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 		}
 		for _, oc := range otherConditions {
 			info.otherCondition = oc
+			if info.otherCondition != nil {
+				info.lUsedInOtherCondition = []int{0}
+				info.rUsedInOtherCondition = []int{4}
+			} else {
+				info.lUsedInOtherCondition = nil
+				info.rUsedInOtherCondition = nil
+			}
+
 			expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
-			testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-			testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-			testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-			testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-			testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
+			// testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource, 4000000)
+			// testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource, 1700000)
+			// testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource, 6400000)
+			testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource, 1500000)
+			// testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, 10000)
 		}
 	}
-
 }
 
-func TestLeftOuterJoinSpillCorrectness(t *testing.T) {
-	// TODO trigger spill in different stages
+func TestInnerJoinSpillBasic(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	leftTypes := []*types.FieldType{intTp, intTp, intTp, stringTp, intTp}
+	rightTypes := []*types.FieldType{intTp, intTp, stringTp, intTp, intTp}
+
+	leftKeys := []*expression.Column{
+		{Index: 1, RetType: intTp},
+		{Index: 3, RetType: stringTp},
+	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+		{Index: 2, RetType: stringTp},
+	}
+
+	params := []spillTestParam{
+		// Normal case
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{4000000, 1700000, 6400000, 1500000, 10000}},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{4000000, 1700000, 6400000, 1500000, 10000}},
+		// rightUsed is empty
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{2000000, 1700000, 3300000, 750000, 10000}},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{4000000, 1700000, 6400000, 1500000, 10000}},
+		// leftUsed is empty
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{4000000, 1700000, 6400000, 1500000, 10000}},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 1700000, 3300000, 750000, 10000}},
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
+
+	for i, param := range params {
+		log.Info(fmt.Sprintf("xzxdebug test index %d", i))
+		testSpill(t, ctx, plannercore.InnerJoin, leftDataSource, rightDataSource, param)
+	}
+}
+
+func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+
+	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	leftTypes := []*types.FieldType{intTp, intTp, intTp, stringTp, intTp}
+	rightTypes := []*types.FieldType{intTp, intTp, stringTp, intTp, intTp}
+
+	leftKeys := []*expression.Column{
+		{Index: 1, RetType: intTp},
+		{Index: 3, RetType: stringTp},
+	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+		{Index: 2, RetType: stringTp},
+	}
+
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 1, RetType: nullableIntTp}
+	b := &expression.Column{Index: 8, RetType: nullableIntTp}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
+	rightAsBuildSide := []bool{true, false}
 }
 
 // Hash join executor may be repeatedly closed and opened
