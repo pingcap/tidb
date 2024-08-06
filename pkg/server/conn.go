@@ -1749,29 +1749,29 @@ func (cc *clientConn) handleQueryAttributes(ctx context.Context, data []byte) (p
 			nullBitmapLen := (numParams + 7) >> 3
 			nullBitmaps = data[pos : pos+nullBitmapLen]
 			pos += nullBitmapLen
-			if data[pos] == 1 {
-				pos++
-				for i := 0; i < numParams; i++ {
-					paramTypes = append(paramTypes, data[pos:pos+2]...)
-					pos += 2
-					s, _, p, e := util2.ParseLengthEncodedBytes(data[pos:])
-					if e != nil {
-						return 0, mysql.ErrMalformPacket
-					}
-					names[i] = string(hack.String(s))
-					pos += p
-				}
-			} else {
+			if data[pos] != 1 {
 				return 0, mysql.ErrMalformPacket
 			}
-			boundParams := make([][]byte, numParams)
-			if p, e := parseBinaryParams(ps, boundParams, nullBitmaps, paramTypes, data[pos:], cc.inputDecoder); err != nil {
-				err = e
-				return
-			} else {
+
+			pos++
+			for i := 0; i < numParams; i++ {
+				paramTypes = append(paramTypes, data[pos:pos+2]...)
+				pos += 2
+				s, _, p, e := util2.ParseLengthEncodedBytes(data[pos:])
+				if e != nil {
+					return 0, mysql.ErrMalformPacket
+				}
+				names[i] = string(hack.String(s))
 				pos += p
 			}
 
+			boundParams := make([][]byte, numParams)
+			p := 0
+			if p, err = parseBinaryParams(ps, boundParams, nullBitmaps, paramTypes, data[pos:], cc.inputDecoder); err != nil {
+				return
+			}
+
+			pos += p
 			psWithName := make(map[string]param.BinaryParam, numParams)
 			for i := range names {
 				psWithName[names[i]] = ps[i]
