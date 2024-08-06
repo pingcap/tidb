@@ -22,6 +22,7 @@ package disjointset
 type Set[T comparable] struct {
 	parent  []int
 	val2Idx map[T]int
+	idx2Val map[int]T
 	tailIdx int
 }
 
@@ -30,24 +31,28 @@ func NewSet[T comparable](size int) *Set[T] {
 	return &Set[T]{
 		parent:  make([]int, 0, size),
 		val2Idx: make(map[T]int, size),
+		idx2Val: make(map[int]T, size),
 		tailIdx: 0,
 	}
 }
+
 func (s *Set[T]) findRootOriginalVal(a T) int {
 	idx, ok := s.val2Idx[a]
 	if !ok {
 		s.parent = append(s.parent, s.tailIdx)
 		s.val2Idx[a] = s.tailIdx
 		s.tailIdx++
+		s.idx2Val[s.tailIdx-1] = a
 		return s.tailIdx - 1
 	}
-	return s.findRoot(idx)
+	return s.findRootInternal(idx)
 }
 
 // findRoot is an internal implementation. Call it inside findRootOriginalVal.
-func (s *Set[T]) findRoot(a int) int {
+func (s *Set[T]) findRootInternal(a int) int {
 	if s.parent[a] != a {
-		s.parent[a] = s.findRoot(s.parent[a])
+		// Path compression, which leads the time complexity to the inverse Ackermann function.
+		s.parent[a] = s.findRootInternal(s.parent[a])
 	}
 	return s.parent[a]
 }
@@ -61,7 +66,20 @@ func (s *Set[T]) InSameGroup(a, b T) bool {
 func (s *Set[T]) Union(a, b T) {
 	rootA := s.findRootOriginalVal(a)
 	rootB := s.findRootOriginalVal(b)
+	// take b as successor, respect the rootA as the root of the new set.
 	if rootA != rootB {
-		s.parent[rootA] = rootB
+		s.parent[rootB] = rootA
 	}
+}
+
+// FindRoot finds the root of the set that contains a.
+func (s *Set[T]) FindRoot(a T) int {
+	// if a is not in the set, assign a new index to it.
+	return s.findRootOriginalVal(a)
+}
+
+// FindVal finds the value of the set corresponding to the index.
+func (s *Set[T]) FindVal(idx int) (T, bool) {
+	v, ok := s.idx2Val[s.findRootInternal(idx)]
+	return v, ok
 }

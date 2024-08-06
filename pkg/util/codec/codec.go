@@ -55,6 +55,8 @@ const IntHandleFlag = intFlag
 
 const (
 	sizeUint64  = unsafe.Sizeof(uint64(0))
+	sizeUint8   = unsafe.Sizeof(uint8(0))
+	sizeUint32  = unsafe.Sizeof(uint32(0))
 	sizeFloat64 = unsafe.Sizeof(float64(0))
 )
 
@@ -401,9 +403,9 @@ const (
 	// the unsigned flag can be ignored, if the join key is <unsigned, signed> or <signed, unsigned>
 	// the unsigned flag can not be ignored, if the unsigned flag can not be ignored, the key can not be inlined
 	NeedSignFlag
-	// KeepStringLength when serialize string column, if the string column can use raw data as the key, then it can be inlined,
-	// in this case, the string length should be included in the serialized key
-	KeepStringLength
+	// KeepVarColumnLength when serialize var-length column, whether record the column length or not. If the join key only contains one var-length
+	// column, and the key is not inlined, then no need to record the column length, otherwise, always need to record the column length
+	KeepVarColumnLength
 )
 
 // SerializeKeys is used in join
@@ -414,6 +416,10 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			nullVector[index] = true
 		}
 		return (filterVector != nil && !filterVector[index]) || (nullVector != nil && nullVector[index])
+	}
+	var jsonHashBuffer []byte
+	if tp.GetType() == mysql.TypeJSON {
+		jsonHashBuffer = make([]byte, 0)
 	}
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
@@ -466,7 +472,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			}
 			data := ConvertByCollation(column.GetBytes(physicalRowIndex), tp)
 			size := uint64(len(data))
-			if serializeMode == KeepStringLength {
+			if serializeMode == KeepVarColumnLength {
 				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint64)...)
 			}
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], data...)
@@ -504,6 +510,11 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if err != nil {
 				return err
 			}
+			if serializeMode == KeepVarColumnLength {
+				// for decimal, the size must be less than uint8.MAX, so use uint8 here
+				size := uint8(len(b))
+				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint8)...)
+			}
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], b...)
 		}
 	case mysql.TypeEnum:
@@ -523,7 +534,13 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 				if enum, err := types.ParseEnumValue(tp.GetElems(), v); err == nil {
 					str = enum.Name
 				}
-				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], ConvertByCollation(hack.Slice(str), tp)...)
+				b := ConvertByCollation(hack.Slice(str), tp)
+				if serializeMode == KeepVarColumnLength {
+					// for enum, the size must be less than uint32.MAX, so use uint32 here
+					size := uint32(len(b))
+					serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint32)...)
+				}
+				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], b...)
 			}
 		}
 	case mysql.TypeSet:
@@ -535,7 +552,13 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if err != nil {
 				return err
 			}
-			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], ConvertByCollation(hack.Slice(s.Name), tp)...)
+			b := ConvertByCollation(hack.Slice(s.Name), tp)
+			if serializeMode == KeepVarColumnLength {
+				// for enum, the size must be less than uint32.MAX, so use uint32 here
+				size := uint32(len(b))
+				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint32)...)
+			}
+			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], b...)
 		}
 	case mysql.TypeBit:
 		for logicalRowIndex, physicalRowindex := range usedRows {
@@ -544,7 +567,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			}
 			v, err1 := types.BinaryLiteral(column.GetBytes(physicalRowindex)).ToInt(typeCtx)
 			terror.Log(errors.Trace(err1))
-			// check serializeMode here because enum maybe compare to integer type directly
+			// check serializeMode here because bit maybe compare to integer type directly
 			if serializeMode == NeedSignFlag {
 				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], uintFlag)
 			}
@@ -555,7 +578,13 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if canSkip(physicalRowindex) {
 				continue
 			}
-			serializedKeysVector[logicalRowIndex] = column.GetJSON(physicalRowindex).HashValue(serializedKeysVector[logicalRowIndex])
+			jsonHashBuffer = jsonHashBuffer[:0]
+			jsonHashBuffer = column.GetJSON(physicalRowindex).HashValue(jsonHashBuffer)
+			if serializeMode == KeepVarColumnLength {
+				size := uint64(len(jsonHashBuffer))
+				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint64)...)
+			}
+			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], jsonHashBuffer...)
 		}
 	case mysql.TypeNull:
 		for _, physicalRowindex := range usedRows {

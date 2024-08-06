@@ -85,22 +85,6 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 	return canBePushDown, canNotBePushDown
 }
 
-// BreakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
-func BreakDownPredicates(p *LogicalProjection, predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	canBePushed := make([]expression.Expression, 0, len(predicates))
-	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	exprCtx := p.SCtx().GetExprCtx()
-	for _, cond := range predicates {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)
-		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
-			canBePushed = append(canBePushed, newFilter)
-		} else {
-			canNotBePushed = append(canNotBePushed, cond)
-		}
-	}
-	return canBePushed, canNotBePushed
-}
-
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
 // conditions for left/right child pushdown.
 func DeriveOtherConditions(

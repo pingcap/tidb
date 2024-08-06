@@ -15,8 +15,6 @@
 package callback
 
 import (
-	"sync/atomic"
-
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -31,8 +29,6 @@ type TestDDLCallback struct {
 	Do ddl.SchemaLoader
 
 	OnJobRunBeforeExported func(*model.Job)
-	OnJobRunAfterExported  func(*model.Job)
-	OnJobUpdatedExported   atomic.Pointer[func(*model.Job)]
 }
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
@@ -44,31 +40,6 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 	}
 
 	tc.BaseCallback.OnJobRunBefore(job)
-}
-
-// OnJobRunAfter is used to run the user customized logic of `OnJobRunAfter` first.
-func (tc *TestDDLCallback) OnJobRunAfter(job *model.Job) {
-	logutil.DDLLogger().Info("on job run after", zap.String("job", job.String()))
-	if tc.OnJobRunAfterExported != nil {
-		tc.OnJobRunAfterExported(job)
-		return
-	}
-
-	tc.BaseCallback.OnJobRunAfter(job)
-}
-
-// OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
-func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
-	logutil.DDLLogger().Info("on job updated", zap.String("job", job.String()))
-	if onJobUpdatedExportedFunc := tc.OnJobUpdatedExported.Load(); onJobUpdatedExportedFunc != nil {
-		(*onJobUpdatedExportedFunc)(job)
-		return
-	}
-	if job.State == model.JobStateSynced {
-		return
-	}
-
-	tc.BaseCallback.OnJobUpdated(job)
 }
 
 // Clone copies the callback and take its reference

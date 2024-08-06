@@ -231,3 +231,116 @@ func TestDetachIndexReaderAndIndexLookUp(t *testing.T) {
 		}
 	}
 }
+
+func TestDetachSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	tk.MustExec("create table t (a int, b int, c int, key idx_a_b (a,b), key idx_b (b))")
+	for i := 0; i < 10000; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+
+	tk.MustHavePlan("select a, b from t where c > 100 and c < 200", "Selection")
+	rs, err := tk.Exec("select a, b from t where c > ? and c < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, err := rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	chk := drs.NewChunk(nil)
+	expectedSelect := 101
+	for {
+		err = drs.Next(context.Background(), chk)
+		require.NoError(t, err)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < chk.NumRows(); i++ {
+			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
+			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(1))
+			expectedSelect++
+		}
+	}
+
+	// Selection with optional property is not allowed
+	tk.MustExec("set @a = 1")
+	tk.MustHavePlan("select a from t where a + @a > 100 and a < 200", "Selection")
+	rs, err = tk.Exec("select a from t where a + @a > ? and a < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, _ = rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.False(t, ok)
+	require.Nil(t, drs)
+	require.NoError(t, rs.Close())
+}
+
+func TestDetachProjection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	tk.MustExec("create table t (a int, b int, c int, key idx_a_b (a,b), key idx_b (b))")
+	for i := 0; i < 10000; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+
+	tk.MustHavePlan("select a + b from t where a > 100 and a < 200", "Projection")
+	rs, err := tk.Exec("select a + b from t where a > ? and a < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, err := rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	chk := drs.NewChunk(nil)
+	expectedSelect := 101
+	for {
+		err = drs.Next(context.Background(), chk)
+		require.NoError(t, err)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < chk.NumRows(); i++ {
+			require.Equal(t, int64(2*expectedSelect), chk.GetRow(i).GetInt64(0))
+			expectedSelect++
+		}
+	}
+
+	// Projection with optional property is not allowed
+	tk.MustExec("set @a = 1")
+	tk.MustHavePlan("select a + @a from t where a > 100 and a < 200", "Projection")
+	rs, err = tk.Exec("select a + @a from t where a > ? and a < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, _ = rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.False(t, ok)
+	require.Nil(t, drs)
+	require.NoError(t, rs.Close())
+
+	// Projection with Selection is also allowed
+	tk.MustHavePlan("select a + b from t where c > 100 and c < 200", "Projection")
+	tk.MustHavePlan("select a + b from t where c > 100 and c < 200", "Selection")
+	rs, err = tk.Exec("select a + b from t where c > ? and c < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, err = rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	chk = drs.NewChunk(nil)
+	expectedSelect = 101
+	for {
+		err = drs.Next(context.Background(), chk)
+		require.NoError(t, err)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < chk.NumRows(); i++ {
+			require.Equal(t, int64(2*expectedSelect), chk.GetRow(i).GetInt64(0))
+			expectedSelect++
+		}
+	}
+}

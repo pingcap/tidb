@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -203,7 +202,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 }
 
 func TestCreateDropCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -216,8 +215,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 	var fpErr error
 	var createTable bool
 
-	originHook := dom.DDL().GetHook()
-	onJobUpdated := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
 			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
 			wg.Add(1)
@@ -227,12 +225,9 @@ func TestCreateDropCreateTable(t *testing.T) {
 			}()
 			createTable = true
 		}
-	}
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobUpdatedExported.Store(&onJobUpdated)
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("drop table t;")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	wg.Wait()
 	require.NoError(t, createErr)

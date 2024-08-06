@@ -86,3 +86,29 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
+
+func TestIssue54535(t *testing.T) {
+	// test for tidb_enable_inl_join_inner_multi_pattern system variable
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_enable_inl_join_inner_multi_pattern='ON'")
+	tk.MustExec("create table ta(a1 int, a2 int, a3 int, index idx_a(a1))")
+	tk.MustExec("create table tb(b1 int, b2 int, b3 int, index idx_b(b1))")
+	tk.MustExec("analyze table ta")
+	tk.MustExec("analyze table tb")
+
+	tk.MustQuery("explain SELECT /*+ inl_join(tmp) */ * FROM ta, (SELECT b1, COUNT(b3) AS cnt FROM tb GROUP BY b1, b2) as tmp where ta.a1 = tmp.b1").
+		Check(testkit.Rows(
+			"Projection_9 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#9",
+			"└─IndexJoin_16 9990.00 root  inner join, inner:HashAgg_14, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
+			"  ├─TableReader_43(Build) 9990.00 root  data:Selection_42",
+			"  │ └─Selection_42 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
+			"  │   └─TableFullScan_41 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+			"  └─HashAgg_14(Probe) 79840080.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
+			"    └─IndexLookUp_15 79840080.00 root  ",
+			"      ├─Selection_12(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
+			"      │ └─IndexRangeScan_10 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
+			"      └─HashAgg_13(Probe) 79840080.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
+			"        └─TableRowIDScan_11 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
+}

@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -4961,11 +4962,11 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 		exec.windowFuncs = windowFuncs
 		exec.partialResults = partialResults
 		if v.Frame == nil {
-			exec.start = &plannercore.FrameBound{
+			exec.start = &logicalop.FrameBound{
 				Type:      ast.Preceding,
 				UnBounded: true,
 			}
-			exec.end = &plannercore.FrameBound{
+			exec.end = &logicalop.FrameBound{
 				Type:      ast.Following,
 				UnBounded: true,
 			}

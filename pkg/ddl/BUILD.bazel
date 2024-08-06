@@ -11,6 +11,7 @@ package_group(
 go_library(
     name = "ddl",
     srcs = [
+        "add_column.go",
         "backfilling.go",
         "backfilling_clean_s3.go",
         "backfilling_dist_executor.go",
@@ -26,6 +27,7 @@ go_library(
         "column.go",
         "constant.go",
         "constraint.go",
+        "create_table.go",
         "ddl.go",
         "ddl_algorithm.go",
         "ddl_history.go",
@@ -43,8 +45,10 @@ go_library(
         "index_cop.go",
         "index_merge_tmp.go",
         "job_scheduler.go",
+        "job_submitter.go",
         "job_worker.go",
         "mock.go",
+        "modify_column.go",
         "multi_schema_change.go",
         "options.go",
         "partition.go",

@@ -15,7 +15,6 @@
 package table
 
 import (
-	"context"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -32,10 +31,23 @@ type IndexIterator interface {
 
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
-	Ctx             context.Context
-	Untouched       bool // If true, the index key/value is no need to commit.
+	commonMutateOpt
 	IgnoreAssertion bool
 	FromBackFill    bool
+}
+
+// NewCreateIdxOpt creates a new CreateIdxOpt.
+func NewCreateIdxOpt(opts ...CreateIdxOption) *CreateIdxOpt {
+	opt := &CreateIdxOpt{}
+	for _, o := range opts {
+		o.ApplyCreateIdxOpt(opt)
+	}
+	return opt
+}
+
+// CreateIdxOption is defined for the Create() method of the Index interface.
+type CreateIdxOption interface {
+	ApplyCreateIdxOpt(*CreateIdxOpt)
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -43,13 +55,13 @@ type CreateIdxOpt struct {
 // https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
 type CreateIdxOptFunc func(*CreateIdxOpt)
 
-// IndexIsUntouched uses to indicate the index kv is untouched.
-var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
-	opt.Untouched = true
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (f CreateIdxOptFunc) ApplyCreateIdxOpt(opt *CreateIdxOpt) {
+	f(opt)
 }
 
 // WithIgnoreAssertion uses to indicate the process can ignore assertion.
-var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
+var WithIgnoreAssertion CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.IgnoreAssertion = true
 }
 
@@ -57,16 +69,8 @@ var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
 // In the backfill-merge process, the index KVs from DML will be redirected to
 // the temp index. On the other hand, the index KVs from DDL backfill worker should
 // never be redirected to the temp index.
-var FromBackfill = func(opt *CreateIdxOpt) {
+var FromBackfill CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.FromBackFill = true
-}
-
-// WithCtx returns a CreateIdxFunc.
-// This option is used to pass context.Context.
-func WithCtx(ctx context.Context) CreateIdxOptFunc {
-	return func(opt *CreateIdxOpt) {
-		opt.Ctx = ctx
-	}
 }
 
 // Index is the interface for index data on KV store.
@@ -76,7 +80,7 @@ type Index interface {
 	// TableMeta returns TableInfo
 	TableMeta() *model.TableInfo
 	// Create supports insert into statement.
-	Create(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
+	Create(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOption) (kv.Handle, error)
 	// Delete supports delete from statement.
 	Delete(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.

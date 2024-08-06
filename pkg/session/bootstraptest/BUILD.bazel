@@ -12,7 +12,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
-        "//pkg/ddl/util/callback",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/parser/model",

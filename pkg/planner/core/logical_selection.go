@@ -162,7 +162,7 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 	s := p.Self().(*LogicalSelection)
 	windowIsTopN, limitValue := windowIsTopN(s)
 	if windowIsTopN {
-		child := s.Children()[0].(*LogicalWindow)
+		child := s.Children()[0].(*logicalop.LogicalWindow)
 		grandChild := child.Children()[0].(*DataSource)
 		// Build order by for derived Limit
 		byItems := make([]*util.ByItems, 0, len(child.OrderBy))
@@ -170,7 +170,7 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 			byItems = append(byItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 		}
 		// Build derived Limit
-		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.QueryBlockOffset())
+		derivedTopN := logicalop.LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.QueryBlockOffset())
 		derivedTopN.SetChildren(grandChild)
 		/* return select->datasource->topN->window */
 		child.SetChildren(derivedTopN)
