@@ -447,7 +447,7 @@
       {
         "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
-        "Hints": "hash_join(`test`.`t1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), use_index(@`upd_1` `test`.`t2` ), no_order_index(@`upd_1` `test`.`t2` `primary`)"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), use_index(@`upd_1` `test`.`t2` ), no_order_index(@`upd_1` `test`.`t2` `primary`)"
       },
       {
         "SQL": "delete from t where b < 1 order by d limit 1",
