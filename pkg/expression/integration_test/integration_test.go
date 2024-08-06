@@ -566,7 +566,6 @@ func TestVectorMiscFunctions(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("SET @@GLOBAL.TIDB_ENABLE_VECTOR_TYPE=1;")
 
 	tk.MustExec("CREATE TABLE a(pk INT PRIMARY KEY, c VECTOR(3), time INT);")
 	tk.MustExec("INSERT INTO a VALUES (1, '[1,2,3]', 5);")
