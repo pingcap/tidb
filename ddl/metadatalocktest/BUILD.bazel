@@ -10,12 +10,21 @@ go_test(
     flaky = True,
     shard_count = 34,
     deps = [
+<<<<<<< HEAD:ddl/metadatalocktest/BUILD.bazel
         "//config",
         "//ddl",
         "//errno",
         "//server",
         "//testkit",
         "//testkit/testsetup",
+=======
+        "//pkg/config",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/statistics/handle/internal",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+>>>>>>> 687f39c12f8 (statistics: fix wrong behavior for primary key' non-lite init stats (#53298)):pkg/statistics/handle/handletest/statstest/BUILD.bazel
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
