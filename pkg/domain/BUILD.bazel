@@ -53,6 +53,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/planner/core/metrics",
         "//pkg/privilege/privileges",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",

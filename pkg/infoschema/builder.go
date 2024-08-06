@@ -683,7 +683,7 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 
 	allocs = b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
 
-	tbl, err := b.tableFromMeta(allocs, tblInfo)
+	tbl, err := tableFromMeta(allocs, b.factory, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -888,7 +888,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
+		err := b.createSchemaTablesForDB(di, tableFromMeta, schemaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -904,14 +904,14 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	return nil
 }
 
-func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+func tableFromMeta(alloc autoid.Allocators, factory func() (pools.Resource, error), tblInfo *model.TableInfo) (table.Table, error) {
 	ret, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if t, ok := ret.(table.CachedTable); ok {
 		var tmp pools.Resource
-		tmp, err = b.factory()
+		tmp, err = factory()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -924,7 +924,7 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 	return ret, nil
 }
 
-type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
+type tableFromMetaFunc func(alloc autoid.Allocators, factory func() (pools.Resource, error), tblInfo *model.TableInfo) (table.Table, error)
 
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) error {
 	schTbls := &schemaTables{
@@ -934,7 +934,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	for _, t := range di.Deprecated.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
-		tbl, err := tableFromMeta(allocs, t)
+		tbl, err := tableFromMeta(allocs, b.factory, t)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
@@ -1011,7 +1011,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
 	builder := &Builder{
 		Requirement:  r,
-		infoschemaV2: NewInfoSchemaV2(r, infoData),
+		infoschemaV2: NewInfoSchemaV2(r, factory, infoData),
 		dirtyDB:      make(map[string]bool),
 		factory:      factory,
 		infoData:     infoData,
