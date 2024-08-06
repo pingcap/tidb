@@ -2501,14 +2501,12 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	newPartInfo.DDLType = piOld.Type
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionAlterTablePartitioning,
-		BinlogInfo: &model.HistoryInfo{},
-		// TODO: Should we propagate the ConvertToGlobalInfo to the DDL job?
-		// It should only differ if there have been a change in the indexes since this was queued?
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionAlterTablePartitioning,
+		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{partNames, newPartInfo},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
