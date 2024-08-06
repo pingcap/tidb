@@ -92,10 +92,11 @@ func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
 func (d *ResultEncoder) ColumnTypeInfoCharsetID(info *Info) uint16 {
 	// Only replace the charset when @@character_set_results is valid and
 	// the target column is a non-binary string.
+	charset := info.dumpCharset()
 	if d.isNull || len(d.chsName) == 0 || !isStringColumnType(info.Type) {
-		return info.Charset
+		return charset
 	}
-	if info.Charset == mysql.BinaryDefaultCollationID {
+	if charset == mysql.BinaryDefaultCollationID {
 		return mysql.BinaryDefaultCollationID
 	}
 	return uint16(mysql.CharsetNameToID(d.chsName))
@@ -136,6 +137,9 @@ func isStringColumnType(tp byte) bool {
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 		mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
+		return true
+	case mysql.TypeTiDBVectorFloat32:
+		// When passing Vector column to the SQL Client, pretend to be a non-binary String.
 		return true
 	}
 	return false
