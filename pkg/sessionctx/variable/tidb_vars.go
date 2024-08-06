@@ -1518,7 +1518,7 @@ const (
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
-	DefTiFlashPreAggMode                              = ForcePreAggStr
+	DefTiFlashPreAggMode                              = AutoStr
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
 )
