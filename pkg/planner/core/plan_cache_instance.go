@@ -52,6 +52,7 @@ type instancePCNode struct {
 type instancePlanCache struct {
 	heads   sync.Map
 	totCost atomic.Int64
+	totPlan atomic.Int64
 
 	evictMutex   sync.Mutex
 	softMemLimit atomic.Int64
@@ -113,6 +114,7 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 	currNode.next.Store(firstNode)
 	if headNode.next.CompareAndSwap(firstNode, currNode) { // if failed, some other thread has updated this node,
 		pc.totCost.Add(vMem) // then skip this Put and wait for the next time.
+		pc.totPlan.Add(1)
 		succ = true
 	}
 	return
@@ -138,6 +140,7 @@ func (pc *instancePlanCache) Evict() (evicted bool) {
 		if !this.lastUsed.Load().After(threshold) { // if lastUsed<=threshold, evict this value
 			if prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
 				pc.totCost.Sub(this.value.MemoryUsage()) //  it might have been updated by other thread
+				pc.totPlan.Sub(1)
 				evicted = true
 				return true
 			}
@@ -158,6 +161,11 @@ func (pc *instancePlanCache) Evict() (evicted bool) {
 // MemUsage returns the memory usage of this plan cache.
 func (pc *instancePlanCache) MemUsage() int64 {
 	return pc.totCost.Load()
+}
+
+// Size returns the number of plans in this plan cache.
+func (pc *instancePlanCache) Size() int64 {
+	return pc.totPlan.Load()
 }
 
 func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t time.Time) {

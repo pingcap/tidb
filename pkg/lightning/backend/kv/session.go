@@ -316,7 +316,6 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars := variable.NewSessionVars(s)
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
-	vars.StmtCtx.BatchCheck = true
 	vars.SQLMode = sqlMode
 
 	typeFlags := vars.StmtCtx.TypeFlags().
