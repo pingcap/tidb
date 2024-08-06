@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
@@ -62,7 +63,22 @@ var rightCols = []*expression.Column{
 	{Index: 4, RetType: types.NewFieldType(mysql.TypeLonglong)},
 }
 
-func getExpectedResults(t *testing.T, info *hashJoinInfo, resultTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) []chunk.Row {
+var retTypes = []*types.FieldType{
+	types.NewFieldType(mysql.TypeLonglong),
+	types.NewFieldType(mysql.TypeLonglong),
+	types.NewFieldType(mysql.TypeVarString),
+	types.NewFieldType(mysql.TypeLonglong),
+	types.NewFieldType(mysql.TypeLonglong),
+	types.NewFieldType(mysql.TypeVarString),
+	types.NewFieldType(mysql.TypeLonglong),
+	types.NewFieldType(mysql.TypeLonglong),
+}
+
+func getExpectedResults(t *testing.T, ctx *mock.Context, info *hashJoinInfo, resultTypes []*types.FieldType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) []chunk.Row {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
 
@@ -173,6 +189,9 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 func printResult(expectedResult []chunk.Row, retTypes []*types.FieldType) {
 	result := ""
 	for i, row := range expectedResult {
+		if i > 100 {
+			break
+		}
 		result = fmt.Sprintf("%s\n[%d %s]", result, i, row.ToString(retTypes))
 	}
 	log.Info(result)
@@ -190,23 +209,84 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 	ctx.GetSessionVars().MaxChunkSize = 32
 	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
 
-	retTypes := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeLonglong),
+	rightAsBuildSide := []bool{true, false}
+
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	b := &expression.Column{Index: 9, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
+	otherConditions := []expression.CNFExprs{otherCondition, nil}
+
+	leftKeys := []*expression.Column{
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 3, RetType: types.NewFieldType(mysql.TypeVarString)},
 	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
+	}
+
+	info := &hashJoinInfo{
+		ctx:                   ctx,
+		schema:                buildSchema(retTypes),
+		leftExec:              leftDataSource,
+		rightExec:             rightDataSource,
+		joinType:              plannercore.InnerJoin,
+		lUsed:                 []int{0, 1, 3, 4},
+		rUsed:                 []int{0, 2, 3, 4},
+		otherCondition:        expression.CNFExprs{},
+		lUsedInOtherCondition: []int{0},
+		rUsedInOtherCondition: []int{4},
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
+
+	for _, rightAsBuild := range rightAsBuildSide {
+		info.rightAsBuildSide = rightAsBuild
+		if info.rightAsBuildSide {
+			info.buildKeys = rightKeys
+			info.probeKeys = leftKeys
+		} else {
+			info.buildKeys = leftKeys
+			info.probeKeys = rightKeys
+		}
+		for _, oc := range otherConditions {
+			info.otherCondition = oc
+			expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
+			testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+			testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+			testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+			testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+			testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
+		}
+	}
+
+}
+
+func TestLeftOuterJoinSpillCorrectness(t *testing.T) {
+	// TODO trigger spill in different stages
+}
+
+// Hash join executor may be repeatedly closed and opened
+func TestHashJoinUnderApplyExec(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
 
 	info := &hashJoinInfo{
 		ctx:              ctx,
 		schema:           buildSchema(retTypes),
 		leftExec:         leftDataSource,
 		rightExec:        rightDataSource,
-		joinType:         plannercore.LeftOuterJoin,
+		joinType:         plannercore.InnerJoin,
 		rightAsBuildSide: true,
 		buildKeys: []*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -223,30 +303,9 @@ func TestInnerJoinSpillCorrectness(t *testing.T) {
 		rUsedInOtherCondition: []int{4},
 	}
 
-	expectedResult := getExpectedResults(t, info, retTypes, leftDataSource, rightDataSource)
-
-	log.Info("xzxdebug ^^^^^^^^^^") // TODO remove it
-
-	// printResult(expectedResult, retTypes)
-
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
-
-	testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	// for i := 0; i < 3; i++ {
-	// testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource)
-	// }
-
-	// testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-}
-
-func TestLeftOuterJoinSpillCorrectness(t *testing.T) {
-	// TODO trigger spill in different stages
+	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
+	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 }

@@ -297,9 +297,9 @@ func buildRightSrc(opt testutil.MockDataSourceParameters) *testutil.MockDataSour
 		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
 			switch retTypes[colIdx].GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
-				m.GenData[idx].AppendInt64(colIdx, int64(i+300))
+				m.GenData[idx].AppendInt64(colIdx, int64(i))
 			case mysql.TypeVarString:
-				m.GenData[idx].AppendString(colIdx, strconv.Itoa(i+300))
+				m.GenData[idx].AppendString(colIdx, strconv.Itoa(i))
 			default:
 				panic("not implement")
 			}
