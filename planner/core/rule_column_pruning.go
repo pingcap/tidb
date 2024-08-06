@@ -262,7 +262,6 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 			return err
 		}
 	}
-
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
