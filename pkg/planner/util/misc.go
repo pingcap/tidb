@@ -69,6 +69,18 @@ func CloneExpressions(exprs []expression.Expression) []expression.Expression {
 	return CloneExprs(exprs)
 }
 
+// CloneExpression2D uses CloneExprs to clone a 2D slice of expression.Expression.
+func CloneExpression2D(exprs [][]expression.Expression) [][]expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	cloned := make([][]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		cloned = append(cloned, CloneExprs(e))
+	}
+	return cloned
+}
+
 // CloneScalarFunctions uses (*ScalarFunction).Clone to clone a slice of *ScalarFunction.
 func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
 	if scalarFuncs == nil {
@@ -77,6 +89,18 @@ func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expressio
 	cloned := make([]*expression.ScalarFunction, 0, len(scalarFuncs))
 	for _, f := range scalarFuncs {
 		cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
+	}
+	return cloned
+}
+
+// CloneAssignments uses (*Assignment).Clone to clone a slice of *Assignment.
+func CloneAssignments(assignments []*expression.Assignment) []*expression.Assignment {
+	if assignments == nil {
+		return nil
+	}
+	cloned := make([]*expression.Assignment, 0, len(assignments))
+	for _, a := range assignments {
+		cloned = append(cloned, a.Clone())
 	}
 	return cloned
 }

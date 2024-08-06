@@ -297,10 +297,15 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	}}
 	initialGID := getGlobalID(ctx, t, store)
 	threads, iterations := 10, 500
+	tks := make([]*testkit.TestKit, threads)
+	for i := 0; i < threads; i++ {
+		tks[i] = testkit.NewTestKit(t, store)
+	}
 	var wg util.WaitGroupWrapper
 	for i := 0; i < threads; i++ {
+		idx := i
 		wg.Run(func() {
-			kit := testkit.NewTestKit(t, store)
+			kit := tks[idx]
 			ddlSe := sess.NewSession(kit.Session())
 			for j := 0; j < iterations; j++ {
 				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
