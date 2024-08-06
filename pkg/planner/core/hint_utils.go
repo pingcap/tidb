@@ -159,9 +159,9 @@ func extractHintTableForJoinNode(
 	return qbOffset, guessQBOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 }
 
-func getJoinMethodHintsForSinglePhysicalJoin(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res []*ast.TableOptimizerHint) {
+func getJoinMethodHintsForSinglePhysicalJoin(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) *ast.TableOptimizerHint {
 	if parentOffset == -1 {
-		return res
+		return nil
 	}
 	hintTbls, hintQBName := genHintTblFromPhysicalPlans(sctx, children, parentOffset, nodeType)
 	if len(hintTbls) == 0 {
@@ -177,8 +177,7 @@ func getJoinMethodHintsForSinglePhysicalJoin(sctx base.PlanContext, joinType str
 		newHint.QBName = *hintQBName
 	}
 
-	res = append(res, newHint)
-	return res
+	return newHint
 }
 
 func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
@@ -304,16 +303,80 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			})
 		}
 	case *PhysicalMergeJoin:
-		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintSMJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
+		hint := getJoinMethodHintsForSinglePhysicalJoin(
+			p.SCtx(),
+			h.HintSMJ,
+			p.QueryBlockOffset(),
+			nodeType,
+			pp.children...,
+		)
+		if hint != nil {
+			res = append(res, hint)
+		}
 	case *PhysicalHashJoin:
-		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
-		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintHJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
+		var buildSideChild, probeSideChild base.PhysicalPlan
+		if pp.RightIsBuildSide() {
+			buildSideChild = pp.children[1]
+			probeSideChild = pp.children[0]
+		} else {
+			buildSideChild = pp.children[0]
+			probeSideChild = pp.children[1]
+		}
+		hint := getJoinMethodHintsForSinglePhysicalJoin(
+			p.SCtx(),
+			h.HintHashJoinBuild,
+			p.QueryBlockOffset(),
+			nodeType,
+			buildSideChild,
+		)
+		if hint != nil {
+			res = append(res, hint)
+		} else {
+			// In case we failed to generate the hint for build side, we try to generate the hint for probe side.
+			hint := getJoinMethodHintsForSinglePhysicalJoin(
+				p.SCtx(),
+				h.HintHashJoinProbe,
+				p.QueryBlockOffset(),
+				nodeType,
+				probeSideChild,
+			)
+			if hint != nil {
+				res = append(res, hint)
+			}
+		}
 	case *PhysicalIndexJoin:
-		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintINLJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		hint := getJoinMethodHintsForSinglePhysicalJoin(
+			p.SCtx(),
+			h.HintINLJ,
+			p.QueryBlockOffset(),
+			nodeType,
+			pp.children[pp.InnerChildIdx],
+		)
+		if hint != nil {
+			res = append(res, hint)
+		}
 	case *PhysicalIndexMergeJoin:
-		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintINLMJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		hint := getJoinMethodHintsForSinglePhysicalJoin(
+			p.SCtx(),
+			h.HintINLMJ,
+			p.QueryBlockOffset(),
+			nodeType,
+			pp.children[pp.InnerChildIdx],
+		)
+		if hint != nil {
+			res = append(res, hint)
+		}
 	case *PhysicalIndexHashJoin:
-		res = append(res, getJoinMethodHintsForSinglePhysicalJoin(p.SCtx(), h.HintINLHJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		hint := getJoinMethodHintsForSinglePhysicalJoin(
+			p.SCtx(),
+			h.HintINLHJ,
+			p.QueryBlockOffset(),
+			nodeType,
+			pp.children[pp.InnerChildIdx],
+		)
+		if hint != nil {
+			res = append(res, hint)
+		}
 	}
 	return res
 }
