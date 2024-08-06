@@ -1006,6 +1006,9 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
+	if ctx == nil {
+		ctx = nil
+	}
 	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
 	failpoint.Inject("mockLoadTableInfoError", func(_ failpoint.Value) {
 		failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
