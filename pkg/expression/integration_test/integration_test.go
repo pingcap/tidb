@@ -104,9 +104,9 @@ func TestVectorColumnInfo(t *testing.T) {
 		"vector vector(3)",
 	))
 
-	// Vector dimension MUST be equal or less than 16000.
+	// Vector dimension MUST be equal or less than 16383.
 	tk.MustExec("drop table if exists t;")
-	tk.MustGetErrMsg("create table t(embedding VECTOR(16001))", "vector cannot have more than 16000 dimensions")
+	tk.MustGetErrMsg("create table t(embedding VECTOR(16384))", "vector cannot have more than 16383 dimensions")
 }
 
 func TestFixedVector(t *testing.T) {
@@ -135,8 +135,8 @@ func TestFixedVector(t *testing.T) {
 	tk.MustExec("alter table t modify column embedding VECTOR")
 	tk.MustExec("insert into t values ('[1,2,3,4]')")
 
-	// Vector dimension MUST be equal or less than 16000.
-	tk.MustGetErrMsg("alter table t modify column embedding VECTOR(16001)", "vector cannot have more than 16000 dimensions")
+	// Vector dimension MUST be equal or less than 16383.
+	tk.MustGetErrMsg("alter table t modify column embedding VECTOR(16384)", "vector cannot have more than 16383 dimensions")
 }
 
 func TestVector(t *testing.T) {
