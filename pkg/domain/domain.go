@@ -2030,7 +2030,7 @@ func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 
 // SetupExtractHandle setups extract handler
 func (do *Domain) SetupExtractHandle(sctxs []sessionctx.Context) {
-	do.extractTaskHandle = NewExtractHandler(sctxs)
+	do.extractTaskHandle = newExtractHandler(do.ctx, sctxs)
 }
 
 var planReplayerHandleLease atomic.Uint64

@@ -77,10 +77,10 @@ type ExtractHandle struct {
 	worker *extractWorker
 }
 
-// NewExtractHandler new extract handler
-func NewExtractHandler(sctxs []sessionctx.Context) *ExtractHandle {
+// newExtractHandler new extract handler
+func newExtractHandler(ctx context.Context, sctxs []sessionctx.Context) *ExtractHandle {
 	h := &ExtractHandle{}
-	h.worker = newExtractWorker(sctxs[0], false)
+	h.worker = newExtractWorker(ctx, sctxs[0], false)
 	return h
 }
 
@@ -123,8 +123,13 @@ func NewExtractPlanTask(begin, end time.Time) *ExtractTask {
 	}
 }
 
-func newExtractWorker(sctx sessionctx.Context, isBackgroundWorker bool) *extractWorker {
+func newExtractWorker(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	isBackgroundWorker bool,
+) *extractWorker {
 	return &extractWorker{
+		ctx:                ctx,
 		sctx:               sctx,
 		isBackgroundWorker: isBackgroundWorker,
 	}
