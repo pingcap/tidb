@@ -690,7 +690,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ownerManager:    d.ownerManager,
 		ddlJobDoneChMap: &d.ddlJobDoneChMap,
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
-		mu:              &d.mu,
 		globalIDLock:    &d.globalIDLock,
 	}
 	d.executor = e
