@@ -532,7 +532,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldDat
 		}
 	}
 	// rebuild index
-	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, opt.SkipWriteUntouchedIndices, opt.GetCreateIdxOpt())
+	err = t.rebuildUpdateRecordIndices(sctx, txn, h, touched, oldData, newData, opt)
 	if err != nil {
 		return err
 	}
@@ -607,7 +607,11 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldDat
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, skipUntouchedIndices bool, opt *table.CreateIdxOpt) error {
+func (t *TableCommon) rebuildUpdateRecordIndices(
+	ctx table.MutateContext, txn kv.Transaction,
+	h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum,
+	opt *table.UpdateRecordOpt,
+) error {
 	for _, idx := range t.deletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
@@ -626,6 +630,7 @@ func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction
 			break
 		}
 	}
+	createIdxOpt := opt.GetCreateIdxOpt()
 	for _, idx := range t.Indices() {
 		if !IsIndexWritable(idx) {
 			continue
@@ -641,14 +646,14 @@ func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction
 			untouched = false
 			break
 		}
-		if untouched && skipUntouchedIndices {
+		if untouched && opt.SkipWriteUntouchedIndices {
 			continue
 		}
 		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
 			return err
 		}
-		if err := t.buildIndexForRow(ctx, h, newVs, newData, asIndex(idx), txn, untouched, opt); err != nil {
+		if err := t.buildIndexForRow(ctx, h, newVs, newData, asIndex(idx), txn, untouched, createIdxOpt); err != nil {
 			return err
 		}
 	}
