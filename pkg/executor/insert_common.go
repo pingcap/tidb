@@ -1190,11 +1190,9 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(
 	ctx context.Context, rows [][]types.Datum,
-	addRecord func(ctx context.Context, row []types.Datum) error,
+	addRecord func(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error,
 	replace bool,
 ) error {
-	// all the rows will be checked, so it is safe to set BatchCheck = true
-	e.Ctx().GetSessionVars().StmtCtx.BatchCheck = true
 	defer tracing.StartRegion(ctx, "InsertValues.batchCheckAndInsert").End()
 	start := time.Now()
 	// Get keys need to be checked.
@@ -1307,7 +1305,8 @@ func (e *InsertValues) batchCheckAndInsert(
 		// it should be added to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		e.Ctx().GetSessionVars().StmtCtx.AddCopiedRows(1)
-		err = addRecord(ctx, rows[i])
+		// all the rows have been checked, so it is safe to use DupKeyCheckSkip
+		err = addRecord(ctx, rows[i], table.DupKeyCheckSkip)
 		if err != nil {
 			// throw warning when violate check constraint
 			if table.ErrCheckConstraintViolated.Equal(err) {
@@ -1405,21 +1404,21 @@ func (e *InsertValues) equalDatumsAsBinary(a []types.Datum, b []types.Datum) (bo
 	return true, nil
 }
 
-func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
-	return e.addRecordWithAutoIDHint(ctx, row, 0)
+func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
+	return e.addRecordWithAutoIDHint(ctx, row, 0, dupKeyCheck)
 }
 
 func (e *InsertValues) addRecordWithAutoIDHint(
-	ctx context.Context, row []types.Datum, reserveAutoIDCount int,
+	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
 ) (err error) {
 	vars := e.Ctx().GetSessionVars()
 	if !vars.ConstraintCheckInPlace {
 		vars.PresumeKeyNotExists = true
 	}
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), dupKeyCheck)
 	} else {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), dupKeyCheck)
 	}
 	vars.PresumeKeyNotExists = false
 	if err != nil {
@@ -1429,7 +1428,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}
-	if !vars.StmtCtx.BatchCheck {
+	if dupKeyCheck != table.DupKeyCheckSkip {
 		for _, fkc := range e.fkChecks {
 			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
 			if err != nil {

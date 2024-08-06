@@ -641,6 +641,9 @@ type ColWithCmpFuncManager struct {
 
 // Copy clones the ColWithCmpFuncManager.
 func (cwc *ColWithCmpFuncManager) Copy() *ColWithCmpFuncManager {
+	if cwc == nil {
+		return nil
+	}
 	cloned := new(ColWithCmpFuncManager)
 	if cwc.TargetCol != nil {
 		cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)

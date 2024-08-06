@@ -217,3 +217,14 @@ func (*instancePlanCache) createNode(value any) *instancePCNode {
 	node.lastUsed.Store(time.Now())
 	return node
 }
+
+// GetLimits gets the memory limit of this plan cache.
+func (pc *instancePlanCache) GetLimits() (softLimit, hardLimit int64) {
+	return pc.softMemLimit.Load(), pc.hardMemLimit.Load()
+}
+
+// SetLimits sets the memory limit of this plan cache.
+func (pc *instancePlanCache) SetLimits(softLimit, hardLimit int64) {
+	pc.softMemLimit.Store(softLimit)
+	pc.hardMemLimit.Store(hardLimit)
+}

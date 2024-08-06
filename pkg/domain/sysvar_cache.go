@@ -107,12 +107,11 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
 	if ctx == nil {
-		sysSessionPool := do.SysSessionPool()
-		res, err := sysSessionPool.Get()
+		res, err := do.sysSessionPool.Get()
 		if err != nil {
 			return err
 		}
-		defer sysSessionPool.Put(res)
+		defer do.sysSessionPool.Put(res)
 		ctx = res.(sessionctx.Context)
 	}
 	// Only one rebuild can be in progress at a time, this prevents a lost update race
