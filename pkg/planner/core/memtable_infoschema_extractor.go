@@ -344,7 +344,8 @@ func findTablesByID(
 			continue
 		}
 		if len(tableNames) > 0 {
-			if _, ok := tblNameMap[tbl.Meta().Name.L]; ok {
+			if _, found := tblNameMap[tbl.Meta().Name.L]; !found {
+				// table_id does not match table_name, skip it.
 				continue
 			}
 		}
@@ -370,7 +371,8 @@ func findTablesByPartID(
 			continue
 		}
 		if len(tableNames) > 0 {
-			if _, ok := tblNameMap[tbl.Meta().Name.L]; ok {
+			if _, found := tblNameMap[tbl.Meta().Name.L]; !found {
+				// partition_id does not match table_name, skip it.
 				continue
 			}
 		}
