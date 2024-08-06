@@ -81,6 +81,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 
 	if dag := builder.dag; dag != nil {
 		if execCnt := len(dag.Executors); execCnt == 1 {
+			oldConcurrency := builder.Request.Concurrency
 			// select * from t order by id
 			if builder.Request.KeepOrder {
 				// When the DAG is just simple scan and keep order, set concurrency to 2.
@@ -89,6 +90,12 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 				switch dag.Executors[0].Tp {
 				case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeIndexScan, tipb.ExecType_TypePartitionTableScan:
 					builder.Request.Concurrency = 2
+					failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+						if val.(bool) {
+							// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
+							builder.Request.Concurrency = oldConcurrency
+						}
+					})
 				}
 			}
 		}
