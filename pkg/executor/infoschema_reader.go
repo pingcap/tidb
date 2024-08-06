@@ -730,7 +730,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		return errors.Trace(err)
 	}
 	for i, table := range tables {
-		rows, err = e.setDataFromOneTable(ctx, sctx, loc, checker, schemas[i], table, rows, useStatsCache)
+		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
 		if err != nil {
 			return errors.Trace(err)
 		}
