@@ -1731,7 +1731,7 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 // handleQueryAttributes support query attributes since mysql 8.0.23
 // see https://dev.mysql.com/doc/refman/8.0/en/query-attributes.html
 // https://archive.fosdem.org/2021/schedule/event/mysql_protocl/attachments/slides/4274/export/events/attachments/mysql_protocl/slides/4274/FOSDEM21_MySQL_Protocols_Query_Attributes.pdf
-func (cc *clientConn) handleQueryAttributes(ctx context.Context, data []byte) (pos int, error error) {
+func (cc *clientConn) handleQueryAttributes(ctx context.Context, data []byte) (pos int, err error) {
 	if cc.ctx.GetSessionVars().ClientCapability&mysql.ClientQueryAttributes > 0 {
 		paraCount, _, np := util2.ParseLengthEncodedInt(data)
 		numParams := int(paraCount)
@@ -1765,7 +1765,8 @@ func (cc *clientConn) handleQueryAttributes(ctx context.Context, data []byte) (p
 				return 0, mysql.ErrMalformPacket
 			}
 			boundParams := make([][]byte, numParams)
-			if p, err := parseBinaryParams(ps, boundParams, nullBitmaps, paramTypes, data[pos:], cc.inputDecoder); err != nil {
+			if p, e := parseBinaryParams(ps, boundParams, nullBitmaps, paramTypes, data[pos:], cc.inputDecoder); err != nil {
+				err = e
 				return
 			} else {
 				pos += p
