@@ -154,6 +154,8 @@ type AddRecordOption interface {
 // UpdateRecordOpt contains the options will be used when updating a record.
 type UpdateRecordOpt struct {
 	commonMutateOpt
+	// SkipWriteUntouchedIndices is an option to skip write untouched indices when updating a record.
+	SkipWriteUntouchedIndices bool
 }
 
 // NewUpdateRecordOpt creates a new UpdateRecordOpt with options.
@@ -222,6 +224,23 @@ type isUpdate struct{}
 func (i isUpdate) ApplyAddRecordOpt(opt *AddRecordOpt) {
 	opt.IsUpdate = true
 }
+
+// skipWriteUntouchedIndices implements UpdateRecordOption.
+type skipWriteUntouchedIndices struct{}
+
+func (skipWriteUntouchedIndices) ApplyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.SkipWriteUntouchedIndices = true
+}
+
+// SkipWriteUntouchedIndices is an option to skip write untouched options when updating a record.
+// If there are no later queries in the transaction that need to read the untouched indices,
+// you can use this option to improve performance.
+// However, it is not safe to use it in an explicit txn or the updated table has some foreign key constraints.
+// Because the following read operations in the same txn may not get the correct data with the current implementation.
+// See:
+// - https://github.com/pingcap/tidb/pull/12609
+// - https://github.com/pingcap/tidb/issues/39419
+var SkipWriteUntouchedIndices UpdateRecordOption = skipWriteUntouchedIndices{}
 
 // DupKeyCheckMode indicates how to check the duplicated key when adding/updating a record/index.
 type DupKeyCheckMode uint8
