@@ -84,7 +84,9 @@ func openParser(
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return nil, err
 	}

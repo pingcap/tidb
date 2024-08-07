@@ -24,6 +24,7 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -117,30 +119,101 @@ var (
 // RecordIterFunc is used for low-level record iteration.
 type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more bool, err error)
 
+// commonMutateOpt is the common options for mutating a table.
+type commonMutateOpt struct {
+	Ctx         context.Context
+	DupKeyCheck DupKeyCheckMode
+}
+
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
-	CreateIdxOpt
+	commonMutateOpt
 	IsUpdate      bool
 	ReserveAutoID int
 }
 
+// NewAddRecordOpt creates a new AddRecordOpt with options.
+func NewAddRecordOpt(opts ...AddRecordOption) *AddRecordOpt {
+	opt := &AddRecordOpt{}
+	for _, o := range opts {
+		o.ApplyAddRecordOpt(opt)
+	}
+	return opt
+}
+
+// GetCreateIdxOpt creates a CreateIdxOpt.
+func (opt *AddRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
+	return &CreateIdxOpt{commonMutateOpt: opt.commonMutateOpt}
+}
+
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
 type AddRecordOption interface {
-	ApplyOn(*AddRecordOpt)
+	ApplyAddRecordOpt(*AddRecordOpt)
+}
+
+// UpdateRecordOpt contains the options will be used when updating a record.
+type UpdateRecordOpt struct {
+	commonMutateOpt
+	// SkipWriteUntouchedIndices is an option to skip write untouched indices when updating a record.
+	SkipWriteUntouchedIndices bool
+}
+
+// NewUpdateRecordOpt creates a new UpdateRecordOpt with options.
+func NewUpdateRecordOpt(opts ...UpdateRecordOption) *UpdateRecordOpt {
+	opt := &UpdateRecordOpt{}
+	for _, o := range opts {
+		o.ApplyUpdateRecordOpt(opt)
+	}
+	return opt
+}
+
+// GetAddRecordOpt creates a AddRecordOpt.
+func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt}
+}
+
+// GetCreateIdxOpt creates a CreateIdxOpt.
+func (opt *UpdateRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
+	return &CreateIdxOpt{commonMutateOpt: opt.commonMutateOpt}
+}
+
+// UpdateRecordOption is defined for the UpdateRecord() method of the Table interface.
+type UpdateRecordOption interface {
+	ApplyUpdateRecordOpt(*UpdateRecordOpt)
+}
+
+// CommonMutateOptFunc is a function to provide common options for mutating a table.
+type CommonMutateOptFunc func(*commonMutateOpt)
+
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (f CommonMutateOptFunc) ApplyAddRecordOpt(opt *AddRecordOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// ApplyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (f CommonMutateOptFunc) ApplyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (f CommonMutateOptFunc) ApplyCreateIdxOpt(opt *CreateIdxOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// WithCtx returns a CommonMutateOptFunc.
+// This option is used to pass context.Context.
+func WithCtx(ctx context.Context) CommonMutateOptFunc {
+	return func(opt *commonMutateOpt) {
+		opt.Ctx = ctx
+	}
 }
 
 // WithReserveAutoIDHint tells the AddRecord operation to reserve a batch of auto ID in the stmtctx.
 type WithReserveAutoIDHint int
 
-// ApplyOn implements the AddRecordOption interface.
-func (n WithReserveAutoIDHint) ApplyOn(opt *AddRecordOpt) {
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (n WithReserveAutoIDHint) ApplyAddRecordOpt(opt *AddRecordOpt) {
 	opt.ReserveAutoID = int(n)
-}
-
-// ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc
-// can be passed as the optional argument to the table.AddRecord method.
-func (f CreateIdxOptFunc) ApplyOn(opt *AddRecordOpt) {
-	f(&opt.CreateIdxOpt)
 }
 
 // IsUpdate is a defined value for AddRecordOptFunc.
@@ -148,8 +221,56 @@ var IsUpdate AddRecordOption = isUpdate{}
 
 type isUpdate struct{}
 
-func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
+func (i isUpdate) ApplyAddRecordOpt(opt *AddRecordOpt) {
 	opt.IsUpdate = true
+}
+
+// skipWriteUntouchedIndices implements UpdateRecordOption.
+type skipWriteUntouchedIndices struct{}
+
+func (skipWriteUntouchedIndices) ApplyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.SkipWriteUntouchedIndices = true
+}
+
+// SkipWriteUntouchedIndices is an option to skip write untouched options when updating a record.
+// If there are no later queries in the transaction that need to read the untouched indices,
+// you can use this option to improve performance.
+// However, it is not safe to use it in an explicit txn or the updated table has some foreign key constraints.
+// Because the following read operations in the same txn may not get the correct data with the current implementation.
+// See:
+// - https://github.com/pingcap/tidb/pull/12609
+// - https://github.com/pingcap/tidb/issues/39419
+var SkipWriteUntouchedIndices UpdateRecordOption = skipWriteUntouchedIndices{}
+
+// DupKeyCheckMode indicates how to check the duplicated key when adding/updating a record/index.
+type DupKeyCheckMode uint8
+
+const (
+	// DupKeyCheckDefault indicates using the default behavior.
+	// Currently, this means to use the return value `ctx.LazyCheckKeyNotExists()`.
+	// If the above method returns true, it will only check the duplicated key in the memory buffer,
+	// otherwise, it will also check the duplicated key in the storage.
+	// TODO: add `DupKeyCheckLazy` to indicate only checking the duplicated key in the memory buffer.
+	// After `DupKeyCheckLazy` added, `DupKeyCheckDefault` will be renamed to `DupKeyCheckInPlace` to force check
+	// the duplicated key in place.
+	DupKeyCheckDefault DupKeyCheckMode = iota
+	// DupKeyCheckSkip indicates skipping the duplicated key check.
+	DupKeyCheckSkip
+)
+
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (m DupKeyCheckMode) ApplyAddRecordOpt(opt *AddRecordOpt) {
+	opt.DupKeyCheck = m
+}
+
+// ApplyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (m DupKeyCheckMode) ApplyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.DupKeyCheck = m
+}
+
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (m DupKeyCheckMode) ApplyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.DupKeyCheck = m
 }
 
 type columnAPI interface {
@@ -188,6 +309,9 @@ type Table interface {
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
 
+	// WritableConstraint returns constraints of the table in writable states.
+	WritableConstraint() []*Constraint
+
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
 	// IndexPrefix returns the index key prefix.
@@ -197,7 +321,7 @@ type Table interface {
 	AddRecord(ctx MutateContext, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(gctx context.Context, ctx MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(ctx MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
 
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
@@ -302,4 +426,27 @@ type CachedTable interface {
 	// 'exit' is a channel to tell the keep alive goroutine to exit.
 	// The result is sent to the 'wg' channel.
 	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
+}
+
+// CheckRowConstraint verify row check constraints.
+func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowToCheck chunk.Row) error {
+	for _, constraint := range constraints {
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
+		if err != nil {
+			return err
+		}
+		if ok == 0 && !isNull {
+			return ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
+		}
+	}
+	return nil
+}
+
+// CheckRowConstraintWithDatum verify row check constraints.
+// It is the same with `CheckRowConstraint` but receives a slice of `types.Datum` instead of `chunk.Row`.
+func CheckRowConstraintWithDatum(ctx exprctx.EvalContext, constraints []*Constraint, row []types.Datum) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	return CheckRowConstraint(ctx, constraints, chunk.MutRowFromDatums(row).ToRow())
 }

@@ -185,6 +185,8 @@ type Handle interface {
 	MemUsage() uint64
 	// ExtraMemSize returns the memory usage of objects that are pointed to by the Handle.
 	ExtraMemSize() uint64
+	// Copy returns a deep copy of the Handle.
+	Copy() Handle
 }
 
 var _ Handle = IntHandle(0)
@@ -193,6 +195,11 @@ var _ Handle = PartitionHandle{}
 
 // IntHandle implement the Handle interface for int64 type handle.
 type IntHandle int64
+
+// Copy implements the Handle interface.
+func (ih IntHandle) Copy() Handle {
+	return ih
+}
 
 // IsInt implements the Handle interface.
 func (IntHandle) IsInt() bool {
@@ -301,6 +308,21 @@ func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 		ch.colEndOffsets = append(ch.colEndOffsets, endOff)
 	}
 	return ch, nil
+}
+
+// Copy implements the Handle interface.
+func (ch *CommonHandle) Copy() Handle {
+	if ch == nil {
+		return nil
+	}
+	encoded := make([]byte, len(ch.encoded))
+	copy(encoded, ch.encoded)
+	colEndOffsets := make([]uint16, len(ch.colEndOffsets))
+	copy(colEndOffsets, ch.colEndOffsets)
+	return &CommonHandle{
+		encoded:       encoded,
+		colEndOffsets: colEndOffsets,
+	}
 }
 
 // IsInt implements the Handle interface.
@@ -688,6 +710,14 @@ func NewPartitionHandle(pid int64, h Handle) PartitionHandle {
 	return PartitionHandle{
 		Handle:      h,
 		PartitionID: pid,
+	}
+}
+
+// Copy implements the Handle interface.
+func (ph PartitionHandle) Copy() Handle {
+	return PartitionHandle{
+		Handle:      ph.Handle.Copy(),
+		PartitionID: ph.PartitionID,
 	}
 }
 

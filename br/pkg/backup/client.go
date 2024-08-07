@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -43,6 +44,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// MaxResolveLocksbackupOffSleep is the maximum sleep time for resolving locks.
+	// 10 minutes for every round.
+	MaxResolveLocksbackupOffSleepMs = 600000
+)
+
 // ClientMgr manages connections needed by backup.
 type ClientMgr interface {
 	GetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
@@ -62,9 +69,293 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
-type StoreBackupPolicy struct {
-	One uint64
-	All bool
+type MainBackupLoop struct {
+	BackupSender
+
+	// backup requests for all stores.
+	// the subRanges may changed every round.
+	BackupReq backuppb.BackupRequest
+	// the number of backup clients to send backup requests per store.
+	Concurrency uint
+	// record the whole backup progress in infinite loop.
+	GlobalProgressTree *rtree.ProgressRangeTree
+	ReplicaReadLabel   map[string]string
+	StateNotifier      chan BackupRetryPolicy
+
+	ProgressCallBack        func()
+	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
+}
+
+type MainBackupSender struct{}
+
+func (s *MainBackupSender) SendAsync(
+	ctx context.Context,
+	round uint64,
+	storeID uint64,
+	request backuppb.BackupRequest,
+	concurrency uint,
+	cli backuppb.BackupClient,
+	respCh chan *ResponseAndStore,
+	StateNotifier chan BackupRetryPolicy,
+) {
+	go func() {
+		defer func() {
+			logutil.CL(ctx).Info("store backup goroutine exits", zap.Uint64("store", storeID))
+			close(respCh)
+		}()
+		err := startBackup(ctx, storeID, request, cli, concurrency, respCh)
+		if err != nil {
+			// only 2 kinds of errors will occur here.
+			// 1. grpc connection error(already retry inside)
+			// 2. context cancelled outside.
+			if errors.Cause(err) == context.Canceled {
+				logutil.CL(ctx).Info("store backup cancelled",
+					zap.Uint64("round", round),
+					zap.Uint64("storeID", storeID))
+			} else {
+				// otherwise retry backup this store
+				logutil.CL(ctx).Error("store backup failed",
+					zap.Uint64("round", round),
+					zap.Uint64("storeID", storeID), zap.Error(err))
+				select {
+				case <-ctx.Done():
+				case StateNotifier <- BackupRetryPolicy{One: storeID}:
+				}
+			}
+		}
+	}()
+}
+
+// CollectStoreBackupsAsync is the receiver function of all stores backup results.
+func (l *MainBackupLoop) CollectStoreBackupsAsync(
+	ctx context.Context,
+	round uint64,
+	storeBackupChs map[uint64]chan *ResponseAndStore,
+	globalCh chan *ResponseAndStore,
+) {
+	go func() {
+		defer func() {
+			logutil.CL(ctx).Info("collect backups goroutine exits", zap.Uint64("round", round))
+			close(globalCh)
+		}()
+		cases := make([]reflect.SelectCase, 0)
+		for _, ch := range storeBackupChs {
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)})
+		}
+
+		remainingProducers := len(cases)
+		logutil.CL(ctx).Info("start wait store backups", zap.Int("remainingProducers", remainingProducers))
+		for remainingProducers > 0 {
+			chosen, value, ok := reflect.Select(cases)
+			if !ok {
+				// The chosen channel has been closed, so zero out the channel to disable the case
+				cases[chosen].Chan = reflect.ValueOf(nil)
+				remainingProducers -= 1
+				continue
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case globalCh <- value.Interface().(*ResponseAndStore):
+			}
+		}
+	}()
+}
+
+// infinite loop to backup ranges on all tikv stores
+// if one client grpc disconnected. resend backup request to this store.
+// if new tikv store joined. send backup request to new store.
+// if one tikv store rebooted. consider leader changes, resend backup request to all stores.
+// if one tikv store disconnected. consider leader changes, resend backup request to all stores.a
+func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
+	// a flag to indicate the backup round
+	// one backup round try to backup all ranges on all tikv stores.
+	// ideally, backup should be finished in one round
+	// unless the cluster state changed or some kv errors occurred.
+	round := uint64(0)
+	// reset grpc connection every round except key_locked error.
+	reset := true
+mainLoop:
+	for {
+		round += 1
+		// sleep 200ms. in case of tikv cluster abnormal state trigger too many backup rounds.
+		time.Sleep(200 * time.Millisecond)
+		logutil.CL(ctx).Info("This round of backup starts...", zap.Uint64("round", round))
+		// initialize the error context every round
+		errContext := utils.NewErrorContext("MainBackupLoop", 10)
+
+		// a channel to collect all store backup results
+		globalBackupResultCh := make(chan *ResponseAndStore)
+		// channel slices to receive backup region result from different tikv stores
+		storeBackupResultChMap := make(map[uint64]chan *ResponseAndStore)
+
+		// mainCtx used to control mainLoop
+		// every round need a new context to control the main backup process
+		mainCtx, mainCancel := context.WithCancel(ctx)
+
+		// handleCtx used to control handleLoop
+		// every round has another infinite loop to handle all tikv backup responses
+		// until backup finished, store state changed or error occurred.
+		handleCtx, handleCancel := context.WithCancel(ctx)
+
+		// Compute the left ranges that not backuped yet
+		start := time.Now()
+
+		var inCompleteRanges []rtree.Range
+		var allTxnLocks []*txnlock.Lock
+		select {
+		case <-ctx.Done():
+			// ctx cancal outside
+			handleCancel()
+			mainCancel()
+			return ctx.Err()
+		default:
+			iter := loop.GlobalProgressTree.Iter()
+			inCompleteRanges = iter.GetIncompleteRanges()
+			if len(inCompleteRanges) == 0 {
+				// all range backuped
+				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
+				handleCancel()
+				mainCancel()
+				return nil
+			}
+		}
+
+		logutil.CL(mainCtx).Info("backup ranges", zap.Uint64("round", round),
+			zap.Int("incomplete-ranges", len(inCompleteRanges)), zap.Duration("cost", time.Since(start)))
+
+		loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
+
+		allStores, err := bc.getBackupStores(mainCtx, loop.ReplicaReadLabel)
+		if err != nil {
+			// because we have connectted to pd before.
+			// so this error must be retryable, just make infinite retry here
+			logutil.CL(mainCtx).Error("failed to get backup stores", zap.Uint64("round", round), zap.Error(err))
+			mainCancel()
+			reset = true
+			continue mainLoop
+		}
+		for _, store := range allStores {
+			if err = utils.CheckStoreLiveness(store); err != nil {
+				// skip this store in this round.
+				logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
+				continue
+			}
+			storeID := store.GetId()
+			// reset backup client every round, to get a clean grpc connection.
+			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, reset)
+			if err != nil {
+				// because the we get store info from pd.
+				// there is no customer setting here, so make infinite retry.
+				logutil.CL(ctx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
+				mainCancel()
+				reset = true
+				continue mainLoop
+			}
+			ch := make(chan *ResponseAndStore)
+			storeBackupResultChMap[storeID] = ch
+			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+		}
+		// infinite loop to collect region backup response to global channel
+		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+	handleLoop:
+		for {
+			select {
+			case <-ctx.Done():
+				handleCancel()
+				mainCancel()
+				return ctx.Err()
+			case storeBackupInfo := <-loop.StateNotifier:
+				if storeBackupInfo.All {
+					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
+					// stop current connections
+					handleCancel()
+					mainCancel()
+					// start next round backups
+					reset = true
+					continue mainLoop
+				}
+				if storeBackupInfo.One != 0 {
+					storeID := storeBackupInfo.One
+					logutil.CL(mainCtx).Info("receive notifaction and retry backup on this store",
+						zap.Uint64("storeID", storeID), zap.Uint64("round", round))
+					store, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
+					if err != nil {
+						// cannot get store, maybe store has scaled-in.
+						logutil.CL(mainCtx).Info("cannot get store from pd", zap.Uint64("round", round), zap.Error(err))
+						// try next round
+						handleCancel()
+						mainCancel()
+						reset = true
+						continue mainLoop
+					}
+					if err = utils.CheckStoreLiveness(store); err != nil {
+						// skip this store in this round.
+						logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
+						reset = true
+						continue mainLoop
+					}
+					// reset backup client. store address could change but store id remained.
+					cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, reset)
+					if err != nil {
+						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
+						handleCancel()
+						mainCancel()
+						// receive new store info but failed to get backup client.
+						// start next round backups to get all tikv stores and reset all client connections.
+						reset = true
+						continue mainLoop
+					}
+
+					// cancel the former collect goroutine
+					handleCancel()
+					ch := make(chan *ResponseAndStore)
+
+					storeBackupResultChMap[storeID] = ch
+					// start backup for this store
+					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+					// re-create context for new handler loop
+					handleCtx, handleCancel = context.WithCancel(mainCtx)
+					// handleCancel makes the former collect goroutine exits
+					// so we need to re-create a new channel and restart a new collect goroutine.
+					globalBackupResultCh = make(chan *ResponseAndStore)
+					// collect all store backup producer channel result to one channel
+					loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+				}
+			case respAndStore, ok := <-globalBackupResultCh:
+				if !ok {
+					// resolve all txn lock before next round starts
+					if len(allTxnLocks) > 0 {
+						bo := utils.AdaptTiKVBackoffer(handleCtx, MaxResolveLocksbackupOffSleepMs, berrors.ErrUnknown)
+						_, err = bc.mgr.GetLockResolver().ResolveLocks(bo.Inner(), 0, allTxnLocks)
+						if err != nil {
+							logutil.CL(handleCtx).Warn("failed to resolve locks, ignore and wait for next round to resolve",
+								zap.Uint64("round", round), zap.Error(err))
+						}
+						reset = false
+					}
+					// this round backup finished. break and check incomplete ranges in mainLoop.
+					break handleLoop
+				}
+				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
+				if err != nil {
+					// if error occurred here, stop the backup process
+					// because only 3 kinds of errors will be returned here:
+					// 1. permission denied on tikv store.
+					// 2. parse backup response error.(shouldn't happen in any case)
+					// 3. checkpoint update failed. TODO: should we retry here?
+					handleCancel()
+					mainCancel()
+					return err
+				}
+				if lock != nil {
+					allTxnLocks = append(allTxnLocks, lock)
+				}
+				loop.ProgressCallBack()
+			}
+		}
+	}
 }
 
 // Client is a client instructs TiKV how to do a backup.
@@ -518,9 +809,7 @@ func BuildBackupRangeAndInitSchema(
 		return nil, nil, nil, nil
 	}
 	return ranges, NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
-		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
-			fn(dbInfo, tableInfo)
-		})
+		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, fn)
 	}, schemasNum), policies, nil
 }
 
@@ -640,7 +929,6 @@ func BuildBackupSchemas(
 		}
 
 		if !hasTable {
-			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
 			fn(dbInfo, nil)
 		}
 	}
@@ -716,8 +1004,37 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// determine whether the jobs need to be append into `allJobs`
+	appendJobsFn := func(jobs []*model.Job) ([]*model.Job, bool) {
+		appendJobs := make([]*model.Job, 0, len(jobs))
+		for _, job := range jobs {
+			if skipUnsupportedDDLJob(job) {
+				continue
+			}
+			if job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion <= lastSchemaVersion {
+				// early exits to stop unnecessary scan
+				return appendJobs, true
+			}
+
+			if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
+				(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
+				if job.BinlogInfo.DBInfo != nil {
+					// ignore all placement policy info during incremental backup for now.
+					job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
+				}
+				if job.BinlogInfo.TableInfo != nil {
+					// ignore all placement policy info during incremental backup for now.
+					job.BinlogInfo.TableInfo.ClearPlacement()
+				}
+				appendJobs = append(appendJobs, job)
+			}
+		}
+		return appendJobs, false
+	}
+
 	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
-	allJobs := make([]*model.Job, 0)
+	var allJobs []*model.Job
 	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
 		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx())
 		if err != nil {
@@ -730,41 +1047,49 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return errors.Trace(err)
 	}
 
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
+	// filter out the jobs
+	allJobs, _ = appendJobsFn(allJobs)
+
+	historyJobsIter, err := ddl.GetLastHistoryDDLJobsIterator(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get history jobs", zap.Int("jobs", len(historyJobs)))
-	allJobs = append(allJobs, historyJobs...)
 
-	count := 0
-	for _, job := range allJobs {
-		if skipUnsupportedDDLJob(job) {
-			continue
+	count := len(allJobs)
+
+	cacheJobs := make([]*model.Job, 0, ddl.DefNumHistoryJobs)
+	for {
+		cacheJobs, err = historyJobsIter.GetLastJobs(ddl.DefNumHistoryJobs, cacheJobs)
+		if err != nil {
+			return errors.Trace(err)
 		}
-
-		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
-			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
-			if job.BinlogInfo.DBInfo != nil {
-				// ignore all placement policy info during incremental backup for now.
-				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
-			}
-			if job.BinlogInfo.TableInfo != nil {
-				// ignore all placement policy info during incremental backup for now.
-				job.BinlogInfo.TableInfo.ClearPlacement()
-			}
-			jobBytes, err := json.Marshal(job)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = metaWriter.Send(jobBytes, metautil.AppendDDL)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			count++
+		if len(cacheJobs) == 0 {
+			// no more jobs
+			break
+		}
+		jobs, finished := appendJobsFn(cacheJobs)
+		count += len(jobs)
+		allJobs = append(allJobs, jobs...)
+		if finished {
+			// no more jobs between [LastTS, ts]
+			break
 		}
 	}
-	log.Debug("get completed jobs", zap.Int("jobs", count))
+	log.Debug("get complete jobs", zap.Int("jobs", count))
+	// sort by job id with ascend order
+	sort.Slice(allJobs, func(i, j int) bool {
+		return allJobs[i].ID < allJobs[j].ID
+	})
+	for _, job := range allJobs {
+		jobBytes, err := json.Marshal(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
@@ -803,39 +1128,33 @@ func (bc *Client) BackupRanges(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	stateChan := make(chan StoreBackupPolicy)
-	// TODO implement state change watch goroutine @3pointer
-	// go func() {
-	// 	// TODO watch changes on cluste state
-	// 	cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
-	// 		stateChan <- StoreBackups{All: true}
-	// 	}), storewatch.WithOnDisconnect(func(s *metapb.Store) {
-	// 		stateChan <- StoreBackups{All: true}
-	// 	}), storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
-	// 		// only backup for this store
-	// 		stateChan <- StoreBackups{One: s.Id}
-	// 	}))
-	// 	watcher := storewatch.New(bc.mgr.GetPDClient(), cb)
-	// 	tick := time.NewTicker(30 * time.Second)
-	// 	for {
-	// 		select {
-	// 		case <-ctx.Done():
-	// 			return
-	// 		case <-tick.C:
-	// 			err := watcher.Step(ctx)
-	// 			if err != nil {
-	// 				// ignore it
-	// 			}
-	// 		}
-	// 	}
-	// }()
-
 	globalProgressTree, err := bc.BuildProgressRangeTree(ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = bc.startMainBackupLoop(ctx, &globalProgressTree, replicaReadLabel, request, stateChan, progressCallBack)
+	stateNotifier := make(chan BackupRetryPolicy)
+	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
+
+	mainBackupLoop := &MainBackupLoop{
+		BackupSender:       &MainBackupSender{},
+		BackupReq:          request,
+		Concurrency:        concurrency,
+		GlobalProgressTree: &globalProgressTree,
+		ReplicaReadLabel:   replicaReadLabel,
+		StateNotifier:      stateNotifier,
+		ProgressCallBack:   progressCallBack,
+		// always use reset connection here.
+		// because we need to reset connection when store state changed.
+		GetBackupClientCallBack: func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {
+			if reset {
+				return bc.mgr.ResetBackupClient(ctx, storeID)
+			}
+			return bc.mgr.GetBackupClient(ctx, storeID)
+		},
+	}
+
+	err = bc.RunLoop(ctx, mainBackupLoop)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -872,19 +1191,21 @@ func (bc *Client) OnBackupResponse(
 	r *ResponseAndStore,
 	errContext *utils.ErrorContext,
 	globalProgressTree *rtree.ProgressRangeTree,
-) error {
+) (*txnlock.Lock, error) {
 	if r == nil || r.GetResponse() == nil {
-		return nil
+		return nil, nil
 	}
 
 	resp := r.GetResponse()
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
+		start := time.Now()
 		pr, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
+		logutil.CL(ctx).Debug("find the range tree contains response ranges", zap.Duration("take", time.Since(start)))
 		if err != nil {
 			logutil.CL(ctx).Error("failed to update the backup response",
 				zap.Reflect("error", err))
-			return err
+			return nil, err
 		}
 		if bc.checkpointRunner != nil {
 			if err := checkpoint.AppendForBackup(
@@ -897,7 +1218,7 @@ func (bc *Client) OnBackupResponse(
 			); err != nil {
 				// flush checkpoint failed,
 				logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
-				return err
+				return nil, err
 			}
 		}
 		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
@@ -905,253 +1226,28 @@ func (bc *Client) OnBackupResponse(
 		bc.SetApiVersion(apiVersion)
 	} else {
 		errPb := resp.GetError()
-		res := errContext.HandleIgnorableError(errPb, storeID)
+		switch v := errPb.Detail.(type) {
+		case *backuppb.Error_KvError:
+			if lockErr := v.KvError.Locked; lockErr != nil {
+				// return lock for later resolving in this round
+				return txnlock.NewLock(lockErr), nil
+			}
+		}
+		res := utils.HandleBackupError(errPb, storeID, errContext)
 		switch res.Strategy {
-		case utils.GiveUpStrategy:
+		case utils.StrategyGiveUp:
 			errMsg := res.Reason
 			if len(errMsg) <= 0 {
 				errMsg = errPb.Msg
 			}
 			// TODO output a precise store address. @3pointer
-			return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
+			return nil, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
 				storeID,
 				errMsg,
 			)
 		}
 	}
-	return nil
-}
-
-// infinite loop to backup ranges on all tikv stores
-// if one client grpc disconnected. resend backup request to this store.
-// if new tikv store joined. send backup request to new store.
-// if one tikv store rebooted. consider leader changes, resend backup request to all stores.
-// if one tikv store disconnected. consider leader changes, resend backup request to all stores.
-func (bc *Client) startMainBackupLoop(
-	ctx context.Context,
-	globalProgressTree *rtree.ProgressRangeTree,
-	replicaReadLabel map[string]string,
-	request backuppb.BackupRequest,
-	stateChan chan StoreBackupPolicy,
-	progressCallBack func(),
-) error {
-	startStoreBackupAsyncFn := func(
-		ctx context.Context,
-		round uint64,
-		storeID uint64,
-		request backuppb.BackupRequest,
-		cli backuppb.BackupClient,
-		respCh chan *ResponseAndStore,
-	) {
-		go func() {
-			defer func() {
-				logutil.CL(ctx).Info("exit store backup goroutine", zap.Uint64("store", storeID))
-				close(respCh)
-			}()
-			err := startStoreBackup(ctx, storeID, request, cli, respCh)
-			if err != nil {
-				// only 2 kinds of errors will occur here.
-				// 1. grpc connection error(already retry inside)
-				// 2. context cancelled outside.
-				if errors.Cause(err) == context.Canceled {
-					logutil.CL(ctx).Info("store backup cancelled",
-						zap.Uint64("round", round),
-						zap.Uint64("storeID", storeID))
-				} else {
-					// otherwise retry backup this store
-					logutil.CL(ctx).Error("store backup failed",
-						zap.Uint64("round", round),
-						zap.Uint64("storeID", storeID), zap.Error(err))
-					stateChan <- StoreBackupPolicy{One: storeID}
-				}
-			}
-		}()
-	}
-
-	collectStoreBackupsAsyncFn := func(
-		ctx context.Context,
-		round uint64,
-		storeBackupChs map[uint64]chan *ResponseAndStore,
-		globalCh chan *ResponseAndStore,
-
-	) {
-		go func() {
-			defer func() {
-				logutil.CL(ctx).Info("exit collect backups goroutine", zap.Uint64("round", round))
-				close(globalCh)
-			}()
-			cases := make([]reflect.SelectCase, 0)
-			for _, ch := range storeBackupChs {
-				cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)})
-			}
-
-			remainingProducers := len(cases)
-			logutil.CL(ctx).Info("start wait store backups", zap.Int("remainingProducers", remainingProducers))
-			for remainingProducers > 0 {
-				chosen, value, ok := reflect.Select(cases)
-				if !ok {
-					// The chosen channel has been closed, so zero out the channel to disable the case
-					cases[chosen].Chan = reflect.ValueOf(nil)
-					remainingProducers -= 1
-					continue
-				}
-
-				select {
-				case <-ctx.Done():
-					return
-				case globalCh <- value.Interface().(*ResponseAndStore):
-				}
-			}
-		}()
-	}
-
-	// a flag to indicate the backup round
-	// one backup round try to backup all ranges on all tikv stores.
-	// ideally, backup should be finished in one round
-	// unless the cluster state changed or some kv errors occurred.
-	round := uint64(0)
-mainLoop:
-	for {
-		round += 1
-		// initialize the error context every round
-		errContext := utils.NewErrorContext("MainBackupLoop", 10)
-
-		// a channel to collect all store backup results
-		globalBackupResultCh := make(chan *ResponseAndStore)
-		// channel slices to receive backup region result from different tikv stores
-		storeBackupResultChMap := make(map[uint64]chan *ResponseAndStore)
-
-		// mainCtx used to control mainLoop
-		// every round need a new context to control the main backup process
-		mainCtx, mainCancel := context.WithCancel(ctx)
-
-		// handleCtx used to control handleLoop
-		// every round has another infinite loop to handle all tikv backup responses
-		// until backup finished, store state changed or error occurred.
-		handleCtx, handleCancel := context.WithCancel(ctx)
-
-		// Compute the left ranges that not backuped yet
-		iter := globalProgressTree.Iter()
-		inCompleteRanges := iter.GetIncompleteRanges()
-		if len(inCompleteRanges) == 0 {
-			// all range backuped
-			handleCancel()
-			mainCancel()
-			return nil
-		}
-
-		logutil.CL(ctx).Info("backup round start...", zap.Uint64("round", round))
-
-		request.SubRanges = getBackupRanges(inCompleteRanges)
-
-		allStores, err := bc.getBackupStores(mainCtx, replicaReadLabel)
-		if err != nil {
-			// because we have connectted to pd before.
-			// so this error must be retryable, just make infinite retry here
-			logutil.CL(mainCtx).Error("failed to get backup stores", zap.Uint64("round", round), zap.Error(err))
-			mainCancel()
-			continue mainLoop
-		}
-		for _, store := range allStores {
-			if err = utils.CheckStoreLiveness(store); err != nil {
-				// skip this store in this round.
-				logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
-				continue
-			}
-			storeID := store.GetId()
-			// reset backup client every round, to get a clean grpc connection.
-			cli, err := bc.mgr.ResetBackupClient(mainCtx, storeID)
-			if err != nil {
-				// because the we get store info from pd.
-				// there is no customer setting here, so make infinite retry.
-				logutil.CL(ctx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
-				mainCancel()
-				continue mainLoop
-			}
-			ch := make(chan *ResponseAndStore)
-			storeBackupResultChMap[storeID] = ch
-			startStoreBackupAsyncFn(mainCtx, round, storeID, request, cli, ch)
-		}
-		// infinite loop to collect region backup response to global channel
-		collectStoreBackupsAsyncFn(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
-	handleLoop:
-		for {
-			select {
-			case <-ctx.Done():
-				handleCancel()
-				mainCancel()
-				return ctx.Err()
-			case storeBackupInfo := <-stateChan:
-				if storeBackupInfo.All {
-					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
-					// stop current connections
-					handleCancel()
-					mainCancel()
-					// start next round backups
-					continue mainLoop
-				}
-				if storeBackupInfo.One != 0 {
-					storeID := storeBackupInfo.One
-					store, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
-					if err != nil {
-						// cannot get store, maybe store has scaled-in.
-						logutil.CL(mainCtx).Info("cannot get store from pd", zap.Uint64("round", round), zap.Error(err))
-						// try next round
-						handleCancel()
-						mainCancel()
-						continue mainLoop
-					}
-					if err = utils.CheckStoreLiveness(store); err != nil {
-						// skip this store in this round.
-						logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
-						continue
-					}
-					// reset backup client. store address could change but store id remained.
-					cli, err := bc.mgr.ResetBackupClient(mainCtx, storeID)
-					if err != nil {
-						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
-						handleCancel()
-						mainCancel()
-						// receive new store info but failed to get backup client.
-						// start next round backups to get all tikv stores and reset all client connections.
-						continue mainLoop
-					}
-
-					// cancel the former collect goroutine
-					handleCancel()
-					ch := make(chan *ResponseAndStore)
-
-					storeBackupResultChMap[storeID] = ch
-					// start backup for this store
-					startStoreBackupAsyncFn(mainCtx, round, storeID, request, cli, ch)
-					// re-create context for new handler loop
-					handleCtx, handleCancel = context.WithCancel(mainCtx)
-					// handleCancel makes the former collect goroutine exits
-					// so we need to re-create a new channel and restart a new collect goroutine.
-					globalBackupResultCh = make(chan *ResponseAndStore)
-					// collect all store backup producer channel result to one channel
-					collectStoreBackupsAsyncFn(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
-				}
-			case respAndStore, ok := <-globalBackupResultCh:
-				if !ok {
-					// this round backup finished. break and check incomplete ranges in mainLoop.
-					break handleLoop
-				}
-				err = bc.OnBackupResponse(handleCtx, respAndStore, errContext, globalProgressTree)
-				if err != nil {
-					// if error occurred here, stop the backup process
-					// because only 3 kinds of errors will be returned here:
-					// 1. permission denied on tikv store.
-					// 2. parse backup response error.(shouldn't happen in any case)
-					// 3. checkpoint update failed. TODO: should we retry here?
-					handleCancel()
-					mainCancel()
-					return err
-				}
-				progressCallBack()
-			}
-		}
-	}
+	return nil, nil
 }
 
 func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {

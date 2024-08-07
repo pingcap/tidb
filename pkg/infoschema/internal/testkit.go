@@ -150,12 +150,13 @@ func GenGlobalID(store kv.Storage) (int64, error) {
 func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 	id, err := GenGlobalID(store)
 	require.NoError(t, err)
-	return &model.DBInfo{
-		ID:     id,
-		Name:   model.NewCIStr(DBName),
-		Tables: []*model.TableInfo{},
-		State:  model.StatePublic,
+	dbInfo := &model.DBInfo{
+		ID:    id,
+		Name:  model.NewCIStr(DBName),
+		State: model.StatePublic,
 	}
+	dbInfo.Deprecated.Tables = []*model.TableInfo{}
+	return dbInfo
 }
 
 // MockTableInfo mock TableInfo for testing.
@@ -222,7 +223,7 @@ func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model
 func AddTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, dbInfo.Name.O, tblInfo)
+		err := meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -244,7 +245,7 @@ func UpdateTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *
 func DropTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblID int64, tblName string) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropTableOrView(dbInfo.ID, dbInfo.Name.O, tblID, tblName)
+		err := meta.NewMeta(txn).DropTableOrView(dbInfo.ID, tblID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -267,7 +268,7 @@ func DropDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropDatabase(dbInfo.ID, dbInfo.Name.O)
+		err := meta.NewMeta(txn).DropDatabase(dbInfo.ID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})

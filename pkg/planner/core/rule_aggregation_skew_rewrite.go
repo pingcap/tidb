@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
@@ -89,9 +90,9 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	// aggregate functions for bottom aggregate
 	bottomAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
 	// output schema for top aggregate
-	topAggSchema := agg.schema.Clone()
+	topAggSchema := agg.Schema().Clone()
 	// output schema for bottom aggregate
-	bottomAggSchema := expression.NewSchema(make([]*expression.Column, 0, agg.schema.Len())...)
+	bottomAggSchema := expression.NewSchema(make([]*expression.Column, 0, agg.Schema().Len())...)
 
 	// columns used by group by items in the original aggregate
 	groupCols := make([]*expression.Column, 0, 3)
@@ -215,7 +216,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 	// it has count(), we have split it into sum()+count(), since sum() returns decimal
 	// we have to return a project operator that casts decimal to bigint
-	proj := LogicalProjection{
+	proj := logicalop.LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, column := range topAggSchema.Columns {
@@ -224,13 +225,13 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 	// wrap sum() with cast function to keep output data type same
 	for _, index := range cntIndexes {
-		exprType := proj.Exprs[index].GetType()
-		targetType := agg.schema.Columns[index].GetType()
+		exprType := proj.Exprs[index].GetType(agg.SCtx().GetExprCtx().GetEvalCtx())
+		targetType := agg.Schema().Columns[index].GetStaticType()
 		if !exprType.Equal(targetType) {
 			proj.Exprs[index] = expression.BuildCastFunction(agg.SCtx().GetExprCtx(), proj.Exprs[index], targetType)
 		}
 	}
-	proj.SetSchema(agg.schema.Clone())
+	proj.SetSchema(agg.Schema().Clone())
 	proj.SetChildren(topAgg)
 	appendSkewDistinctAggRewriteTraceStep(agg, proj, opt)
 	return proj

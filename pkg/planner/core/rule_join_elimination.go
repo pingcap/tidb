@@ -19,9 +19,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
@@ -141,7 +143,7 @@ func (*outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPl
 	if !ok {
 		return false, nil
 	}
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsIntHandlePath || !path.Index.Unique || len(path.IdxCols) == 0 {
 			continue
 		}
@@ -211,7 +213,7 @@ func (o *outerJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	}
 
 	switch x := p.(type) {
-	case *LogicalProjection:
+	case *logicalop.LogicalProjection:
 		parentCols = parentCols[:0]
 		for _, expr := range x.Exprs {
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
@@ -259,20 +261,21 @@ func (*outerJoinEliminator) name() string {
 
 func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan base.LogicalPlan, parentCols []*expression.Column,
 	innerJoinKeys *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := join.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString("The columns[")
 		for i, col := range parentCols {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are from outer table, and the inner join keys[")
 		for i, key := range innerJoinKeys.Columns {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(key.String())
+			buffer.WriteString(key.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are unique")
 		return buffer.String()
@@ -284,13 +287,14 @@ func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan base.Logical
 }
 
 func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan base.LogicalPlan, aggCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := join.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString("The columns[")
 		for i, col := range aggCols {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		buffer.WriteString("] in agg are from outer table, and the agg functions are duplicate agnostic")
 		return buffer.String()

@@ -109,6 +109,9 @@ func CutRowKeyPrefix(key kv.Key) []byte {
 // EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
 func EncodeRecordKey(recordPrefix kv.Key, h kv.Handle) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+h.Len())
+	if ph, ok := h.(kv.PartitionHandle); ok {
+		recordPrefix = GenTableRecordPrefix(ph.PartitionID)
+	}
 	buf = append(buf, recordPrefix...)
 	buf = append(buf, h.Encoded()...)
 	return buf
@@ -341,13 +344,13 @@ func EncodeValue(loc *time.Location, b []byte, raw types.Datum) ([]byte, error) 
 // EncodeRow will allocate it.
 // This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
 // expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
-func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, e *rowcodec.Encoder, checksums ...uint32) ([]byte, error) {
+func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, checksum rowcodec.Checksum, e *rowcodec.Encoder) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
 	if e.Enable {
 		valBuf = valBuf[:0]
-		return e.Encode(loc, colIDs, row, valBuf, checksums...)
+		return e.Encode(loc, colIDs, row, checksum, valBuf)
 	}
 	return EncodeOldRow(loc, row, colIDs, valBuf, values)
 }
@@ -960,7 +963,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	if len(b) > 0 {
 		return decodeHandleInIndexKey(b)
 	} else if len(value) >= 8 {
-		return decodeHandleInIndexValue(value)
+		return DecodeHandleInIndexValue(value)
 	}
 	// Should never execute to here.
 	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
@@ -977,7 +980,11 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+// DecodeHandleInIndexValue decodes handle in unqiue index value.
+func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+	if len(value) <= MaxOldEncodeValueLen {
+		return decodeIntHandleInIndexValue(value), nil
+	}
 	seg := SplitIndexValue(value)
 	if len(seg.IntHandle) != 0 {
 		handle = decodeIntHandleInIndexValue(seg.IntHandle)
@@ -1522,7 +1529,7 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 
 		rd := rowcodec.Encoder{Enable: true}
 		var err error
-		idxVal, err = rd.Encode(loc, colIds, allRestoredData, idxVal)
+		idxVal, err = rd.Encode(loc, colIds, allRestoredData, nil, idxVal)
 		if err != nil {
 			return nil, err
 		}
@@ -1566,7 +1573,7 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 		rd := rowcodec.Encoder{Enable: true}
 		// Encode row restored value.
 		var err error
-		idxVal, err = rd.Encode(loc, colIds, indexedValues, idxVal)
+		idxVal, err = rd.Encode(loc, colIds, indexedValues, nil, idxVal)
 		if err != nil {
 			return nil, err
 		}
@@ -1674,35 +1681,6 @@ func encodeCommonHandle(idxVal []byte, h kv.Handle) []byte {
 	idxVal = append(idxVal, byte(hLen>>8), byte(hLen))
 	idxVal = append(idxVal, h.Encoded()...)
 	return idxVal
-}
-
-// DecodeHandleInUniqueIndexValue decodes handle in data.
-func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle, error) {
-	if !isCommonHandle {
-		dLen := len(data)
-		if dLen <= MaxOldEncodeValueLen {
-			return kv.IntHandle(int64(binary.BigEndian.Uint64(data))), nil
-		}
-		return kv.IntHandle(int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):]))), nil
-	}
-	if getIndexVersion(data) == 1 {
-		seg := splitIndexValueForClusteredIndexVersion1(data)
-		h, err := kv.NewCommonHandle(seg.CommonHandle)
-		if err != nil {
-			return nil, err
-		}
-		return h, nil
-	}
-
-	tailLen := int(data[0])
-	data = data[:len(data)-tailLen]
-	handleLen := uint16(data[2])<<8 + uint16(data[3])
-	handleEndOff := 4 + handleLen
-	h, err := kv.NewCommonHandle(data[4:handleEndOff])
-	if err != nil {
-		return nil, err
-	}
-	return h, nil
 }
 
 func encodePartitionID(idxVal []byte, partitionID int64) []byte {

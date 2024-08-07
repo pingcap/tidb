@@ -465,8 +465,6 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
-		} else if col.ID == model.ExtraPidColID {
-			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
 			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
@@ -636,28 +634,6 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
 	}, nil
-}
-
-// ToPB converts FrameBound to tipb structure.
-func (fb *FrameBound) ToPB(ctx *base.BuildPBContext) (*tipb.WindowFrameBound, error) {
-	pbBound := &tipb.WindowFrameBound{
-		Type:      tipb.WindowBoundType(fb.Type),
-		Unbounded: fb.UnBounded,
-	}
-	offset := fb.Num
-	pbBound.Offset = &offset
-
-	if fb.IsExplicitRange {
-		rangeFrame, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), fb.CalcFuncs, ctx.GetClient())
-		if err != nil {
-			return nil, err
-		}
-
-		pbBound.FrameRange = rangeFrame[0]
-		pbBound.CmpDataType = &fb.CmpDataType
-	}
-
-	return pbBound, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.

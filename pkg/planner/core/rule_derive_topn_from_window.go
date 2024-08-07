@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -43,23 +43,23 @@ func appendDerivedTopNTrace(topN base.LogicalPlan, opt *optimizetrace.LogicalOpt
 
 // checkPartitionBy mainly checks if partition by of window function is a prefix of
 // data order (clustered index) of the data source. TiFlash is allowed only for empty partition by.
-func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
+func checkPartitionBy(p *logicalop.LogicalWindow, d *DataSource) bool {
 	// No window partition by. We are OK.
 	if len(p.PartitionBy) == 0 {
 		return true
 	}
 
 	// Table not clustered and window has partition by. Can not do the TopN push down.
-	if d.handleCols == nil {
+	if d.HandleCols == nil {
 		return false
 	}
 
-	if len(p.PartitionBy) > d.handleCols.NumCols() {
+	if len(p.PartitionBy) > d.HandleCols.NumCols() {
 		return false
 	}
 
 	for i, col := range p.PartitionBy {
-		if !(col.Col.EqualColumn(d.handleCols.GetCol(i))) {
+		if !(col.Col.EqualColumn(d.HandleCols.GetCol(i))) {
 			return false
 		}
 	}
@@ -76,7 +76,7 @@ func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
 */
 func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	// Check if child is window function.
-	child, isLogicalWindow := p.Children()[0].(*LogicalWindow)
+	child, isLogicalWindow := p.Children()[0].(*logicalop.LogicalWindow)
 	if !isLogicalWindow {
 		return false, 0
 	}
@@ -104,7 +104,7 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	}
 
 	// Give up if TiFlash is one possible access path. Pushing down window aggregation is good enough in this case.
-	for _, path := range dataSource.possibleAccessPaths {
+	for _, path := range dataSource.PossibleAccessPaths {
 		if path.StoreType == kv.TiFlash {
 			return false, 0
 		}
@@ -121,30 +121,6 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 func (*deriveTopNFromWindow) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.DeriveTopN(opt), planChanged, nil
-}
-
-// DeriveTopN implements the LogicalPlan interface.
-func (s *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	p := s.Self().(*LogicalSelection)
-	windowIsTopN, limitValue := windowIsTopN(p)
-	if windowIsTopN {
-		child := p.Children()[0].(*LogicalWindow)
-		grandChild := child.Children()[0].(*DataSource)
-		// Build order by for derived Limit
-		byItems := make([]*util.ByItems, 0, len(child.OrderBy))
-		for _, col := range child.OrderBy {
-			byItems = append(byItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
-		}
-		// Build derived Limit
-		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.QueryBlockOffset())
-		derivedTopN.SetChildren(grandChild)
-		/* return select->datasource->topN->window */
-		child.SetChildren(derivedTopN)
-		p.SetChildren(child)
-		appendDerivedTopNTrace(p, opt)
-		return p
-	}
-	return p
 }
 
 func (*deriveTopNFromWindow) name() string {

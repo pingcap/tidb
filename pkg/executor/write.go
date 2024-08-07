@@ -193,8 +193,19 @@ func updateRecord(
 			return updated, err
 		}
 	} else {
+		var opts []table.UpdateRecordOption
+		if sctx.GetSessionVars().InTxn() || sc.InHandleForeignKeyTrigger || sc.ForeignKeyTriggerCtx.HasFKCascades {
+			// If txn is auto commit and index is untouched, no need to write index value.
+			// If InHandleForeignKeyTrigger or ForeignKeyTriggerCtx.HasFKCascades is true indicate we may have
+			// foreign key cascade need to handle later, then we still need to write index value,
+			// otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx)}
+		} else {
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), table.SkipWriteUntouchedIndices}
+		}
+
 		// Update record to new value and update index.
-		if err := t.UpdateRecord(ctx, sctx.GetTableCtx(), h, oldData, newData, modified); err != nil {
+		if err := t.UpdateRecord(sctx.GetTableCtx(), h, oldData, newData, modified, opts...); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
 				return false, ec.HandleError(err)
@@ -329,8 +340,9 @@ func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, t
 	if !ok {
 		return errors.Errorf("exchange partition process assert table partition failed")
 	}
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	err := p.CheckForExchangePartition(
-		sctx.GetExprCtx().GetEvalCtx(),
+		evalCtx,
 		pt.Meta().Partition,
 		row,
 		tbl.ExchangePartitionInfo.ExchangePartitionDefID,
@@ -340,15 +352,7 @@ func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, t
 		return err
 	}
 	if variable.EnableCheckConstraint.Load() {
-		type CheckConstraintTable interface {
-			CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error
-		}
-		cc, ok := pt.(CheckConstraintTable)
-		if !ok {
-			return errors.Errorf("exchange partition process assert check constraint failed")
-		}
-		err := cc.CheckRowConstraint(sctx, row)
-		if err != nil {
+		if err = table.CheckRowConstraintWithDatum(evalCtx, pt.WritableConstraint(), row); err != nil {
 			// TODO: make error include ExchangePartition info.
 			return err
 		}

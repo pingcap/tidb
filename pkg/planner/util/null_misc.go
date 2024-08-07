@@ -17,6 +17,7 @@ package util
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
@@ -50,7 +51,8 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 			newArgs := make([]expression.Expression, 0, 2)
 			newArgs = append(newArgs, expr.GetArgs()[0])
 			newArgs = append(newArgs, arg)
-			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ, expr.GetType(), newArgs...)
+			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ,
+				expr.GetType(ctx.GetExprCtx().GetEvalCtx()), newArgs...)
 			if err != nil {
 				return false
 			}
@@ -114,4 +116,15 @@ func isNullRejectedSimpleExpr(ctx context.PlanContext, schema *expression.Schema
 		}
 	}
 	return false
+}
+
+// ResetNotNullFlag resets the not null flag of [start, end] columns in the schema.
+func ResetNotNullFlag(schema *expression.Schema, start, end int) {
+	for i := start; i < end; i++ {
+		col := *schema.Columns[i]
+		newFieldType := *col.RetType
+		newFieldType.DelFlag(mysql.NotNullFlag)
+		col.RetType = &newFieldType
+		schema.Columns[i] = &col
+	}
 }

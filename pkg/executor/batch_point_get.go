@@ -290,7 +290,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
+			handle, err1 := tablecodec.DecodeHandleInIndexValue(handleVal)
 			if err1 != nil {
 				return err1
 			}
@@ -424,9 +424,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					IndexEncode: func(_ *consistency.RecordData) kv.Key {
 						return indexKeys[i]
 					},
-					Tbl:  e.tblInfo,
-					Idx:  e.idxInfo,
-					Sctx: e.Ctx(),
+					Tbl:             e.tblInfo,
+					Idx:             e.idxInfo,
+					EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+					Storage:         e.Ctx().GetStore(),
 				}).ReportLookupInconsistent(ctx,
 					1, 0,
 					e.handles[i:i+1],

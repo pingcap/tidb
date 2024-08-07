@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1242,7 +1243,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 	for i, c := range cases {
 		// Test wrapping with CastAsInt.
 		intExpr := WrapWithCastAsInt(ctx, c.expr)
-		require.Equal(t, types.ETInt, intExpr.GetType().EvalType())
+		require.Equal(t, types.ETInt, intExpr.GetType(ctx).EvalType())
 		intRes, isNull, err := intExpr.EvalInt(ctx, c.row.ToRow())
 		require.NoErrorf(t, err, "cast[%v]: %#v", i, t)
 		require.Equal(t, false, isNull)
@@ -1250,7 +1251,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 
 		// Test wrapping with CastAsReal.
 		realExpr := WrapWithCastAsReal(ctx, c.expr)
-		require.Equal(t, types.ETReal, realExpr.GetType().EvalType())
+		require.Equal(t, types.ETReal, realExpr.GetType(ctx).EvalType())
 		realRes, isNull, err := realExpr.EvalReal(ctx, c.row.ToRow())
 		require.NoError(t, err)
 		require.Equal(t, false, isNull)
@@ -1258,7 +1259,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 
 		// Test wrapping with CastAsDecimal.
 		decExpr := WrapWithCastAsDecimal(ctx, c.expr)
-		require.Equal(t, types.ETDecimal, decExpr.GetType().EvalType())
+		require.Equal(t, types.ETDecimal, decExpr.GetType(ctx).EvalType())
 		decRes, isNull, err := decExpr.EvalDecimal(ctx, c.row.ToRow())
 		require.NoError(t, err, "case[%v]: %#v\n", i, t)
 		require.Equal(t, false, isNull)
@@ -1266,7 +1267,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(ctx, c.expr)
-		require.True(t, strExpr.GetType().EvalType().IsStringKind())
+		require.True(t, strExpr.GetType(ctx).EvalType().IsStringKind())
 		strRes, isNull, err := strExpr.EvalString(ctx, c.row.ToRow())
 		require.NoError(t, err)
 		require.Equal(t, false, isNull)
@@ -1277,7 +1278,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 
 	// test cast unsigned int as string.
 	strExpr := WrapWithCastAsString(ctx, unsignedIntExpr)
-	require.True(t, strExpr.GetType().EvalType().IsStringKind())
+	require.True(t, strExpr.GetType(ctx).EvalType().IsStringKind())
 	strRes, isNull, err := strExpr.EvalString(ctx, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(math.MaxUint64)}).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(math.MaxUint64, 10), strRes)
@@ -1290,7 +1291,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 
 	// test cast unsigned int as decimal.
 	decExpr := WrapWithCastAsDecimal(ctx, unsignedIntExpr)
-	require.Equal(t, types.ETDecimal, decExpr.GetType().EvalType())
+	require.Equal(t, types.ETDecimal, decExpr.GetType(ctx).EvalType())
 	decRes, isNull, err := decExpr.EvalDecimal(ctx, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(uint64(1234))}).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, false, isNull)
@@ -1298,7 +1299,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 
 	// test cast unsigned int as Time.
 	timeExpr := WrapWithCastAsTime(ctx, unsignedIntExpr, types.NewFieldType(mysql.TypeDatetime))
-	require.Equal(t, mysql.TypeDatetime, timeExpr.GetType().GetType())
+	require.Equal(t, mysql.TypeDatetime, timeExpr.GetType(ctx).GetType())
 	timeRes, isNull, err := timeExpr.EvalTime(ctx, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(uint64(curTimeInt))}).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, false, isNull)
@@ -1446,7 +1447,7 @@ func TestWrapWithCastAsString(t *testing.T) {
 	}
 
 	expr := BuildCastFunction(ctx, &Constant{RetType: types.NewFieldType(mysql.TypeEnum)}, types.NewFieldType(mysql.TypeVarString))
-	require.NotContains(t, expr.String(), "to_binary")
+	require.NotContains(t, expr.StringWithCtx(ctx, errors.RedactLogDisable), "to_binary")
 }
 
 func TestWrapWithCastAsJSON(t *testing.T) {
@@ -1595,8 +1596,8 @@ func TestCastConstAsDecimalFieldType(t *testing.T) {
 	ctx := createContext(t)
 	for _, tc := range allTestCase {
 		expr := WrapWithCastAsDecimal(ctx, tc.input)
-		require.Equal(t, tc.resultFlen, expr.GetType().GetFlen())
-		require.Equal(t, tc.resultDecimal, expr.GetType().GetDecimal())
+		require.Equal(t, tc.resultFlen, expr.GetType(ctx).GetFlen())
+		require.Equal(t, tc.resultDecimal, expr.GetType(ctx).GetDecimal())
 	}
 }
 

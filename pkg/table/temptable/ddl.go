@@ -130,7 +130,7 @@ func checkLocalTemporaryExistsAndReturn(sctx sessionctx.Context, schema model.CI
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ident.String())
 	}
 
-	tbl, exist := localTemporaryTables.TableByName(schema, tblName)
+	tbl, exist := localTemporaryTables.TableByName(context.Background(), schema, tblName)
 	if !exist {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ident.String())
 	}

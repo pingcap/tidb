@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"bytes"
-	"context"
 	"testing"
 	"time"
 
@@ -64,7 +63,6 @@ func TestPickBackfillType(t *testing.T) {
 			return nil
 		})
 	ingest.LitBackCtxMgr = mockMgr
-	mockCtx := context.Background()
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
@@ -72,19 +70,19 @@ func TestPickBackfillType(t *testing.T) {
 		},
 	}
 	mockJob.ReorgMeta.IsFastReorg = true
-	tp, err := pickBackfillType(mockCtx, mockJob)
+	tp, err := pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxn)
 
 	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
 	ingest.LitInitialized = false
-	tp, err = pickBackfillType(mockCtx, mockJob)
+	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxnMerge)
 
 	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
 	ingest.LitInitialized = true
-	tp, err = pickBackfillType(mockCtx, mockJob)
+	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
 }
@@ -191,4 +189,77 @@ func TestReorgDistSQLCtx(t *testing.T) {
 	ctx1.ExecDetails = ctx2.ExecDetails
 
 	require.Equal(t, ctx1, ctx2)
+}
+
+func TestValidateAndFillRanges(t *testing.T) {
+	mkRange := func(start, end string) kv.KeyRange {
+		return kv.KeyRange{StartKey: []byte(start), EndKey: []byte(end)}
+	}
+	ranges := []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "d"),
+		mkRange("d", "e"),
+	}
+	err := validateAndFillRanges(ranges, []byte("a"), []byte("e"))
+	require.NoError(t, err)
+	require.EqualValues(t, []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "d"),
+		mkRange("d", "e"),
+	}, ranges)
+
+	// adjust first and last range.
+	ranges = []kv.KeyRange{
+		mkRange("a", "c"),
+		mkRange("c", "e"),
+		mkRange("e", "g"),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.NoError(t, err)
+	require.EqualValues(t, []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "e"),
+		mkRange("e", "f"),
+	}, ranges)
+
+	// first range startKey and last range endKey are empty.
+	ranges = []kv.KeyRange{
+		mkRange("", "c"),
+		mkRange("c", "e"),
+		mkRange("e", ""),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.NoError(t, err)
+	require.EqualValues(t, []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "e"),
+		mkRange("e", "f"),
+	}, ranges)
+	ranges = []kv.KeyRange{
+		mkRange("", "c"),
+		mkRange("c", ""),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.NoError(t, err)
+	require.EqualValues(t, []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "f"),
+	}, ranges)
+
+	// invalid range.
+	ranges = []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", ""),
+		mkRange("e", "f"),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.Error(t, err)
+
+	ranges = []kv.KeyRange{
+		mkRange("b", "c"),
+		mkRange("c", "d"),
+		mkRange("e", "f"),
+	}
+	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
+	require.Error(t, err)
 }

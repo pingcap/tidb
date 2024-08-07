@@ -590,7 +590,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
-		if opt.Value.GetType().GetType() != mysql.TypeVarString {
+		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -601,7 +601,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
 		// current parser takes integer and bool as mysql.TypeLonglong
-		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -809,9 +809,13 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		setClause = sb.String()
 	}
 	optionMap := make(map[string]any, len(plan.Options))
+	var evalCtx expression.EvalContext
+	if plan.SCtx() != nil {
+		evalCtx = plan.SCtx().GetExprCtx().GetEvalCtx()
+	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.String()
+			val := opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1359,7 +1363,7 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 type JobImportResult struct {
 	Affected   uint64
 	Warnings   []contextutil.SQLWarn
-	ColSizeMap map[int64]int64
+	ColSizeMap variable.DeltaColsMap
 }
 
 // GetMsgFromBRError get msg from BR error.

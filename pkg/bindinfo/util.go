@@ -17,7 +17,6 @@ package bindinfo
 import (
 	"context"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,10 +35,4 @@ func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
-}
-
-// SessionPool is used to recycle sessionctx.
-type SessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
 }

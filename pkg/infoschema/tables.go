@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -546,6 +547,7 @@ var collationsCols = []columnInfo{
 	{name: "IS_DEFAULT", tp: mysql.TypeVarchar, size: 3},
 	{name: "IS_COMPILED", tp: mysql.TypeVarchar, size: 3},
 	{name: "SORTLEN", tp: mysql.TypeLonglong, size: 3},
+	{name: "PAD_ATTRIBUTE", tp: mysql.TypeVarchar, size: 9},
 }
 
 var keyColumnUsageCols = []columnInfo{
@@ -854,6 +856,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "CURRENT_AFFECTED_ROWS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -1389,7 +1392,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.AvgQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
-	{name: stmtsummary.LastPlanCacheUnqualifiedStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
+	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1530,7 +1533,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.StartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Start time of the transaction"},
 	{name: txninfo.CurrentSQLDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
 	{name: txninfo.CurrentSQLDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The normalized sql the transaction are currently running"},
-	{name: txninfo.StateStr, tp: mysql.TypeEnum, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
+	{name: txninfo.StateStr, tp: mysql.TypeEnum, size: 16, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
 	{name: txninfo.WaitingStartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Current lock waiting's start time"},
 	{name: txninfo.MemBufferKeysStr, tp: mysql.TypeLonglong, size: 64, comment: "How many entries are in MemDB"},
 	{name: txninfo.MemBufferBytesStr, tp: mysql.TypeLonglong, size: 64, comment: "MemDB used memory"},
@@ -2350,7 +2353,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 }
 
-func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
@@ -2408,6 +2411,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (it *infoschemaTable) WritableConstraint() []*table.Constraint {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
@@ -2429,7 +2437,7 @@ func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -2496,6 +2504,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (vt *VirtualTable) WritableConstraint() []*table.Constraint {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
 	return nil
@@ -2517,7 +2530,7 @@ func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []t
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (vt *VirtualTable) UpdateRecord(ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 

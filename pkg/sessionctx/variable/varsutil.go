@@ -18,12 +18,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -542,6 +544,7 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONMergePreserve: {},
 	ast.JSONPretty:        {},
 	ast.JSONQuote:         {},
+	ast.JSONSchemaValid:   {},
 	ast.JSONSearch:        {},
 	ast.JSONStorageSize:   {},
 	ast.JSONDepth:         {},
@@ -585,4 +588,35 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 		}
 	}
 	return skipTypes
+}
+
+var (
+	// SchemaCacheSizeLowerBound will adjust the schema cache size to this value if
+	// it is lower than this value.
+	SchemaCacheSizeLowerBound uint64 = 512 * units.MiB
+	// SchemaCacheSizeLowerBoundStr is the string representation of
+	// SchemaCacheSizeLowerBound.
+	SchemaCacheSizeLowerBoundStr = "512MB"
+)
+
+func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
+	defer func() {
+		if err == nil && byteSize > 0 && byteSize < SchemaCacheSizeLowerBound {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
+			byteSize = SchemaCacheSizeLowerBound
+			normalizedStr = SchemaCacheSizeLowerBoundStr
+		}
+		if err == nil && byteSize > math.MaxInt64 {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
+			byteSize = math.MaxInt64
+			normalizedStr = strconv.Itoa(math.MaxInt64)
+		}
+	}()
+
+	bt, str := parseByteSize(normalizedValue)
+	if str != "" {
+		return bt, str, nil
+	}
+
+	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSchemaCacheSize, originalValue)
 }

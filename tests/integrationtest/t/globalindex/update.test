@@ -34,4 +34,11 @@ update t set a = 13 where a = 12;
 explain select * from t use index(idx) order by a;
 select * from t use index(idx) order by a;
 
+# https://github.com/pingcap/tidb/issues/53750
+drop table t;
+create table t(a varchar(70), b mediumint(9), unique index idx_a(a), unique index idx_b(b)) partition by key(b) partitions 5;
+insert into t values ('',826534 );
+replace into t values ('',826536 );
+select * from t;
+
 set tidb_enable_global_index=default;

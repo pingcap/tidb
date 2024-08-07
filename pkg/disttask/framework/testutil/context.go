@@ -391,20 +391,6 @@ type TestContext struct {
 	CallTime int
 }
 
-// InitTestContext inits test context for disttask tests.
-func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Controller, *TestContext, *testkit.DistExecutionContext) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
-
-	executionContext := testkit.NewDistExecutionContext(t, nodeNum)
-	testCtx := &TestContext{
-		subtasksHasRun: make(map[string]map[int64]struct{}),
-	}
-	return ctx, ctrl, testCtx, executionContext
-}
-
 // CollectSubtask collects subtask info
 func (c *TestContext) CollectSubtask(subtask *proto.Subtask) {
 	key := getTaskStepKey(subtask.TaskID, subtask.Step)

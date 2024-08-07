@@ -283,7 +283,7 @@ func TestSingleStatementRollback(t *testing.T) {
 
 	dom := domain.GetDomain(tk1.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("single_statement"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("single_statement"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -2919,7 +2919,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	txnCtx = tk.Session().GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(secIdxKey1)
 	require.Equal(t, true, ok)
-	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
+	handle, err := tablecodec.DecodeHandleInIndexValue(val)
 	require.NoError(t, err)
 	require.Equal(t, kv.IntHandle(1), handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(key1)

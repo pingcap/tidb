@@ -29,7 +29,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -706,7 +709,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	bs, err := tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, &rd)
+	bs, err := tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	bin := base64.StdEncoding.EncodeToString(bs)
@@ -894,6 +897,15 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Greater(t, len(lt), 2)
 
+	resp, err = ts.FetchStatus("/schema/tidb?id_name_only=true")
+	require.NoError(t, err)
+	var lti []*model.TableNameInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&lti)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Greater(t, len(lti), 2)
+
 	resp, err = ts.FetchStatus("/schema/abc")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -939,6 +951,64 @@ func TestGetSchema(t *testing.T) {
 		PARTITION p1 VALUES LESS THAN (5),
 		PARTITION p2 VALUES LESS THAN (7),
 		PARTITION p3 VALUES LESS THAN (9))`)
+	dbt.MustExec(`CREATE TABLE t2 (c INT)`)
+
+	var simpleTableInfos []*model.TableNameInfo
+	resp, err = ts.FetchStatus("/schema/test?id_name_only=true")
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&simpleTableInfos)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	slices.SortFunc(simpleTableInfos, func(i, j *model.TableNameInfo) int {
+		return strings.Compare(i.Name.L, j.Name.L)
+	})
+	require.Len(t, simpleTableInfos, 2)
+	require.Equal(t, "t1", simpleTableInfos[0].Name.L)
+	require.Equal(t, "t2", simpleTableInfos[1].Name.L)
+	id1 := simpleTableInfos[0].ID
+	id2 := simpleTableInfos[1].ID
+	require.NotZero(t, id1)
+	require.NotZero(t, id2)
+
+	// check table_ids=... happy path
+	ids := strings.Join([]string{strconv.FormatInt(id1, 10), strconv.FormatInt(id2, 10)}, ",")
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
+	require.NoError(t, err)
+	var tis map[int]*model.TableInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&tis)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, len(tis))
+	require.Equal(t, "t1", tis[int(id1)].Name.L)
+	require.Equal(t, "t2", tis[int(id2)].Name.L)
+
+	// check table_ids=... partial missing
+	ids = ids + ",99999"
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
+	require.NoError(t, err)
+	clear(tis)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&tis)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, len(tis))
+	require.Equal(t, "t1", tis[int(id1)].Name.L)
+	require.Equal(t, "t2", tis[int(id2)].Name.L)
+
+	// check wrong format in table_ids
+	ids = ids + ",abc"
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
+	require.NoError(t, err)
+	clear(tis)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&tis)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, len(tis))
+	require.Equal(t, "t1", tis[int(id1)].Name.L)
+	require.Equal(t, "t2", tis[int(id2)].Name.L)
 
 	resp, err = ts.FetchStatus("/schema/test/t1")
 	require.NoError(t, err)
@@ -1130,19 +1200,21 @@ func TestWriteDBTablesData(t *testing.T) {
 	// No table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{})
 	rc := httptest.NewRecorder()
-	tbs := info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err := info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 0, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
 	decoder := json.NewDecoder(rc.Body)
-	err := decoder.Decode(&ti)
+	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 1, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
@@ -1155,7 +1227,8 @@ func TestWriteDBTablesData(t *testing.T) {
 	// Two tables in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTableInfos(model.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), model.NewCIStr("test"))
+	require.NoError(t, err)
 	require.Equal(t, 2, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)

@@ -803,7 +803,7 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 drop table if exists t;
-create table t(a int);
+create table t(a int, index idx(a));
 insert into t values (2);
 prepare st from 'select * from t where a=?';
 set @a=1;
@@ -820,7 +820,7 @@ execute st using @a;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 set tidb_plan_cache_invalidation_on_fresh_stats = 1;
 execute st using @a;
 a
@@ -834,7 +834,7 @@ select @@last_plan_from_cache;
 1
 set tidb_plan_cache_invalidation_on_fresh_stats = DEFAULT;
 drop table if exists t;
-create table t(a int);
+create table t(a int, index idx(a));
 insert into t values (2);
 set tidb_enable_non_prepared_plan_cache=1;
 select * from t where a=1;
@@ -849,7 +849,7 @@ select * from t where a=1;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from t where a=1;
 a
 select @@last_plan_from_cache;
