@@ -640,8 +640,6 @@ type InfoSchemaTableNameExtractor struct {
 		is infoschema.InfoSchema,
 	) ([]*model.TableInfo, error)
 
-	extracted bool
-
 	tableNames []model.CIStr
 
 	predColsLower map[string]set.StringSet
@@ -658,7 +656,6 @@ func (e *InfoSchemaTableNameExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	e.extracted = true
 	remained := e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
 	if e.SkipRequest {
 		return remained

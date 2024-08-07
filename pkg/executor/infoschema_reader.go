@@ -864,7 +864,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 	var err error
 	if e.table.Name.O == infoschema.TableColumns {
-		err = e.setDataForColumns(ctx, sctx, e.extractor)
+		err = e.setDataForColumns(ctx, sctx)
 	}
 	if err != nil {
 		return nil, err
@@ -874,7 +874,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	return adjustColumns(e.rows, e.columns, e.table), nil
 }
 
-func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context, extractor *plannercore.ColumnsTableExtractor) error {
+func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
@@ -890,7 +890,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 		for e.tblIdx < len(e.curTables) {
 			table = e.curTables[e.tblIdx]
 			e.tblIdx++
-			if e.setDataForColumnsWithOneTable(ctx, sctx, extractor, schema, table, checker) {
+			if e.setDataForColumnsWithOneTable(ctx, sctx, schema, table, checker) {
 				return nil
 			}
 		}
@@ -903,7 +903,6 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	extractor *plannercore.ColumnsTableExtractor,
 	schema model.CIStr,
 	table *model.TableInfo,
 	checker privilege.Manager) bool {
@@ -921,7 +920,7 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 		}
 	}
 
-	e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
+	e.dataForColumnsInTable(ctx, sctx, schema, table, priv)
 	return len(e.rows) >= e.batch
 }
 
@@ -930,8 +929,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 	sctx sessionctx.Context,
 	schema model.CIStr,
 	tbl *model.TableInfo,
-	priv mysql.PrivilegeType,
-	extractor *plannercore.ColumnsTableExtractor) {
+	priv mysql.PrivilegeType) {
 	if tbl.IsView() {
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
@@ -3796,9 +3794,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 				}
 				row = append(row, lastUsedAt)
 				rows = append(rows, row)
-
 			}
-
 		}
 	}
 
