@@ -228,7 +228,7 @@ var Keywords = []KeywordsType{
 	{"TRAILING", true, "reserved"},
 	{"TRIGGER", true, "reserved"},
 	{"TRUE", true, "reserved"},
-	{"TiDB_CURRENT_TSO", true, "reserved"},
+	{"TIDB_CURRENT_TSO", true, "reserved"},
 	{"UNION", true, "reserved"},
 	{"UNIQUE", true, "reserved"},
 	{"UNLOCK", true, "reserved"},
