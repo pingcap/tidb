@@ -1212,8 +1212,8 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// From the real-time stats, we are able to know the total count is 11.
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_7 1.00 root  data:Selection_6",
-		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"TableReader_7 0.00 root  data:Selection_6",
+		"└─Selection_6 0.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
 		"  └─TableFullScan_5 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
