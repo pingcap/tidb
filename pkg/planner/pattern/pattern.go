@@ -101,7 +101,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandSort
 	case *logicalop.LogicalTopN:
 		return OperandTopN
-	case *plannercore.LogicalLock:
+	case *logicalop.LogicalLock:
 		return OperandLock
 	case *logicalop.LogicalLimit:
 		return OperandLimit
