@@ -720,3 +720,27 @@ func removeFiles(fileNames []string) {
 		os.Remove(fileName)
 	}
 }
+
+func TestIssue54324(t *testing.T) {
+	f, err := os.CreateTemp("", "test-tidb-slow-query-issue54324")
+	require.NoError(t, err)
+	defer os.Remove(f.Name()) // clean up
+
+	w := bufio.NewWriter(f)
+	for i := 0; i < 8191; i++ {
+		w.WriteByte('x')
+	}
+	w.WriteByte('\n')
+	for i := 0; i < 4096; i++ {
+		w.WriteByte('a')
+	}
+	require.NoError(t, w.Flush())
+
+	stat, err := f.Stat()
+	require.NoError(t, err)
+	endCursor := stat.Size()
+	lines, readBytes, err := readLastLines(context.Background(), f, endCursor)
+	require.NoError(t, err)
+	require.Len(t, lines, 2)
+	require.Equal(t, readBytes, 8192+4096)
+}
