@@ -108,8 +108,12 @@ func SortAndValidateFileRanges(
 		// group the files by the generated split keys
 		tableIDWithFilesGroup                    = make([][]TableIDWithFiles, 0, hintSplitKeyCount)
 		lastFilesGroup        []TableIDWithFiles = nil
+
+		// statistic
+		mergedRangeCount = 0
 	)
 
+	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
 	// Notice that TiDB does not split partition even if the config `split-table` is on.
 	for _, table := range createdTables {
 		files := fileOfTable[table.OldTable.Info.ID]
@@ -169,7 +173,10 @@ func SortAndValidateFileRanges(
 			afterMergedGroupSize := groupSize + rg.Size
 			afterMergedGroupCount := groupCount + rg.Count
 			if afterMergedGroupSize > splitSizeBytes || afterMergedGroupCount > splitKeyCount {
+				log.Info("merge ranges across tables due to kv size/count threshold exceeded", zap.Uint64("merged kv size", groupSize), zap.Uint64("merged kv count", groupCount),
+					zap.Int("merged range count", mergedRangeCount))
 				groupSize, groupCount = rg.Size, rg.Count
+				mergedRangeCount = 0
 				// can not merge files anymore, so generate a new split key
 				if lastKey != nil {
 					sortedSplitKeys = append(sortedSplitKeys, lastKey)
@@ -185,7 +192,7 @@ func SortAndValidateFileRanges(
 			}
 			// override the previous key, which may not become a split key.
 			lastKey = rg.EndKey
-
+			mergedRangeCount += len(rg.Files)
 			// checkpoint filter out the import done files in the previous restore executions.
 			// Notice that skip ranges after select split keys in order to make the split keys
 			// always the same.
@@ -205,6 +212,10 @@ func SortAndValidateFileRanges(
 
 		// If the config split-table/split-region-on-table is on, it skip merging ranges over tables.
 		if splitOnTable {
+			log.Info("merge ranges across tables due to split on table", zap.Uint64("merged kv size", groupSize), zap.Uint64("merged kv count", groupCount),
+				zap.Int("merged range count", mergedRangeCount))
+			groupSize, groupCount = 0, 0
+			mergedRangeCount = 0
 			// Besides, ignore the table's last key that might be chosen as a split key, because there
 			// is already a table split key.
 			lastKey = nil
@@ -220,6 +231,8 @@ func SortAndValidateFileRanges(
 	}
 	// append the last files group anyway
 	if lastFilesGroup != nil {
+		log.Info("merge ranges across tables due to the last group", zap.Uint64("merged kv size", groupSize), zap.Uint64("merged kv count", groupCount),
+			zap.Int("merged range count", mergedRangeCount))
 		tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
 	}
 	return sortedSplitKeys, tableIDWithFilesGroup, nil
