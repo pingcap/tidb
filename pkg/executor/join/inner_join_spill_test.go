@@ -74,18 +74,6 @@ var retTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeLonglong),
 }
 
-// TODO delete it
-type dataSourceParam struct {
-	leftSchema  *expression.Schema
-	rightSchema *expression.Schema
-	leftRowNum  int
-	rightRowNum int
-	leftNdvs    []int
-	rightNdvs   []int
-	leftDatums  [][]any
-	rightDatums [][]any
-}
-
 type spillTestParam struct {
 	rightAsBuildSide          bool
 	leftKeys                  []*expression.Column
@@ -242,6 +230,11 @@ func getReturnTypes(joinType plannercore.JoinType, param spillTestParam) []*type
 	return resultTypes
 }
 
+// Case 1: Trigger spill during the building of row table and spill partial partitions
+// Case 2: Trigger spill during the building of row table and spill all partitions
+// Case 3: Trigger spill before creating hash table when row table has been built and spill partial partitions
+// Case 4: Trigger re-spill
+// Case 5: Trigger re-spill and exceed max spill round
 func testSpill(t *testing.T, ctx *mock.Context, joinType plannercore.JoinType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, param spillTestParam) {
 	returnTypes := getReturnTypes(joinType, param)
 
@@ -279,99 +272,6 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType plannercore.JoinType, l
 	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, param.memoryLimits[4])
 }
 
-// TODO test nullable type
-// Case 1: Trigger spill during the building of row table and spill partial partitions
-// Case 2: Trigger spill during the building of row table and spill all partitions
-// Case 3: Trigger spill before creating hash table when row table has been built and spill partial partitions
-// Case 4: Trigger re-spill
-// Case 5: Trigger re-spill and exceed max spill round
-func TestInnerJoinSpillBasicOld(t *testing.T) {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = 32
-	ctx.GetSessionVars().MaxChunkSize = 32
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
-
-	rightAsBuildSide := []bool{true, false}
-
-	tinyTp := types.NewFieldType(mysql.TypeTiny)
-	a := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	b := &expression.Column{Index: 9, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
-	require.NoError(t, err, "error when create other condition")
-	otherCondition := make(expression.CNFExprs, 0)
-	otherCondition = append(otherCondition, sf)
-	otherConditions := []expression.CNFExprs{otherCondition, nil}
-
-	leftKeys := []*expression.Column{
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 3, RetType: types.NewFieldType(mysql.TypeVarString)},
-	}
-	rightKeys := []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
-	}
-
-	intTp := types.NewFieldType(mysql.TypeLonglong)
-	intTp.AddFlag(mysql.NotNullFlag)
-	stringTp := types.NewFieldType(mysql.TypeVarString)
-	stringTp.AddFlag(mysql.NotNullFlag)
-
-	// leftTypes := []*types.FieldType{intTp, intTp, intTp, stringTp, intTp}
-	// rightTypes := []*types.FieldType{intTp, intTp, stringTp, intTp, intTp}
-
-	// params := []spillTestParam{
-	// 	// Normal case
-	// 	{true, []int{1, 3}, []int{0, 2}, []*types.FieldType{intTp, stringTp}, []*types.FieldType{intTp, stringTp}, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil},
-	// }
-
-	info := &hashJoinInfo{
-		ctx:       ctx,
-		schema:    buildSchema(retTypes),
-		leftExec:  leftDataSource,
-		rightExec: rightDataSource,
-		joinType:  plannercore.InnerJoin,
-		lUsed:     []int{0, 1, 3, 4},
-		rUsed:     []int{0, 2, 3, 4},
-		// otherCondition:        expression.CNFExprs{},
-		// lUsedInOtherCondition: []int{0},
-		// rUsedInOtherCondition: []int{4},
-	}
-
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
-
-	maxRowTableSegmentSize = 100
-	spillChunkSize = 100
-
-	for _, rightAsBuild := range rightAsBuildSide {
-		info.rightAsBuildSide = rightAsBuild
-		if info.rightAsBuildSide {
-			info.buildKeys = rightKeys
-			info.probeKeys = leftKeys
-		} else {
-			info.buildKeys = leftKeys
-			info.probeKeys = rightKeys
-		}
-		for _, oc := range otherConditions {
-			info.otherCondition = oc
-			if info.otherCondition != nil {
-				info.lUsedInOtherCondition = []int{0}
-				info.rUsedInOtherCondition = []int{4}
-			} else {
-				info.lUsedInOtherCondition = nil
-				info.rUsedInOtherCondition = nil
-			}
-
-			expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
-			// testInnerJoinSpillCase1(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource, 4000000)
-			// testInnerJoinSpillCase2(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource, 1700000)
-			// testInnerJoinSpillCase3(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource, 6400000)
-			testInnerJoinSpillCase4(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource, 1500000)
-			// testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, 10000)
-		}
-	}
-}
-
 func TestInnerJoinSpillBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -407,14 +307,14 @@ func TestInnerJoinSpillBasic(t *testing.T) {
 		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 1700000, 3300000, 750000, 10000}},
 	}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	require.NoError(t, err)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
 
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	for i, param := range params {
-		log.Info(fmt.Sprintf("xzxdebug test index %d", i))
+	for _, param := range params {
 		testSpill(t, ctx, plannercore.InnerJoin, leftDataSource, rightDataSource, param)
 	}
 }
@@ -444,14 +344,32 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 	}
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
-	a := &expression.Column{Index: 1, RetType: nullableIntTp}
-	b := &expression.Column{Index: 8, RetType: nullableIntTp}
+	a := &expression.Column{Index: 0, RetType: nullableIntTp}
+	b := &expression.Column{Index: 9, RetType: nullableIntTp}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
-	rightAsBuildSide := []bool{true, false}
+
+	params := []spillTestParam{
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{4000000, 1700000, 6400000, 1500000, 10000}},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{4000000, 1700000, 6400000, 1500000, 10000}},
+	}
+
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
+
+	for _, param := range params {
+		testSpill(t, ctx, plannercore.InnerJoin, leftDataSource, rightDataSource, param)
+	}
 }
+
+// TODO add with selection
+// TODO add random fail tests
 
 // Hash join executor may be repeatedly closed and opened
 func TestHashJoinUnderApplyExec(t *testing.T) {

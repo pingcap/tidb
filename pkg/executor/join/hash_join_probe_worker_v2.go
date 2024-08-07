@@ -75,6 +75,8 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 			totalOutputRowNum += joinResult.chk.NumRows()
 		}
 		w.HashJoinCtx.joinResultCh <- joinResult
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
+		w.joinChkResourceCh <- joinResult.chk
 	}
 	return nil
 }
