@@ -756,7 +756,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		} else {
 			// All Intervals are single points
 			if f, ok := accesses[i].(*expression.ScalarFunction); !ok || (ok && f.FuncName.L != ast.IsNull) {
-				// isnull is nut equal to a = NULL
+				// isnull is not equal to a = NULL
 				accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
 				newConditions = append(newConditions, accesses[i])
 			}
