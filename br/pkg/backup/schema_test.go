@@ -133,7 +133,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("insert into t1 values (10);")
-	tk.MustExec("create placement policy fivereplicas followers=4;")
+	tk.MustExec("create placement policy fivereplicas with replicas=5;")
 
 	var policies []*backuppb.PlacementPolicy
 	_, backupSchemas, policies, err = backup.BuildBackupRangeAndInitSchema(
