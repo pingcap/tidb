@@ -80,7 +80,12 @@ func (c *index) TableMeta() *model.TableInfo {
 func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	idxTblID := c.phyTblID
 	if c.idxInfo.Global {
-		idxTblID = c.tblInfo.ID
+		pi := c.tblInfo.GetPartitionInfo()
+		if pi.NewTableID != 0 && c.idxInfo.State != model.StatePublic {
+			idxTblID = pi.NewTableID
+		} else {
+			idxTblID = c.tblInfo.ID
+		}
 	}
 	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 }
