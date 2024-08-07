@@ -120,11 +120,11 @@ func (ctx *TableContextImpl) GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAllo
 
 // GetBinlogSupport implements the MutateContext interface.
 func (ctx *TableContextImpl) GetBinlogSupport() (context.BinlogSupport, bool) {
-	if _, _err_ := failpoint.Eval(_curpkg_("forceWriteBinlog")); _err_ == nil {
+	failpoint.Inject("forceWriteBinlog", func() {
 		// Just to cover binlog related code in this package, since the `BinlogClient` is
 		// still nil, mutations won't be written to pump on commit.
-		return ctx, true
-	}
+		failpoint.Return(ctx, true)
+	})
 	if ctx.vars().BinlogClient != nil {
 		return ctx, true
 	}

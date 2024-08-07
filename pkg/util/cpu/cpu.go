@@ -125,8 +125,8 @@ func getCPUTime() (userTimeMillis, sysTimeMillis int64, err error) {
 
 // GetCPUCount returns the number of logical CPUs usable by the current process.
 func GetCPUCount() int {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockNumCpu")); _err_ == nil {
-		return val.(int)
-	}
+	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	return runtime.GOMAXPROCS(0)
 }

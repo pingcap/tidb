@@ -357,9 +357,9 @@ func (e *Engine) LoadIngestData(
 ) error {
 	// try to make every worker busy for each batch
 	regionBatchSize := e.workerConcurrency
-	if val, _err_ := failpoint.Eval(_curpkg_("LoadIngestDataBatchSize")); _err_ == nil {
+	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
-	}
+	})
 	for i := 0; i < len(regionRanges); i += regionBatchSize {
 		err := e.loadBatchRegionData(ctx, regionRanges[i].Start, regionRanges[min(i+regionBatchSize, len(regionRanges))-1].End, outCh)
 		if err != nil {

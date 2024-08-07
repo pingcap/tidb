@@ -716,9 +716,9 @@ func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, s
 }
 
 func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("load_bindings_from_storage_internal_timeout")); _err_ == nil {
+	failpoint.Inject("load_bindings_from_storage_internal_timeout", func() {
 		time.Sleep(time.Second)
-	}
+	})
 	var bindings Bindings
 	selectStmt := fmt.Sprintf("SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = '%s'", sqlDigest)
 	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {

@@ -630,9 +630,9 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 			newRangePropertiesCollector,
 		},
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("slowCreateFS")); _err_ == nil {
+	failpoint.Inject("slowCreateFS", func() {
 		opts.FS = slowCreateFS{vfs.Default}
-	}
+	})
 	return pebble.Open(dbPath, opts)
 }
 

@@ -64,9 +64,9 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	if !do.DDL().OwnerManager().IsOwner() {
 		return
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
+	failpoint.Inject("FastRunawayGC", func() {
 		expiredDuration = time.Second * 1
-	}
+	})
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := model.NewCIStr(tableName)
 	tbl, err := do.InfoSchema().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
@@ -244,12 +244,12 @@ func (do *Domain) runawayRecordFlushLoop() {
 	// we can guarantee a watch record can be seen by the user within 1s.
 	runawayRecordFlushTimer := time.NewTimer(runawayRecordFlushInterval)
 	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
-	if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
+	failpoint.Inject("FastRunawayGC", func() {
 		runawayRecordFlushTimer.Stop()
 		runawayRecordGCTicker.Stop()
 		runawayRecordFlushTimer = time.NewTimer(time.Millisecond * 50)
 		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
-	}
+	})
 
 	fired := false
 	recordCh := do.runawayManager.RunawayRecordChan()
@@ -278,9 +278,9 @@ func (do *Domain) runawayRecordFlushLoop() {
 			fired = true
 		case r := <-recordCh:
 			records = append(records, r)
-			if _, _err_ := failpoint.Eval(_curpkg_("FastRunawayGC")); _err_ == nil {
+			failpoint.Inject("FastRunawayGC", func() {
 				flushRunawayRecords()
-			}
+			})
 			if len(records) >= flushThreshold {
 				flushRunawayRecords()
 			} else if fired {

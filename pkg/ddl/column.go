@@ -172,7 +172,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		}
 	case model.StateWriteOnly:
 		// write only -> delete only
-		failpoint.Call(_curpkg_("onDropColumnStateWriteOnly"))
+		failpoint.InjectCall("onDropColumnStateWriteOnly")
 		colInfo.State = model.StateDeleteOnly
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		if len(idxInfos) > 0 {
@@ -511,7 +511,7 @@ var TestReorgGoroutineRunning = make(chan any)
 
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockInfiniteReorgLogic")); _err_ == nil {
+	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			a := new(any)
@@ -520,11 +520,11 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 				time.Sleep(30 * time.Millisecond)
 				if w.isReorgCancelled(reorgInfo.Job.ID) {
 					// Job is cancelled. So it can't be done.
-					return dbterror.ErrCancelledDDLJob
+					failpoint.Return(dbterror.ErrCancelledDDLJob)
 				}
 			}
 		}
-	}
+	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		//nolint:forcetypeassert
@@ -631,11 +631,11 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	if _, _err_ := failpoint.Eval(_curpkg_("forceRowLevelChecksumOnUpdateColumnBackfill")); _err_ == nil {
+	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
 		orig := variable.EnableRowLevelChecksum.Load()
 		defer variable.EnableRowLevelChecksum.Store(orig)
 		variable.EnableRowLevelChecksum.Store(true)
-	}
+	})
 	return &updateColumnWorker{
 		backfillCtx:    bCtx,
 		oldColInfo:     oldCol,
@@ -757,14 +757,14 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockReorgTimeoutInOneRegion")); _err_ == nil {
+	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
-				return errors.Trace(dbterror.ErrWaitReorgTimeout)
+				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
 			}
 		}
-	}
+	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
 	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.exprCtx, w.rowMap)
@@ -1158,12 +1158,12 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	defer w.sessPool.Put(sctx)
 
 	skipCheck := false
-	if val, _err_ := failpoint.Eval(_curpkg_("skipMockContextDoExec")); _err_ == nil {
+	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			skipCheck = true
 		}
-	}
+	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = checkForNullValue(w.ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)

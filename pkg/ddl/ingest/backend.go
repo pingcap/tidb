@@ -215,11 +215,11 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 			}
 		}()
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionStateBeforeImport")); _err_ == nil {
+	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
 		if MockDMLExecutionStateBeforeImport != nil {
 			MockDMLExecutionStateBeforeImport()
 		}
-	}
+	})
 
 	for indexID, ei := range bc.engines {
 		if err = bc.unsafeImportAndReset(ei); err != nil {
@@ -286,9 +286,9 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	}
 
 	err := resetFn(bc.ctx, ei.uuid)
-	if _, _err_ := failpoint.Eval(_curpkg_("mockResetEngineFailed")); _err_ == nil {
+	failpoint.Inject("mockResetEngineFailed", func() {
 		err = fmt.Errorf("mock reset engine failed")
-	}
+	})
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
 		err1 := closedEngine.Cleanup(bc.ctx)
@@ -306,10 +306,10 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 var ForceSyncFlagForTest = false
 
 func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImport bool) {
-	if _, _err_ := failpoint.Eval(_curpkg_("forceSyncFlagForTest")); _err_ == nil {
+	failpoint.Inject("forceSyncFlagForTest", func() {
 		// used in a manual test
 		ForceSyncFlagForTest = true
-	}
+	})
 	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
 	}
@@ -317,11 +317,11 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	shouldImport = bc.diskRoot.ShouldImport()
 	interval := bc.updateInterval
 	// This failpoint will be manually set through HTTP status port.
-	if val, _err_ := failpoint.Eval(_curpkg_("mockSyncIntervalMs")); _err_ == nil {
+	failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
 			interval = time.Duration(v) * time.Millisecond
 		}
-	}
+	})
 	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport

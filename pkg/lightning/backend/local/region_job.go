@@ -208,7 +208,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("fakeRegionJobs")); _err_ == nil {
+	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
 		j.writeResult = front.write.result
@@ -216,8 +216,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		if err == nil {
 			j.convertStageTo(wrote)
 		}
-		return err
-	}
+		failpoint.Return(err)
+	})
 
 	var cancel context.CancelFunc
 	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
@@ -261,7 +261,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		ApiVersion: apiVersion,
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("changeEpochVersion")); _err_ == nil {
+	failpoint.Inject("changeEpochVersion", func(val failpoint.Value) {
 		cloned := *meta.RegionEpoch
 		meta.RegionEpoch = &cloned
 		i := val.(int)
@@ -270,7 +270,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		} else {
 			meta.RegionEpoch.ConfVer -= uint64(-i)
 		}
-	}
+	})
 
 	annotateErr := func(in error, peer *metapb.Peer, msg string) error {
 		// annotate the error with peer/store/region info to help debug.
@@ -307,10 +307,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			return annotateErr(err, peer, "when open write stream")
 		}
 
-		if _, _err_ := failpoint.Eval(_curpkg_("mockWritePeerErr")); _err_ == nil {
+		failpoint.Inject("mockWritePeerErr", func() {
 			err = errors.Errorf("mock write peer error")
-			return annotateErr(err, peer, "when open write stream")
-		}
+			failpoint.Return(annotateErr(err, peer, "when open write stream"))
+		})
 
 		// Bind uuid for this write request
 		if err = wstream.Send(req); err != nil {
@@ -360,9 +360,9 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("afterFlushKVs")); _err_ == nil {
+		failpoint.Inject("afterFlushKVs", func() {
 			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
-		}
+		})
 		return nil
 	}
 
@@ -444,10 +444,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		}
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("NoLeader")); _err_ == nil {
+	failpoint.Inject("NoLeader", func() {
 		log.FromContext(ctx).Warn("enter failpoint NoLeader")
 		leaderPeerMetas = nil
-	}
+	})
 
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
@@ -488,12 +488,12 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 		return nil
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("fakeRegionJobs")); _err_ == nil {
+	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
 		j.convertStageTo(front.ingest.nextStage)
-		return front.ingest.err
-	}
+		failpoint.Return(front.ingest.err)
+	})
 
 	if len(j.writeResult.sstMeta) == 0 {
 		j.convertStageTo(ingested)
@@ -597,7 +597,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
-		if val, _err_ := failpoint.Eval(_curpkg_("FailIngestMeta")); _err_ == nil {
+		failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
 			// only inject the error once
 			var resp *sst.IngestResponse
 
@@ -620,8 +620,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 					},
 				}
 			}
-			return resp, nil
-		}
+			failpoint.Return(resp, nil)
+		})
 
 		leader := j.region.Leader
 		if leader == nil {

@@ -87,7 +87,7 @@ func (p *parallelSortWorker) reset() {
 
 func (p *parallelSortWorker) injectFailPointForParallelSortWorker(triggerFactor int32) {
 	injectParallelSortRandomFail(triggerFactor)
-	if val, _err_ := failpoint.Eval(_curpkg_("SlowSomeWorkers")); _err_ == nil {
+	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
 		if val.(bool) {
 			if p.workerIDForTest%2 == 0 {
 				randNum := rand.Int31n(10000)
@@ -96,7 +96,7 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker(triggerFactor 
 				}
 			}
 		}
-	}
+	})
 }
 
 func (p *parallelSortWorker) multiWayMergeLocalSortedRows() ([]chunk.Row, error) {
@@ -208,11 +208,11 @@ func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
 		p.timesOfRowCompare = 0
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("SignalCheckpointForSort")); _err_ == nil {
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
 		if val.(bool) {
 			p.timesOfRowCompare += 1024
 		}
-	}
+	})
 	p.timesOfRowCompare++
 
 	return p.lessRowFunc(i, j)

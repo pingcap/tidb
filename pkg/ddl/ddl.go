@@ -1224,11 +1224,11 @@ func processJobs(
 	ids []int64,
 	byWho model.AdminCommandOperator,
 ) (jobErrs []error, err error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockFailedCommandOnConcurencyDDL")); _err_ == nil {
+	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, errors.New("mock failed admin command on ddl jobs")
+			failpoint.Return(nil, errors.New("mock failed admin command on ddl jobs"))
 		}
-	}
+	})
 
 	if len(ids) == 0 {
 		return nil, nil
@@ -1279,11 +1279,11 @@ func processJobs(
 			}
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("mockCommitFailedOnDDLCommand")); _err_ == nil {
+		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
 			if val.(bool) {
-				return jobErrs, errors.New("mock commit failed on admin command on ddl jobs")
+				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
 			}
-		}
+		})
 
 		// There may be some conflict during the update, try it again
 		if err = ns.Commit(context.Background()); err != nil {

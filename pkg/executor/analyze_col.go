@@ -176,18 +176,18 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
-		if _, _err_ := failpoint.Eval(_curpkg_("mockKillRunningV1AnalyzeJob")); _err_ == nil {
+		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
 			dom := domain.GetDomain(e.ctx)
 			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 				dom.SysProcTracker().KillSysProcess(id)
 			}
-		}
+		})
 		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockSlowAnalyzeV1")); _err_ == nil {
+		failpoint.Inject("mockSlowAnalyzeV1", func() {
 			time.Sleep(1000 * time.Second)
-		}
+		})
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1

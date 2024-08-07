@@ -66,9 +66,9 @@ func (p *pool) Get() (resource pools.Resource, err error) {
 	}
 
 	// Put the internal session to the map of SessionManager
-	if _, _err_ := failpoint.Eval(_curpkg_("mockSessionPoolReturnError")); _err_ == nil {
+	failpoint.Inject("mockSessionPoolReturnError", func() {
 		err = errors.New("mockSessionPoolReturnError")
-	}
+	})
 
 	if err == nil && p.getCallback != nil {
 		p.getCallback(resource)

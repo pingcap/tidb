@@ -55,7 +55,7 @@ func (d *ddl) limitDDLJobs() {
 		// the channel is never closed
 		case jobW := <-ch:
 			jobWs = jobWs[:0]
-			failpoint.Call(_curpkg_("afterGetJobFromLimitCh"), ch)
+			failpoint.InjectCall("afterGetJobFromLimitCh", ch)
 			jobLen := len(ch)
 			jobWs = append(jobWs, jobW)
 			for i := 0; i < jobLen; i++ {
@@ -369,11 +369,11 @@ func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 				return errors.Trace(err)
 			}
 		}
-		if val, _err_ := failpoint.Eval(_curpkg_("mockAddBatchDDLJobsErr")); _err_ == nil {
+		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 			if val.(bool) {
-				return errors.Errorf("mockAddBatchDDLJobsErr")
+				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
 			}
-		}
+		})
 		return nil
 	})
 }
@@ -399,11 +399,11 @@ func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
 func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
 	count := getRequiredGIDCount(jobWs)
 	return genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
-		if val, _err_ := failpoint.Eval(_curpkg_("mockGenGlobalIDFail")); _err_ == nil {
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
-				return errors.New("gofail genGlobalIDs error")
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
 			}
-		}
+		})
 		assignGIDsForJobs(jobWs, ids)
 		injectModifyJobArgFailPoint(jobWs)
 		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
@@ -578,7 +578,7 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 // TODO this failpoint is only checking how job scheduler handle
 // corrupted job args, we should test it there by UT, not here.
 func injectModifyJobArgFailPoint(jobWs []*JobWrapper) {
-	if val, _err_ := failpoint.Eval(_curpkg_("MockModifyJobArg")); _err_ == nil {
+	failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
 		if val.(bool) {
 			for _, jobW := range jobWs {
 				job := jobW.Job
@@ -592,7 +592,7 @@ func injectModifyJobArgFailPoint(jobWs []*JobWrapper) {
 				}
 			}
 		}
-	}
+	})
 }
 
 func setJobStateToQueueing(job *model.Job) {

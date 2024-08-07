@@ -145,11 +145,11 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		if err != nil {
 			return err
 		}
-		if val, _err_ := failpoint.Eval(_curpkg_("mockCopSenderPanic")); _err_ == nil {
+		failpoint.Inject("mockCopSenderPanic", func(val failpoint.Value) {
 			if val.(bool) {
 				panic("mock panic")
 			}
-		}
+		})
 		if p.checkpointMgr != nil {
 			p.checkpointMgr.Register(task.id, task.endKey)
 		}
@@ -169,9 +169,9 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
 			rate := float64(srcChk.MemoryUsage()) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()
 			metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
-			if _, _err_ := failpoint.Eval(_curpkg_("mockCopSenderError")); _err_ == nil {
+			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.Err = errors.New("mock cop error")
-			}
+			})
 			p.chunkSender.AddTask(idxRs)
 			startTime = time.Now()
 		}

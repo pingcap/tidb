@@ -180,11 +180,11 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 }
 
 func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, *statistics.FMSketch, *statistics.TopN, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("buildStatsFromResult")); _err_ == nil {
+	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, nil, nil, nil, errors.New("mock buildStatsFromResult error")
+			failpoint.Return(nil, nil, nil, nil, errors.New("mock buildStatsFromResult error"))
 		}
-	}
+	})
 	hist := &statistics.Histogram{}
 	var cms *statistics.CMSketch
 	var topn *statistics.TopN
@@ -198,18 +198,18 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		statsVer = int(*e.analyzePB.IdxReq.Version)
 	}
 	for {
-		if _, _err_ := failpoint.Eval(_curpkg_("mockKillRunningAnalyzeIndexJob")); _err_ == nil {
+		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
 			dom := domain.GetDomain(e.ctx)
 			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 				dom.SysProcTracker().KillSysProcess(id)
 			}
-		}
+		})
 		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return nil, nil, nil, nil, err
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockSlowAnalyzeIndex")); _err_ == nil {
+		failpoint.Inject("mockSlowAnalyzeIndex", func() {
 			time.Sleep(1000 * time.Second)
-		}
+		})
 		data, err := result.NextRaw(context.TODO())
 		if err != nil {
 			return nil, nil, nil, nil, err

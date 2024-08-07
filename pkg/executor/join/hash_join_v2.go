@@ -95,7 +95,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false, 0)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
-	failpoint.Eval(_curpkg_("finalizeCurrentSegPanic"))
+	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.finalized = true
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
@@ -360,7 +360,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	for chk := range srcChkCh {
 		start := time.Now()
 		err = builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
-		failpoint.Eval(_curpkg_("splitPartitionPanic"))
+		failpoint.Inject("splitPartitionPanic", nil)
 		cost += int64(time.Since(start))
 		if err != nil {
 			return err
@@ -495,7 +495,7 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 		if !ok || joinResult.err != nil {
 			return ok, waitTime, joinResult
 		}
-		failpoint.Eval(_curpkg_("processOneProbeChunkPanic"))
+		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
 			w.HashJoinCtx.joinResultCh <- joinResult
@@ -542,7 +542,7 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 			return
 		case probeSideResult, ok = <-w.probeResultCh:
 		}
-		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if !ok {
 			break
 		}
@@ -648,7 +648,7 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 	createBuildTask := func(partIdx int, segStartIdx int, segEndIdx int) *buildTask {
 		return &buildTask{partitionIdx: partIdx, segStartIdx: segStartIdx, segEndIdx: segEndIdx}
 	}
-	failpoint.Eval(_curpkg_("createTasksPanic"))
+	failpoint.Inject("createTasksPanic", nil)
 
 	if isBalanced {
 		for partIdx, subTable := range subTables {
@@ -831,7 +831,7 @@ func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 		start := time.Now()
 		partIdx, segStartIdx, segEndIdx := task.partitionIdx, task.segStartIdx, task.segEndIdx
 		w.HashJoinCtx.hashTableContext.hashTable.tables[partIdx].build(segStartIdx, segEndIdx)
-		failpoint.Eval(_curpkg_("buildHashTablePanic"))
+		failpoint.Inject("buildHashTablePanic", nil)
 		cost += int64(time.Since(start))
 	}
 	return nil
