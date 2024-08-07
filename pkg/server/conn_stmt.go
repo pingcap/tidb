@@ -135,7 +135,8 @@ func (cc *clientConn) HandleStmtPrepare(ctx context.Context, sql string) error {
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
 	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
 	if len(data) < 9 {
-		return mysql.ErrMalformPacket
+		// todo
+		return errors.Trace(mysql.ErrMalformPacket)
 	}
 	pos := 0
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
@@ -184,7 +185,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	if numParams > 0 {
 		nullBitmapLen := (numParams + 7) >> 3
 		if len(data) < (pos + nullBitmapLen + 1) {
-			return mysql.ErrMalformPacket
+			// todo
+			return errors.Trace(mysql.ErrMalformPacket)
 		}
 		nullBitmaps = data[pos : pos+nullBitmapLen]
 		pos += nullBitmapLen
@@ -193,7 +195,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		if data[pos] == 1 {
 			pos++
 			if len(data) < (pos + (numParams << 1)) {
-				return mysql.ErrMalformPacket
+				// todo
+				return errors.Trace(mysql.ErrMalformPacket)
 			}
 
 			paramTypes = data[pos : pos+(numParams<<1)]
