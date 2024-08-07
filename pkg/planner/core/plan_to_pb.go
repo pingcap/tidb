@@ -250,6 +250,10 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return p.partitionTableScanToPBForFlash(ctx)
 	}
+
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
 	tsExec.Desc = p.Desc
 	keepOrder := p.KeepOrder
@@ -257,8 +261,6 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	tsExec.IsFastScan = &(ctx.GetSessionVars().TiFlashFastScan)
 
 	if len(p.LateMaterializationFilterCondition) > 0 {
-		sc := ctx.GetSessionVars().StmtCtx
-		client := ctx.GetClient()
 		conditions, err := expression.ExpressionsToPBList(sc, p.LateMaterializationFilterCondition, client)
 		if err != nil {
 			return nil, err
@@ -272,6 +274,11 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		return nil, errors.Trace(err)
 	}
 	tsExec.MaxWaitTimeMs = int32(p.maxWaitTimeMs)
+
+	if p.annQuery != nil {
+		annQueryCopy := *p.annQuery
+		tsExec.AnnQuery = &annQueryCopy
+	}
 
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
@@ -315,6 +322,12 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Contex
 	ptsExec.MaxWaitTimeMs = int32(p.maxWaitTimeMs)
 
 	ptsExec.Desc = p.Desc
+
+	if p.annQuery != nil {
+		annQueryCopy := *p.annQuery
+		ptsExec.AnnQuery = &annQueryCopy
+	}
+
 	executorID := p.ExplainID().String()
 	err = tables.SetPBColumnsDefaultValue(ctx, ptsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err

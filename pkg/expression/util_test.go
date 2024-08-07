@@ -518,8 +518,12 @@ func (m *MockExpr) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, r
 func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
+func (m *MockExpr) VecEvalVectorFloat32(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
 
 func (m *MockExpr) String() string                          { return "" }
+func (m *MockExpr) StringForExplain() string                { return "" }
 func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
 func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
@@ -564,6 +568,13 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.Bi
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
 }
+func (m *MockExpr) EvalVectorFloat32(ctx sessionctx.Context, row chunk.Row) (val types.VectorFloat32, isNull bool, err error) {
+	if x, ok := m.i.(types.VectorFloat32); ok {
+		return x, false, m.err
+	}
+	return types.ZeroVectorFloat32, m.i == nil, m.err
+}
+
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }

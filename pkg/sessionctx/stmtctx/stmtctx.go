@@ -436,6 +436,10 @@ type StatementContext struct {
 
 	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
 	MDLRelatedTableIDs map[int64]int64
+
+	// Note: These VectorSearch fields will also set in a valid EXPLAIN (ANALYZE) statement.
+	VectorSearchIsANNQuery bool
+	VectorSearchTopK       uint32
 }
 
 // NewStmtCtx creates a new statement context

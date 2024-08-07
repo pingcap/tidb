@@ -1523,6 +1523,7 @@ var (
 	ServiceScope              = atomic.NewString("")
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")
+	EnableVectorType          = atomic.NewBool(false)
 )
 
 var (

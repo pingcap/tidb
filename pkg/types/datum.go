@@ -60,6 +60,7 @@ const (
 	KindMaxValue      byte = 16
 	KindRaw           byte = 17
 	KindMysqlJSON     byte = 18
+	KindVectorFloat32 byte = 19
 )
 
 // Datum is a data box holds different kind of data.
@@ -406,6 +407,21 @@ func (d *Datum) SetMysqlJSON(b BinaryJSON) {
 	d.b = b.Value
 }
 
+// SetVectorFloat32 sets VectorFloat32 value
+func (d *Datum) SetVectorFloat32(vec VectorFloat32) {
+	d.k = KindVectorFloat32
+	d.b = vec.ZeroCopySerialize()
+}
+
+// GetVectorFloat32 gets VectorFloat32 value
+func (d *Datum) GetVectorFloat32() VectorFloat32 {
+	v, _, err := ZeroCopyDeserializeVectorFloat32(d.b)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
 // GetMysqlTime gets types.Time value
 func (d *Datum) GetMysqlTime() Time {
 	return d.x.(Time)
@@ -480,6 +496,8 @@ func (d Datum) String() string {
 		t = "KindRaw"
 	case KindMysqlJSON:
 		t = "KindMysqlJSON"
+	case KindVectorFloat32:
+		t = "KindVectorFloat32"
 	default:
 		t = "Unknown"
 	}
@@ -527,6 +545,8 @@ func (d *Datum) GetValue() interface{} {
 		return d.GetMysqlJSON()
 	case KindMysqlTime:
 		return d.GetMysqlTime()
+	case KindVectorFloat32:
+		return d.GetVectorFloat32()
 	default:
 		return d.GetInterface()
 	}
@@ -575,6 +595,8 @@ func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
 		d.SetMysqlJSON(x)
 	case Time:
 		d.SetMysqlTime(x)
+	case VectorFloat32:
+		d.SetVectorFloat32(x)
 	default:
 		d.SetInterface(x)
 	}
@@ -623,6 +645,8 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 		d.SetMysqlJSON(x)
 	case Time:
 		d.SetMysqlTime(x)
+	case VectorFloat32:
+		d.SetVectorFloat32(x)
 	default:
 		d.SetInterface(x)
 	}
@@ -677,6 +701,8 @@ func (d *Datum) Compare(sc *stmtctx.StatementContext, ad *Datum, comparer collat
 		return d.compareMysqlJSON(sc, ad.GetMysqlJSON())
 	case KindMysqlTime:
 		return d.compareMysqlTime(sc, ad.GetMysqlTime())
+	case KindVectorFloat32:
+		return d.compareVectorFloat32(sc, ad.GetVectorFloat32())
 	default:
 		return 0, nil
 	}
@@ -902,6 +928,20 @@ func (d *Datum) compareMysqlTime(sc *stmtctx.StatementContext, time Time) (int, 
 	}
 }
 
+func (d *Datum) compareVectorFloat32(sc *stmtctx.StatementContext, vec VectorFloat32) (int, error) {
+	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
+	case KindVectorFloat32:
+		return d.GetVectorFloat32().Compare(vec), nil
+	// Note: We expect cast is applied before compare, when comparing with String and other vector types.
+	default:
+		return 0, errors.New("cannot compare vector and non-vector, cast is required")
+	}
+}
+
 // ConvertTo converts a datum to the target field type.
 // change this method need sync modification to type2Kind in rowcodec/types.go
 func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
@@ -938,6 +978,8 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 		return d.convertToMysqlSet(sc, target)
 	case mysql.TypeJSON:
 		return d.convertToMysqlJSON(sc, target)
+	case mysql.TypeTiDBVectorFloat32:
+		return d.convertToVectorFloat32(sc, target)
 	case mysql.TypeNull:
 		return Datum{}, nil
 	default:
@@ -1075,6 +1117,8 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		}
 	case KindMysqlJSON:
 		s = d.GetMysqlJSON().String()
+	case KindVectorFloat32:
+		s = d.GetVectorFloat32().String()
 	default:
 		return invalidConv(d, target.GetType())
 	}
@@ -1674,6 +1718,8 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 		s, err = ParseSet(target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
 	case KindMysqlSet:
 		s, err = ParseSet(target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
+	case KindVectorFloat32:
+		return invalidConv(d, mysql.TypeSet)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1739,6 +1785,29 @@ func (d *Datum) convertToMysqlJSON(_ *stmtctx.StatementContext, _ *FieldType) (r
 	return ret, errors.Trace(err)
 }
 
+func (d *Datum) convertToVectorFloat32(_ *stmtctx.StatementContext, ft *FieldType) (ret Datum, err error) {
+	switch d.k {
+	case KindVectorFloat32:
+		v := d.GetVectorFloat32()
+		if err = v.CheckDimsFitColumn(ft.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		ret = *d
+	case KindString, KindBytes:
+		var v VectorFloat32
+		if v, err = ParseVectorFloat32(d.GetString()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		if err = v.CheckDimsFitColumn(ft.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		ret.SetVectorFloat32(v)
+	default:
+		return invalidConv(d, mysql.TypeTiDBVectorFloat32)
+	}
+	return ret, errors.Trace(err)
+}
+
 // ToBool converts to a bool.
 // We will use 1 for true, and 0 for false.
 func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
@@ -1773,6 +1842,8 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	case KindMysqlJSON:
 		val := d.GetMysqlJSON()
 		isZero = val.IsZero()
+	case KindVectorFloat32:
+		isZero = d.GetVectorFloat32().IsZeroValue()
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", d.GetValue(), d.GetValue())
 	}
@@ -1820,7 +1891,7 @@ func ConvertDatumToDecimal(sc *stmtctx.StatementContext, d Datum) (*MyDecimal, e
 		}
 		dec = f
 	default:
-		err = fmt.Errorf("can't convert %v to decimal", d.GetValue())
+		err = errors.Errorf("can't convert %v to decimal", d.GetValue())
 	}
 	return dec, errors.Trace(err)
 }
@@ -1991,10 +2062,30 @@ func (d *Datum) ToString() (string, error) {
 		return d.GetMysqlJSON().String(), nil
 	case KindBinaryLiteral, KindMysqlBit:
 		return d.GetBinaryLiteral().ToString(), nil
+	case KindVectorFloat32:
+		return d.GetVectorFloat32().String(), nil
 	case KindNull:
 		return "", nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", d.GetValue(), d.GetValue())
+	}
+}
+
+// StringForExplain implements Explainable interface.
+func (d *Datum) StringForExplain() string {
+	switch d.Kind() {
+	case KindVectorFloat32:
+		return d.GetVectorFloat32().StringForExplain()
+	case KindString, KindBytes:
+		{
+			str := d.GetString()
+			if len(str) > 64 {
+				str = fmt.Sprintf("%s(len:%d)", str[:64], len(str))
+			}
+			return str
+		}
+	default:
+		return fmt.Sprintf("%v", d.GetValue())
 	}
 }
 
@@ -2203,6 +2294,12 @@ func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 // NewJSONDatum creates a new Datum from a BinaryJSON value
 func NewJSONDatum(j BinaryJSON) (d Datum) {
 	d.SetMysqlJSON(j)
+	return d
+}
+
+// NewVectorFloat32Datum creates a new Datum from a VectorFloat32 value
+func NewVectorFloat32Datum(v VectorFloat32) (d Datum) {
+	d.SetVectorFloat32(v)
 	return d
 }
 
@@ -2570,6 +2667,8 @@ func (d Datum) EstimatedMemUsage() int64 {
 		bytesConsumed += sizeOfMyDecimal
 	case KindMysqlTime:
 		bytesConsumed += sizeOfMysqlTime
+	case KindVectorFloat32:
+		bytesConsumed += d.GetVectorFloat32().EstimatedMemUsage()
 	default:
 		bytesConsumed += len(d.b)
 	}

@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/atomic"
 )
 
 var constLabels prometheus.Labels
@@ -74,4 +75,31 @@ func NewHistogramVec(opts prometheus.HistogramOpts, labelNames []string) *promet
 func NewSummaryVec(opts prometheus.SummaryOpts, labelNames []string) *prometheus.SummaryVec {
 	opts.ConstLabels = constLabels
 	return prometheus.NewSummaryVec(opts, labelNames)
+}
+
+// OptionalCollector could make a Prometheus metric optional in the output.
+type OptionalCollector[T prometheus.Collector] struct {
+	Collector T
+	Enabled   *atomic.Bool
+}
+
+// CollectOptionally makes a Prometheus metric optional in the output.
+func CollectOptionally[T prometheus.Collector](c T) OptionalCollector[T] {
+	return OptionalCollector[T]{
+		Collector: c,
+		Enabled:   atomic.NewBool(false),
+	}
+}
+
+// Collect implements the prometheus.Collector interface.
+func (c OptionalCollector[T]) Collect(ch chan<- prometheus.Metric) {
+	// Only collect when enabled
+	if c.Enabled.Load() {
+		c.Collector.Collect(ch)
+	}
+}
+
+// Describe implements prometheus.Collector.
+func (c OptionalCollector[T]) Describe(ch chan<- *prometheus.Desc) {
+	c.Collector.Describe(ch)
 }

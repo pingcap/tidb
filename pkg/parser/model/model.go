@@ -127,6 +127,9 @@ type ColumnInfo struct {
 	// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
 	//              This will fix bug in version 0. For compatibility with version 0, we add version field in column info struct.
 	Version uint64 `json:"version"`
+
+	// If this column is a Vector column and vector index is defined in comment, the parsed vector index information will be stored here.
+	VectorIndex *VectorIndexInfo `json:"vector_index,omitempty"`
 }
 
 // IsVirtualGenerated checks the column if it is virtual.
@@ -545,6 +548,10 @@ type TableInfo struct {
 
 	// Revision is per table schema's version, it will be increased when the schema changed.
 	Revision uint64 `json:"revision"`
+
+	// Set when any one of the column has defined vector index.
+	// Currently only used by optimizer.
+	HasVectorIndex bool `json:"has_vector_index"`
 }
 
 // TableNameInfo provides meta data describing a table name info.

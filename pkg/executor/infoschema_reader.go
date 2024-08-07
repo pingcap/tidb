@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -76,7 +77,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
-	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -2989,7 +2989,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 		return nil, nil
 	}
 	if !e.initialized {
-		err := e.initialize(sctx, e.extractor.TiFlashInstances)
+		err := e.initialize(sctx)
 		if err != nil {
 			return nil, err
 		}
@@ -3000,7 +3000,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 	}
 
 	for {
-		rows, err := e.dataForTiFlashSystemTables(ctx, sctx, e.extractor.TiDBDatabases, e.extractor.TiDBTables)
+		rows, err := e.dataForTiFlashSystemTables(ctx, sctx, e.extractor.TiDBDatabases)
 		if err != nil {
 			return nil, err
 		}
@@ -3010,7 +3010,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 	}
 }
 
-func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
+func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context) error {
 	storeInfo, err := infoschema.GetStoreServerInfo(sctx)
 	if err != nil {
 		return err
@@ -3021,9 +3021,6 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 			continue
 		}
 		info.ResolveLoopBackAddr()
-		if len(tiflashInstances) > 0 && !tiflashInstances.Exist(info.Address) {
-			continue
-		}
 		hostAndStatusPort := strings.Split(info.StatusAddr, ":")
 		if len(hostAndStatusPort) != 2 {
 			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
@@ -3045,15 +3042,24 @@ type tiFlashSQLExecuteResponse struct {
 	Data [][]interface{}                       `json:"data"`
 }
 
-func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
+var (
+	tiflashTargetTableName = map[string]string{
+		"tiflash_tables":   "dt_tables",
+		"tiflash_segments": "dt_segments",
+		"tiflash_indexes":  "dt_local_indexes",
+	}
+)
+
+func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string) ([][]types.Datum, error) {
 	maxCount := 1024
-	targetTable := strings.ToLower(strings.Replace(e.table.Name.O, "TIFLASH", "DT", 1))
+	targetTable := tiflashTargetTableName[e.table.Name.L]
+
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	partitionIDToNme := make(map[int64]string) // A small cache only lasts in this function
+
 	var filters []string
 	if len(tidbDatabases) > 0 {
 		filters = append(filters, fmt.Sprintf("tidb_database IN (%s)", strings.ReplaceAll(tidbDatabases, "\"", "'")))
-	}
-	if len(tidbTables) > 0 {
-		filters = append(filters, fmt.Sprintf("tidb_table IN (%s)", strings.ReplaceAll(tidbTables, "\"", "'")))
 	}
 	sql := fmt.Sprintf("SELECT * FROM system.%s", targetTable)
 	if len(filters) > 0 {
@@ -3136,7 +3142,55 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 				return nil, errors.Errorf("Meet column of unknown type %v", column)
 			}
 		}
-		outputRow[len(e.outputCols)-1].SetString(instanceID, mysql.DefaultCollationName)
+
+		{
+			// instanceID is actually instance Address.
+			// In serverless, we mask it for security.
+			h := md5.New()
+			h.Write([]byte(instanceID))
+			instance := hex.EncodeToString(h.Sum(nil))
+			instance = "store-" + instance[:8]
+			outputRow[outputColIndexMap["tiflash_instance"]].SetString(instance, mysql.DefaultCollationName)
+		}
+		// Try to map a better table name and partition name.
+		// Currently all TiFlash tables have belonging_table_id column.
+		{
+			var belongingTableID int64 = -1
+			belongingTableIDDatum := outputRow[outputColIndexMap["belonging_table_id"]]
+			if !belongingTableIDDatum.IsNull() {
+				// Old TiFlash versions may not have this column. In this case it would be NULL.
+				belongingTableID = belongingTableIDDatum.GetInt64()
+			}
+			var partitionID = outputRow[outputColIndexMap["table_id"]].GetInt64()
+			if belongingTableID != -1 {
+				// Only deal with partitioned tables
+				if table, ok := is.TableByID(belongingTableID); ok {
+					parentTable := table.Meta()
+					outputRow[outputColIndexMap["tidb_table"]].SetString(parentTable.Name.O, mysql.DefaultCollationName)
+
+					// Try to get partition name from cache first
+					partitionName, ok := partitionIDToNme[partitionID]
+					if !ok {
+						// Fill partition name for all partitions in this table, cache for future access
+						partitionInfo := parentTable.GetPartitionInfo()
+						if partitionInfo != nil {
+							for _, def := range partitionInfo.Definitions {
+								partitionIDToNme[def.ID] = def.Name.O
+							}
+						}
+						// Retry getting partition name again
+						v, ok2 := partitionIDToNme[partitionID]
+						if ok2 {
+							partitionName = v
+						}
+					}
+					// Note it is possible that partitionName is still not found.
+					// In this case it is empty.
+					outputRow[outputColIndexMap["tidb_partition"]].SetString(partitionName, mysql.DefaultCollationName)
+				}
+			}
+		}
+
 		outputRows = append(outputRows, outputRow)
 	}
 	e.rowIdx += len(outputRows)

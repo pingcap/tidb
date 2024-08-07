@@ -80,6 +80,11 @@ func (sf *ScalarFunction) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk
 	return sf.Function.vecEvalJSON(input, result)
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalVectorFloat32(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalVectorFloat32(input, result)
+}
+
 // GetArgs gets arguments of function.
 func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
@@ -124,6 +129,29 @@ func (sf *ScalarFunction) String() string {
 	default:
 		for i, arg := range sf.GetArgs() {
 			buffer.WriteString(arg.String())
+			if i+1 != len(sf.GetArgs()) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
+// StringForExplain implements Explainable interface.
+func (sf *ScalarFunction) StringForExplain() string {
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
+	switch sf.FuncName.L {
+	case ast.Cast:
+		for _, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.StringForExplain())
+			buffer.WriteString(", ")
+			buffer.WriteString(sf.RetType.String())
+		}
+	default:
+		for i, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.StringForExplain())
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -421,6 +449,8 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		res, isNull, err = sf.EvalDuration(sf.GetCtx(), row)
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(sf.GetCtx(), row)
+	case types.ETVectorFloat32:
+		res, isNull, err = sf.EvalVectorFloat32(sf.GetCtx(), row)
 	case types.ETString:
 		var str string
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
@@ -480,6 +510,11 @@ func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (t
 // EvalJSON implements Expression interface.
 func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
+}
+
+// EvalVectorFloat32 implements Expression interface.
+func (sf *ScalarFunction) EvalVectorFloat32(ctx sessionctx.Context, row chunk.Row) (types.VectorFloat32, bool, error) {
+	return sf.Function.evalVectorFloat32(row)
 }
 
 // HashCode implements Expression interface.

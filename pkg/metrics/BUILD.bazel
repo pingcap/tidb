@@ -24,6 +24,7 @@ go_library(
         "telemetry.go",
         "topsql.go",
         "ttl.go",
+        "vector_search.go",
         "wrapper.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/metrics",
@@ -41,6 +42,7 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_model//go",
         "@com_github_tikv_client_go_v2//metrics",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )

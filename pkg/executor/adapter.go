@@ -1374,6 +1374,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
 	}
+	if sessVars.StmtCtx.VectorSearchIsANNQuery && succ {
+		metrics.VectorSearchIndexQueryLatency.Observe(time.Since(sessVars.StartTime).Seconds())
+		metrics.VectorSearchIndexQueryTopK.Observe(float64(sessVars.StmtCtx.VectorSearchTopK))
+	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
 	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)

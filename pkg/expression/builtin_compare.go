@@ -16,6 +16,7 @@ package expression
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"strings"
 
@@ -47,6 +48,7 @@ var (
 	_ builtinFunc = &builtinCoalesceStringSig{}
 	_ builtinFunc = &builtinCoalesceTimeSig{}
 	_ builtinFunc = &builtinCoalesceDurationSig{}
+	_ builtinFunc = &builtinCoalesceVectorFloat32Sig{}
 
 	_ builtinFunc = &builtinGreatestIntSig{}
 	_ builtinFunc = &builtinGreatestRealSig{}
@@ -55,6 +57,7 @@ var (
 	_ builtinFunc = &builtinGreatestDurationSig{}
 	_ builtinFunc = &builtinGreatestTimeSig{}
 	_ builtinFunc = &builtinGreatestCmpStringAsTimeSig{}
+	_ builtinFunc = &builtinGreatestVectorFloat32Sig{}
 	_ builtinFunc = &builtinLeastIntSig{}
 	_ builtinFunc = &builtinLeastRealSig{}
 	_ builtinFunc = &builtinLeastDecimalSig{}
@@ -62,6 +65,8 @@ var (
 	_ builtinFunc = &builtinLeastTimeSig{}
 	_ builtinFunc = &builtinLeastDurationSig{}
 	_ builtinFunc = &builtinLeastCmpStringAsTimeSig{}
+	_ builtinFunc = &builtinLeastVectorFloat32Sig{}
+
 	_ builtinFunc = &builtinIntervalIntSig{}
 	_ builtinFunc = &builtinIntervalRealSig{}
 
@@ -168,6 +173,11 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETJson:
 		sig = &builtinCoalesceJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceJson)
+	case types.ETVectorFloat32:
+		sig = &builtinCoalesceVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CoalesceVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for COALESCE()", retEvalTp)
 	}
 
 	return sig, nil
@@ -323,6 +333,28 @@ func (b *builtinCoalesceJSONSig) Clone() builtinFunc {
 func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalJSON(b.ctx, row)
+		if err != nil || !isNull {
+			break
+		}
+	}
+	return res, isNull, err
+}
+
+// builtinCoalesceVectorFloat32Sig is builtin function coalesce signature which return type vector float32.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
+type builtinCoalesceVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCoalesceVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinCoalesceVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCoalesceVectorFloat32Sig) evalVectorFloat32(row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
+	for _, a := range b.getArgs() {
+		res, isNull, err = a.EvalVectorFloat32(b.ctx, row)
 		if err != nil || !isNull {
 			break
 		}
@@ -498,6 +530,11 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 			sig = &builtinGreatestTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 		}
+	case types.ETVectorFloat32:
+		sig = &builtinGreatestVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_GreatestVectorFloat32)
+	default:
+		return nil, errors.Errorf("unsupported type %s during evaluation", argTp)
 	}
 
 	flen, decimal := fixFlenAndDecimalForGreatestAndLeast(args)
@@ -751,6 +788,29 @@ func (b *builtinGreatestDurationSig) evalDuration(row chunk.Row) (res types.Dura
 	return res, false, nil
 }
 
+type builtinGreatestVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGreatestVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinGreatestVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGreatestVectorFloat32Sig) evalVectorFloat32(row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err := b.args[i].EvalVectorFloat32(b.ctx, row)
+		if isNull || err != nil {
+			return types.VectorFloat32{}, true, err
+		}
+		if i == 0 || v.Compare(res) > 0 {
+			res = v
+		}
+	}
+	return res, false, nil
+}
+
 type leastFunctionClass struct {
 	baseFunctionClass
 }
@@ -811,6 +871,11 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 			sig = &builtinLeastTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 		}
+	case types.ETVectorFloat32:
+		sig = &builtinLeastVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_LeastVectorFloat32)
+	default:
+		return nil, errors.Errorf("unsupported type %s during evaluation", argTp)
 	}
 	flen, decimal := fixFlenAndDecimalForGreatestAndLeast(args)
 	sig.getRetTp().SetFlenUnderLimit(flen)
@@ -1027,6 +1092,29 @@ func (b *builtinLeastDurationSig) evalDuration(row chunk.Row) (res types.Duratio
 		v, isNull, err := b.args[i].EvalDuration(b.ctx, row)
 		if isNull || err != nil {
 			return types.Duration{}, true, err
+		}
+		if i == 0 || v.Compare(res) < 0 {
+			res = v
+		}
+	}
+	return res, false, nil
+}
+
+type builtinLeastVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLeastVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinLeastVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinLeastVectorFloat32Sig) evalVectorFloat32(row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err := b.args[i].EvalVectorFloat32(b.ctx, row)
+		if isNull || err != nil {
+			return types.VectorFloat32{}, true, err
 		}
 		if i == 0 || v.Compare(res) < 0 {
 			res = v
@@ -1290,7 +1378,9 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
-	if (lhsEvalType.IsStringKind() && lhsFieldType.GetType() == mysql.TypeJSON) || (rhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) {
+	if lhsEvalType == types.ETVectorFloat32 || rhsEvalType == types.ETVectorFloat32 {
+		cmpType = types.ETVectorFloat32
+	} else if (lhsEvalType.IsStringKind() && lhsFieldType.GetType() == mysql.TypeJSON) || (rhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) {
 		cmpType = types.ETJson
 	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.GetType()) || types.IsTypeTime(rhsFieldType.GetType())) {
 		// date[time] <cmp> date[time]
@@ -1357,8 +1447,11 @@ func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 		return CompareTime
 	case types.ETJson:
 		return CompareJSON
+	case types.ETVectorFloat32:
+		return CompareVectorFloat32
+	default:
+		panic(fmt.Sprintf("cannot compare with %s", GetAccurateCmpType(lhs, rhs)))
 	}
-	return nil
 }
 
 // isTemporalColumn checks if a expression is a temporal column,
@@ -1967,6 +2060,32 @@ func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Ex
 			sig = &builtinNullEQJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQJson)
 		}
+	case types.ETVectorFloat32:
+		switch c.op {
+		case opcode.LT:
+			sig = &builtinLTVectorFloat32Sig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_LTVectorFloat32)
+		case opcode.LE:
+			sig = &builtinLEVectorFloat32Sig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_LEVectorFloat32)
+		case opcode.GT:
+			sig = &builtinGTVectorFloat32Sig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_GTVectorFloat32)
+		case opcode.GE:
+			sig = &builtinGEVectorFloat32Sig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_GEVectorFloat32)
+		case opcode.EQ:
+			sig = &builtinEQVectorFloat32Sig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_EQVectorFloat32)
+		case opcode.NE:
+			sig = &builtinNEVectorFloat32Sig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_NEVectorFloat32)
+		case opcode.NullEQ:
+			sig = &builtinNullEQVectorFloat32Sig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_NullEQVectorFloat32)
+		}
+	default:
+		return nil, errors.Errorf("operator %s is not supported for %s", c.op, tp)
 	}
 	return
 }
@@ -2073,6 +2192,20 @@ func (b *builtinLTJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, err e
 	return resOfLT(CompareJSON(b.ctx, b.args[0], b.args[1], row, row))
 }
 
+type builtinLTVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLTVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinLTVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinLTVectorFloat32Sig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfLT(CompareVectorFloat32(b.ctx, b.args[0], b.args[1], row, row))
+}
+
 type builtinLEIntSig struct {
 	baseBuiltinFunc
 }
@@ -2169,6 +2302,20 @@ func (b *builtinLEJSONSig) Clone() builtinFunc {
 
 func (b *builtinLEJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	return resOfLE(CompareJSON(b.ctx, b.args[0], b.args[1], row, row))
+}
+
+type builtinLEVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLEVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinLEVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinLEVectorFloat32Sig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfLE(CompareVectorFloat32(b.ctx, b.args[0], b.args[1], row, row))
 }
 
 type builtinGTIntSig struct {
@@ -2269,6 +2416,20 @@ func (b *builtinGTJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, err e
 	return resOfGT(CompareJSON(b.ctx, b.args[0], b.args[1], row, row))
 }
 
+type builtinGTVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGTVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinGTVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGTVectorFloat32Sig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfGT(CompareVectorFloat32(b.ctx, b.args[0], b.args[1], row, row))
+}
+
 type builtinGEIntSig struct {
 	baseBuiltinFunc
 }
@@ -2365,6 +2526,20 @@ func (b *builtinGEJSONSig) Clone() builtinFunc {
 
 func (b *builtinGEJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	return resOfGE(CompareJSON(b.ctx, b.args[0], b.args[1], row, row))
+}
+
+type builtinGEVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGEVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinGEVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGEVectorFloat32Sig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfGE(CompareVectorFloat32(b.ctx, b.args[0], b.args[1], row, row))
 }
 
 type builtinEQIntSig struct {
@@ -2465,6 +2640,20 @@ func (b *builtinEQJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, err e
 	return resOfEQ(CompareJSON(b.ctx, b.args[0], b.args[1], row, row))
 }
 
+type builtinEQVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinEQVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinEQVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinEQVectorFloat32Sig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfEQ(CompareVectorFloat32(b.ctx, b.args[0], b.args[1], row, row))
+}
+
 type builtinNEIntSig struct {
 	baseBuiltinFunc
 }
@@ -2561,6 +2750,20 @@ func (b *builtinNEJSONSig) Clone() builtinFunc {
 
 func (b *builtinNEJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	return resOfNE(CompareJSON(b.ctx, b.args[0], b.args[1], row, row))
+}
+
+type builtinNEVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNEVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinNEVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNEVectorFloat32Sig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfNE(CompareVectorFloat32(b.ctx, b.args[0], b.args[1], row, row))
 }
 
 type builtinNullEQIntSig struct {
@@ -2779,6 +2982,40 @@ func (b *builtinNullEQJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 		return res, false, nil
 	default:
 		cmpRes := types.CompareBinaryJSON(arg0, arg1)
+		if cmpRes == 0 {
+			res = 1
+		}
+	}
+	return res, false, nil
+}
+
+type builtinNullEQVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNullEQVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinNullEQVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNullEQVectorFloat32Sig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	arg0, isNull0, err := b.args[0].EvalVectorFloat32(b.ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	arg1, isNull1, err := b.args[1].EvalVectorFloat32(b.ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	var res int64
+	switch {
+	case isNull0 && isNull1:
+		res = 1
+	case isNull0 != isNull1:
+		return res, false, nil
+	default:
+		cmpRes := arg0.Compare(arg1)
 		if cmpRes == 0 {
 			res = 1
 		}
@@ -3008,4 +3245,22 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 		return compareNull(isNull0, isNull1), true, nil
 	}
 	return int64(types.CompareBinaryJSON(arg0, arg1)), false, nil
+}
+
+// CompareVectorFloat32 compares two float32 vectors.
+func CompareVectorFloat32(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+	arg0, isNull0, err := lhsArg.EvalVectorFloat32(sctx, lhsRow)
+	if err != nil {
+		return 0, true, err
+	}
+
+	arg1, isNull1, err := rhsArg.EvalVectorFloat32(sctx, rhsRow)
+	if err != nil {
+		return 0, true, err
+	}
+
+	if isNull0 || isNull1 {
+		return compareNull(isNull0, isNull1), true, nil
+	}
+	return int64(arg0.Compare(arg1)), false, nil
 }

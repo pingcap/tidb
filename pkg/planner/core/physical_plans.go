@@ -840,6 +840,8 @@ type PhysicalTableScan struct {
 	// TODO: remove this field after we support pushing down selection to coprocessor.
 	LateMaterializationFilterCondition []expression.Expression
 
+	annQuery *tipb.ANNQueryInfo
+
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr

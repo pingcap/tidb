@@ -76,7 +76,7 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 
 	buffer = append(buffer, 0x0c)
 	buffer = dump.Uint16(buffer, d.ColumnTypeInfoCharsetID(column))
-	buffer = dump.Uint32(buffer, column.ColumnLength)
+	buffer = dump.Uint32(buffer, column.dumpLength())
 	buffer = append(buffer, dumpType(column.Type))
 	buffer = dump.Uint16(buffer, DumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
@@ -95,6 +95,29 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 	return buffer
 }
 
+func (column *Info) dumpCharset() uint16 {
+	switch column.Type {
+	case mysql.TypeTiDBVectorFloat32:
+		// When passing Vector column to the SQL Client, pretend to be a non-binary String.
+		return mysql.DefaultCollationID
+	default:
+		return column.Charset
+	}
+}
+
+func (column *Info) dumpLength() uint32 {
+	switch column.Type {
+	case mysql.TypeTiDBVectorFloat32:
+		// When passing Vector column to the SQL Client, pretend to be a non-binary String.
+		// Thus, we use maximum string length here.
+		// As a downside, there is no way to get the max dimension of the
+		// vector through binary protocol.
+		return mysql.MaxLongBlobWidth
+	default:
+		return column.ColumnLength
+	}
+}
+
 // DumpFlag dumps flag of a column.
 func DumpFlag(tp byte, flag uint16) uint16 {
 	switch tp {
@@ -102,6 +125,9 @@ func DumpFlag(tp byte, flag uint16) uint16 {
 		return flag | uint16(mysql.SetFlag)
 	case mysql.TypeEnum:
 		return flag | uint16(mysql.EnumFlag)
+	case mysql.TypeTiDBVectorFloat32:
+		// When passing Vector column to the SQL Client, pretend to be a non-binary String.
+		return flag & ^uint16(mysql.BinaryFlag)
 	default:
 		return flag
 	}
@@ -111,6 +137,9 @@ func dumpType(tp byte) byte {
 	switch tp {
 	case mysql.TypeSet, mysql.TypeEnum:
 		return mysql.TypeString
+	case mysql.TypeTiDBVectorFloat32:
+		// When passing Vector column to the SQL Client, pretend to be a non-binary String.
+		return mysql.TypeLongBlob
 	default:
 		return tp
 	}
@@ -183,6 +212,9 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 			// To compatible with MySQL, here we treat it as utf-8.
 			d.UpdateDataEncoding(mysql.DefaultCollationID)
 			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetJSON(i).String())))
+		case mysql.TypeTiDBVectorFloat32:
+			d.UpdateDataEncoding(mysql.DefaultCollationID)
+			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetVectorFloat32(i).String())))
 		default:
 			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
@@ -242,6 +274,9 @@ func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncod
 			// To compatible with MySQL, here we treat it as utf-8.
 			d.UpdateDataEncoding(mysql.DefaultCollationID)
 			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetJSON(i).String())))
+		case mysql.TypeTiDBVectorFloat32:
+			d.UpdateDataEncoding(mysql.DefaultCollationID)
+			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetVectorFloat32(i).String())))
 		default:
 			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}

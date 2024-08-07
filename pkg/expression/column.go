@@ -84,6 +84,11 @@ func (col *CorrelatedColumn) VecEvalJSON(ctx sessionctx.Context, input *chunk.Ch
 	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalVectorFloat32(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETVectorFloat32, input, result)
+}
+
 // Traverse implements the TraverseDown interface.
 func (col *CorrelatedColumn) Traverse(action TraverseAction) Expression {
 	return action.Transform(col)
@@ -153,6 +158,14 @@ func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (ty
 		return types.BinaryJSON{}, true, nil
 	}
 	return col.Data.GetMysqlJSON(), false, nil
+}
+
+// EvalVectorFloat32 returns VectorFloat32 representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalVectorFloat32(ctx sessionctx.Context, row chunk.Row) (types.VectorFloat32, bool, error) {
+	if col.Data.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return col.Data.GetVectorFloat32(), false, nil
 }
 
 // Equal implements Expression interface.
@@ -378,6 +391,12 @@ func (col *Column) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 	return nil
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalVectorFloat32(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
 const columnPrefix = "Column#"
 
 // String implements Stringer interface.
@@ -385,6 +404,20 @@ func (col *Column) String() string {
 	if col.IsHidden {
 		// A hidden column must be a virtual generated column, we should output its expression.
 		return col.VirtualExpr.String()
+	}
+	if col.OrigName != "" {
+		return col.OrigName
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	return builder.String()
+}
+
+// StringForExplain implements Explainable interface.
+func (col *Column) StringForExplain() string {
+	if col.IsHidden {
+		// A hidden column must be a virtual generated column, we should output its expression.
+		return col.VirtualExpr.StringForExplain()
 	}
 	if col.OrigName != "" {
 		return col.OrigName
@@ -493,6 +526,14 @@ func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.Binary
 		return types.BinaryJSON{}, true, nil
 	}
 	return row.GetJSON(col.Index), false, nil
+}
+
+// EvalVectorFloat32 returns VectorFloat32 representation of Column.
+func (col *Column) EvalVectorFloat32(ctx sessionctx.Context, row chunk.Row) (types.VectorFloat32, bool, error) {
+	if row.IsNull(col.Index) {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return row.GetVectorFloat32(col.Index), false, nil
 }
 
 // Clone implements Expression interface.

@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -169,6 +170,8 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 		return expr.VecEvalDuration(ctx, input, result)
 	case types.ETJson:
 		return expr.VecEvalJSON(ctx, input, result)
+	case types.ETVectorFloat32:
+		return expr.VecEvalVectorFloat32(ctx, input, result)
 	case types.ETString:
 		if err := expr.VecEvalString(ctx, input, result); err != nil {
 			return err
@@ -214,6 +217,8 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			}
 			output.SetCol(colIdx, buf)
 		}
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", ft.EvalType())
 	}
 	return nil
 }
@@ -244,10 +249,16 @@ func evalOneColumn(ctx sessionctx.Context, expr Expression, iterator *chunk.Iter
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToJSON(ctx, expr, fieldType, row, output, colID)
 		}
+	case types.ETVectorFloat32:
+		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
+			err = executeToVectorFloat32(ctx, expr, fieldType, row, output, colID)
+		}
 	case types.ETString:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToString(ctx, expr, fieldType, row, output, colID)
 		}
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", evalType)
 	}
 	return err
 }
@@ -266,8 +277,12 @@ func evalOneCell(ctx sessionctx.Context, expr Expression, row chunk.Row, output 
 		err = executeToDuration(ctx, expr, fieldType, row, output, colID)
 	case types.ETJson:
 		err = executeToJSON(ctx, expr, fieldType, row, output, colID)
+	case types.ETVectorFloat32:
+		err = executeToVectorFloat32(ctx, expr, fieldType, row, output, colID)
 	case types.ETString:
 		err = executeToString(ctx, expr, fieldType, row, output, colID)
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", evalType)
 	}
 	return err
 }
@@ -367,6 +382,19 @@ func executeToJSON(ctx sessionctx.Context, expr Expression, fieldType *types.Fie
 		output.AppendNull(colID)
 	} else {
 		output.AppendJSON(colID, res)
+	}
+	return nil
+}
+
+func executeToVectorFloat32(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return err
+	}
+	if isNull {
+		output.AppendNull(colID)
+	} else {
+		output.AppendVectorFloat32(colID, res)
 	}
 	return nil
 }

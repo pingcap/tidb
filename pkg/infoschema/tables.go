@@ -177,6 +177,8 @@ const (
 	TableTiFlashTables = "TIFLASH_TABLES"
 	// TableTiFlashSegments is the string constant of tiflash segments table.
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"
+	// TableTiFlashIndexes is the string constant of tiflash indexes table.
+	TableTiFlashIndexes = "TIFLASH_INDEXES"
 	// TableClientErrorsSummaryGlobal is the string constant of client errors table.
 	TableClientErrorsSummaryGlobal = "CLIENT_ERRORS_SUMMARY_GLOBAL"
 	// TableClientErrorsSummaryByUser is the string constant of client errors table.
@@ -321,6 +323,7 @@ var tableIDMap = map[string]int64{
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
+	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 200,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1386,11 +1389,15 @@ var tableStorageStatsCols = []columnInfo{
 }
 
 var tableTableTiFlashTablesCols = []columnInfo{
-	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
+	// TiFlash DB and Table Name contains the internal KeyspaceID,
+	// which is not suitable for presenting to users. Commented out.
+	//   {name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
+	//   {name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},     // Overwritten by TiDB
+	{name: "TIDB_PARTITION", tp: mysql.TypeVarchar, size: 64}, // Supplied by TiDB
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "BELONGING_TABLE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 64},
 	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64},
@@ -1439,15 +1446,19 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
 	{name: "BACKGROUND_TASKS_LENGTH", tp: mysql.TypeLonglong, size: 64},
-	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64}, // Supplied by TiDB
 }
 
 var tableTableTiFlashSegmentsCols = []columnInfo{
-	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
+	// TiFlash DB and Table Name contains the internal KeyspaceID,
+	// which is not suitable for presenting to users. Commented out.
+	//   {name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
+	//   {name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},     // Overwritten by TiDB
+	{name: "TIDB_PARTITION", tp: mysql.TypeVarchar, size: 64}, // Supplied by TiDB
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "BELONGING_TABLE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
@@ -1475,7 +1486,23 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "STABLE_DMFILES_SIZE", tp: mysql.TypeLonglong, size: 64},
 	{name: "STABLE_DMFILES_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 64},
 	{name: "STABLE_DMFILES_PACKS", tp: mysql.TypeLonglong, size: 64},
-	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64}, // Supplied by TiDB
+}
+
+var tableTiFlashIndexesCols = []columnInfo{
+	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},     // Overwritten by TiDB
+	{name: "TIDB_PARTITION", tp: mysql.TypeVarchar, size: 64}, // Supplied by TiDB
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "BELONGING_TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "COLUMN_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "INDEX_KIND", tp: mysql.TypeVarchar, size: 64},
+	{name: "ROWS_STABLE_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "ROWS_STABLE_NOT_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "ROWS_DELTA_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "ROWS_DELTA_NOT_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64}, // Supplied by TiDB
 }
 
 var tableClientErrorsSummaryGlobalCols = []columnInfo{
@@ -2158,6 +2185,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableStorageStats:                       tableStorageStatsCols,
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
+	TableTiFlashIndexes:                     tableTiFlashIndexesCols,
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,

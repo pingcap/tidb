@@ -17,7 +17,6 @@ package codec
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"hash"
 	"io"
 	"time"
@@ -37,18 +36,19 @@ import (
 
 // First byte in the encoded value which specifies the encoding type.
 const (
-	NilFlag          byte = 0
-	bytesFlag        byte = 1
-	compactBytesFlag byte = 2
-	intFlag          byte = 3
-	uintFlag         byte = 4
-	floatFlag        byte = 5
-	decimalFlag      byte = 6
-	durationFlag     byte = 7
-	varintFlag       byte = 8
-	uvarintFlag      byte = 9
-	jsonFlag         byte = 10
-	maxFlag          byte = 250
+	NilFlag           byte = 0
+	bytesFlag         byte = 1
+	compactBytesFlag  byte = 2
+	intFlag           byte = 3
+	uintFlag          byte = 4
+	floatFlag         byte = 5
+	decimalFlag       byte = 6
+	durationFlag      byte = 7
+	varintFlag        byte = 8
+	uvarintFlag       byte = 9
+	jsonFlag          byte = 10
+	vectorFloat32Flag byte = 20
+	maxFlag           byte = 250
 )
 
 // IntHandleFlag is only used to encode int handle key.
@@ -73,6 +73,8 @@ func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 			size++
 		case types.KindMysqlJSON:
 			size += 2 + len(vals[i].GetBytes())
+		case types.KindVectorFloat32:
+			size += 1 + vals[i].GetVectorFloat32().SerializedSize()
 		case types.KindMysqlDecimal:
 			size += 1 + types.MyDecimalStructSize
 		default:
@@ -132,6 +134,11 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			j := vals[i].GetMysqlJSON()
 			b = append(b, j.TypeCode)
 			b = append(b, j.Value...)
+		case types.KindVectorFloat32:
+			// Always do a small deser + ser for sanity check
+			b = append(b, vectorFloat32Flag)
+			v := vals[i].GetVectorFloat32()
+			b = v.SerializeTo(b)
 		case types.KindNull:
 			b = append(b, NilFlag)
 		case types.KindMinNotNull:
@@ -175,6 +182,9 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 		l = valueSizeOfUnsignedInt(val)
 	case types.KindMysqlJSON:
 		l = 2 + len(val.GetMysqlJSON().Value)
+	case types.KindVectorFloat32:
+		v := val.GetVectorFloat32()
+		l = 1 + v.SerializedSize()
 	case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
 		l = 1
 	default:
@@ -391,6 +401,10 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		flag = jsonFlag
 		json := row.GetJSON(idx)
 		b = json.HashValue(b)
+	case mysql.TypeTiDBVectorFloat32:
+		flag = vectorFloat32Flag
+		v := row.GetVectorFloat32(idx)
+		b = v.SerializeTo(nil)
 	default:
 		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.GetType())
 	}
@@ -659,6 +673,25 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			_, _ = h[i].Write(buf)
 			_, _ = h[i].Write(b)
 		}
+	case mysql.TypeTiDBVectorFloat32:
+		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			if column.IsNull(i) {
+				buf[0], b = NilFlag, nil
+				isNull[i] = !ignoreNull
+			} else {
+				buf[0] = vectorFloat32Flag
+				v := column.GetVectorFloat32(i)
+				b = v.SerializeTo(nil)
+			}
+
+			// As the golang doc described, `Hash.Write` never returns an error..
+			// See https://golang.org/pkg/hash/#Hash
+			_, _ = h[i].Write(buf)
+			_, _ = h[i].Write(b)
+		}
 	case mysql.TypeNull:
 		for i := 0; i < rows; i++ {
 			if sel != nil && !sel[i] {
@@ -865,6 +898,13 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		j := types.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
 		d.SetMysqlJSON(j)
 		b = b[size:]
+	case vectorFloat32Flag:
+		v, remaining, err := types.ZeroCopyDeserializeVectorFloat32(b)
+		if err != nil {
+			return b, d, errors.Trace(err)
+		}
+		d.SetVectorFloat32(v)
+		b = remaining
 	case NilFlag:
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
@@ -994,6 +1034,8 @@ func peek(b []byte) (length int, err error) {
 		l, err = peekUvarint(b)
 	case jsonFlag:
 		l, err = types.PeekBytesAsJSON(b)
+	case vectorFloat32Flag:
+		l, err = types.PeekBytesAsVectorFloat32(b)
 	default:
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
@@ -1166,6 +1208,13 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		}
 		chk.AppendJSON(colIdx, types.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
 		b = b[size:]
+	case vectorFloat32Flag:
+		v, remaining, err := types.ZeroCopyDeserializeVectorFloat32(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chk.AppendVectorFloat32(colIdx, v)
+		b = remaining
 	case NilFlag:
 		chk.AppendNull(colIdx)
 	default:
@@ -1315,8 +1364,16 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 				buf[i] = encodeBytes(buf[i], ConvertByCollation(col.GetBytes(i), ft), false)
 			}
 		}
+	case types.ETVectorFloat32:
+		for i := 0; i < n; i++ {
+			if col.IsNull(i) {
+				buf[i] = append(buf[i], NilFlag)
+			} else {
+				buf[i] = col.GetVectorFloat32(i).SerializeTo(buf[i])
+			}
+		}
 	default:
-		return nil, fmt.Errorf("invalid eval type %v", ft.EvalType())
+		return nil, errors.Errorf("unsupported type %s during evaluation", ft.EvalType())
 	}
 	return buf, nil
 }
@@ -1372,6 +1429,10 @@ func HashCode(b []byte, d types.Datum) []byte {
 		j := d.GetMysqlJSON()
 		b = append(b, j.TypeCode)
 		b = append(b, j.Value...)
+	case types.KindVectorFloat32:
+		b = append(b, vectorFloat32Flag)
+		v := d.GetVectorFloat32()
+		b = v.SerializeTo(b)
 	case types.KindNull:
 		b = append(b, NilFlag)
 	case types.KindMinNotNull:

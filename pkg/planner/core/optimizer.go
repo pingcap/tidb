@@ -440,7 +440,10 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
-	tryEnableLateMaterialization(sctx, plan)
+	if !tryEnableANNIndex(sctx, plan) {
+		// Only enable late mat when ANN index is not enabled.
+		tryEnableLateMaterialization(sctx, plan)
+	}
 	generateRuntimeFilter(sctx, plan)
 	return plan, nil
 }
@@ -597,6 +600,10 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 		}
 	}
 	return nil
+}
+
+func tryEnableANNIndex(sctx sessionctx.Context, plan PhysicalPlan) bool {
+	return addANNIndexHintToTableScan(sctx, plan)
 }
 
 // tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
@@ -1371,7 +1378,7 @@ func existsOverlongType(schema *expression.Schema) bool {
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
 		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeBlob, mysql.TypeJSON:
+			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar:
 			// if the column is varchar and the length of

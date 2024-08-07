@@ -1336,17 +1336,11 @@ type TiFlashSystemTableExtractor struct {
 
 	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
-	// TiFlashInstances represents all tiflash instances we should send request to.
-	// e.g:
-	// 1. SELECT * FROM information_schema.<table_name> WHERE tiflash_instance='192.168.1.7:3930'
-	// 2. SELECT * FROM information_schema.<table_name> WHERE tiflash_instance in ('192.168.1.7:3930', '192.168.1.9:3930')
-	TiFlashInstances set.StringSet
 	// TidbDatabases represents tidbDatabases applied to, and we should apply all tidb database if there is no database specified.
 	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_database in ('test', 'test2').
 	TiDBDatabases string
-	// TidbTables represents tidbTables applied to, and we should apply all tidb table if there is no table specified.
-	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_table in ('t', 't2').
-	TiDBTables string
+	// Don't extract TiFlashInstances in Serverless, because we will mask them.
+	// Don't extract TiDBTables, because it is a physical table name. We will rewrite into a logical table name.
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1355,19 +1349,13 @@ func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `tiflash_instance` columns.
-	remained, instanceSkip, tiflashInstances := e.extractCol(schema, names, predicates, "tiflash_instance", false)
 	// Extract the `tidb_database` columns.
-	remained, databaseSkip, tidbDatabases := e.extractCol(schema, names, remained, "tidb_database", true)
-	// Extract the `tidb_table` columns.
-	remained, tableSkip, tidbTables := e.extractCol(schema, names, remained, "tidb_table", true)
-	e.SkipRequest = instanceSkip || databaseSkip || tableSkip
+	remained, databaseSkip, tidbDatabases := e.extractCol(schema, names, predicates, "tidb_database", true)
+	e.SkipRequest = databaseSkip
 	if e.SkipRequest {
 		return nil
 	}
-	e.TiFlashInstances = tiflashInstances
 	e.TiDBDatabases = extractStringFromStringSet(tidbDatabases)
-	e.TiDBTables = extractStringFromStringSet(tidbTables)
 	return remained
 }
 
@@ -1376,14 +1364,8 @@ func (e *TiFlashSystemTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 		return "skip_request:true"
 	}
 	r := new(bytes.Buffer)
-	if len(e.TiFlashInstances) > 0 {
-		fmt.Fprintf(r, "tiflash_instances:[%s], ", extractStringFromStringSet(e.TiFlashInstances))
-	}
 	if len(e.TiDBDatabases) > 0 {
 		fmt.Fprintf(r, "tidb_databases:[%s], ", e.TiDBDatabases)
-	}
-	if len(e.TiDBTables) > 0 {
-		fmt.Fprintf(r, "tidb_tables:[%s], ", e.TiDBTables)
 	}
 	// remove the last ", " in the message info
 	s := r.String()

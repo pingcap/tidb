@@ -141,6 +141,17 @@ func (c *Constant) String() string {
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }
 
+// StringForExplain implements Explainable interface.
+func (c *Constant) StringForExplain() string {
+	if c.ParamMarker != nil {
+		dt := c.ParamMarker.GetUserVar()
+		c.Value.SetValue(dt.GetValue(), c.RetType)
+	} else if c.DeferredExpr != nil {
+		return c.DeferredExpr.StringForExplain()
+	}
+	return c.Value.StringForExplain()
+}
+
 // MarshalJSON implements json.Marshaler interface.
 func (c *Constant) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("%q", c)), nil
@@ -219,6 +230,14 @@ func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 		return genVecFromConstExpr(ctx, c, types.ETJson, input, result)
 	}
 	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
+}
+
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalVectorFloat32(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETVectorFloat32, input, result)
+	}
+	return c.DeferredExpr.VecEvalVectorFloat32(ctx, input, result)
 }
 
 func (c *Constant) getLazyDatum(row chunk.Row) (dt types.Datum, isLazy bool, err error) {
@@ -399,6 +418,21 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.Binary
 		return types.BinaryJSON{}, true, nil
 	}
 	return dt.GetMysqlJSON(), false, nil
+}
+
+// EvalVectorFloat32 returns VectorFloat32 representation of Constant.
+func (c *Constant) EvalVectorFloat32(ctx sessionctx.Context, row chunk.Row) (types.VectorFloat32, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
+	if err != nil {
+		return types.ZeroVectorFloat32, false, err
+	}
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType().GetType() == mysql.TypeNull || dt.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return dt.GetVectorFloat32(), false, nil
 }
 
 // Equal implements Expression interface.
