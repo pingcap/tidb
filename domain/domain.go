@@ -1698,12 +1698,13 @@ func (do *Domain) StartPlanReplayerHandle() {
 	}
 	do.wg.Add(2)
 	go func() {
+		logutil.BgLogger().Info("PlanReplayerTaskCollectHandle started")
 		tikcer := time.NewTicker(time.Duration(lease))
 		defer func() {
 			tikcer.Stop()
 			do.wg.Done()
-			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
+			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
 		}()
 		for {
 			select {
@@ -1718,10 +1719,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 		}
 	}()
 	go func() {
+		logutil.BgLogger().Info("PlanReplayerTaskCollectHandle started")
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
+			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 		}()
 		for {
 			select {
@@ -1743,12 +1745,13 @@ func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)
 	go func() {
+		logutil.BgLogger().Info("dumpFileGcChecker started")
 		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
 		defer func() {
 			gcTicker.Stop()
 			do.wg.Done()
-			logutil.BgLogger().Info("dumpFileGcChecker exited.")
 			util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
+			logutil.BgLogger().Info("dumpFileGcChecker exited.")
 		}()
 		for {
 			select {
@@ -1776,16 +1779,21 @@ func (do *Domain) StartHistoricalStatsWorker() {
 	}
 	do.wg.Add(1)
 	go func() {
+		logutil.BgLogger().Info("HistoricalStatsWorker started")
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
 			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
 		}()
 		for {
 			select {
 			case <-do.exit:
+				close(do.historicalStatsWorker.tblCH)
 				return
-			case tblID := <-do.historicalStatsWorker.tblCH:
+			case tblID, ok := <-do.historicalStatsWorker.tblCH:
+				if !ok {
+					return
+				}
 				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
 				if err != nil {
 					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
@@ -2016,8 +2024,30 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
+func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, owner owner.Manager) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
+		statsHandle.FlushStats()
+		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
+		owner.Cancel()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("updateStatsWorker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("updateStatsWorker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
 	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
 	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
@@ -2037,13 +2067,13 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		deltaUpdateTicker.Stop()
 		readMemTricker.Stop()
 		do.SetStatsUpdating(false)
+		util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
 	for {
 		select {
 		case <-do.exit:
-			statsHandle.FlushStats()
-			owner.Cancel()
+			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
