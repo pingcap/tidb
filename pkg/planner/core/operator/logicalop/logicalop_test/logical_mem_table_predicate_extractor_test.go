@@ -1635,30 +1635,30 @@ func TestColumns(t *testing.T) {
 		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.ColumnsTableExtractor)
 		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
 
-		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColumnName.Count())
-		if ca.columnName.Count() > 0 && columnsTableExtractor.ColumnName.Count() > 0 {
-			require.EqualValues(t, ca.columnName, columnsTableExtractor.ColumnName, "SQL: %v", ca.sql)
+		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColPredicates["column_name"].Count())
+		if ca.columnName.Count() > 0 && columnsTableExtractor.ColPredicates["column_name"].Count() > 0 {
+			require.EqualValues(t, ca.columnName, columnsTableExtractor.ColPredicates["column_name"], "SQL: %v", ca.sql)
 		}
 
-		require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.TableSchema.Count())
-		if ca.tableSchema.Count() > 0 && columnsTableExtractor.TableSchema.Count() > 0 {
-			require.EqualValues(t, ca.tableSchema, columnsTableExtractor.TableSchema, "SQL: %v", ca.sql)
+		require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.ColPredicates["table_schema"].Count())
+		if ca.tableSchema.Count() > 0 && columnsTableExtractor.ColPredicates["table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, columnsTableExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
 		}
-		require.Equal(t, ca.tableName.Count(), columnsTableExtractor.TableName.Count())
-		if ca.tableName.Count() > 0 && columnsTableExtractor.TableName.Count() > 0 {
-			require.EqualValues(t, ca.tableName, columnsTableExtractor.TableName, "SQL: %v", ca.sql)
+		require.Equal(t, ca.tableName.Count(), columnsTableExtractor.ColPredicates["table_name"].Count())
+		if ca.tableName.Count() > 0 && columnsTableExtractor.ColPredicates["table_name"].Count() > 0 {
+			require.EqualValues(t, ca.tableName, columnsTableExtractor.ColPredicates["table_name"], "SQL: %v", ca.sql)
 		}
-		require.Equal(t, len(ca.tableNamePattern), len(columnsTableExtractor.TableNamePatterns))
-		if len(ca.tableNamePattern) > 0 && len(columnsTableExtractor.TableNamePatterns) > 0 {
-			require.EqualValues(t, ca.tableNamePattern, columnsTableExtractor.TableNamePatterns, "SQL: %v", ca.sql)
+		require.Equal(t, len(ca.tableNamePattern), len(columnsTableExtractor.LikePatterns["table_name"]))
+		if len(ca.tableNamePattern) > 0 && len(columnsTableExtractor.LikePatterns["table_name"]) > 0 {
+			require.EqualValues(t, ca.tableNamePattern, columnsTableExtractor.LikePatterns["table_name"], "SQL: %v", ca.sql)
 		}
-		require.Equal(t, len(ca.columnNamePattern), len(columnsTableExtractor.ColumnNamePatterns))
-		if len(ca.columnNamePattern) > 0 && len(columnsTableExtractor.ColumnNamePatterns) > 0 {
-			require.EqualValues(t, ca.columnNamePattern, columnsTableExtractor.ColumnNamePatterns, "SQL: %v", ca.sql)
+		require.Equal(t, len(ca.columnNamePattern), len(columnsTableExtractor.LikePatterns["column_name"]))
+		if len(ca.columnNamePattern) > 0 && len(columnsTableExtractor.LikePatterns["column_name"]) > 0 {
+			require.EqualValues(t, ca.columnNamePattern, columnsTableExtractor.LikePatterns["column_name"], "SQL: %v", ca.sql)
 		}
-		require.Equal(t, len(ca.tableSchemaPattern), len(columnsTableExtractor.TableSchemaPatterns))
-		if len(ca.tableSchemaPattern) > 0 && len(columnsTableExtractor.TableSchemaPatterns) > 0 {
-			require.EqualValues(t, ca.tableSchemaPattern, columnsTableExtractor.TableSchemaPatterns, "SQL: %v", ca.sql)
+		require.Equal(t, len(ca.tableSchemaPattern), len(columnsTableExtractor.LikePatterns["table_schema"]))
+		if len(ca.tableSchemaPattern) > 0 && len(columnsTableExtractor.LikePatterns["table_schema"]) > 0 {
+			require.EqualValues(t, ca.tableSchemaPattern, columnsTableExtractor.LikePatterns["table_schema"], "SQL: %v", ca.sql)
 		}
 	}
 }
@@ -1764,7 +1764,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			params:   []any{"a%"},
 			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.ColumnsTableExtractor)
-				require.EqualValues(t, []string{"a%"}, rse.TableNamePatterns)
+				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
 			},
 		},
 		{
@@ -2057,6 +2057,8 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		case *plannercore.InfoSchemaKeyColumnUsageExtractor:
 			base = &ex.InfoSchemaBaseExtractor
 		case *plannercore.InfoSchemaTableConstraintsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.ColumnsTableExtractor:
 			base = &ex.InfoSchemaBaseExtractor
 		default:
 			require.Failf(t, "unexpected extractor type", "%T", ex)

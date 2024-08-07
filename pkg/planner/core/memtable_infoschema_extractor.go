@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"golang.org/x/exp/maps"
 )
@@ -44,6 +46,7 @@ const (
 	_schemaName       = "schema_name"
 	_constraintSchema = "constraint_schema"
 	_constraintName   = "constraint_name"
+	_columnName       = "column_name"
 )
 
 var extractableColumns = map[string][]string{
@@ -61,6 +64,18 @@ var extractableColumns = map[string][]string{
 	// See infoschema.statisticsCols for full columns.
 	// Used by InfoSchemaStatisticsExtractor and setDataForStatistics.
 	infoschema.TableStatistics: {
+		_tableSchema, _tableName,
+		_indexName,
+	},
+	// See infoschema.columns for full columns.
+	// Used by InfoSchemaStatisticsExtractor and setDataFromColumns.
+	infoschema.TableColumns: {
+		_tableSchema, _tableName,
+		_columnName,
+	},
+	// See infoschema.tidb_index_usage for full columns.
+	// Used by InfoSchemaIndexesExtractor and setDataFromIndexUsage.
+	infoschema.TableTiDBIndexUsage: {
 		_tableSchema, _tableName,
 		_indexName,
 	},
@@ -613,4 +628,247 @@ func (e *InfoSchemaBaseExtractor) getSchemaObjectNames(colName string) []model.C
 		return tableNames
 	}
 	return nil
+}
+
+// InfoSchemaTableNameExtractor is a base struct used to list schema and tables by predicates.
+type InfoSchemaTableNameExtractor struct {
+	InfoSchemaSchemataExtractor
+
+	listTableFunc func(
+		s model.CIStr,
+		ctx context.Context,
+		is infoschema.InfoSchema,
+	) ([]*model.TableInfo, error)
+
+	extracted bool
+
+	tableNames []model.CIStr
+
+	predColsLower map[string]set.StringSet
+
+	LikePatterns map[string][]string
+
+	colRegexp map[string][]collate.WildcardPattern
+}
+
+func (e *InfoSchemaTableNameExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	e.extracted = true
+	remained := e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
+	if e.SkipRequest {
+		return remained
+	}
+
+	e.LikePatterns = make(map[string][]string, len(e.colNames))
+	e.colRegexp = make(map[string][]collate.WildcardPattern, len(e.colNames))
+	e.predColsLower = make(map[string]set.StringSet, len(e.colNames))
+	var likePatterns []string
+	for _, colName := range e.colNames {
+		remained, likePatterns = e.extractLikePatternCol(ctx, schema, names, remained, colName, true, false)
+		regexp := make([]collate.WildcardPattern, len(likePatterns))
+		predColLower := set.StringSet{}
+		for i, pattern := range likePatterns {
+			regexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			regexp[i].Compile(pattern, byte('\\'))
+		}
+		if vals, ok := e.ColPredicates[colName]; ok {
+			vals.IterateWith(func(n string) {
+				predColLower.Insert(strings.ToLower(n))
+			})
+		}
+		e.predColsLower[colName] = predColLower
+		e.LikePatterns[colName] = likePatterns
+		e.colRegexp[colName] = regexp
+	}
+
+	return remained
+}
+
+func (e *InfoSchemaTableNameExtractor) ListSchemas(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) []model.CIStr {
+	allSchemas := e.InfoSchemaSchemataExtractor.listSchemas(is, _tableSchema)
+
+	if regexp, ok := e.colRegexp[_tableSchema]; ok {
+		schemas := make([]model.CIStr, 0, len(allSchemas))
+	ForLoop:
+		for _, schema := range allSchemas {
+			for _, re := range regexp {
+				if !re.DoMatch(schema.L) {
+					continue ForLoop
+				}
+			}
+			schemas = append(schemas, schema)
+		}
+		allSchemas = schemas
+	}
+
+	// TODO: add table_id here
+	tableNames := e.getSchemaObjectNames(_tableName)
+	e.tableNames = tableNames
+	if len(tableNames) > 0 {
+		e.listTableFunc = e.listSchemaTablesByName
+	} else {
+		e.listTableFunc = e.listSchemaTables
+	}
+
+	return allSchemas
+}
+
+func (e *InfoSchemaTableNameExtractor) ListTables(
+	ctx context.Context,
+	s model.CIStr,
+	is infoschema.InfoSchema,
+) ([]*model.TableInfo, error) {
+	allTbls, err := e.listTableFunc(s, ctx, is)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if regexp, ok := e.colRegexp[_tableName]; ok {
+		tbls := make([]*model.TableInfo, 0, len(allTbls))
+	ForLoop:
+		for _, tbl := range allTbls {
+			for _, re := range regexp {
+				if !re.DoMatch(tbl.Name.L) {
+					continue ForLoop
+				}
+			}
+			tbls = append(tbls, tbl)
+		}
+		allTbls = tbls
+	}
+
+	return allTbls, nil
+}
+
+func (e *InfoSchemaTableNameExtractor) listSchemaTablesByName(
+	s model.CIStr,
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]*model.TableInfo, error) {
+	tbls := make([]*model.TableInfo, 0, len(e.tableNames))
+	for _, n := range e.tableNames {
+		tbl, err := is.TableByName(ctx, s, n)
+		if err != nil {
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
+		tbls = append(tbls, tbl.Meta())
+	}
+
+	return tbls, nil
+}
+
+func (e *InfoSchemaTableNameExtractor) listSchemaTables(
+	s model.CIStr,
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]*model.TableInfo, error) {
+	return is.SchemaTableInfos(ctx, s)
+}
+
+// getPredicates gets the object names and like pattern specified in predicate of given column name.
+func (e *InfoSchemaTableNameExtractor) getPredicates(colName string) (
+	set.StringSet, []collate.WildcardPattern) {
+	if predCol, ok := e.predColsLower[colName]; ok {
+		return predCol, e.colRegexp[colName]
+	}
+	return nil, nil
+}
+
+func (e *InfoSchemaTableNameExtractor) ExplainInfo(plan base.PhysicalPlan) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+
+	r := new(bytes.Buffer)
+
+	colNames := make([]string, len(e.colNames))
+	copy(colNames, e.colNames)
+	sort.Strings(colNames)
+
+	for _, colName := range colNames {
+		if pred, ok := e.ColPredicates[colName]; ok && len(pred) > 0 {
+			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(pred))
+		}
+	}
+
+	for _, colName := range colNames {
+		if patterns, ok := e.LikePatterns[colName]; ok && len(patterns) > 0 {
+			fmt.Fprintf(r, "%s_pattern:[%s], ", colName, extractStringFromStringSlice(patterns))
+		}
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+type ColumnsTableExtractor struct {
+	InfoSchemaTableNameExtractor
+}
+
+func (e *InfoSchemaTableNameExtractor) ListColumns(
+	tbl *model.TableInfo,
+) []*model.ColumnInfo {
+	predCol, regexp := e.getPredicates(_columnName)
+	if len(predCol) == 0 && len(regexp) == 0 {
+		return tbl.Columns
+	}
+
+	columns := make([]*model.ColumnInfo, 0, len(predCol))
+ForLoop:
+	for _, column := range tbl.Columns {
+		if len(predCol) > 0 && !predCol.Exist(column.Name.L) {
+			continue
+		}
+		for _, re := range regexp {
+			if !re.DoMatch(column.Name.L) {
+				continue ForLoop
+			}
+		}
+		columns = append(columns, column)
+	}
+
+	return columns
+}
+
+type InfoSchemaIndexesExtractor struct {
+	InfoSchemaTableNameExtractor
+}
+
+func (e *InfoSchemaIndexesExtractor) ListIndexes(
+	tbl *model.TableInfo,
+) []*model.IndexInfo {
+	predCol, regexp := e.getPredicates(_indexName)
+	if len(predCol) == 0 && len(regexp) == 0 {
+		return tbl.Indices
+	}
+
+	indexes := make([]*model.IndexInfo, 0, len(predCol))
+ForLoop:
+	for _, index := range tbl.Indices {
+		if len(predCol) > 0 && !predCol.Exist(index.Name.L) {
+			continue
+		}
+		for _, re := range regexp {
+			if !re.DoMatch(index.Name.L) {
+				continue ForLoop
+			}
+		}
+		indexes = append(indexes, index)
+	}
+
+	return indexes
 }
