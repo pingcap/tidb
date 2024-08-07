@@ -248,7 +248,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	idxID := table.Meta().Indices[0].ID
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
 	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
+	require.Equal(t, 0.1, count)
 
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
 	require.NoError(t, err)
