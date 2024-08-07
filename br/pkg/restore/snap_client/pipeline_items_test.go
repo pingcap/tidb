@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ type fakeRestorer struct {
 	tableIDIsInsequence bool
 }
 
-func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress, isRawKv bool) error {
+func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -57,14 +58,14 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, up
 	return nil
 }
 
-func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []snapclient.TableIDWithFiles, updateCh glue.Progress) error {
+func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, files []sstfiles.SstFilesInfo, updateCh glue.Progress) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	for i, tableIDWithFile := range tableIDWithFiles {
+	for i, tableIDWithFile := range files {
 		if int64(i) != tableIDWithFile.TableID {
 			f.tableIDIsInsequence = false
 		}
