@@ -17,6 +17,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -276,7 +277,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	b.ResetTimer()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		core.SubstituteExpression(selection.(*core.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
+		core.SubstituteExpression(selection.(*logicalop.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
 	}
 	b.StopTimer()
 }

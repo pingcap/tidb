@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"

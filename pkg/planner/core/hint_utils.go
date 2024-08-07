@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -579,7 +580,7 @@ func extractOrderedPhysicalJoinGroup(p PhysicalJoin, visitedIDs map[int]struct{}
 
 	jt := p.GetJoinType()
 	// They are the only join types supported by current join reorder.
-	if jt != InnerJoin && jt != LeftOuterJoin && jt != RightOuterJoin {
+	if jt != logicalop.InnerJoin && jt != logicalop.LeftOuterJoin && jt != logicalop.RightOuterJoin {
 		return nil
 	}
 

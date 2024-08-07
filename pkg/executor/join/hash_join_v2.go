@@ -17,6 +17,7 @@ package join
 import (
 	"bytes"
 	"context"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"

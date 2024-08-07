@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 	"runtime"
 	"slices"
@@ -1155,8 +1156,8 @@ func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base
 }
 
 func existsCartesianProduct(p base.LogicalPlan) bool {
-	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
-		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
+	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
+		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
 	}
 	for _, child := range p.Children() {
 		if existsCartesianProduct(child) {

@@ -186,7 +186,7 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 	var tp types.EvalType
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	switch x := lp.(type) {
-	case *LogicalSelection:
+	case *logicalop.LogicalSelection:
 		for _, cond := range x.Conditions {
 			substituteExpression(cond, lp, exprToColumn, x.Schema(), opt)
 		}

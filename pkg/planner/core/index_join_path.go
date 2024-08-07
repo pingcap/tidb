@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -584,7 +585,7 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 // getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
 // index join path for each access path. It returns the best index join path result and the mapping.
 func getBestIndexJoinPathResult(
-	join *LogicalJoin,
+	join *logicalop.LogicalJoin,
 	innerChild *DataSource,
 	innerJoinKeys, outerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {

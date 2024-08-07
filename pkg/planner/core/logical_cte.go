@@ -184,7 +184,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		// Build push-downed predicates.
 		if len(p.Cte.pushDownPredicates) > 0 {
 			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.Cte.pushDownPredicates...)
-			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.seedPartLogicalPlan.QueryBlockOffset())
+			newSel := logicalop.LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.seedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.Cte.seedPartLogicalPlan)
 			p.Cte.seedPartLogicalPlan = newSel
 			p.Cte.optFlag |= flagPredicatePushDown
