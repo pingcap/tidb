@@ -85,8 +85,6 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
-<<<<<<< HEAD
-=======
 
 func TestIssue54535(t *testing.T) {
 	// test for tidb_enable_inl_join_inner_multi_pattern system variable
@@ -118,4 +116,3 @@ func TestIssue54535(t *testing.T) {
 	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
 	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(distinct col_2 order by col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
 }
->>>>>>> de943d1a2ca (planner: avoid nil PhysicalProperty when to build agg (#55201))
