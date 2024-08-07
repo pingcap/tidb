@@ -1559,7 +1559,7 @@ import (
 	FirstOrNext       "FIRST or NEXT"
 	RowOrRows         "ROW or ROWS"
 	Replica           "{REPLICA | SLAVE}"
-	GlobalOpt         "GLOBAL or empty"
+	GlobalOrLocalOpt  "GLOBAL, LOCAL or empty"
 
 %type	<ident>
 	Identifier                      "identifier or unreserved keyword"
@@ -2777,7 +2777,11 @@ WithClustered:
 		$$ = model.PrimaryKeyTypeNonClustered
 	}
 
-GlobalOpt:
+GlobalOrLocalOpt:
+	{
+		$$ = ""
+	}
+|	"LOCAL"
 	{
 		$$ = ""
 	}
@@ -3581,14 +3585,14 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoIncrement}
 	}
-|	PrimaryOpt "KEY" GlobalOpt
+|	PrimaryOpt "KEY" GlobalOrLocalOpt
 	{
 		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
 		// can also be specified as just KEY when given in a column definition.
 		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey, StrValue: $3}
 	}
-|	PrimaryOpt "KEY" WithClustered GlobalOpt
+|	PrimaryOpt "KEY" WithClustered GlobalOrLocalOpt
 	{
 		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
 		// can also be specified as just KEY when given in a column definition.
@@ -3603,7 +3607,7 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
 	}
-|	"UNIQUE" "KEY" GlobalOpt
+|	"UNIQUE" "KEY" GlobalOrLocalOpt
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey, StrValue: $3}
 	}
@@ -6573,6 +6577,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Global: true,
+		}
+	}
+|	"LOCAL"
+	{
+		$$ = &ast.IndexOption{
+			Global: false,
 		}
 	}
 
