@@ -715,8 +715,10 @@ const (
 //	| index_type
 //	| WITH PARSER parser_name
 //	| COMMENT 'string'
+//	| GLOBAL
 //
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
+// with the addition of Global Index
 type IndexOption struct {
 	node
 
@@ -726,6 +728,7 @@ type IndexOption struct {
 	ParserName   model.CIStr
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
+	Global       bool
 }
 
 // Restore implements Node interface.
@@ -771,6 +774,17 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WriteString(n.Comment)
+		hasPrevOption = true
+	}
+
+	if n.Global {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
+			ctx.WriteKeyWord("GLOBAL")
+			return nil
+		})
 		hasPrevOption = true
 	}
 
@@ -4344,8 +4358,9 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 // PartitionOptions specifies the partition options.
 type PartitionOptions struct {
 	PartitionMethod
-	Sub         *PartitionMethod
-	Definitions []*PartitionDefinition
+	Sub             *PartitionMethod
+	Definitions     []*PartitionDefinition
+	ConvertToGlobal bool
 }
 
 // Validate checks if the partition is well-formed.
@@ -4437,6 +4452,14 @@ func (n *PartitionOptions) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 		ctx.WritePlain(")")
+	}
+
+	if n.ConvertToGlobal {
+		ctx.WritePlain(" ")
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
+			ctx.WritePlain("CONVERT TO GLOBAL INDEX")
+			return nil
+		})
 	}
 
 	return nil
