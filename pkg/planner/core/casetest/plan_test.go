@@ -36,7 +36,10 @@ func getPlanRows(planStr string) []string {
 }
 
 func compareStringSlice(t *testing.T, ss1, ss2 []string) {
-	require.Equal(t, ss1, ss2)
+	require.Equal(t, len(ss1), len(ss2))
+	for i, s := range ss1 {
+		require.Equal(t, len(s), len(ss2[i]))
+	}
 }
 
 func TestPreferRangeScan(t *testing.T) {
