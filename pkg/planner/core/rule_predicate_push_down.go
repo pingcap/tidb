@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
+// PPDSolver stands for Predicate Push Down.
 type PPDSolver struct{}
 
 // exprPrefixAdder is the wrapper struct to add tidb_shard(x) = val for `OrigConds`

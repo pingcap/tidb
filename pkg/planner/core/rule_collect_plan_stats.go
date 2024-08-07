@@ -79,6 +79,7 @@ func (CollectPredicateColumnsPoint) Name() string {
 	return "collect_predicate_columns_point"
 }
 
+// SyncWaitStatsLoadPoint sync-wait for stats load point.
 type SyncWaitStatsLoadPoint struct{}
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
