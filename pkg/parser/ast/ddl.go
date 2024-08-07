@@ -4358,9 +4358,9 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 // PartitionOptions specifies the partition options.
 type PartitionOptions struct {
 	PartitionMethod
-	Sub             *PartitionMethod
-	Definitions     []*PartitionDefinition
-	ConvertToGlobal bool
+	Sub           *PartitionMethod
+	Definitions   []*PartitionDefinition
+	UpdateIndexes []*Constraint
 }
 
 // Validate checks if the partition is well-formed.
@@ -4454,12 +4454,20 @@ func (n *PartitionOptions) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if n.ConvertToGlobal {
-		ctx.WritePlain(" ")
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
-			ctx.WritePlain("CONVERT TO GLOBAL INDEX")
-			return nil
-		})
+	if len(n.UpdateIndexes) > 0 {
+		ctx.WritePlain(" UPDATE INDEXES (")
+		for i, update := range n.UpdateIndexes {
+			if i > 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(update.Name)
+			if update.Option != nil && update.Option.Global {
+				ctx.WritePlain(" GLOBAL")
+			} else {
+				ctx.WritePlain(" LOCAL")
+			}
+		}
+		ctx.WritePlain(")")
 	}
 
 	return nil

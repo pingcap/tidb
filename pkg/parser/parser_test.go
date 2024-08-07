@@ -3219,8 +3219,12 @@ func TestDDL(t *testing.T) {
 
 		{"alter table t partition by hash(a)", true, "ALTER TABLE `t` PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t add column a int partition by hash(a)", true, "ALTER TABLE `t` ADD COLUMN `a` INT PARTITION BY HASH (`a`) PARTITIONS 1"},
-		{"alter table t add column a int partition by hash(a) convert to global index", true, "ALTER TABLE `t` ADD COLUMN `a` INT PARTITION BY HASH (`a`) PARTITIONS 1 CONVERT TO GLOBAL INDEX"},
+		{"alter table t add column a int partition by hash(a) update indexes (idx_a global)", true, "ALTER TABLE `t` ADD COLUMN `a` INT PARTITION BY HASH (`a`) PARTITIONS 1 UPDATE INDEXES (`idx_a` GLOBAL)"},
+		{"alter table t add column a int partition by hash(a) update indexes (idx_a global, idx_b local)", true, "ALTER TABLE `t` ADD COLUMN `a` INT PARTITION BY HASH (`a`) PARTITIONS 1 UPDATE INDEXES (`idx_a` GLOBAL,`idx_b` LOCAL)"},
+		{"alter table t add column a int partition by hash(a) update indexes (idx_a normal)", false, ""},
+		{"alter table t add column a int partition by hash(a) update indexes (global)", false, ""},
 		{"alter table t partition by range(a)", false, ""},
+		{"alter table t partition by range(a) update indexes (a local)", false, ""},
 		{"alter table t partition by range(a) (partition x values less than (75))", true, "ALTER TABLE `t` PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (75))"},
 		{"alter table t add column a int, partition by range(a) (partition x values less than (75))", false, ""},
 		{"alter table t comment 'cmt' partition by hash(a)", true, "ALTER TABLE `t` COMMENT = 'cmt' PARTITION BY HASH (`a`) PARTITIONS 1"},
