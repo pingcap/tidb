@@ -1134,7 +1134,6 @@ import (
 	Constraint                             "table constraint"
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
-	ConvertToGlobalOpt                     "CONVERT TO GLOBAL INDEX or empty"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1171,6 +1170,7 @@ import (
 	FirstAndLastPartOpt                    "First and Last partition option"
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
+	GlobalOrLocal                          "{GLOBAL|LOCAL}"
 	GlobalScope                            "The scope of variable"
 	StatementScope                         "The scope of statement"
 	GroupByClause                          "GROUP BY clause"
@@ -1364,6 +1364,9 @@ import (
 	TransactionChars                       "Transaction characteristic list"
 	TrimDirection                          "Trim string direction"
 	SetOprOpt                              "Union/Except/Intersect Option(empty/ALL/DISTINCT)"
+	UpdateIndexElem                        "IndexName {GLOBAL/LOCAL}"
+	UpdateIndexesList                      "UpdateIndexElem[,...]"
+	UpdateIndexesOpt                       "UPDATE INDEXES (UpdateIndexesList) or empty"
 	Username                               "Username"
 	UsernameList                           "UsernameList"
 	UserSpec                               "Username and auth option"
@@ -4472,18 +4475,18 @@ PartitionOpt:
 	{
 		$$ = nil
 	}
-|	"PARTITION" "BY" PartitionMethod PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt ConvertToGlobalOpt
+|	"PARTITION" "BY" PartitionMethod PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt UpdateIndexesOpt
 	{
 		method := $3.(*ast.PartitionMethod)
 		method.Num = $4.(uint64)
 		sub, _ := $5.(*ast.PartitionMethod)
 		defs, _ := $6.([]*ast.PartitionDefinition)
-		convertToGlobal, _ := $7.(bool)
+		UpdateIndexes, _ := $7.([]*ast.Constraint)
 		opt := &ast.PartitionOptions{
 			PartitionMethod: *method,
 			Sub:             sub,
 			Definitions:     defs,
-			ConvertToGlobal: convertToGlobal,
+			UpdateIndexes:   UpdateIndexes,
 		}
 		if err := opt.Validate(); err != nil {
 			yylex.AppendError(err)
@@ -4492,13 +4495,43 @@ PartitionOpt:
 		$$ = opt
 	}
 
-ConvertToGlobalOpt:
+GlobalOrLocal:
+	"LOCAL"
 	{
 		$$ = false
 	}
-|	"CONVERT" "TO" "GLOBAL" "INDEX"
+|	"GLOBAL"
 	{
 		$$ = true
+	}
+
+UpdateIndexElem:
+	Identifier GlobalOrLocal
+	{
+		opt := &ast.IndexOption{Global: $2.(bool)}
+		$$ = &ast.Constraint{
+			Name:   $1,
+			Option: opt,
+		}
+	}
+
+UpdateIndexesList:
+	UpdateIndexElem
+	{
+		$$ = []*ast.Constraint{$1.(*ast.Constraint)}
+	}
+|	UpdateIndexesList ',' UpdateIndexElem
+	{
+		$$ = append($1.([]*ast.Constraint), $3.(*ast.Constraint))
+	}
+
+UpdateIndexesOpt:
+	{
+		$$ = nil
+	}
+|	"UPDATE" "INDEXES" '(' UpdateIndexesList ')'
+	{
+		$$ = $4
 	}
 
 SubPartitionMethod:

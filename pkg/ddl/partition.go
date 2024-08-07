@@ -637,18 +637,12 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				}
 				return errors.Trace(dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(tp))
 			}
-			if s.ConvertToGlobal && !index.Global {
-				// Convert the index to global
-				index.Global = true
-				// TODO: Implicitly keep previously global indexes?
-				// Test?
-			}
 			// Require explicit mentioning of GLOBAL, to have a global index!
 			if !index.Global {
 				if index.Primary && tbInfo.IsCommonHandle {
 					return errors.Trace(dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX"))
 				}
-				return errors.Trace(dbterror.ErrGlobalIndexNotExplicitlySet)
+				return errors.Trace(dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O))
 			}
 		}
 	}

@@ -2435,6 +2435,25 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 	newPartInfo := newMeta.Partition
 
+	if spec.Partition != nil && len(spec.Partition.UpdateIndexes) > 0 {
+		for _, idxUpdate := range spec.Partition.UpdateIndexes {
+			idxOffset := -1
+			for i := range newMeta.Indices {
+				if strings.EqualFold(newMeta.Indices[i].Name.L, idxUpdate.Name) {
+					idxOffset = i
+					break
+				}
+			}
+			if idxOffset == -1 {
+				return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(idxUpdate.Name)
+			}
+			if idxUpdate.Option != nil && idxUpdate.Option.Global {
+				newMeta.Indices[idxOffset].Global = true
+			} else {
+				newMeta.Indices[idxOffset].Global = false
+			}
+		}
+	}
 	for _, index := range newMeta.Indices {
 		if index.Unique {
 			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
@@ -2455,10 +2474,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 				if indexTp != "" {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 				}
-				if !spec.Partition.ConvertToGlobal {
-					return dbterror.ErrGlobalIndexNotExplicitlySet
+				if !index.Global {
+					return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
 				}
-				index.Global = true
 			}
 		}
 	}
@@ -4558,7 +4576,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			}
 			// index columns does not contain all partition columns, must set global
 			if indexOption == nil || !indexOption.Global {
-				return dbterror.ErrGlobalIndexNotExplicitlySet
+				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs("PRIMARY")
 			}
 			global = true
 		}
@@ -4705,7 +4723,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			}
 			// index columns does not contain all partition columns, must set global
 			if indexOption == nil || !indexOption.Global {
-				return dbterror.ErrGlobalIndexNotExplicitlySet
+				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
 			}
 		}
 	}
