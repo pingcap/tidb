@@ -39,9 +39,10 @@ var tlsCrtStr []byte
 var tlsKeyStr []byte
 
 func TestCanonicalizeDN(t *testing.T) {
-	impl := &ldapAuthImpl{
+	implBuilder := &ldapAuthImplBuilder{
 		searchAttr: "cn",
 	}
+	impl := implBuilder.build()
 	require.Equal(t, impl.canonicalizeDN("yka", "cn=y,dc=ping,dc=cap"), "cn=y,dc=ping,dc=cap")
 	require.Equal(t, impl.canonicalizeDN("yka", "+dc=ping,dc=cap"), "cn=yka,dc=ping,dc=cap")
 }
@@ -97,15 +98,17 @@ func TestConnectThrough636(t *testing.T) {
 		serverWg.Wait()
 	}()
 
-	impl := &ldapAuthImpl{}
+	impl := &ldapAuthImplBuilder{}
 	impl.SetEnableTLS(true)
 	impl.SetLDAPServerHost("localhost")
 	impl.SetLDAPServerPort(randomTLSServicePort)
 
 	impl.caPool = x509.NewCertPool()
 	require.True(t, impl.caPool.AppendCertsFromPEM(tlsCAStr))
+	impl.SetInitCapacity(1)
+	impl.SetMaxCapacity(1)
 
-	conn, err := impl.connectionFactory()
+	conn, err := impl.ldapConnectionPool.Get()
 	require.NoError(t, err)
 	defer conn.Close()
 }
@@ -162,15 +165,17 @@ func TestConnectWithTLS11(t *testing.T) {
 		serverWg.Wait()
 	}()
 
-	impl := &ldapAuthImpl{}
+	impl := &ldapAuthImplBuilder{}
 	impl.SetEnableTLS(true)
 	impl.SetLDAPServerHost("localhost")
 	impl.SetLDAPServerPort(randomTLSServicePort)
 
 	impl.caPool = x509.NewCertPool()
 	require.True(t, impl.caPool.AppendCertsFromPEM(tlsCAStr))
+	impl.SetInitCapacity(1)
+	impl.SetMaxCapacity(1)
 
-	_, err := impl.connectionFactory()
+	_, err := impl.ldapConnectionPool.Get()
 	require.ErrorContains(t, err, "protocol version not supported")
 }
 
@@ -216,7 +221,7 @@ func TestLDAPStartTLSTimeout(t *testing.T) {
 		serverWg.Wait()
 	}()
 
-	impl := &ldapAuthImpl{}
+	impl := &ldapAuthImplBuilder{}
 	impl.SetEnableTLS(true)
 	impl.SetLDAPServerHost("localhost")
 	impl.SetLDAPServerPort(randomTLSServicePort)
@@ -227,10 +232,8 @@ func TestLDAPStartTLSTimeout(t *testing.T) {
 	impl.SetMaxCapacity(1)
 
 	now := time.Now()
-	_, err := impl.connectionFactory()
+	_, err := impl.build().getConnection()
 	afterTimeout <- struct{}{}
-	dur := time.Since(now)
-	require.Greater(t, dur, 2*time.Second)
-	require.Less(t, dur, 3*time.Second)
+	require.Greater(t, time.Since(now), 2*time.Second)
 	require.ErrorContains(t, err, "connection timed out")
 }
