@@ -26,7 +26,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
-// semiJoinRewriter rewrites semi join to inner join with aggregation.
+// SemiJoinRewriter rewrites semi join to inner join with aggregation.
 // Note: This rewriter is only used for exists subquery.
 // And it also requires the hint `SEMI_JOIN_REWRITE` to be set.
 // For example:
@@ -36,20 +36,22 @@ import (
 // will be rewriten to:
 //
 //	select * from t join (select a from s group by a) s on t.a = s.a;
-type semiJoinRewriter struct {
+type SemiJoinRewriter struct {
 }
 
-func (smj *semiJoinRewriter) optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (smj *SemiJoinRewriter) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newLogicalPlan, err := smj.recursivePlan(p)
 	return newLogicalPlan, planChanged, err
 }
 
-func (*semiJoinRewriter) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*SemiJoinRewriter) Name() string {
 	return "semi_join_rewrite"
 }
 
-func (smj *semiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, error) {
+func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, error) {
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
 	}

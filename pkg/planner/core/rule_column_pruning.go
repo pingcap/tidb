@@ -30,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-type columnPruner struct {
+// ColumnPruner is used to prune unnecessary columns.
+type ColumnPruner struct {
 }
 
-func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
 	if err != nil {
@@ -93,7 +95,8 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 	return
 }
 
-func (*columnPruner) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*ColumnPruner) Name() string {
 	return "column_prune"
 }
 

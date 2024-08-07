@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
-// constantPropagationSolver can support constant propagated cross-query block.
+// ConstantPropagationSolver can support constant propagated cross-query block.
 // This is a logical optimize rule.
 // It mainly used for the sub query in FromList and propagated the constant predicate
 // from sub query to outer query.
@@ -41,9 +41,10 @@ import (
 // Steps 1 and 2 will be called recursively
 //  3. (ppdSolver in rule_predicate_push_down.go) Push down constant predicate
 //     and propagate constant predicate into other side. 't.id>1'
-type constantPropagationSolver struct {
+type ConstantPropagationSolver struct {
 }
 
+// Optimize implements base.LogicalOptRule.<0th> interface.
 // **Preorder traversal** of logic tree
 // Step1: constant propagation current plan node
 // Step2: optimize all of child
@@ -52,7 +53,7 @@ type constantPropagationSolver struct {
 // which is mainly implemented in the interface "constantPropagation" of LogicalPlan.
 // Currently only the Logical Join implements this function. (Used for the subquery in FROM List)
 // In the future, the Logical Apply will implements this function. (Used for the subquery in WHERE or SELECT list)
-func (cp *constantPropagationSolver) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (cp *ConstantPropagationSolver) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	// constant propagation root plan
 	newRoot := p.ConstantPropagation(nil, 0, opt)
@@ -69,7 +70,7 @@ func (cp *constantPropagationSolver) optimize(_ context.Context, p base.LogicalP
 }
 
 // execOptimize optimize constant propagation exclude root plan node
-func (cp *constantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+func (cp *ConstantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) {
 	if parentPlan == nil {
 		// Attention: The function 'execOptimize' could not handle the root plan, so the parent plan could not be nil.
 		return
@@ -82,7 +83,8 @@ func (cp *constantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, 
 	}
 }
 
-func (*constantPropagationSolver) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*ConstantPropagationSolver) Name() string {
 	return "constant_propagation"
 }
 

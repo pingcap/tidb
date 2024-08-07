@@ -212,7 +212,8 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 }
 
-type joinReOrderSolver struct {
+// JoinReOrderSolver is used to reorder the join nodes in a logical plan.
+type JoinReOrderSolver struct {
 }
 
 type jrNode struct {
@@ -225,7 +226,8 @@ type joinTypeWithExtMsg struct {
 	outerBindCondition []expression.Expression
 }
 
-func (s *joinReOrderSolver) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
 	tracer.traceJoinReorder(p)
@@ -236,7 +238,7 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p base.LogicalPlan, opt 
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
-func (s *joinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
+func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
 	}
@@ -687,7 +689,8 @@ func (*baseSingleGroupJoinOrderSolver) calcJoinCumCost(join base.LogicalPlan, lN
 	return join.StatsInfo().RowCount + lNode.cumCost + rNode.cumCost
 }
 
-func (*joinReOrderSolver) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (*JoinReOrderSolver) Name() string {
 	return "join_reorder"
 }
 
