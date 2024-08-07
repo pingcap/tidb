@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package rule
 
 import (
 	"github.com/pingcap/failpoint"
@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -124,7 +125,7 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *core.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
 		return
@@ -143,7 +144,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *Dat
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *LogicalJoin) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *core.LogicalJoin) {
 	// The only schema change is merging two schemas so there is no new column.
 	// Assume statistics of all the columns in EqualConditions/LeftConditions/RightConditions/OtherConditions are needed.
 	exprs := make([]expression.Expression, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
@@ -162,7 +163,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *LogicalJoi
 	c.addPredicateColumnsFromExpressions(exprs)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *LogicalUnionAll) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *core.LogicalUnionAll) {
 	// statistics of the ith column of UnionAll come from statistics of the ith column of each child.
 	schemas := make([]*expression.Schema, 0, len(p.Children()))
 	relatedCols := make([]*expression.Column, 0, len(p.Children()))
@@ -178,7 +179,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *Logica
 	}
 }
 
-func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
+func (c *columnStatsUsageCollector) addHistNeededColumns(ds *core.DataSource) {
 	c.visitedPhysTblIDs.Insert(int(ds.PhysicalTableID))
 	if c.collectMode&collectHistNeededColumns == 0 {
 		return
@@ -232,12 +233,12 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	}
 	if c.collectMode&collectPredicateColumns != 0 {
 		switch x := lp.(type) {
-		case *DataSource:
+		case *core.DataSource:
 			c.collectPredicateColumnsForDataSource(x)
-		case *LogicalIndexScan:
+		case *core.LogicalIndexScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
-		case *LogicalTableScan:
+		case *core.LogicalTableScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
 		case *logicalop.LogicalProjection:
@@ -246,11 +247,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for i, expr := range x.Exprs {
 				c.updateColMapFromExpressions(schema.Columns[i], []expression.Expression{expr})
 			}
-		case *LogicalSelection:
+		case *core.LogicalSelection:
 			// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
 			// regard statistics of the columns in the conditions as needed.
 			c.addPredicateColumnsFromExpressions(x.Conditions)
-		case *LogicalAggregation:
+		case *core.LogicalAggregation:
 			// Just assume statistics of all the columns in GroupByItems are needed.
 			c.addPredicateColumnsFromExpressions(x.GroupByItems)
 			// Schema change from children to self.
@@ -269,9 +270,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for i, col := range windowColumns {
 				c.updateColMapFromExpressions(col, x.WindowFuncDescs[i].Args)
 			}
-		case *LogicalJoin:
+		case *core.LogicalJoin:
 			c.collectPredicateColumnsForJoin(x)
-		case *LogicalApply:
+		case *core.LogicalApply:
 			c.collectPredicateColumnsForJoin(&x.LogicalJoin)
 			// Assume statistics of correlated columns are needed.
 			// Correlated columns can be found in LogicalApply.Children()[0].Schema(). Since we already visit LogicalApply.Children()[0],
@@ -289,22 +290,22 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for _, item := range x.ByItems {
 				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
 			}
-		case *LogicalUnionAll:
+		case *core.LogicalUnionAll:
 			c.collectPredicateColumnsForUnionAll(x)
-		case *LogicalPartitionUnionAll:
+		case *core.LogicalPartitionUnionAll:
 			c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
-		case *LogicalCTE:
+		case *core.LogicalCTE:
 			// Visit seedPartLogicalPlan and recursivePartLogicalPlan first.
-			c.collectFromPlan(x.Cte.seedPartLogicalPlan)
-			if x.Cte.recursivePartLogicalPlan != nil {
-				c.collectFromPlan(x.Cte.recursivePartLogicalPlan)
+			c.collectFromPlan(x.Cte.SeedPartLogicalPlan())
+			if x.Cte.RecursivePartLogicalPlan() != nil {
+				c.collectFromPlan(x.Cte.RecursivePartLogicalPlan())
 			}
 			// Schema change from seedPlan/recursivePlan to self.
 			columns := x.Schema().Columns
-			seedColumns := x.Cte.seedPartLogicalPlan.Schema().Columns
+			seedColumns := x.Cte.SeedPartLogicalPlan().Schema().Columns
 			var recursiveColumns []*expression.Column
-			if x.Cte.recursivePartLogicalPlan != nil {
-				recursiveColumns = x.Cte.recursivePartLogicalPlan.Schema().Columns
+			if x.Cte.RecursivePartLogicalPlan() != nil {
+				recursiveColumns = x.Cte.RecursivePartLogicalPlan().Schema().Columns
 			}
 			relatedCols := make([]*expression.Column, 0, 2)
 			for i, col := range columns {
@@ -336,11 +337,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	// Since c.visitedPhysTblIDs is also collected here and needs to be collected even collectHistNeededColumns is not set,
 	// so we do the c.collectMode check in addHistNeededColumns() after collecting c.visitedPhysTblIDs.
 	switch x := lp.(type) {
-	case *DataSource:
+	case *core.DataSource:
 		c.addHistNeededColumns(x)
-	case *LogicalIndexScan:
+	case *core.LogicalIndexScan:
 		c.addHistNeededColumns(x.Source)
-	case *LogicalTableScan:
+	case *core.LogicalTableScan:
 		c.addHistNeededColumns(x.Source)
 	}
 }
