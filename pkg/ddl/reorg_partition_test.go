@@ -15,13 +15,14 @@
 package ddl_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -49,8 +50,8 @@ type allTableData struct {
 // Checks that there are no accessible data after an existing table
 // assumes that tableIDs are only increasing.
 // To be used during failure testing of ALTER, to make sure cleanup is done.
-func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, tbl table.Table) {
-	waitForGC := tk.MustQuery(`select start_key, end_key from mysql.gc_delete_range`).Rows()
+func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, tbl table.Table, msg string) {
+	waitForGC := tk.MustQuery(`select start_key, end_key from mysql.gc_delete_range union all select start_key, end_key from mysql.gc_delete_range_done`).Rows()
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -71,27 +72,43 @@ func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context,
 	prefix := tablecodec.EncodeTablePrefix(tblID + 1)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
+	for _, rowGC := range waitForGC {
+		logutil.DDLLogger().Info("GC",
+			zap.String("start", fmt.Sprintf("%v", rowGC[0])),
+			zap.String("end", fmt.Sprintf("%v", rowGC[1])))
+	}
 ROW:
 	for it.Valid() {
 		for _, rowGC := range waitForGC {
 			// OK if queued for range delete / GC
-			hexString := fmt.Sprintf("%v", rowGC[0])
-			start, err := hex.DecodeString(hexString)
+			startHex := fmt.Sprintf("%v", rowGC[0])
+			endHex := fmt.Sprintf("%v", rowGC[1])
+			end, err := hex.DecodeString(endHex)
 			require.NoError(t, err)
-			hexString = fmt.Sprintf("%v", rowGC[1])
-			end, err := hex.DecodeString(hexString)
-			require.NoError(t, err)
-			if bytes.Compare(start, it.Key()) >= 0 && bytes.Compare(it.Key(), end) < 0 {
+			keyHex := hex.EncodeToString(it.Key())
+			if startHex <= keyHex && keyHex < endHex {
 				it.Close()
 				it, err = txn.Iter(end, nil)
 				require.NoError(t, err)
 				continue ROW
 			}
+			logutil.DDLLogger().Info("not found in GC",
+				zap.String("key", keyHex),
+				zap.String("start", startHex),
+				zap.String("end", endHex))
 		}
 		foundTblID := tablecodec.DecodeTableID(it.Key())
 		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
 		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
-		require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
+		if it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00 {
+			is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+			tbl, found := is.TableByID(foundTblID)
+			tblmsg := " Table ID no longer maps to a table"
+			if found {
+				tblmsg = fmt.Sprintf(" Table name: %s", tbl.Meta().Name.O)
+			}
+			require.False(t, true, "Found table data after highest physical Table ID %d < %d (%s) "+msg+tblmsg, tblID, foundTblID, it.Key())
+		}
 		break
 	}
 }
@@ -508,13 +525,8 @@ func TestReorgPartitionFailInject(t *testing.T) {
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 }
 
-func TestReorgPartitionRollback(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartRollback"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+func TestReorgPartitionFailures(t *testing.T) {
+	create := `create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
 		` partition by range (a) ` +
 		`(partition p0 values less than (10),` +
 		` partition p1 values less than (20),` +
