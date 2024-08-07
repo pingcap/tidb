@@ -106,8 +106,8 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false, 0)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
+	seg.initTaggedBits()
 	seg.finalized = true
-	seg.taggedBits = min(getTaggedBitsFromUnsafePointer(seg.getRowPointer(0)), getTaggedBitsFromUnsafePointer(seg.getRowPointer(len(seg.rowStartOffset)-1)))
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
 
@@ -126,7 +126,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 			totalSegmentCnt += len(rt.segments)
 		}
 	}
-	taggedBits := uint8(24)
+	taggedBits := uint8(initTaggedBits)
 	for i := 0; i < int(partitionNumber); i++ {
 		for _, seg := range rowTables[i].segments {
 			taggedBits = min(taggedBits, seg.taggedBits)

@@ -132,6 +132,14 @@ func (rts *rowTableSegment) getRowPointer(index int) unsafe.Pointer {
 	return unsafe.Pointer(&rts.rawData[rts.rowStartOffset[index]])
 }
 
+func (rts *rowTableSegment) initTaggedBits() {
+	startPtr := uintptr(0)
+	*(*unsafe.Pointer)(unsafe.Pointer(&startPtr)) = rts.getRowPointer(0)
+	endPtr := uintptr(0)
+	*(*unsafe.Pointer)(unsafe.Pointer(&endPtr)) = rts.getRowPointer(len(rts.rowStartOffset) - 1)
+	rts.taggedBits = getTaggedBitsFromUintptr(endPtr | startPtr)
+}
+
 const maxRowTableSegmentSize = 1024
 
 // 64 MB

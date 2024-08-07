@@ -18,6 +18,9 @@ import (
 	"unsafe"
 )
 
+const initTaggedBits = int8(24)
+const initTaggedMask = uint64(0xffffffffff)
+
 // taggedPtr is a struct to save unsafe.Pointer with tagged value
 // the value of unsafe.Pointer is actually an uint64 and in most
 // cases, the n MSB in unsafe.Pointer is all zeros, which means we
@@ -63,21 +66,19 @@ func (th *tagPtrHelper) toUnsafePointer(tPtr taggedPtr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&tPtr))
 }
 
-func getTaggedBitsFromUnsafePointer(up unsafe.Pointer) uint8 {
+func getTaggedBitsFromUintptr(ptr uintptr) uint8 {
 	if sizeOfUintptr != 8 {
 		return 0
 	}
-	p := taggedPtr(0)
-	*(*unsafe.Pointer)(unsafe.Pointer(&p)) = up
-	initMask := uint64(0xffffffffff)
-	taggedBits := int8(24)
-	pValue := uint64(p)
+	taggedBits := initTaggedBits
+	taggedMask := initTaggedMask
+	pValue := uint64(ptr)
 	for taggedBits > 0 {
-		if pValue & ^initMask == 0 {
+		if pValue & ^taggedMask == 0 {
 			return uint8(taggedBits)
 		}
 		taggedBits--
-		initMask = (initMask << 1) + 1
+		taggedMask = (taggedMask << 1) + 1
 	}
 	return 0
 }
