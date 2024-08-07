@@ -692,7 +692,6 @@ func (e *InfoSchemaTableNameExtractor) Extract(
 // ListSchemas lists related schemas from predicate.
 // If no schema found in predicate, it return all schemas.
 func (e *InfoSchemaTableNameExtractor) ListSchemas(
-	ctx context.Context,
 	is infoschema.InfoSchema,
 ) []model.CIStr {
 	allSchemas := e.InfoSchemaSchemataExtractor.listSchemas(is, _tableSchema)
@@ -717,7 +716,7 @@ func (e *InfoSchemaTableNameExtractor) ListSchemas(
 	if len(tableNames) > 0 {
 		e.listTableFunc = e.listSchemaTablesByName
 	} else {
-		e.listTableFunc = e.listSchemaTables
+		e.listTableFunc = listSchemaTables
 	}
 
 	return allSchemas
@@ -772,7 +771,7 @@ func (e *InfoSchemaTableNameExtractor) listSchemaTablesByName(
 	return tbls, nil
 }
 
-func (e *InfoSchemaTableNameExtractor) listSchemaTables(
+func listSchemaTables(
 	ctx context.Context,
 	s model.CIStr,
 	is infoschema.InfoSchema,
@@ -790,7 +789,7 @@ func (e *InfoSchemaTableNameExtractor) getPredicates(colName string) (
 }
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *InfoSchemaTableNameExtractor) ExplainInfo(plan base.PhysicalPlan) string {
+func (e *InfoSchemaTableNameExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}

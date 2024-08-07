@@ -856,7 +856,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 	if !e.initialized {
 		e.is = sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-		e.dbs = e.extractor.ListSchemas(ctx, e.is)
+		e.dbs = e.extractor.ListSchemas(e.is)
 		e.initialized = true
 		e.rows = make([][]types.Datum, 0, 1024)
 		e.batch = 1024
@@ -3761,7 +3761,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 		return nil
 	}
 
-	schemas := extractor.ListSchemas(ctx, e.is)
+	schemas := extractor.ListSchemas(e.is)
 	for _, schema := range schemas {
 		tbls, err := extractor.ListTables(ctx, schema, e.is)
 		if err != nil {
