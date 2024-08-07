@@ -312,8 +312,8 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 	return tblName
 }
 
-// genJoinMethodHintForSinglePhysicalJoin generates a join method hint for a single physical join operator according to
-// the input joinType.
+// genJoinMethodHintForSinglePhysicalJoin is the entry point of generating join method hint.
+// It generates a join method hint for a single physical join operator according to the input joinType.
 // Both children of the Join should be passed in as the children arguments, this is for correctly deriving the QB offset
 // for the hint.
 // For hints like merge_join(), we can generate hint using table name of any one of the two tables. But for hints like
@@ -356,8 +356,9 @@ func genJoinMethodHintForSinglePhysicalJoin(
 }
 
 // genHintTblForJoinNodes tries to generate ast.HintTable for each join node, and the QB name for the hint itself.
+// (Join node here means the operators that are joined, not Join operator itself)
 // If the return values is not (nil,nil), len(hintTbls) should be equal to len(joinedNodes). The invalid ones in the
-// hintTbls slice will be nil.
+// returned hintTbls slice will be nil.
 // The hintQBNamePtr will be nil if it's not needed, or we failed to generate one.
 func genHintTblForJoinNodes(
 	sctx base.PlanContext,
@@ -365,17 +366,17 @@ func genHintTblForJoinNodes(
 	parentOffset int,
 	nodeType h.NodeType,
 ) (hintTbls []*ast.HintTable, hintQBNamePtr *model.CIStr) {
-	// 1. Use extractHintTableForJoinNode() to generate QB name and table name for each join node.
+	// 1. Use genHintTblForSingleJoinNode() to generate QB offset and table name for each join node.
 
 	// Note that if we failed to generate valid information for one element in joinedNodes, we append -1 and nil instead
 	// of skipping.
-	// So qbOffsets[x] is -1 if and only if hintTbls[x] is/nil;
+	// So qbOffsets[x] is -1 if and only if hintTbls[x] is nil;
 	// and qbOffsets[x] >=0 if and only if hintTbls[x] is not nil.
 	hintTbls = make([]*ast.HintTable, 0, len(joinedNodes))
 	qbOffsets := make([]int, 0, len(joinedNodes))
 	guessQBOffsets := make(map[int]struct{})
 	for _, plan := range joinedNodes {
-		qbOffset, guessOffset, ht := extractHintTableForJoinNode(sctx, plan, parentOffset)
+		qbOffset, guessOffset, ht := genHintTblForSingleJoinNode(sctx, plan, parentOffset)
 		if qbOffset < 0 || ht == nil {
 			qbOffsets = append(qbOffsets, -1)
 			hintTbls = append(hintTbls, nil)
@@ -422,7 +423,7 @@ func genHintTblForJoinNodes(
 	// Current join reorder will break QB offset of the join operator, e.g. setting them to -1.
 	// So we are unable to get the correct QB offset for the hint from the join operator, now we use the minimum QB
 	// offset among the tables.
-	// Besides, extractHintTableForJoinNode() is not powerful enough to handle all cases, it may fail in some cases.
+	// Besides, genHintTblForSingleJoinNode() is not powerful enough to handle all cases, it may fail in some cases.
 	// If we failed to get QB offset information from one join node, we don't generate QB name for the hint. Because
 	// that may cause a wrong QB offset, leaving it blank is probably better.
 	if slices.Contains(qbOffsets, -1) {
@@ -442,7 +443,9 @@ func genHintTblForJoinNodes(
 	return hintTbls, hintQBNamePtr
 }
 
-func extractHintTableForJoinNode(
+// genHintTblForSingleJoinNode tries to generate ast.HintTable and QB offset for a single join node.
+// See the comments inside about the meaning of guessQBOffset.
+func genHintTblForSingleJoinNode(
 	sctx base.PlanContext,
 	joinNode base.PhysicalPlan,
 	parentOffset int,
@@ -520,6 +523,7 @@ func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	return nil, nil
 }
 
+// genJoinOrderHintFromRootPhysicalJoin is the entry point of generating join order hint.
 func genJoinOrderHintFromRootPhysicalJoin(
 	p PhysicalJoin,
 	visitedIDs map[int]struct{},
