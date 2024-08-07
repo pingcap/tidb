@@ -1224,6 +1224,8 @@ func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen
 			col.AppendJSON(v.(types.BinaryJSON))
 		case types.ETString:
 			col.AppendString(v.(string))
+		case types.ETVectorFloat32:
+			col.AppendVectorFloat32(v.(types.VectorFloat32))
 		}
 	}
 }
@@ -1260,6 +1262,8 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 		return types.NewFieldType(mysql.TypeJSON)
 	case types.ETString:
 		return types.NewFieldType(mysql.TypeVarString)
+	case types.ETVectorFloat32:
+		return types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 	default:
 		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
 	}
@@ -1669,6 +1673,21 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					}
 					i++
 				}
+			case types.ETVectorFloat32:
+				err := baseFunc.vecEvalVectorFloat32(ctx, input, output)
+				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
+				// do not forget to call ResizeXXX/ReserveXXX
+				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
+				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				for row := it.Begin(); row != it.End(); row = it.Next() {
+					val, isNull, err := baseFunc.evalVectorFloat32(ctx, row)
+					require.NoErrorf(t, err, commentf(i))
+					require.Equal(t, output.IsNull(i), isNull, commentf(i))
+					if !isNull {
+						require.Equal(t, output.GetVectorFloat32(i), val, commentf(i))
+					}
+					i++
+				}
 			default:
 				t.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 			}
@@ -1823,6 +1842,12 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 							b.Fatal(err)
 						}
 					}
+				case types.ETVectorFloat32:
+					for i := 0; i < b.N; i++ {
+						if err := baseFunc.vecEvalVectorFloat32(ctx, input, output); err != nil {
+							b.Fatal(err)
+						}
+					}
 				default:
 					b.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 				}
@@ -1933,6 +1958,21 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 								output.AppendNull()
 							} else {
 								output.AppendString(v)
+							}
+						}
+					}
+				case types.ETVectorFloat32:
+					for i := 0; i < b.N; i++ {
+						output.Reset(testCase.retEvalType)
+						for row := it.Begin(); row != it.End(); row = it.Next() {
+							v, isNull, err := baseFunc.evalVectorFloat32(ctx, row)
+							if err != nil {
+								b.Fatal(err)
+							}
+							if isNull {
+								output.AppendNull()
+							} else {
+								output.AppendVectorFloat32(v)
 							}
 						}
 					}
