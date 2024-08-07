@@ -165,3 +165,16 @@ alter table child_with_partition exchange partition p1 with table child;
 alter table child drop foreign key fk_1;
 alter table child drop key fk_1;
 alter table child_with_partition exchange partition p1 with table child;
+
+drop table if exists t;
+-- error 1493
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
+-- error 1493
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'));
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
+
+drop table t;
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'));
+-- error 1493
+alter table t add partition (PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
+alter table t add partition (PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
