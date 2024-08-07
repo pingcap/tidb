@@ -381,12 +381,37 @@ func TestExplainAnalyzeJoin(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select /*+ HASH_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
 	require.Equal(t, 7, len(rows))
 	require.Regexp(t, "HashJoin.*", rows[0][0])
+<<<<<<< HEAD
 	require.Regexp(t, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch:.*}", rows[0][5])
 	// Test for index merge join.
 	rows = tk.MustQuery("explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
 	require.Len(t, rows, 9)
 	require.Regexp(t, "IndexMergeJoin_.*", rows[0][0])
 	require.Regexp(t, fmt.Sprintf(".*Concurrency:%v.*", tk.Session().GetSessionVars().IndexLookupJoinConcurrency()), rows[0][5])
+=======
+	require.Regexp(t, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch and wait:.*}", rows[0][5])
+
+	// TestExplainAnalyzeIndexHashJoin
+	// Issue 43597
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t (a int, index idx(a));")
+	sql := "insert into t values"
+	for i := 0; i <= 1024; i++ {
+		if i != 0 {
+			sql += ","
+		}
+		sql += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec(sql)
+	for i := 0; i <= 10; i++ {
+		// Test for index lookup hash join.
+		rows := tk.MustQuery("explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a limit 1;").Rows()
+		require.Equal(t, 7, len(rows))
+		require.Regexp(t, "IndexHashJoin.*", rows[1][0])
+		// When innerWorkerRuntimeStats.join is negative, `join:` will not print.
+		require.Regexp(t, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}", rows[1][5])
+	}
+>>>>>>> 628b7ed6739 (planner: deprecate index lookup merge join. (#54681))
 }
 
 func TestIssue20270(t *testing.T) {
