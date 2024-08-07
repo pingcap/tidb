@@ -16,6 +16,9 @@ package tables
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"sync"
 	"time"
 
@@ -466,6 +469,11 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		if c.idxInfo.State == model.StatePublic {
 			// If the index is in public state, delete this index means it must exists.
 			err = txn.SetAssertion(key, kv.SetAssertExist)
+			tblData, err := json.Marshal(c.tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			logutil.BgLogger().Info("delete index key", zap.Any("tbl meta", string(tblData)), zap.Any("startTS", txn.StartTS()))
 		}
 		if err != nil {
 			return err
