@@ -1167,6 +1167,35 @@ func TestCheckCN(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDDLHookHandler(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	resp, err := ts.FetchStatus("/test/ddl/hook")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	resp, err = ts.PostStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"success!\"", string(body))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = ts.PostStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"success!\"", string(body))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func TestWriteDBTablesData(t *testing.T) {
 	// No table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{})

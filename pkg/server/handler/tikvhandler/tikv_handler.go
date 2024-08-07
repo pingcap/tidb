@@ -32,6 +32,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -193,6 +194,10 @@ type ProfileHandler struct {
 func NewProfileHandler(tool *handler.TikvHandlerTool) *ProfileHandler {
 	return &ProfileHandler{tool}
 }
+
+// DDLHookHandler is the handler for use pre-defined ddl callback.
+// It's convenient to provide some APIs for integration tests.
+type DDLHookHandler struct{}
 
 // ValueHandler is the handler for get value.
 type ValueHandler struct {
@@ -1982,6 +1987,42 @@ func (h *TestHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 	if err != nil {
 		handler.WriteError(w, errors.Annotate(err, "resolveLocks failed"))
 	}
+}
+
+// ServeHTTP handles request of resigning ddl owner.
+func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	hook := req.FormValue("ddl_hook")
+	switch hook {
+	case "ctc_hook":
+		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+			log.Info("on job run before", zap.String("job", job.String()))
+			// Only block the ctc type ddl here.
+			if job.Type != model.ActionModifyColumn {
+				return
+			}
+			switch job.SchemaState {
+			case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+				log.Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
+				time.Sleep(500 * time.Millisecond)
+			}
+		})
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+	case "default_hook":
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	}
+
+	handler.WriteData(w, "success!")
+
+	ctx := req.Context()
+	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
 }
 
 // ServeHTTP handles request of set server labels.
