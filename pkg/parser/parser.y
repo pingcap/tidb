@@ -1364,7 +1364,7 @@ import (
 	TransactionChars                       "Transaction characteristic list"
 	TrimDirection                          "Trim string direction"
 	SetOprOpt                              "Union/Except/Intersect Option(empty/ALL/DISTINCT)"
-	UpdateIndexElem                        "IndexName {GLOBAL/LOCAL}"
+	UpdateIndexElem                        "IndexName {GLOBAL|LOCAL}"
 	UpdateIndexesList                      "UpdateIndexElem[,...]"
 	UpdateIndexesOpt                       "UPDATE INDEXES (UpdateIndexesList) or empty"
 	Username                               "Username"
