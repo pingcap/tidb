@@ -519,9 +519,7 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 		})
 		return 0, w.handleJobDone(d, job, t)
 	}
-	d.mu.RLock()
-	d.mu.hook.OnJobRunBefore(job)
-	d.mu.RUnlock()
+	failpoint.InjectCall("onJobRunBefore", job)
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
