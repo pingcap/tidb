@@ -683,3 +683,59 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().True(result.Passed)
 	s.Require().Equal("TiDB Lightning is not using local backend, skip this check", result.Message)
 }
+
+func (s *precheckImplSuite) TestSourceDataSizeCheckBasic() {
+	var (
+		err    error
+		ci     precheck.Checker
+		result *precheck.CheckResult
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// source data size is 1024 * 256 MB
+	testMockSrcData := s.generateMockData(1, 1, 1024,
+		func(dbName string, tblName string) string {
+			return fmt.Sprintf("CREATE TABLE %s.%s ( id INTEGER PRIMARY KEY );", dbName, tblName)
+		},
+		func(dbID int, tblID int, fileID int) ([]byte, int, string) {
+			return []byte(nil), 256 * units.MB, "csv"
+		},
+	)
+	s.Require().NoError(s.setMockImportData(testMockSrcData))
+
+	// case 1: the cfg.Mydumper.MaxSourceDataSize is 0, the check result should be passed
+	ci = NewSourceDataSizeCheckItem(s.cfg, s.preInfoGetter)
+	s.Require().Equal(precheck.CheckSourceDataSize, ci.GetCheckItemID())
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().NotNil(result)
+	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(precheck.Critical, result.Severity)
+	s.T().Logf("check result message: %s", result.Message)
+	s.Require().True(result.Passed)
+
+	// case 2: the cfg.Mydumper.MaxSourceDataSize is 256 MB * 2048, the check result should be passed
+	s.cfg.Mydumper.MaxSourceDataSize = 256 * units.MB * 2048
+	ci = NewSourceDataSizeCheckItem(s.cfg, s.preInfoGetter)
+	s.Require().Equal(precheck.CheckSourceDataSize, ci.GetCheckItemID())
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().NotNil(result)
+	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(precheck.Critical, result.Severity)
+	s.T().Logf("check result message: %s", result.Message)
+	s.Require().True(result.Passed)
+
+	// case 3: the cfg.Mydumper.MaxSourceDataSize is 256 MB * 512, the check result should not be passed
+	s.cfg.Mydumper.MaxSourceDataSize = 256 * units.MB * 512
+	ci = NewSourceDataSizeCheckItem(s.cfg, s.preInfoGetter)
+	s.Require().Equal(precheck.CheckSourceDataSize, ci.GetCheckItemID())
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().NotNil(result)
+	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(precheck.Critical, result.Severity)
+	s.T().Logf("check result message: %s", result.Message)
+	s.Require().False(result.Passed)
+}
