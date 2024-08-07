@@ -189,7 +189,11 @@ func runNodeRestoreTestWithFlags(t *testing.T, nodeTestCases []NodeRestoreTestCa
 		var sb strings.Builder
 		err = extractNodeFunc(stmt).Restore(NewRestoreCtx(flags, &sb))
 		require.NoError(t, err, comment)
-		restoreSql := fmt.Sprintf(template, sb.String())
+		s := sb.String()
+		if len(s) > 0 && s[0] == ' ' {
+			s = s[1:]
+		}
+		restoreSql := fmt.Sprintf(template, s)
 		comment = fmt.Sprintf("source %#v; restore %v", testCase, restoreSql)
 		require.Equal(t, expectSQL, restoreSql, comment)
 		stmt2, err := p.ParseOneStmt(restoreSql, "", "")
