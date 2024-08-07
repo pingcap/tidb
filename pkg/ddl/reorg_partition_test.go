@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -141,10 +140,6 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 	return all
 }
 
-type TestReorgDDLCallback struct {
-	*callback.TestDDLCallback
-}
-
 func TestReorgPartitionConcurrent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -157,13 +152,8 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		` partition p1 values less than (20),` +
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (10,"10",10),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
 	syncOnChanged := make(chan bool)
 	defer close(syncOnChanged)
-	hook := &TestReorgDDLCallback{TestDDLCallback: &callback.TestDDLCallback{Do: dom}}
-	dom.DDL().SetHook(hook)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorganizePartition", func() {
 		<-syncOnChanged
 		// We want to wait here
@@ -174,7 +164,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	defer close(wait)
 
 	currState := model.StateNone
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition &&
 			(job.SchemaState == model.StateDeleteOnly ||
 				job.SchemaState == model.StateWriteOnly ||
@@ -185,7 +175,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 			<-wait
 			<-wait
 		}
-	}
+	})
 	alterErr := make(chan error, 1)
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 
@@ -341,24 +331,19 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 		` partition p1 values less than (20),` +
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
 
 	wait := make(chan bool)
 	defer close(wait)
 
 	// Test insert of duplicate key during copy phase
 	injected := false
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
 			injected = true
 			<-wait
 			<-wait
 		}
-	}
+	})
 	alterErr := make(chan error, 1)
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 	wait <- true
@@ -389,7 +374,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 
 	// Test reorg of duplicate key
 	prevState := model.StateNone
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition &&
 			job.SchemaState == model.StateWriteReorganization &&
 			job.SnapshotVer == 0 &&
@@ -405,7 +390,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 			<-wait
 			<-wait
 		}
-	}
+	})
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1a,p1b into (partition p1a values less than (14), partition p1b values less than (17), partition p1c values less than (20))", alterErr)
 	wait <- true
 	infoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
@@ -483,23 +468,17 @@ func TestReorgPartitionFailInject(t *testing.T) {
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
 
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
-
 	wait := make(chan bool)
 	defer close(wait)
 
 	injected := false
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
 			injected = true
 			<-wait
 			<-wait
 		}
-	}
+	})
 	alterErr := make(chan error, 1)
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 	wait <- true

@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -771,7 +771,6 @@ func runTestInSchemaState(
 	// Make sure these SQLs use the plan of index scan.
 	tk.MustExec("drop stats t")
 
-	callback := &callback.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
 	se, err := session.CreateSession(store)
@@ -797,14 +796,11 @@ func runTestInSchemaState(
 	if isOnJobUpdated {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc)
 	} else {
-		callback.OnJobRunBeforeExported = cbFunc
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", cbFunc)
 	}
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	d.SetHook(callback)
 	tk.MustExec(alterTableSQL)
 	require.NoError(t, checkErr)
-	d.SetHook(originalCallback)
+	_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(t, store)
@@ -1294,10 +1290,9 @@ func TestParallelAlterAndDropSchema(t *testing.T) {
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain) (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
-	callback := &callback.TestDDLCallback{}
+func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit.TestKit, *testkit.TestKit, chan struct{}) {
 	times := 0
-	callback.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if times != 0 {
 			return
 		}
@@ -1315,10 +1310,7 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *doma
 			time.Sleep(5 * time.Millisecond)
 		}
 		times++
-	}
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	d.SetHook(callback)
+	})
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
@@ -1343,7 +1335,7 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *doma
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
-	return tk1, tk2, ch, originalCallback
+	return tk1, tk2, ch
 }
 
 func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Storage, dom *domain.Domain, preSQL, sql1, sql2 string, f func(e1, e2 error)) {
@@ -1364,8 +1356,7 @@ func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	 	partition p1 values less than (20)
 	 	);`)
 
-	tk1, tk2, ch, originalCallback := prepareTestControlParallelExecSQL(t, store, dom)
-	defer dom.DDL().SetHook(originalCallback)
+	tk1, tk2, ch := prepareTestControlParallelExecSQL(t, store)
 
 	var err1 error
 	var err2 error
@@ -1819,7 +1810,7 @@ func TestDropExpressionIndex(t *testing.T) {
 }
 
 func TestParallelRenameTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create database test2")
@@ -1836,11 +1827,7 @@ func TestParallelRenameTable(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var checkErr error
-	d2 := dom.DDL()
-	originalCallback := d2.GetHook()
-	defer d2.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{Do: dom}
-	callback.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
 			if !firstDDL {
@@ -1866,9 +1853,7 @@ func TestParallelRenameTable(t *testing.T) {
 			}()
 			time.Sleep(10 * time.Millisecond)
 		}
-	}
-
-	d2.SetHook(callback)
+	})
 
 	// rename then add column
 	concurrentDDLQuery = "alter table t add column g int"
@@ -1934,7 +1919,7 @@ func TestParallelRenameTable(t *testing.T) {
 }
 
 func TestConcurrentSetDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1950,12 +1935,8 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 	setdefaultSQLOffset := 0
 
 	var wg sync.WaitGroup
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{Do: dom}
 	skip := false
-	callback.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			if skip {
@@ -1971,9 +1952,8 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 				wg.Done()
 			}()
 		}
-	}
+	})
 
-	d.SetHook(callback)
 	tk.MustExec("alter table t modify column a MEDIUMINT NULL DEFAULT '-8145111'")
 
 	wg.Wait()

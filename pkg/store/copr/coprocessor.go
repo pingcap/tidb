@@ -220,17 +220,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 
 	if it.req.KeepOrder {
-		oldConcurrency := it.concurrency
-		partitionNum := req.KeyRanges.PartitionNum()
-		if partitionNum > 0 && partitionNum < it.concurrency {
-			it.concurrency = partitionNum
-		}
-		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
-			if val.(bool) {
-				// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
-				it.concurrency = oldConcurrency
-			}
-		})
 		if it.smallTaskConcurrency > 20 {
 			it.smallTaskConcurrency = 20
 		}

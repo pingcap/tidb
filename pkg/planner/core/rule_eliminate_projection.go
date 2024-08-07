@@ -118,6 +118,11 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 		if p.Schema().Len() != 0 {
 			childProj.SetSchema(p.Schema())
 		}
+		// If any of the consecutive projection operators has the AvoidColumnEvaluator set to true,
+		// we need to set the AvoidColumnEvaluator of the remaining projection to true.
+		if proj.AvoidColumnEvaluator {
+			childProj.AvoidColumnEvaluator = true
+		}
 	}
 	for i, col := range p.Schema().Columns {
 		if p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan.Has(int(col.UniqueID)) && !child.Schema().Columns[i].Equal(nil, col) {
@@ -144,21 +149,21 @@ func eliminatePhysicalProjection(p base.PhysicalPlan) base.PhysicalPlan {
 // The projection eliminate in logical optimize will optimize the projection under the projection, window, agg
 // The projection eliminate in post optimize will optimize other projection
 
-// For update stmt
+// ProjectionEliminator is for update stmt
 // The projection eliminate in logical optimize has been forbidden.
 // The projection eliminate in post optimize will optimize the projection under the projection, window, agg (the condition is same as logical optimize)
-type projectionEliminator struct {
+type ProjectionEliminator struct {
 }
 
-// optimize implements the logicalOptRule interface.
-func (pe *projectionEliminator) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the logicalOptRule interface.
+func (pe *ProjectionEliminator) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false, opt)
 	return root, planChanged, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
-func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// LogicalCTE's logical optimization is independent.
 	if _, ok := p.(*LogicalCTE); ok {
 		return p
@@ -233,7 +238,8 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *logicalop.LogicalProj
 	return expr
 }
 
-func (*projectionEliminator) name() string {
+// Name implements the logicalOptRule.<1st> interface.
+func (*ProjectionEliminator) Name() string {
 	return "projection_eliminate"
 }
 
