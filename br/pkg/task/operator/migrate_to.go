@@ -51,11 +51,17 @@ func (cx migrateToCtx) estlimateByLog(migs stream.Migrations, targetVersion int)
 	return nil
 }
 
-func (cx migrateToCtx) dryRun(ctx context.Context, migs stream.Migrations, targetVersion int) error {
-	est := cx.est
-	console := cx.console
-	targetMig := migs.MergeTo(targetVersion)
-	estBase, effects := est.EstimateEffectFor(ctx, targetMig)
+func (cx migrateToCtx) dryRun(ctx context.Context, targetVersion int) error {
+	var (
+		est     = cx.est
+		console = cx.console
+		estBase stream.MergeAndMigratedTo
+		effects []storage.Effect
+	)
+	effects = est.DryRun(func(me stream.MigrationExt) {
+		estBase = me.MergeAndMigrateTo(ctx, targetVersion)
+	})
+
 	tbl := console.CreateTable()
 	stream.AddMigrationToTable(estBase.NewBase, tbl)
 	console.Println("The new BASE migration will be like: ")
@@ -85,12 +91,14 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		return err
 	}
 
+	console := glue.ConsoleOperations{ConsoleGlue: glue.StdIOGlue{}}
+
 	est := stream.MigerationExtension(st)
+	est.Hooks = stream.NewProgressBarHooks(console)
 	migs, err := est.Load(ctx)
 	if err != nil {
 		return err
 	}
-	console := glue.ConsoleOperations{ConsoleGlue: glue.StdIOGlue{}}
 
 	cx := migrateToCtx{
 		cfg:     cfg,
@@ -103,18 +111,19 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		console.Printf("No recent migration found. Skipping.")
 	}
 
-	if cfg.DryRun {
-		// Note: this shouldn't be committed even user requires,
-		// as once we encounter error during committing,
-		// we won't record the failure to the new BASE migration.
-		// Then those files failed to be deleted will leak.
-		return cx.dryRun(ctx, migs, targetVersion)
-	}
 	if !cfg.Yes {
 		err := cx.estlimateByLog(migs, targetVersion)
 		if err != nil {
 			return err
 		}
+	}
+
+	if cfg.DryRun {
+		// Note: this shouldn't be committed even user requires,
+		// as once we encounter error during committing,
+		// we won't record the failure to the new BASE migration.
+		// Then those files failed to be deleted will leak.
+		return cx.dryRun(ctx, targetVersion)
 	}
 
 	result := est.MergeAndMigrateTo(ctx, targetVersion)
