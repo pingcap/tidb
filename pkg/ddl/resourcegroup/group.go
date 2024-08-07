@@ -51,10 +51,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		}
 		// Update the action settings.
 		runaway.Action = rmpb.RunawayAction(options.Runaway.Action.Type)
-		runaway.ActionV2 = &rmpb.RunawayActionV2{
-			Type:            runaway.Action,
-			SwitchGroupName: options.Runaway.Action.SwitchGroupName,
-		}
+		runaway.SwitchGroupName = options.Runaway.Action.SwitchGroupName
 		// Update the watch settings.
 		if options.Runaway.WatchType != model.WatchNone {
 			runaway.Watch = &rmpb.RunawayWatch{}

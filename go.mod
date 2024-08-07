@@ -2,7 +2,7 @@ module github.com/pingcap/tidb
 
 go 1.21
 
-replace github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20240730032855-30010ef5dc20
+replace github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20240807105224-7e7a2da7bfcd
 
 require (
 	cloud.google.com/go/storage v1.38.0

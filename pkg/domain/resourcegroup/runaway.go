@@ -16,6 +16,7 @@ package resourcegroup
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -111,17 +112,48 @@ type QuarantineRecord struct {
 	ID                int64
 	ResourceGroupName string
 	// startTime and endTime are in UTC.
-	StartTime time.Time
-	EndTime   time.Time
-	Watch     rmpb.RunawayWatchType
-	WatchText string
-	Source    string
-	Action    rmpb.RunawayAction
+	StartTime       time.Time
+	EndTime         time.Time
+	Watch           rmpb.RunawayWatchType
+	WatchText       string
+	Source          string
+	action          rmpb.RunawayAction
+	switchGroupName string
 }
 
 // GetRecordKey is used to get the key in ttl cache.
 func (r *QuarantineRecord) GetRecordKey() string {
 	return r.ResourceGroupName + "/" + r.WatchText
+}
+
+// GetAction returns the runaway action type.
+func (r *QuarantineRecord) GetAction() rmpb.RunawayAction {
+	return r.action
+}
+
+// GetSwitchGroupName returns the switch group name if the action type is `SWITCH_GROUP`.
+func (r *QuarantineRecord) GetSwitchGroupName() string {
+	if r.action == rmpb.RunawayAction_SwitchGroup {
+		return r.switchGroupName
+	}
+	return ""
+}
+
+// GetActionString returns the action string.
+func (r *QuarantineRecord) GetActionString() string {
+	if r == nil {
+		return rmpb.RunawayAction_NoneAction.String()
+	}
+	if r.action == rmpb.RunawayAction_SwitchGroup {
+		return fmt.Sprintf("%s(%s)", r.action.String(), r.switchGroupName)
+	}
+	return r.action.String()
+}
+
+// SetAction sets the runaway action fields.
+func (r *QuarantineRecord) SetAction(action rmpb.RunawayAction, switchGroupName string) {
+	r.action = action
+	r.switchGroupName = switchGroupName
 }
 
 func writeInsert(builder *strings.Builder, tableName string) {
@@ -135,7 +167,7 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 6)
 	writeInsert(&builder, RunawayWatchTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
 	if r.EndTime.Equal(NullTime) {
@@ -146,7 +178,8 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []any) {
 	params = append(params, r.Watch)
 	params = append(params, r.WatchText)
 	params = append(params, r.Source)
-	params = append(params, r.Action)
+	params = append(params, r.GetAction())
+	params = append(params, r.GetSwitchGroupName())
 	return builder.String(), params
 }
 
@@ -155,7 +188,7 @@ func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
 	writeInsert(&builder, RunawayWatchDoneTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -167,7 +200,8 @@ func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []any) {
 	params = append(params, r.Watch)
 	params = append(params, r.WatchText)
 	params = append(params, r.Source)
-	params = append(params, r.Action)
+	params = append(params, r.GetAction())
+	params = append(params, r.GetSwitchGroupName())
 	params = append(params, time.Now().UTC())
 	return builder.String(), params
 }
@@ -276,7 +310,11 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest, startTime)
 }
 
-func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, ttl time.Duration, now *time.Time) {
+func (rm *RunawayManager) markQuarantine(
+	resourceGroupName, convict string,
+	watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, switchGroupName string,
+	ttl time.Duration, now *time.Time,
+) {
 	var endTime time.Time
 	if ttl > 0 {
 		endTime = now.UTC().Add(ttl)
@@ -288,7 +326,8 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watc
 		Watch:             watchType,
 		WatchText:         convict,
 		Source:            rm.serverID,
-		Action:            action,
+		action:            action,
+		switchGroupName:   switchGroupName,
 	}
 	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
@@ -399,7 +438,7 @@ func (rm *RunawayManager) getWatchFromWatchList(key string) *QuarantineRecord {
 	return nil
 }
 
-func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest string, action string, matchType RunawayMatchType, now *time.Time) {
+func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest, actionStr string, matchType RunawayMatchType, now *time.Time) {
 	source := rm.serverID
 	if !rm.syncerInitialized.Load() {
 		rm.logOnce.Do(func() {
@@ -412,7 +451,7 @@ func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest
 		ResourceGroupName: resourceGroupName,
 		Time:              *now,
 		Match:             matchType.String(),
-		Action:            action,
+		Action:            actionStr,
 		SQLText:           originalSQL,
 		PlanDigest:        planDigest,
 		Source:            source,
@@ -443,12 +482,12 @@ func (rm *RunawayManager) StaleQuarantineRecordChan() <-chan *QuarantineRecord {
 }
 
 // examineWatchList check whether the query is in watch list.
-func (rm *RunawayManager) examineWatchList(resourceGroupName string, convict string) (bool, rmpb.RunawayAction) {
+func (rm *RunawayManager) examineWatchList(resourceGroupName, convict string) (bool, rmpb.RunawayAction, string) {
 	item := rm.getWatchFromWatchList(resourceGroupName + "/" + convict)
 	if item == nil {
-		return false, 0
+		return false, 0, ""
 	}
-	return true, item.Action
+	return true, item.GetAction(), item.GetSwitchGroupName()
 }
 
 // Stop stops the watchList which is a ttlcache.
@@ -470,11 +509,15 @@ type RunawayChecker struct {
 	planDigest        string
 
 	deadline time.Time
-	setting  *rmpb.RunawaySettings
+	// settings is used as the fallback runaway settings if there is no other specification.
+	setting *rmpb.RunawaySettings
 
 	markedByRule  atomic.Bool
 	markedByWatch bool
-	watchAction   rmpb.RunawayAction
+	// action is the specified action for the runaway query.
+	// If it's not given, the action defined in `groupSettings` will be used.
+	action          rmpb.RunawayAction
+	switchGroupName string
 }
 
 func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string, startTime time.Time) *RunawayChecker {
@@ -495,34 +538,39 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 }
 
 // BeforeExecutor checks whether query is in watch list before executing and after compiling.
-func (r *RunawayChecker) BeforeExecutor() error {
+func (r *RunawayChecker) BeforeExecutor() (string, error) {
 	if r == nil {
-		return nil
+		return "", nil
 	}
 	for _, convict := range r.getConvictIdentifiers() {
-		watched, action := r.manager.examineWatchList(r.resourceGroupName, convict)
+		watched, action, switchGroupName := r.manager.examineWatchList(r.resourceGroupName, convict)
 		if watched {
+			// Fallback to use the resource group runaway setting.
 			if action == rmpb.RunawayAction_NoneAction && r.setting != nil {
 				action = r.setting.Action
+				switchGroupName = r.setting.SwitchGroupName
 			}
 			r.markedByWatch = true
 			now := time.Now()
-			r.watchAction = action
-			r.markRunaway(RunawayMatchTypeWatch, action, &now)
+			r.action = action
+			r.switchGroupName = switchGroupName
+			r.markRunaway(RunawayMatchTypeWatch, action, switchGroupName, &now)
 			// If no match action, it will do nothing.
 			switch action {
 			case rmpb.RunawayAction_Kill:
-				return exeerrors.ErrResourceGroupQueryRunawayQuarantine
+				return "", exeerrors.ErrResourceGroupQueryRunawayQuarantine
 			case rmpb.RunawayAction_CoolDown:
 				// This action should be done in BeforeCopRequest.
-				return nil
+				return "", nil
 			case rmpb.RunawayAction_DryRun:
-				return nil
+				return "", nil
+			case rmpb.RunawayAction_SwitchGroup:
+				return switchGroupName, nil
 			default:
 			}
 		}
 	}
-	return nil
+	return "", nil
 }
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
@@ -534,7 +582,7 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	if !marked {
 		// note: now we don't check whether query is in watch list again.
 		if r.markedByWatch {
-			if r.watchAction == rmpb.RunawayAction_CoolDown {
+			if r.action == rmpb.RunawayAction_CoolDown {
 				req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 			}
 		}
@@ -552,7 +600,7 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		}
 		// execution time exceeds the threshold, mark the query as runaway
 		if r.markedByRule.CompareAndSwap(false, true) {
-			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
+			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, r.setting.SwitchGroupName, &now)
 			if !r.markedByWatch {
 				r.markQuarantine(&now)
 			}
@@ -580,7 +628,7 @@ func (r *RunawayChecker) CheckCopRespError(err error) error {
 		if !r.markedByRule.Load() {
 			now := time.Now()
 			if r.deadline.Before(now) && r.markedByRule.CompareAndSwap(false, true) {
-				r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
+				r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, r.setting.SwitchGroupName, &now)
 				if !r.markedByWatch {
 					r.markQuarantine(&now)
 				}
@@ -601,11 +649,22 @@ func (r *RunawayChecker) markQuarantine(now *time.Time) {
 	}
 	ttl := time.Duration(r.setting.Watch.LastingDurationMs) * time.Millisecond
 
-	r.manager.markQuarantine(r.resourceGroupName, r.getSettingConvictIdentifier(), r.setting.Watch.Type, r.setting.Action, ttl, now)
+	r.manager.markQuarantine(
+		r.resourceGroupName, r.getSettingConvictIdentifier(),
+		r.setting.Watch.Type, r.setting.Action, r.setting.SwitchGroupName,
+		ttl, now,
+	)
 }
 
-func (r *RunawayChecker) markRunaway(matchType RunawayMatchType, action rmpb.RunawayAction, now *time.Time) {
-	actionStr := strings.ToLower(rmpb.RunawayAction_name[int32(action)])
+func (r *RunawayChecker) markRunaway(matchType RunawayMatchType, action rmpb.RunawayAction, switchGroupName string, now *time.Time) {
+	var actionStr string
+	switch action {
+	case rmpb.RunawayAction_NoneAction, rmpb.RunawayAction_DryRun, rmpb.RunawayAction_CoolDown, rmpb.RunawayAction_Kill:
+		actionStr = action.String()
+	case rmpb.RunawayAction_SwitchGroup:
+		actionStr = fmt.Sprintf("%s(%s)", action.String(), switchGroupName)
+	}
+	actionStr = strings.ToLower(actionStr)
 	metrics.RunawayCheckerCounter.WithLabelValues(r.resourceGroupName, matchType.String(), actionStr).Inc()
 	r.manager.markRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, actionStr, matchType, now)
 }

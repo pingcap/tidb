@@ -566,8 +566,9 @@ func getRunawayWatchRecord(exec sqlexec.RestrictedSQLExecutor, reader *SystemTab
 			Watch:             rmpb.RunawayWatchType(r.GetInt64(4)),
 			WatchText:         r.GetString(5),
 			Source:            r.GetString(6),
-			Action:            rmpb.RunawayAction(r.GetInt64(7)),
 		}
+		// TODO: initialize the switch group name from the system table also.
+		qr.SetAction(rmpb.RunawayAction(r.GetInt64(7)), "")
 		// If a TiDB write record slow, it will occur that the record which has earlier start time is inserted later than others.
 		// So we start the scan a little earlier.
 		if push {
@@ -606,8 +607,9 @@ func getRunawayWatchDoneRecord(exec sqlexec.RestrictedSQLExecutor, reader *Syste
 			Watch:             rmpb.RunawayWatchType(r.GetInt64(5)),
 			WatchText:         r.GetString(6),
 			Source:            r.GetString(7),
-			Action:            rmpb.RunawayAction(r.GetInt64(8)),
 		}
+		// TODO: initialize the switch group name from the system table also.
+		qr.SetAction(rmpb.RunawayAction(r.GetInt64(8)), "")
 		// Ditto as getRunawayWatchRecord.
 		if push {
 			reader.CheckPoint = now.Add(-3 * runawayWatchSyncInterval)

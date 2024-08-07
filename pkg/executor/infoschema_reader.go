@@ -3614,7 +3614,6 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 	watches := do.GetRunawayWatchList()
 	rows := make([][]types.Datum, 0, len(watches))
 	for _, watch := range watches {
-		action := watch.Action
 		row := types.MakeDatums(
 			watch.ID,
 			watch.ResourceGroupName,
@@ -3623,7 +3622,7 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 			rmpb.RunawayWatchType_name[int32(watch.Watch)],
 			watch.WatchText,
 			watch.Source,
-			rmpb.RunawayAction_name[int32(action)],
+			watch.GetActionString(),
 		)
 		if watch.EndTime.Equal(resourcegroup.NullTime) {
 			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
@@ -3665,12 +3664,12 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
 			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
-			actionType := model.RunawayActionType(setting.ActionV2.GetType())
+			actionType := model.RunawayActionType(setting.Action)
 			switch actionType {
 			case model.RunawayActionDryRun, model.RunawayActionCooldown, model.RunawayActionKill:
 				fmt.Fprintf(limitBuilder, ", ACTION=%s", actionType.String())
 			case model.RunawayActionSwitchGroup:
-				fmt.Fprintf(limitBuilder, ", ACTION=%s(%s)", actionType.String(), setting.ActionV2.GetSwitchGroupName())
+				fmt.Fprintf(limitBuilder, ", ACTION=%s(%s)", actionType.String(), setting.SwitchGroupName)
 			default:
 			}
 			if setting.Watch != nil {
