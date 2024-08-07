@@ -349,8 +349,8 @@ SELECT * FROM t WHERE 1 = 0 OR a = -1;
 a	b
 explain format='brief' SELECT * FROM t WHERE a != 0;
 id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, 0)
+TableReader	6.00	root	partition:all	data:Selection
+└─Selection	6.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, 0)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a != 0;
 a	b
@@ -362,8 +362,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0;
 id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0)
+TableReader	6.00	root	partition:all	data:Selection
+└─Selection	6.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0;
 a	b
@@ -375,8 +375,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0);
 id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0))
+TableReader	6.00	root	partition:all	data:Selection
+└─Selection	6.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0);
 a	b
@@ -409,8 +409,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1;
 id	estRows	task	access object	operator info
-TableReader	6.00	root	partition:all	data:Selection
-└─Selection	6.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1)
+TableReader	5.00	root	partition:all	data:Selection
+└─Selection	5.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1;
 a	b
@@ -421,8 +421,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1);
 id	estRows	task	access object	operator info
-TableReader	6.00	root	partition:all	data:Selection
-└─Selection	6.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1))
+TableReader	5.00	root	partition:all	data:Selection
+└─Selection	5.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1);
 a	b
@@ -455,8 +455,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2;
 id	estRows	task	access object	operator info
-TableReader	5.00	root	partition:all	data:Selection
-└─Selection	5.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2)
+TableReader	4.00	root	partition:all	data:Selection
+└─Selection	4.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2;
 a	b
@@ -466,8 +466,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2);
 id	estRows	task	access object	operator info
-TableReader	5.00	root	partition:all	data:Selection
-└─Selection	5.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2))
+TableReader	4.00	root	partition:all	data:Selection
+└─Selection	4.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2);
 a	b
@@ -500,8 +500,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3;
 id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:all	data:Selection
-└─Selection	4.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3)
+TableReader	3.00	root	partition:all	data:Selection
+└─Selection	3.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3;
 a	b
@@ -510,8 +510,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3);
 id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:all	data:Selection
-└─Selection	4.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3))
+TableReader	3.00	root	partition:all	data:Selection
+└─Selection	3.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3);
 a	b
@@ -544,8 +544,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4;
 id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:all	data:Selection
-└─Selection	3.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4)
+TableReader	2.00	root	partition:all	data:Selection
+└─Selection	2.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4;
 a	b
@@ -553,8 +553,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4);
 id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:all	data:Selection
-└─Selection	3.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4))
+TableReader	2.00	root	partition:all	data:Selection
+└─Selection	2.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4);
 a	b
@@ -587,16 +587,16 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5;
 id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:all	data:Selection
-└─Selection	2.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5)
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5;
 a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5);
 id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:all	data:Selection
-└─Selection	2.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5))
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5);
 a	b
@@ -616,8 +616,8 @@ a	b
 5	5 Filler...
 explain format='brief' SELECT * FROM t WHERE a != 6;
 id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, 6)
+TableReader	6.00	root	partition:all	data:Selection
+└─Selection	6.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, 6)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a != 6;
 a	b
@@ -629,15 +629,15 @@ a	b
 5	5 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6;
 id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:all	data:Selection
-└─Selection	2.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5), ne(executor__partition__partition_boundaries.t.a, 6)
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5), ne(executor__partition__partition_boundaries.t.a, 6)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6;
 a	b
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6);
 id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:all	data:Selection
-└─Selection	2.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6))
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6);
 a	b
@@ -671,15 +671,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6 AND a != 7;
 id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:all	data:Selection
-└─Selection	2.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5), ne(executor__partition__partition_boundaries.t.a, 6), ne(executor__partition__partition_boundaries.t.a, 7)
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5), ne(executor__partition__partition_boundaries.t.a, 6), ne(executor__partition__partition_boundaries.t.a, 7)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6 AND a != 7;
 a	b
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6, 7);
 id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:all	data:Selection
-└─Selection	2.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7))
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6, 7);
 a	b
@@ -4348,16 +4348,16 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 3;
 id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p3	data:Selection
-└─Selection	2.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 3)
+TableReader	1.00	root	partition:p3	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 3)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a <= 3;
 a	b
 3	3 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 3);
 id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p3	data:Selection
-└─Selection	2.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 3))
+TableReader	1.00	root	partition:p3	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 3))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a > 3);
 a	b
@@ -4881,8 +4881,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 6;
 id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0,p1	data:Selection
-└─Selection	3.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 6))
+TableReader	2.00	root	partition:p0,p1	data:Selection
+└─Selection	2.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 6))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a < 2 OR a > 6;
 a	b
@@ -4965,8 +4965,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 6;
 id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p1,p2	data:Selection
-└─Selection	4.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 6))
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 6))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a <= 2 OR a > 6;
 a	b
@@ -4997,8 +4997,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 6);
 id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p1,p2	data:Selection
-└─Selection	4.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 6))
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 6))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a > 2 AND a <= 6);
 a	b
@@ -5040,8 +5040,8 @@ a	b
 5	5 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 6);
 id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0,p1	data:Selection
-└─Selection	3.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 6))
+TableReader	2.00	root	partition:p0,p1	data:Selection
+└─Selection	2.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 6))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a >= 2 AND a <= 6);
 a	b
@@ -5091,8 +5091,8 @@ SELECT * FROM t WHERE a >= 7;
 a	b
 explain format='brief' SELECT * FROM t WHERE a < 2 OR a > 7;
 id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0,p1	data:Selection
-└─Selection	3.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 7))
+TableReader	2.00	root	partition:p0,p1	data:Selection
+└─Selection	2.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a < 2 OR a > 7;
 a	b
@@ -5123,8 +5123,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a < 7);
 id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p1,p2	data:Selection
-└─Selection	4.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), ge(executor__partition__partition_boundaries.t.a, 7))
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), ge(executor__partition__partition_boundaries.t.a, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a > 2 AND a < 7);
 a	b
@@ -5133,8 +5133,8 @@ a	b
 2	2 Filler...
 explain format='brief' SELECT * FROM t WHERE a < 2 OR a >= 7;
 id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0,p1	data:Selection
-└─Selection	3.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), ge(executor__partition__partition_boundaries.t.a, 7))
+TableReader	2.00	root	partition:p0,p1	data:Selection
+└─Selection	2.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), ge(executor__partition__partition_boundaries.t.a, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a < 2 OR a >= 7;
 a	b
@@ -5166,8 +5166,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a < 7);
 id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0,p1	data:Selection
-└─Selection	3.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), ge(executor__partition__partition_boundaries.t.a, 7))
+TableReader	2.00	root	partition:p0,p1	data:Selection
+└─Selection	2.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), ge(executor__partition__partition_boundaries.t.a, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a >= 2 AND a < 7);
 a	b
@@ -5175,8 +5175,8 @@ a	b
 1	1 Filler...
 explain format='brief' SELECT * FROM t WHERE a <= 2 OR a > 7;
 id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p1,p2	data:Selection
-└─Selection	4.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 7))
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a <= 2 OR a > 7;
 a	b
@@ -5207,8 +5207,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a > 2 AND a <= 7);
 id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p1,p2	data:Selection
-└─Selection	4.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 7))
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a > 2 AND a <= 7);
 a	b
@@ -5217,8 +5217,8 @@ a	b
 2	2 Filler...
 explain format='brief' SELECT * FROM t WHERE a <= 2 OR a >= 7;
 id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p1,p2	data:Selection
-└─Selection	4.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), ge(executor__partition__partition_boundaries.t.a, 7))
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		or(le(executor__partition__partition_boundaries.t.a, 2), ge(executor__partition__partition_boundaries.t.a, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a <= 2 OR a >= 7;
 a	b
@@ -5250,8 +5250,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a >= 2 AND a <= 7);
 id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0,p1	data:Selection
-└─Selection	3.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 7))
+TableReader	2.00	root	partition:p0,p1	data:Selection
+└─Selection	2.00	cop[tikv]		or(lt(executor__partition__partition_boundaries.t.a, 2), gt(executor__partition__partition_boundaries.t.a, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a >= 2 AND a <= 7);
 a	b

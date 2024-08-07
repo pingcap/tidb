@@ -278,7 +278,7 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
-			cnt = mathutil.Clamp(cnt, 1, c.NotNullCount())
+			cnt = mathutil.Clamp(cnt, 0, c.NotNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
@@ -291,7 +291,7 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 			cnt += highCnt
 		}
 
-		cnt = mathutil.Clamp(cnt, 1, c.TotalRowCount())
+		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
@@ -312,6 +312,7 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 		}
 		rowCount += cnt
 	}
+	// Don't allow the final result to go below 1 row
 	rowCount = mathutil.Clamp(rowCount, 1, float64(realtimeRowCount))
 	return rowCount, nil
 }

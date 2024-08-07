@@ -350,6 +350,7 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 		}
 		totalCount += count
 	}
+	// Don't allow the final result to go below 1 row
 	totalCount = mathutil.Clamp(totalCount, 1, float64(realtimeRowCount))
 	return totalCount, nil
 }
