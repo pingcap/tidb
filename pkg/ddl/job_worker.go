@@ -522,13 +522,14 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	failpoint.InjectCall("onJobRunBefore", job)
 	// ctcSlowDown is used by failpoint HTTP API in other repo, don't delete it.
 	failpoint.Inject("ctcSlowDown", func() {
-		if job.Type != model.ActionModifyColumn {
-			return
-		}
-		switch job.SchemaState {
-		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-			logutil.DDLLogger().Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
-			time.Sleep(500 * time.Millisecond)
+		if job.Type == model.ActionModifyColumn {
+			switch job.SchemaState {
+			case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+				logutil.DDLLogger().Warn(
+					fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()),
+				)
+				time.Sleep(500 * time.Millisecond)
+			}
 		}
 	})
 
