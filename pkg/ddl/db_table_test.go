@@ -786,11 +786,13 @@ func TestAddColumn2(t *testing.T) {
 			return
 		}
 		// allow write _tidb_rowid first
-		tk.MustExec("set @@tidb_opt_write_row_id=1")
-		tk.MustExec("begin")
-		tk.MustExec("insert into t2 (a,_tidb_rowid) values (1,2);")
-		re = tk.MustQuery(" select a,_tidb_rowid from t2;")
-		tk.MustExec("commit")
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("set @@tidb_opt_write_row_id=1")
+		tk2.MustExec("begin")
+		tk2.MustExec("insert into t2 (a,_tidb_rowid) values (1,2);")
+		re = tk2.MustQuery(" select a,_tidb_rowid from t2;")
+		tk2.MustExec("commit")
 	})
 
 	go backgroundExec(store, "test", "alter table t2 add column b int not null default 3", done)
@@ -798,6 +800,7 @@ func TestAddColumn2(t *testing.T) {
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 }
 
 func TestDropTables(t *testing.T) {
