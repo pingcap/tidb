@@ -1,6 +1,5 @@
 --echo # TestWriteListPartitionTable2
 --echo # test for write list partition when the partition expression is complicated and contain generated column.
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual)
     partition by list  (id*2 + b*b + b*b - b*b*2 - abs(id)) (
@@ -122,10 +121,8 @@ select id,name from t;
 insert into t (id,name) values  (3, 'c'),(4,'d'),(7,'f');
 delete from t limit 3;
 select id,name from t;
-set @@session.tidb_enable_list_partition = default;
 
 --echo # TestWriteListColumnsPartitionTable1
-set @@session.tidb_enable_list_partition = ON;
 
 drop table if exists t;
 create table t (id int, name varchar(10)) partition by list columns (id) (
@@ -247,8 +244,6 @@ select * from t;
 insert into t values  (3, 'c'),(4,'d'),(7,'f');
 delete from t limit 3;
 select * from t;
-
-set @@session.tidb_enable_list_partition = default;
 
 
 # TestPartitionedTableReplace

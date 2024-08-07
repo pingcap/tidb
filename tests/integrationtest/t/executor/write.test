@@ -466,7 +466,6 @@ from t order by c_str;
 drop table if exists t;
 
 # TestWriteListPartitionTable
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -503,11 +502,9 @@ delete from t partition (p0);
 select * from t order by id;
 delete from t partition (p3,p2);
 select * from t order by id;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
 
 # TestWriteListColumnsPartitionTable
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -544,12 +541,10 @@ delete from t partition (p0);
 select * from t order by id;
 delete from t partition (p3,p2);
 select * from t order by id;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
 
 # TestWriteListPartitionTable1
 ## TestWriteListPartitionTable1 test for write list partition when the partition expression is simple.
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (id int, name varchar(10)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -640,11 +635,9 @@ insert into t values  (3, 'c'),(4,'d'),(7,'f');
 delete from t limit 3;
 select * from t;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = default;
 
 # TestWriteListColumnsPartitionTable2
 ## TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (location varchar(10), id int, a int) partition by list columns (location,id) (
     	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
@@ -756,19 +749,15 @@ select * from t order by id;
 delete from t limit 1;
 select * from t order by id;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = default;
 
 # TestWriteListPartitionTableIssue21437
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (a int) partition by list (a%10) (partition p0 values in (0,1));
 --error 1526
 replace into t values  (null);
 drop table if exists t;
-set @@session.tidb_enable_list_partition = default;
 
 # TestListPartitionWithGeneratedColumn
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
 insert into t (a) values (1),(3),(5),(7),(9);
@@ -850,10 +839,8 @@ insert into t (a) values (11);
 --error 1526
 update t set a=a+10 where a = 2;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = default;
 
 # TestListPartitionWithGeneratedColumn1
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));
 insert into t (a) values (1),(3),(5),(7),(9);
@@ -933,10 +920,8 @@ insert into t (a) values (2011);
 -- error 1526
 update t set a=a+10 where a = 2002;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = default;
 
 # TestListPartitionWithGeneratedColumn2
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
 				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
@@ -998,10 +983,8 @@ update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
 select a from t partition (p0);
 select a from t partition (p1) order by a;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = default;
 
 # TestListColumnsPartitionWithGeneratedColumn
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
 insert into t (a) values  ('aaa'),('abc'),('acd');
@@ -1021,7 +1004,6 @@ select a from t partition (p0) order by a;
 select a from t partition (p1) order by a;
 select * from t where a = 'bbb' order by a;
 drop table if exists t;
-set @@session.tidb_enable_list_partition = default;
 
 # TestIssue22496
 drop table if exists t12;
@@ -1168,7 +1150,6 @@ connection default;
 disconnect conn1;
 
 # TestListPartitionWithAutoRandom
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (a bigint key auto_random (3), b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));
 set @@allow_auto_random_explicit_insert = true;
@@ -1189,11 +1170,9 @@ select b from t where a<2;
 insert into t values (1, 1) on duplicate key update b=b+1;
 select b from t where a=1;
 
-set @@session.tidb_enable_list_partition = default;
 set @@allow_auto_random_explicit_insert = default;
 
 # TestListPartitionWithAutoIncrement
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t;
 create table t (a bigint key auto_increment, b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));
 set @@allow_auto_random_explicit_insert = true;
@@ -1214,7 +1193,6 @@ select b from t where a<2;
 insert into t values (1, 1) on duplicate key update b=b+1;
 select b from t where a=1;
 
-set @@session.tidb_enable_list_partition = default;
 set @@allow_auto_random_explicit_insert = default;
 
 

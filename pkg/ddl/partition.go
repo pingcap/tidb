@@ -521,13 +521,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	case model.PartitionTypeRange:
 		enable = true
 	case model.PartitionTypeList:
-		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
-		enable = ctx.GetSessionVars().EnableListTablePartition
-		if enable {
-			err := checkListPartitions(s.Definitions)
-			if err != nil {
-				return err
-			}
+		enable = true
+		err := checkListPartitions(s.Definitions)
+		if err != nil {
+			return err
 		}
 	case model.PartitionTypeHash, model.PartitionTypeKey:
 		// Partition by hash and key is enabled by default.

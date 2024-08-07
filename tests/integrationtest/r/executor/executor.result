@@ -1828,7 +1828,6 @@ insert into test_gc_read_1(a, b) values (1, null);
 Error 1048 (23000): Column 'c' cannot be null
 insert into test_gc_read_2(a, b) values (1, null);
 Error 1048 (23000): Column 'd' cannot be null
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists th, tr, tl;
 create table th (a int, b int) partition by hash(a) partitions 3;
 create table tr (a int, b int)
@@ -1937,7 +1936,6 @@ c1
 -40
 select * from tscalar where c1 in (-1);
 c1
-set @@session.tidb_enable_list_partition = default;
 prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";
 Error 1295 (HY000): This command is not supported in the prepared statement protocol yet
 prepare stmt from "import into test from 'xx' format 'delimited'";
