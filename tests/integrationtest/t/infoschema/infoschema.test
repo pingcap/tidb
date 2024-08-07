@@ -93,6 +93,66 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 drop table infoschema__infoschema.t1;
 drop table infoschema__infoschema_2.t2;
 
+# TestIndexUsageColumns
+drop database if exists indexusage;
+create database indexusage;
+use indexusage;
+create table idt1(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_3(col_1, col_2));
+create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt1';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and INDEX_NAME = 'idx_2';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_1';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_4';
+
+# Empty query
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage1';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt3';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_5';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt0';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage1' and INDEX_NAME = 'idx_2';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_3';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_4';
+drop database indexusage;
+
+drop database if exists columnsinfo;
+create database columnsinfo;
+use columnsinfo;
+create table tbl1(col_1 int primary key, col_2 int, col_4 int);
+create table tbl2(col_1 int primary key, col_2 int, col_3 int);
+create view view1 as select min(col_1), col_2, max(col_4) as max4 from tbl1 group by col_2;
+
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = "columnsinfo";
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_NAME = "view1" or TABLE_NAME = "tbl1";
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where COLUMN_NAME = "col_2";
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = "columnsinfo" and TABLE_NAME = "tbl2";
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = "columnsinfo" and COLUMN_NAME = "col_4";
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_NAME = "view1" and COLUMN_NAME like "m%";
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = 'columnsinfo' and TABLE_NAME = 'tbl1' and COLUMN_NAME = 'col_2';
+
 # TestSchemataColumns
 use infoschema__infoschema;
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema_2';
