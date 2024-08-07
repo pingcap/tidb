@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime"
 	"runtime/trace"
 	"slices"
 	"sort"
@@ -696,6 +697,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
 	go func() {
+		// 32KB ballast helps grow the stack to the requirement of index worker.
+		// This reduces the `morestack` call during the execution, thus improvement the efficiency of TiDB.
+		// TODO: remove ballast after global pool is applied
+		ballast := make([]byte, 32*size.KB)
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		worker := &indexWorker{
 			idxLookup:       e,
@@ -771,6 +776,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
+		runtime.KeepAlive(ballast)
 	}()
 	return nil
 }
