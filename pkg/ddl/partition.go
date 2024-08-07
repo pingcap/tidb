@@ -635,6 +635,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				}
 			}
 			if idxOffset == -1 {
+				if strings.EqualFold("primary", idxUpdate.Name) &&
+					tbInfo.PKIsHandle {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
+
+				}
 				return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(idxUpdate.Name)
 			}
 			if _, ok := dupCheck[strings.ToLower(idxUpdate.Name)]; ok {
@@ -665,7 +670,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 					} else {
 						indexTp = "UNIQUE INDEX"
 					}
-				} else if tbInfo.IsCommonHandle {
+				} else if index.Primary && tbInfo.IsCommonHandle {
 					indexTp = "CLUSTERED INDEX"
 				}
 				if indexTp != "" {

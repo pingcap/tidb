@@ -178,7 +178,7 @@ IndexReader	3.00	root	partition:p1	index:Selection
   └─IndexFullScan	3.00	cop[tikv]	table:t, index:a(a)	keep order:true
 drop table if exists t;
 create table t (a int, b int, unique key idx_b (b)) partition by hash (a) partitions 3;
-Error 8264 (HY000): Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table t (a int, b int, unique key idx_b (b) global) partition by hash (a) partitions 3;
 show create table t;
 Table	Create Table
