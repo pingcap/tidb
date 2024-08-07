@@ -3007,8 +3007,13 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
+<<<<<<< HEAD:planner/core/logical_plan_builder.go
 		if g.exprDepth == 1 {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx, n)
+=======
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
+			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
+>>>>>>> 08b7ac62187 (planner: fix the issue that cannot find column if using question marker in group-by-clause (#54205)):pkg/planner/core/logical_plan_builder.go
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
 				return expression.ConstructPositionExpr(n), true
@@ -3045,6 +3050,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				} else if ast.HasWindowFlag(ret) {
 					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
+					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+						isParam.UseAsValueInGbyByClause = true
+					}
 					return ret, true
 				}
 			}
