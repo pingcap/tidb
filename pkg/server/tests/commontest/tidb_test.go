@@ -89,8 +89,8 @@ func TestVectorTypeTextProtocol(t *testing.T) {
 		require.Equal(t, reflect.TypeOf(sql.RawBytes{}).String(), columnTypes[1].ScanType().String())
 
 		require.True(t, rows.Next())
-		rowDatums := make([]interface{}, 2)
-		rowDatumsPtr := make([]interface{}, 2)
+		rowDatums := make([]any, 2)
+		rowDatumsPtr := make([]any, 2)
 		for i := range rowDatumsPtr {
 			rowDatumsPtr[i] = &rowDatums[i]
 		}
@@ -167,8 +167,8 @@ func TestVectorTypeBinaryProtocol(t *testing.T) {
 		require.Equal(t, reflect.TypeOf(sql.RawBytes{}).String(), columnTypes[1].ScanType().String())
 
 		require.True(t, rows.Next())
-		rowDatums := make([]interface{}, 2)
-		rowDatumsPtr := make([]interface{}, 2)
+		rowDatums := make([]any, 2)
+		rowDatumsPtr := make([]any, 2)
 		for i := range rowDatumsPtr {
 			rowDatumsPtr[i] = &rowDatums[i]
 		}
