@@ -37,7 +37,7 @@ var (
 	_ base.LogicalPlan = &LogicalIndexScan{}
 	_ base.LogicalPlan = &LogicalUnionAll{}
 	_ base.LogicalPlan = &logicalop.LogicalSort{}
-	_ base.LogicalPlan = &LogicalLock{}
+	_ base.LogicalPlan = &logicalop.LogicalLock{}
 	_ base.LogicalPlan = &logicalop.LogicalLimit{}
 	_ base.LogicalPlan = &logicalop.LogicalWindow{}
 	_ base.LogicalPlan = &LogicalExpand{}

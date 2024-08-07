@@ -35,7 +35,7 @@ func TestGetOperand(t *testing.T) {
 	require.Equal(t, OperandUnionAll, GetOperand(&plannercore.LogicalUnionAll{}))
 	require.Equal(t, OperandSort, GetOperand(&logicalop.LogicalSort{}))
 	require.Equal(t, OperandTopN, GetOperand(&logicalop.LogicalTopN{}))
-	require.Equal(t, OperandLock, GetOperand(&plannercore.LogicalLock{}))
+	require.Equal(t, OperandLock, GetOperand(&logicalop.LogicalLock{}))
 	require.Equal(t, OperandLimit, GetOperand(&logicalop.LogicalLimit{}))
 }
 

@@ -6,6 +6,7 @@ go_library(
         "base_logical_plan.go",
         "logical_cte_table.go",
         "logical_limit.go",
+        "logical_lock.go",
         "logical_max_one_row.go",
         "logical_mem_table.go",
         "logical_projection.go",
