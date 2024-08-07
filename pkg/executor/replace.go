@@ -17,6 +17,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"runtime/trace"
 	"time"
 
@@ -77,6 +79,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 
 		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
 			rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
+			logutil.BgLogger().Info("remove duplicated row", zap.String("handle", handle.String()), zap.Any("key", r.handleKey.newKey), zap.Any("startTS", txn.StartTS()))
 			if err != nil {
 				return err
 			}
@@ -132,6 +135,7 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 		if err != nil {
 			return false, true, err
 		}
+		logutil.BgLogger().Info("remove duplicated row", zap.String("handle", handle.String()), zap.Any("key", uk.newKey), zap.Any("startTS", txn.StartTS()))
 		return rowUnchanged, true, nil
 	}
 	return false, false, nil
