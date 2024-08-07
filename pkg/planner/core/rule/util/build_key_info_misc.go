@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,41 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package util
 
 import (
-	"context"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
-type buildKeySolver struct{}
-
-func (*buildKeySolver) optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
-	planChanged := false
-	buildKeyInfo(p)
-	return p, planChanged, nil
-}
-
-// buildKeyInfo recursively calls base.LogicalPlan's BuildKeyInfo method.
-func buildKeyInfo(lp base.LogicalPlan) {
-	for _, child := range lp.Children() {
-		buildKeyInfo(child)
-	}
-	childSchema := make([]*expression.Schema, len(lp.Children()))
-	for i, child := range lp.Children() {
-		childSchema[i] = child.Schema()
-	}
-	lp.BuildKeyInfo(lp.Schema(), childSchema)
-}
-
-// If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
-// This function will check it.
-func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+// CheckMaxOneRowCond check if a condition is the form of (uniqueKey = constant) or (uniqueKey =
+// Correlated column), it returns at most one row.
+func CheckMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
 	if len(eqColIDs) == 0 {
 		return false
 	}
@@ -70,8 +47,8 @@ func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Sch
 	return false
 }
 
-// checkIndexCanBeKey checks whether an Index can be a Key in schema.
-func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) (uniqueKey, newKey expression.KeyInfo) {
+// CheckIndexCanBeKey checks whether an Index can be a Key in schema.
+func CheckIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) (uniqueKey, newKey expression.KeyInfo) {
 	if !idx.Unique {
 		return nil, nil
 	}
@@ -110,6 +87,5 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 	return nil, nil
 }
 
-func (*buildKeySolver) name() string {
-	return "build_keys"
-}
+// BuildKeyInfoPortal is a hook for other packages to build key info for logical plan.
+var BuildKeyInfoPortal func(lp base.LogicalPlan)

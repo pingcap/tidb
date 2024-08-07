@@ -186,10 +186,6 @@ type DDL interface {
 	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
-	// GetHook gets the hook. It's exported for testing.
-	GetHook() Callback
-	// SetHook sets the hook.
-	SetHook(h Callback)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 }
@@ -352,16 +348,11 @@ type ddlCtx struct {
 		// jobCtxMap maps job ID to job's ctx.
 		jobCtxMap map[int64]*JobContext
 	}
-
-	// hook may be modified.
-	mu hookStruct
 }
 
-// TODO remove it after we remove hook.
-type hookStruct struct {
-	sync.RWMutex
-	// see newDefaultCallBack for its value in normal flow.
-	hook Callback
+// SchemaLoader is used to avoid import loop, the only impl is domain currently.
+type SchemaLoader interface {
+	Reload() error
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -609,9 +600,7 @@ func NewDDL(ctx context.Context, options ...Option) (DDL, Executor) {
 }
 
 func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
-	opt := &Options{
-		Hook: &BaseCallback{},
-	}
+	opt := &Options{}
 	for _, o := range options {
 		o(opt)
 	}
@@ -661,7 +650,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
-	ddlCtx.mu.hook = opt.Hook
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.schemaVersionManager = newSchemaVersionManager()
@@ -702,7 +690,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ownerManager:    d.ownerManager,
 		ddlJobDoneChMap: &d.ddlJobDoneChMap,
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
-		mu:              &d.mu,
 		globalIDLock:    &d.globalIDLock,
 	}
 	d.executor = e
@@ -895,22 +882,6 @@ func (d *ddl) GetID() string {
 // SetBinlogClient implements DDL.SetBinlogClient interface.
 func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
 	d.binlogCli = binlogCli
-}
-
-// GetHook implements DDL.GetHook interface.
-func (d *ddl) GetHook() Callback {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	return d.mu.hook
-}
-
-// SetHook set the customized hook.
-func (d *ddl) SetHook(h Callback) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.hook = h
 }
 
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {

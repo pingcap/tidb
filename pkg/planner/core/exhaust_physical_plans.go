@@ -46,7 +46,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func exhaustPhysicalPlans4LogicalUnionScan(p *LogicalUnionScan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalUnionScan)
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
@@ -769,7 +770,7 @@ childLoop:
 				return nil
 			}
 			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
-		case *LogicalUnionScan:
+		case *logicalop.LogicalUnionScan:
 			wrapper.hasDitryWrite = true
 			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
 		default:
@@ -1029,7 +1030,7 @@ func constructInnerTableScanTask(
 func constructInnerByZippedChildren(prop *property.PhysicalProperty, zippedChildren []base.LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
 	for i := len(zippedChildren) - 1; i >= 0; i-- {
 		switch x := zippedChildren[i].(type) {
-		case *LogicalUnionScan:
+		case *logicalop.LogicalUnionScan:
 			child = constructInnerUnionScan(prop, x, child)
 		case *logicalop.LogicalProjection:
 			child = constructInnerProj(prop, x, child)
@@ -1077,7 +1078,7 @@ func constructInnerProj(prop *property.PhysicalProperty, proj *logicalop.Logical
 	return physicalProj
 }
 
-func constructInnerUnionScan(prop *property.PhysicalProperty, us *LogicalUnionScan, reader base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerUnionScan(prop *property.PhysicalProperty, us *logicalop.LogicalUnionScan, reader base.PhysicalPlan) base.PhysicalPlan {
 	if us == nil {
 		return reader
 	}
@@ -2282,7 +2283,7 @@ func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProp
 	return []base.PhysicalPlan{window}
 }
 
-func exhaustLogicalWindowPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	lw := lp.(*logicalop.LogicalWindow)
 	windows := make([]base.PhysicalPlan, 0, 2)
 
@@ -2821,7 +2822,8 @@ func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalPro
 	return ret, true, nil
 }
 
-func getLockPhysicalPlans(p *LogicalLock, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalLock)
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Lock` is not supported now.")

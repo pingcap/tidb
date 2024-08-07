@@ -1745,7 +1745,7 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			rs := keyColumnUsageInTable(schema, table)
+			rs := keyColumnUsageInTable(schema, table, extractor)
 			rows = append(rows, rs...)
 		}
 	}
@@ -1815,7 +1815,7 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	e.rows = rows
 }
 
-func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types.Datum {
+func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaBaseExtractor) [][]types.Datum {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
@@ -1853,6 +1853,11 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 			// Only handle unique/primary key
 			continue
 		}
+
+		if extractor != nil && extractor.Filter("constraint_name", idxName) {
+			continue
+		}
+
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
 			if col.Hidden {
@@ -2125,6 +2130,9 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 		if ok && extractor.Filter("constraint_schema", schema.L) {
 			continue
 		}
+		if ok && extractor.Filter("table_schema", schema.L) {
+			continue
+		}
 		tables, err := e.is.SchemaTableInfos(ctx, schema)
 		if err != nil {
 			return errors.Trace(err)
@@ -2159,6 +2167,9 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 					ctype = infoschema.UniqueKeyType
 				} else {
 					// The index has no constriant.
+					continue
+				}
+				if ok && extractor.Filter("constraint_name", cname) {
 					continue
 				}
 				record := types.MakeDatums(

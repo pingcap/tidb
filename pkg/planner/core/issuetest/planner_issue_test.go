@@ -117,3 +117,30 @@ func TestIssue54535(t *testing.T) {
 	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
 	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(distinct col_2 order by col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
 }
+
+func TestIssue54803(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+    CREATE TABLE t1db47fc1 (
+        col_67 time NOT NULL DEFAULT '16:58:45',
+        col_68 tinyint(3) unsigned DEFAULT NULL,
+        col_69 bit(6) NOT NULL DEFAULT b'11110',
+        col_72 double NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    PARTITION BY HASH (col_68) PARTITIONS 5;
+    `)
+	tk.MustQuery(`EXPLAIN SELECT TRIM(t1db47fc1.col_68) AS r0
+    FROM t1db47fc1
+    WHERE ISNULL(t1db47fc1.col_68)
+    GROUP BY t1db47fc1.col_68
+    HAVING ISNULL(t1db47fc1.col_68) OR t1db47fc1.col_68 IN (62, 200, 196, 99)
+    LIMIT 106149535;
+    `).Check(testkit.Rows("Projection_11 8.00 root  trim(cast(test.t1db47fc1.col_68, var_string(20)))->Column#7",
+		"└─Limit_14 8.00 root  offset:0, count:106149535",
+		"  └─HashAgg_17 8.00 root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
+		"    └─TableReader_24 10.00 root partition:p0 data:Selection_23",
+		"      └─Selection_23 10.00 cop[tikv]  isnull(test.t1db47fc1.col_68), or(isnull(test.t1db47fc1.col_68), in(test.t1db47fc1.col_68, 62, 200, 196, 99))",
+		"        └─TableFullScan_22 10000.00 cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
+}

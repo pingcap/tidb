@@ -31,9 +31,11 @@ import (
 	"go.uber.org/zap"
 )
 
-type collectPredicateColumnsPoint struct{}
+// CollectPredicateColumnsPoint collects the columns that are used in the predicates.
+type CollectPredicateColumnsPoint struct{}
 
-func (collectPredicateColumnsPoint) optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements LogicalOptRule.<0th> interface.
+func (CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
@@ -72,13 +74,16 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan base.Logica
 	return plan, planChanged, nil
 }
 
-func (collectPredicateColumnsPoint) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (CollectPredicateColumnsPoint) Name() string {
 	return "collect_predicate_columns_point"
 }
 
-type syncWaitStatsLoadPoint struct{}
+// SyncWaitStatsLoadPoint sync-wait for stats load point.
+type SyncWaitStatsLoadPoint struct{}
 
-func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
@@ -90,7 +95,8 @@ func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan base.LogicalPlan,
 	return plan, planChanged, err
 }
 
-func (syncWaitStatsLoadPoint) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (SyncWaitStatsLoadPoint) Name() string {
 	return "sync_wait_stats_load_point"
 }
 

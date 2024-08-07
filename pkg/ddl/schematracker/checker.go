@@ -545,16 +545,6 @@ func (d *Checker) SetBinlogClient(client *pumpcli.PumpsClient) {
 	d.realDDL.SetBinlogClient(client)
 }
 
-// GetHook implements the DDL interface.
-func (d *Checker) GetHook() ddl.Callback {
-	return d.realDDL.GetHook()
-}
-
-// SetHook implements the DDL interface.
-func (d *Checker) SetHook(h ddl.Callback) {
-	d.realDDL.SetHook(h)
-}
-
 // DoDDLJob implements the DDL interface.
 func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	de := d.realExecutor.(ddl.ExecutorForTest)
