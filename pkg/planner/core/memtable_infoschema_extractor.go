@@ -324,6 +324,9 @@ func findNameAndAppendToTableMap(
 			return errors.Trace(err)
 		}
 		tblInfo := tbl.Meta()
+		if tblInfo.TempTableType != model.TempTableNone {
+			continue
+		}
 		tables[tblInfo.ID] = tblInfo
 	}
 	return nil
@@ -345,12 +348,15 @@ func findTablesByID(
 		if !ok {
 			continue
 		}
+		tblInfo := tbl.Meta()
+		if tblInfo.TempTableType != model.TempTableNone {
+			continue
+		}
 		if len(tableNames) > 0 {
-			if _, ok := tblNameMap[tbl.Meta().Name.L]; ok {
+			if _, ok := tblNameMap[tblInfo.Name.L]; ok {
 				continue
 			}
 		}
-		tblInfo := tbl.Meta()
 		tables[tblInfo.ID] = tblInfo
 	}
 }
@@ -402,6 +408,9 @@ func findTableAndSchemaByName(
 				return nil, nil, errors.Trace(err)
 			}
 			tblInfo := tbl.Meta()
+			if tblInfo.TempTableType != model.TempTableNone {
+				continue
+			}
 			tableMap[tblInfo.ID] = schemaAndTable{s, tblInfo}
 		}
 	}
