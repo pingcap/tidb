@@ -371,7 +371,7 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 		tables:          make([]*subTable, hCtx.partitionNumber),
 		partitionNumber: uint64(hCtx.partitionNumber),
 	}
-	hCtx.finalSync = make(chan struct{})
+	hCtx.finalSync = make(chan struct{}, 1)
 	hCtx.hashTableContext.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
 }
 
@@ -509,8 +509,8 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	}
 
 	e.waiterWg = util.WaitGroupWrapper{}
-	e.closeCh = make(chan struct{})
-	e.buildFetcherFinishCh = make(chan struct{})
+	e.closeCh = make(chan struct{}, 1)
+	e.buildFetcherFinishCh = make(chan struct{}, 1)
 	e.finished.Store(false)
 
 	if e.RuntimeStats() != nil {
@@ -638,7 +638,7 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 	fetcherAndWorkerSyncer := &sync.WaitGroup{}
 
 	// synchronize between probe fetcher and final worker
-	pfAndFWSync := make(chan struct{})
+	pfAndFWSync := make(chan struct{}, 1)
 
 	e.startProbeWorkers(ctx, fetcherAndWorkerSyncer)
 	e.startFinalWorker(pfAndFWSync)
@@ -795,7 +795,7 @@ func (e *HashJoinV2Exec) restoreAndBuild(
 	preBuildWorkerWg *sync.WaitGroup,
 	buildFetcherAndDispatcherSyncChan chan struct{},
 ) {
-	syncCh := make(chan struct{})
+	syncCh := make(chan struct{}, 1)
 	e.startPrebuildWorkersForRestore(restoredPartition, syncCh, fetcherAndWorkerSyncer, preBuildWorkerWg)
 
 	chunkNum := e.getRestoredChunkNum(restoredPartition)
@@ -986,7 +986,7 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	}
 
 	// Build fetcher wakes up build workers with this channel
-	buildFetcherAndDispatcherSyncChan := make(chan struct{})
+	buildFetcherAndDispatcherSyncChan := make(chan struct{}, 1)
 
 	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
 	fetcherAndWorkerSyncer := &sync.WaitGroup{}
@@ -1008,7 +1008,7 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 
 	// Actually we can directly return error by the function `fetchBuildSideRowsImpl`.
 	// However, `fetchBuildSideRowsImpl` is also used by hash join v1.
-	errCh := make(chan error)
+	errCh := make(chan error, 1)
 	e.BuildWorkers[0].fetchBuildSideRowsImpl(ctx, &e.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, e.buildFetcherFinishCh)
 
 	// Wait for the finish of prebuild workers

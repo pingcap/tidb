@@ -277,12 +277,18 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 // fetchBuildSideRowsImpl fetches all rows from build side executor, and append them
 // to e.buildSideResult.
 func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+	var err error
 	defer func() {
 		// We must put the close of chkCh after the place of spilling remaining rows or there will be data race
 		defer close(chkCh)
 
 		if r := recover(); r != nil {
 			errCh <- util.GetRecoverError(r)
+			return
+		}
+
+		if err != nil {
+			errCh <- err
 			return
 		}
 
@@ -298,11 +304,10 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 		}
 	}()
 
-	var err error
 	failpoint.Inject("issue30289", func(val failpoint.Value) {
 		if val.(bool) {
 			err = errors.Errorf("issue30289 build return error")
-			errCh <- errors.Trace(err)
+			err = errors.Trace(err)
 			return
 		}
 	})
@@ -326,7 +331,7 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 		err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
 		if err != nil {
 			log.Info("xzxdebug here1")
-			errCh <- errors.Trace(err)
+			err = errors.Trace(err)
 			log.Info("xzxdebug here2")
 			return
 		}
@@ -337,7 +342,7 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 
 		err = triggerIntest(2)
 		if err != nil {
-			errCh <- errors.Trace(err)
+			err = errors.Trace(err)
 			return
 		}
 
@@ -350,7 +355,7 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 			}
 		})
 		if err != nil {
-			errCh <- errors.Trace(err)
+			err = errors.Trace(err)
 			return
 		}
 

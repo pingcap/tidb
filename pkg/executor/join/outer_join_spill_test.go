@@ -15,17 +15,60 @@
 package join
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func testRandomFail(t *testing.T, ctx *mock.Context, joinType plannercore.JoinType, param spillTestParam, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1500000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	returnTypes := getReturnTypes(joinType, param)
+
+	var buildKeys []*expression.Column
+	var probeKeys []*expression.Column
+	if param.rightAsBuildSide {
+		buildKeys = param.rightKeys
+		probeKeys = param.leftKeys
+	} else {
+		buildKeys = param.leftKeys
+		probeKeys = param.rightKeys
+	}
+
+	info := &hashJoinInfo{
+		ctx:                   ctx,
+		schema:                buildSchema(returnTypes),
+		leftExec:              leftDataSource,
+		rightExec:             rightDataSource,
+		joinType:              joinType,
+		rightAsBuildSide:      param.rightAsBuildSide,
+		buildKeys:             buildKeys,
+		probeKeys:             probeKeys,
+		lUsed:                 param.leftUsed,
+		rUsed:                 param.rightUsed,
+		otherCondition:        param.otherCondition,
+		lUsedInOtherCondition: param.leftUsedByOtherCondition,
+		rUsedInOtherCondition: param.rightUsedByOtherCondition,
+	}
+
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	hashJoinExec := buildHashJoinV2Exec(info)
+	executeHashJoinExecForRandomFailTest(t, hashJoinExec)
+}
 
 func TestOuterJoinSpillBasic(t *testing.T) {
 	ctx := mock.NewContext()
@@ -131,6 +174,104 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 	for _, joinType := range joinTypes {
 		for _, param := range params {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
+		}
+	}
+}
+
+// Hash join executor may be repeatedly closed and opened
+func TestOuterJoinUnderApplyExec(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+
+	info := &hashJoinInfo{
+		ctx:              ctx,
+		schema:           buildSchema(retTypes),
+		leftExec:         leftDataSource,
+		rightExec:        rightDataSource,
+		joinType:         plannercore.InnerJoin,
+		rightAsBuildSide: true,
+		buildKeys: []*expression.Column{
+			{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+			{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
+		},
+		probeKeys: []*expression.Column{
+			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+			{Index: 3, RetType: types.NewFieldType(mysql.TypeVarString)},
+		},
+		lUsed:                 []int{0, 1, 3, 4},
+		rUsed:                 []int{0, 2, 3, 4},
+		otherCondition:        expression.CNFExprs{},
+		lUsedInOtherCondition: []int{0},
+		rUsedInOtherCondition: []int{4},
+	}
+
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
+
+	joinTypes := make([]plannercore.JoinType, 0)
+	joinTypes = append(joinTypes, plannercore.LeftOuterJoin)
+	joinTypes = append(joinTypes, plannercore.RightOuterJoin)
+
+	for _, joinType := range joinTypes {
+		info.joinType = joinType
+		expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
+		testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	}
+}
+
+func TestHashJoinRandomFail(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	leftTypes := []*types.FieldType{intTp, intTp, intTp, stringTp, intTp}
+	rightTypes := []*types.FieldType{intTp, intTp, stringTp, intTp, intTp}
+
+	leftKeys := []*expression.Column{
+		{Index: 1, RetType: intTp},
+		{Index: 3, RetType: stringTp},
+	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+		{Index: 2, RetType: stringTp},
+	}
+
+	params := []spillTestParam{
+		// Normal case
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, nil},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, nil},
+	}
+
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/panicOrError", `return(true)`)
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/panicOrError")
+
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
+
+	joinTypes := make([]plannercore.JoinType, 0)
+	joinTypes = append(joinTypes, plannercore.InnerJoin)
+	joinTypes = append(joinTypes, plannercore.LeftOuterJoin)
+	joinTypes = append(joinTypes, plannercore.RightOuterJoin)
+
+	for i := 0; i < 10; i++ {
+		for j, joinType := range joinTypes {
+			for k, param := range params {
+				log.Info(fmt.Sprintf("xzxdebug testcase %d %d", j, k))
+				testRandomFail(t, ctx, joinType, param, leftDataSource, rightDataSource)
+			}
 		}
 	}
 }

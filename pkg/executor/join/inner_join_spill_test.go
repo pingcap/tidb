@@ -372,7 +372,7 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 // TODO add random fail tests
 
 // Hash join executor may be repeatedly closed and opened
-func TestHashJoinUnderApplyExec(t *testing.T) {
+func TestInnerJoinUnderApplyExec(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -406,3 +406,5 @@ func TestHashJoinUnderApplyExec(t *testing.T) {
 	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 }
+
+
