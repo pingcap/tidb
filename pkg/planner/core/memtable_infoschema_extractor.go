@@ -529,8 +529,8 @@ type InfoSchemaTableNameExtractor struct {
 	InfoSchemaSchemataExtractor
 
 	listTableFunc func(
-		s model.CIStr,
 		ctx context.Context,
+		s model.CIStr,
 		is infoschema.InfoSchema,
 	) ([]*model.TableInfo, error)
 
@@ -583,6 +583,8 @@ func (e *InfoSchemaTableNameExtractor) Extract(
 	return remained
 }
 
+// ListSchemas lists related schemas from predicate.
+// If no schema found in predicate, it return all schemas.
 func (e *InfoSchemaTableNameExtractor) ListSchemas(
 	ctx context.Context,
 	is infoschema.InfoSchema,
@@ -615,12 +617,14 @@ func (e *InfoSchemaTableNameExtractor) ListSchemas(
 	return allSchemas
 }
 
+// ListTables lists related tables for given schema from predicate.
+// If no table found in predicate, it return all tables.
 func (e *InfoSchemaTableNameExtractor) ListTables(
 	ctx context.Context,
 	s model.CIStr,
 	is infoschema.InfoSchema,
 ) ([]*model.TableInfo, error) {
-	allTbls, err := e.listTableFunc(s, ctx, is)
+	allTbls, err := e.listTableFunc(ctx, s, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -643,8 +647,8 @@ func (e *InfoSchemaTableNameExtractor) ListTables(
 }
 
 func (e *InfoSchemaTableNameExtractor) listSchemaTablesByName(
-	s model.CIStr,
 	ctx context.Context,
+	s model.CIStr,
 	is infoschema.InfoSchema,
 ) ([]*model.TableInfo, error) {
 	tbls := make([]*model.TableInfo, 0, len(e.tableNames))
@@ -663,8 +667,8 @@ func (e *InfoSchemaTableNameExtractor) listSchemaTablesByName(
 }
 
 func (e *InfoSchemaTableNameExtractor) listSchemaTables(
-	s model.CIStr,
 	ctx context.Context,
+	s model.CIStr,
 	is infoschema.InfoSchema,
 ) ([]*model.TableInfo, error) {
 	return is.SchemaTableInfos(ctx, s)
@@ -679,6 +683,7 @@ func (e *InfoSchemaTableNameExtractor) getPredicates(colName string) (
 	return nil, nil
 }
 
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *InfoSchemaTableNameExtractor) ExplainInfo(plan base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
@@ -710,10 +715,13 @@ func (e *InfoSchemaTableNameExtractor) ExplainInfo(plan base.PhysicalPlan) strin
 	return s
 }
 
+// ColumnsTableExtractor is the predicate extractor for information_schema.columns.
 type ColumnsTableExtractor struct {
 	InfoSchemaTableNameExtractor
 }
 
+// ListColumns lists related columns for given table from predicate.
+// If no column found in predicate, it return all columns.
 func (e *InfoSchemaTableNameExtractor) ListColumns(
 	tbl *model.TableInfo,
 ) []*model.ColumnInfo {
@@ -739,10 +747,13 @@ ForLoop:
 	return columns
 }
 
+// InfoSchemaIndexesExtractor is the predicate extractor for information_schema.tidb_index_usage.
 type InfoSchemaIndexesExtractor struct {
 	InfoSchemaTableNameExtractor
 }
 
+// ListIndexes lists related indexes for given table from predicate.
+// If no index found in predicate, it return all indexes.
 func (e *InfoSchemaIndexesExtractor) ListIndexes(
 	tbl *model.TableInfo,
 ) []*model.IndexInfo {
