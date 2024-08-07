@@ -2283,7 +2283,7 @@ func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProp
 	return []base.PhysicalPlan{window}
 }
 
-func exhaustLogicalWindowPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	lw := lp.(*logicalop.LogicalWindow)
 	windows := make([]base.PhysicalPlan, 0, 2)
 
