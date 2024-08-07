@@ -628,6 +628,36 @@ func TestReferencedTableSchemaWithForeignKey(t *testing.T) {
 		"id id t1 test2 test"))
 }
 
+func TestSameTableNameInTwoSchemas(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test1;")
+	tk.MustExec("create database test2;")
+	tk.MustExec("create table test1.t (a int);")
+	tk.MustExec("create table test2.t (a int);")
+
+	rs := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't' and table_schema = 'test1';").Rows()
+	t1ID, err := strconv.Atoi(rs[0][0].(string))
+	require.NoError(t, err)
+	rs = tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't' and table_schema = 'test2';").Rows()
+	t2ID, err := strconv.Atoi(rs[0][0].(string))
+	require.NoError(t, err)
+
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where tidb_table_id = %d;", t2ID)).
+		Check(testkit.Rows(fmt.Sprintf("test2 t %d", t2ID)))
+
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_name = 't' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'test1' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_name = 'unknown' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'unknown' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows())
+}
+
 func TestInfoSchemaConditionWorks(t *testing.T) {
 	// this test creates table in different schema with different index name, and check
 	// the condition in the following columns whether work as expected.
