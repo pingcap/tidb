@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func (b *builtinVecDimsSig) vectorized() bool{
+func (b *builtinVecDimsSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVecDimsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinVecDimsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -45,18 +45,18 @@ func (b *builtinVecDimsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 			continue
 		}
 		length := buf.GetVectorFloat32(i).Len()
-		i64s[i]= int64(length)
+		i64s[i] = int64(length)
 	}
 	return nil
 }
 
-func (b *builtinVecL1DistanceSig) vectorized() bool{
+func (b *builtinVecL1DistanceSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1,err := b.bufAllocator.get()
+	col1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -65,7 +65,7 @@ func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 		return err
 	}
 
-	col2,err := b.bufAllocator.get()
+	col2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 		return err
 	}
 	result.ResizeFloat64(n, false)
-	result.MergeNulls(col1,col2)
+	result.MergeNulls(col1, col2)
 	res := result.Float64s()
 	for i := 0; i < n; i++ {
 		x := col1.GetVectorFloat32(i)
@@ -83,7 +83,7 @@ func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 		if err != nil {
 			return err
 		}
-		if math.IsNaN(d) == true{
+		if math.IsNaN(d) == true {
 			res[i] = 0
 			continue
 		}
@@ -92,13 +92,13 @@ func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 	return nil
 }
 
-func (b *builtinVecL2DistanceSig) vectorized() bool{
+func (b *builtinVecL2DistanceSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1,err := b.bufAllocator.get()
+	col1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 		return err
 	}
 
-	col2,err := b.bufAllocator.get()
+	col2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 		return err
 	}
 	result.ResizeFloat64(n, false)
-	result.MergeNulls(col1,col2)
+	result.MergeNulls(col1, col2)
 	res := result.Float64s()
 	for i := 0; i < n; i++ {
 		x := col1.GetVectorFloat32(i)
@@ -130,13 +130,13 @@ func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 	return nil
 }
 
-func (b *builtinVecNegativeInnerProductSig) vectorized() bool{
+func (b *builtinVecNegativeInnerProductSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1,err := b.bufAllocator.get()
+	col1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *
 		return err
 	}
 
-	col2,err := b.bufAllocator.get()
+	col2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -154,7 +154,7 @@ func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *
 		return err
 	}
 	result.ResizeFloat64(n, false)
-	result.MergeNulls(col1,col2)
+	result.MergeNulls(col1, col2)
 	res := result.Float64s()
 	for i := 0; i < n; i++ {
 		x := col1.GetVectorFloat32(i)
@@ -168,13 +168,13 @@ func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *
 	return nil
 }
 
-func (b *builtinVecCosineDistanceSig) vectorized() bool{
+func (b *builtinVecCosineDistanceSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1,err := b.bufAllocator.get()
+	col1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.
 		return err
 	}
 
-	col2,err := b.bufAllocator.get()
+	col2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -192,7 +192,7 @@ func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.
 		return err
 	}
 	result.ResizeFloat64(n, false)
-	result.MergeNulls(col1,col2)
+	result.MergeNulls(col1, col2)
 	res := result.Float64s()
 
 	for i := 0; i < n; i++ {
@@ -207,13 +207,13 @@ func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.
 	return nil
 }
 
-func (b *builtinVecL2NormSig) vectorized() bool{
+func (b *builtinVecL2NormSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVecL2NormSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinVecL2NormSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	col1,err := b.bufAllocator.get()
+	col1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -236,11 +236,11 @@ func (b *builtinVecL2NormSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 	return nil
 }
 
-func (b *builtinVecFromTextSig) vectorized() bool{
+func (b *builtinVecFromTextSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVecFromTextSig) vecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinVecFromTextSig) vecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -271,11 +271,11 @@ func (b *builtinVecFromTextSig) vecEvalVectorFloat32(ctx EvalContext, input *chu
 	return nil
 }
 
-func (b *builtinVecAsTextSig) vectorized() bool{
+func (b *builtinVecAsTextSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinVecAsTextSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinVecAsTextSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
