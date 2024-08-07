@@ -928,13 +928,13 @@ const (
 // With ideal parallelism and sufficient concurrency,
 // the maximum duration for a round of deleteRanges is 100,000 * 50ms = 5,000s.
 // These values are conservatively chosen to minimize GC impact on foreground requests
-func (w *GCWorker) calcDeleteRangeConcurrency(concurrency gcConcurrency, n int) int {
-	maxConcurrency := concurrency.v / ConcurrencyDivisor
-	threadsBasedOnRequests := n / RequestsPerThread
+func (w *GCWorker) calcDeleteRangeConcurrency(concurrency gcConcurrency, rangeNum int) int {
+	maxConcurrency := max(1, concurrency.v/ConcurrencyDivisor)
+	threadsBasedOnRequests := max(1, rangeNum/RequestsPerThread)
 	if concurrency.isAuto {
-		return max(1, min(maxConcurrency, threadsBasedOnRequests))
+		return min(maxConcurrency, threadsBasedOnRequests)
 	}
-	return max(1, maxConcurrency)
+	return maxConcurrency
 }
 
 // redoDeleteRanges checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.

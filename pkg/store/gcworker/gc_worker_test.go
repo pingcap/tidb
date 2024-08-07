@@ -1700,3 +1700,37 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	})
 	return dom
 }
+
+func TestCalcDeleteRangeConcurrency(t *testing.T) {
+	testCases := []struct {
+		name        string
+		concurrency gcConcurrency
+		rangeNum    int
+		expected    int
+	}{
+		{"Auto: Low concurrency, few ranges", gcConcurrency{16, true}, 50000, 1},
+		{"Auto: High concurrency, many ranges", gcConcurrency{400, true}, 1000000, 10},
+		{"Auto: High concurrency, few ranges", gcConcurrency{400, true}, 50000, 1},
+		{"Auto: Low concurrency, many ranges", gcConcurrency{16, true}, 1000000, 4},
+		{"Non-auto: Low concurrency", gcConcurrency{16, false}, 1000000, 4},
+		{"Non-auto: High concurrency", gcConcurrency{400, false}, 50000, 100},
+		{"Edge case: Zero concurrency", gcConcurrency{0, true}, 100000, 1},
+		{"Edge case: Zero ranges", gcConcurrency{100, true}, 0, 1},
+		{"Large range number", gcConcurrency{400, true}, 10000000, 100},
+		{"Exact RequestsPerThread", gcConcurrency{400, true}, 200000, 2},
+	}
+
+	w := &GCWorker{}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := w.calcDeleteRangeConcurrency(tc.concurrency, tc.rangeNum)
+			if result != tc.expected {
+				t.Errorf("Expected %d, but got %d", tc.expected, result)
+			}
+			if result < 1 {
+				t.Errorf("Result should never be less than 1, but got %d", result)
+			}
+		})
+	}
+}
