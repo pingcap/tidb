@@ -323,7 +323,7 @@ func genJoinMethodHintForSinglePhysicalJoin(
 	if parentOffset == -1 {
 		return nil
 	}
-	hintTbls, hintQBName := genHintTblFromPhysicalPlans(sctx, children, parentOffset, nodeType)
+	hintTbls, hintQBName := genHintTblForJoinNodes(sctx, children, parentOffset, nodeType)
 	effectiveHintTbls := slices.DeleteFunc(slices.Clone(hintTbls), func(ht *ast.HintTable) bool {
 		return ht == nil
 	})
@@ -340,14 +340,14 @@ func genJoinMethodHintForSinglePhysicalJoin(
 		Tables:   []ast.HintTable{*effectiveHintTbls[0]},
 	}
 
-	if !slices.Contains(hintTbls, nil) && hintQBName != nil {
+	if hintQBName != nil {
 		newHint.QBName = *hintQBName
 	}
 
 	return newHint
 }
 
-func genHintTblFromPhysicalPlans(
+func genHintTblForJoinNodes(
 	sctx base.PlanContext,
 	joinedNodes []base.PhysicalPlan,
 	parentOffset int,
@@ -368,11 +368,15 @@ func genHintTblFromPhysicalPlans(
 			qbOffsets = append(qbOffsets, -1)
 			hintTbls = append(hintTbls, nil)
 		}
-		// TODO
+		// If we guessed the same QB offset for two different nodes, that's likely incorrect, and we stop use that.
+		// This may happen for queries like ... FROM t1 join (select * from t2 join t3) derived ... . We will guess
+		// derived@sel_1 for both t2 and t3, and that's incorrect. Besides, current leading hint also can't handle this
+		// kind of hints.
 		if guessOffset {
 			if _, ok := guessQBOffsets[qbOffset]; ok {
 				qbOffsets = append(qbOffsets, -1)
 				hintTbls = append(hintTbls, nil)
+				continue
 			}
 			guessQBOffsets[qbOffset] = struct{}{}
 		}
@@ -380,39 +384,16 @@ func genHintTblFromPhysicalPlans(
 		hintTbls = append(hintTbls, ht)
 	}
 
-	// 2. Generate QB name for the hint itself based on the QB name of each join node from step 1.
-
-	effectiveQBOffsets := slices.DeleteFunc(slices.Clone(qbOffsets), func(i int) bool {
-		return i == -1
-	})
-	if len(effectiveQBOffsets) == 0 {
-		return nil, nil
-	}
-	// Current join reorder will break QB offset of the join operator, e.g. setting them to -1.
-	// So we are unable to get the correct QB offset for the hint from the join operator, now we use the minimum QB
-	// offset among the tables.
-	minQBOffset := slices.Min(effectiveQBOffsets)
-	var hintQBNamePtr *model.CIStr
-	// In quick binding, we always put the generated hints in the first valid place in the SQL.
-	// That means in UPDATE/DELETE statements, hintname(@del_1) and hintname(@upd_1) is unnecessary, and in SELECT
-	// statements, hintname(@sel_1) is unnecessary.
-	// We don't generate QB name for the hint itself in this case to make the result cleaner.
-	if (minQBOffset > 1 && nodeType == h.TypeSelect) ||
-		(minQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
-		hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
-		if err != nil {
-			return nil, nil
-		}
-		hintQBNamePtr = &hintQBName
-	}
-
-	// 3. Add QB name for each table name in the hint.
+	// 2. Add QB name for each table name in the hint.
 
 	for i, hintTbl := range hintTbls {
 		if hintTbl == nil {
 			continue
 		}
-		// ditto. We don't generate unnecessary QB name for the table name in the hint.
+		// In quick binding, we always put the generated hints in the first valid place in the SQL.
+		// That implies hintname(@del_1) and hintname(@upd_1) is unnecessary in UPDATE/DELETE statements, and
+		// hintname(@sel_1) is unnecessary in SELECT statements.
+		// We don't generate QB name for the table names in the hint in this case to make the result cleaner.
 		if (qbOffsets[i] <= 1 && nodeType == h.TypeSelect) ||
 			(qbOffsets[i] == 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
 			continue
@@ -422,6 +403,30 @@ func genHintTblFromPhysicalPlans(
 			continue
 		}
 		hintTbls[i].QBName = tblQBName
+	}
+
+	// 3. Generate QB name for the hint itself based on the QB name of each join node from step 1.
+
+	// Current join reorder will break QB offset of the join operator, e.g. setting them to -1.
+	// So we are unable to get the correct QB offset for the hint from the join operator, now we use the minimum QB
+	// offset among the tables.
+	// Besides, extractHintTableForJoinNode() is not powerful enough to handle all cases, it may fail in some cases.
+	// If we failed to get QB offset information from one join node, we don't generate QB name for the hint. Because
+	// that may cause a wrong QB offset, leaving it blank is probably better.
+	if slices.Contains(qbOffsets, -1) {
+		return hintTbls, nil
+	}
+	minQBOffset := slices.Min(qbOffsets)
+
+	var hintQBNamePtr *model.CIStr
+	// ditto. We don't generate unnecessary QB name for the hint itself.
+	if (minQBOffset > 1 && nodeType == h.TypeSelect) ||
+		(minQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
+		hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
+		if err != nil {
+			return nil, nil
+		}
+		hintQBNamePtr = &hintQBName
 	}
 	return hintTbls, hintQBNamePtr
 }
@@ -516,13 +521,14 @@ func genJoinOrderHintFromRootPhysicalJoin(
 		return nil
 	}
 
-	// 2. Generate the leading hint based on the ordered operators.
-	hintTbls, hintQBName := genHintTblFromPhysicalPlans(p.SCtx(), orderedJoinGroup, p.QueryBlockOffset(), nodeType)
+	// 2. Generate the leading hint based on the ordered join nodes.
+	hintTbls, hintQBName := genHintTblForJoinNodes(p.SCtx(), orderedJoinGroup, p.QueryBlockOffset(), nodeType)
+
+	// For now, we generate the leading hint only if we successfully generate the names for all nodes.
 	if slices.Contains(hintTbls, nil) {
 		return nil
 	}
 
-	// convert hintTbls from []*ast.HintTable to []ast.HintTable
 	hintTblVals := make([]ast.HintTable, 0, len(hintTbls))
 	for _, ht := range hintTbls {
 		hintTblVals = append(hintTblVals, *ht)
