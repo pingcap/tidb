@@ -277,7 +277,7 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 // fetchBuildSideRowsImpl fetches all rows from build side executor, and append them
 // to e.buildSideResult.
 func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
-	var err error
+	var globalErr error
 	defer func() {
 		// We must put the close of chkCh after the place of spilling remaining rows or there will be data race
 		defer close(chkCh)
@@ -287,8 +287,8 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 			return
 		}
 
-		if err != nil {
-			errCh <- err
+		if globalErr != nil {
+			errCh <- globalErr
 			return
 		}
 
@@ -306,8 +306,8 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 
 	failpoint.Inject("issue30289", func(val failpoint.Value) {
 		if val.(bool) {
-			err = errors.Errorf("issue30289 build return error")
-			err = errors.Trace(err)
+			globalErr = errors.Errorf("issue30289 build return error")
+			globalErr = errors.Trace(globalErr)
 			return
 		}
 	})
@@ -331,7 +331,7 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 		err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
 		if err != nil {
 			log.Info("xzxdebug here1")
-			err = errors.Trace(err)
+			globalErr = errors.Trace(err)
 			log.Info("xzxdebug here2")
 			return
 		}
@@ -342,7 +342,7 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 
 		err = triggerIntest(2)
 		if err != nil {
-			err = errors.Trace(err)
+			globalErr = errors.Trace(err)
 			return
 		}
 
@@ -351,11 +351,11 @@ func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCt
 
 		failpoint.Inject("issue51998", func(val failpoint.Value) {
 			if val.(bool) {
-				err = errors.Errorf("issue51998 build return error")
+				globalErr = errors.Errorf("issue51998 build return error")
 			}
 		})
 		if err != nil {
-			err = errors.Trace(err)
+			globalErr = errors.Trace(err)
 			return
 		}
 

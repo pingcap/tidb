@@ -269,7 +269,7 @@ func TestHashJoinRandomFail(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		for j, joinType := range joinTypes {
 			for k, param := range params {
-				log.Info(fmt.Sprintf("xzxdebug testcase %d %d", j, k))
+				log.Info(fmt.Sprintf("xzxdebug start new testcase %d %d ---------------", j, k))
 				testRandomFail(t, ctx, joinType, param, leftDataSource, rightDataSource)
 			}
 		}

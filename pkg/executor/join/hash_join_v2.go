@@ -577,12 +577,12 @@ func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorker
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				// log.Info(fmt.Sprintf("xzxdebug start probe worker %d", workerID))
+				log.Info(fmt.Sprintf("xzxdebug start probe worker %d", workerID))
 				defer trace.StartRegion(ctx, "HashJoinWorker").End()
 				e.ProbeWorkers[workerID].runJoinWorker()
 			},
 			func(r any) {
-				// log.Info(fmt.Sprintf("xzxdebug leave probe worker %d...", workerID))
+				log.Info(fmt.Sprintf("xzxdebug leave probe worker %d...", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				fetcherAndWorkerSyncer.Done()
 			},
@@ -593,11 +593,11 @@ func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorker
 func (e *HashJoinV2Exec) startFinalWorker(syncer chan struct{}) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			// log.Info("xzxdebug start final worker")
+			log.Info("xzxdebug start final worker")
 			e.finalWorker(syncer)
 		},
 		func(r any) {
-			// log.Info("xzxdebug leave final worker...")
+			log.Info("xzxdebug leave final worker...")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)
@@ -683,12 +683,12 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			// log.Info("xzxdebug start probe fetcher")
+			log.Info("xzxdebug start probe fetcher")
 			defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
 			e.startProbeFetcher(ctx)
 		},
 		func(r any) {
-			// log.Info("xzxdebug leave probe fetcher")
+			log.Info("xzxdebug leave probe fetcher")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)
@@ -716,12 +716,15 @@ func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 				workerID := i
 				e.waiterWg.RunWithRecover(
 					func() {
-						// log.Info(fmt.Sprintf("xzxdebug start final subworker %d", workerID))
+						log.Info(fmt.Sprintf("xzxdebug start final subworker %d", workerID))
 						// Error has been handled in the function
-						_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
+						err := e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
+						if err != nil {
+							handleError(e.joinResultCh, &e.finished, err)
+						}
 					},
 					func(r any) {
-						// log.Info(fmt.Sprintf("xzxdebug leave final subworker %d...", workerID))
+						log.Info(fmt.Sprintf("xzxdebug leave final subworker %d...", workerID))
 						handleError(e.joinResultCh, &e.finished, r)
 						wg.Done()
 					},
@@ -744,7 +747,7 @@ func (e *HashJoinV2Exec) getRestoredChunkNum(restoredPartition *restorePartition
 
 func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, doneCh <-chan struct{}, wg *sync.WaitGroup) {
 	defer func() {
-		defer close(syncCh)
+		close(syncCh)
 
 		if r := recover(); r != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
@@ -974,8 +977,13 @@ func (e *HashJoinV2Exec) dispatchBuildTasks(syncer chan struct{}) error {
 }
 
 func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
-	// log.Info("xzxdebug start build fetcher")
-	// defer log.Info("xzxdebug leave build fetcher...")
+	log.Info("xzxdebug start build fetcher")
+	defer func() {
+		log.Info("xzxdebug leave build fetcher...")
+		if r := recover(); r != nil {
+			log.Info(fmt.Sprintf("xzxdebug panic in startBuildFetcher %s", util.GetRecoverError(r).Error()))
+		}
+	}()
 
 	// TODO we need to re-handle it
 	if e.stats != nil {
@@ -1086,14 +1094,11 @@ func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetche
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				// log.Info(fmt.Sprintf("xzxdebug start prebuild worker %d", workerID))
-				err := e.BuildWorkers[workerID].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
-				if err != nil {
-					handleError(e.joinResultCh, &e.finished, err)
-				}
+				log.Info(fmt.Sprintf("xzxdebug start prebuild worker %d", workerID))
+				e.BuildWorkers[workerID].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
 			},
 			func(r any) {
-				// log.Info(fmt.Sprintf("xzxdebug leave prebuild worker %d...", workerID))
+				log.Info(fmt.Sprintf("xzxdebug leave prebuild worker %d...", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				wg.Done()
 			},
@@ -1108,10 +1113,7 @@ func (e *HashJoinV2Exec) startPrebuildWorkersForRestore(restoredPartition *resto
 		e.waiterWg.RunWithRecover(
 			func() {
 				// log.Info(fmt.Sprintf("xzxdebug start restore prebuild worker %d", workerID))
-				err := e.BuildWorkers[workerID].restoreAndPrebuild(restoredPartition.buildSideChunks[workerID], syncCh, fetcherAndWorkerSyncer)
-				if err != nil {
-					handleError(e.joinResultCh, &e.finished, err)
-				}
+				e.BuildWorkers[workerID].restoreAndPrebuild(restoredPartition.buildSideChunks[workerID], syncCh, fetcherAndWorkerSyncer)
 			},
 			func(r any) {
 				// log.Info(fmt.Sprintf("xzxdebug leave restore prebuild worker %d...", workerID))
@@ -1125,14 +1127,14 @@ func (e *HashJoinV2Exec) startPrebuildWorkersForRestore(restoredPartition *resto
 func (e *HashJoinV2Exec) startBuildTaskDispatcher(syncer chan struct{}) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			// log.Info("xzxdebug start dispatcher")
+			log.Info("xzxdebug start dispatcher")
 			err := e.dispatchBuildTasks(syncer)
 			if err != nil {
 				handleError(e.joinResultCh, &e.finished, err)
 			}
 		},
 		func(r any) {
-			// log.Info("xzxdebug leave dispatcher...")
+			log.Info("xzxdebug leave dispatcher...")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)

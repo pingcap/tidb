@@ -88,11 +88,7 @@ func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) {
 	}
 }
 
-func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
-	defer func() {
-		fetcherAndWorkerSyncer.Done()
-	}()
-
+func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, cost *int64) error {
 	start := time.Now()
 	err := w.builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
 	failpoint.Inject("splitPartitionPanic", nil)
@@ -100,7 +96,28 @@ func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk,
 	return err
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup) (err error) {
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableImpl(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+	defer func() {
+		fetcherAndWorkerSyncer.Done()
+	}()
+
+	if w.HashJoinCtx.finished.Load() {
+		return nil
+	}
+
+	err := triggerIntest(5)
+	if err != nil {
+		return err
+	}
+
+	err = w.processOneChunk(typeCtx, chk, cost)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup) {
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
@@ -116,18 +133,10 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
-		if hashJoinCtx.finished.Load() {
-			return
-		}
-
-		err = triggerIntest(5)
+		err := w.splitPartitionAndAppendToRowTableImpl(typeCtx, chk, fetcherAndWorkerSyncer, &cost)
 		if err != nil {
-			return err
-		}
-
-		err = w.processOneChunk(typeCtx, chk, fetcherAndWorkerSyncer, &cost)
-		if err != nil {
-			return err
+			// Do no directly exit the function as there may still be some chunks in `srcChkCh`
+			handleError(hashJoinCtx.joinResultCh, &hashJoinCtx.finished, err)
 		}
 	}
 
@@ -138,12 +147,9 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	start := time.Now()
 	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
-	return nil
 }
 
-func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
-	defer fetcherAndWorkerSyncer.Done()
-
+func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) error {
 	start := time.Now()
 	err := w.builder.processOneRestoredChunk(chk, w.HashJoinCtx, int(w.WorkerID), int(w.HashJoinCtx.partitionNumber))
 	if err != nil {
@@ -153,7 +159,34 @@ func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, fetcherAndWork
 	return nil
 }
 
-func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) error {
+func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+	defer func() {
+		fetcherAndWorkerSyncer.Done()
+	}()
+
+	if w.HashJoinCtx.finished.Load() {
+		return nil
+	}
+
+	// TODO reuse chunk
+	chk, err := inDisk.GetChunk(i)
+	if err != nil {
+		return err
+	}
+
+	err = triggerIntest(3)
+	if err != nil {
+		return err
+	}
+
+	err = w.processOneRestoredChunk(chk, cost)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) {
 	// TODO add statistic
 	cost := int64(0)
 	// defer func() {
@@ -170,30 +203,18 @@ func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syn
 
 	chunkNum := inDisk.NumChunks()
 	for i := 0; i < chunkNum; i++ {
-		<-syncCh
-		if w.HashJoinCtx.finished.Load() {
-			return nil
+		_, ok := <-syncCh
+		if !ok {
+			break
 		}
 
-		// TODO reuse chunk
-		chk, err := inDisk.GetChunk(i)
+		err := w.restoreAndPrebuildImpl(i, inDisk, fetcherAndWorkerSyncer, &cost)
 		if err != nil {
-			return err
-		}
-
-		err = triggerIntest(3)
-		if err != nil {
-			return err
-		}
-
-		err = w.processOneRestoredChunk(chk, fetcherAndWorkerSyncer, &cost)
-		if err != nil {
-			return err
+			handleError(hashJoinCtx.joinResultCh, &hashJoinCtx.finished, err)
 		}
 	}
 
 	start := time.Now()
 	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
-	return nil
 }

@@ -406,5 +406,3 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 }
-
-
