@@ -42,6 +42,70 @@ import (
 	"go.uber.org/zap"
 )
 
+// CacheQueryResult caches the results of frequently executed queries.
+var queryCache = make(map[string]interface{})
+
+func CacheQueryResult(query string, result interface{}) {
+	queryCache[query] = result
+}
+
+func GetCachedQueryResult(query string) (interface{}, bool) {
+	result, exists := queryCache[query]
+	return result, exists
+}
+
+// CollectStats collects statistics for query optimization.
+func CollectStats(ctx context.Context, tableID int64) (*statistics.Table, error) {
+	h := statistics.GetHandle()
+	tableStats, err := h.TableStatsFromStorage(tableID)
+	if err != nil {
+		logutil.BgLogger().Error("failed to collect table statistics", zap.Error(err))
+		return nil, err
+	}
+	return tableStats, nil
+}
+
+// UseIndex optimizes the use of indexes in query plans.
+func UseIndex(ctx context.Context, tableStats *statistics.Table, columns []string) []string {
+	indexes := make([]string, 0)
+	for _, col := range columns {
+		if idx := tableStats.IndexByColumns(col); idx != nil {
+			indexes = append(indexes, idx.Name.O)
+		}
+	}
+	return indexes
+}
+
+// OptimizeQuery optimizes the query execution using collected statistics and indexes.
+func OptimizeQuery(ctx context.Context, query string, tableID int64, columns []string) (interface{}, error) {
+	if result, exists := GetCachedQueryResult(query); exists {
+		return result, nil
+	}
+
+	tableStats, err := CollectStats(ctx, tableID)
+	if err != nil {
+		return nil, err
+	}
+
+	indexes := UseIndex(ctx, tableStats, columns)
+	result, err := ExecuteQueryWithIndex(query, indexes)
+	if err != nil {
+		return nil, err
+	}
+
+	CacheQueryResult(query, result)
+	return result, nil
+}
+
+// ExecuteQueryWithIndex executes the query using the provided indexes.
+func ExecuteQueryWithIndex(query string, indexes []string) (interface{}, error) {
+	// Implementation of query execution using indexes.
+	// This is a placeholder for actual implementation.
+	logutil.BgLogger().Info("Executing query with indexes", zap.Strings("indexes", indexes))
+	// Here should be the actual implementation to execute the query with given indexes.
+	return nil, nil
+}
+
 func (p *basePhysicalPlan) StatsCount() float64 {
 	return p.StatsInfo().RowCount
 }
