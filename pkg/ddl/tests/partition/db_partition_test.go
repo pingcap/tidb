@@ -3776,15 +3776,15 @@ func TestGlobalIndexExplicitOption(t *testing.T) {
 	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:1503]A PRIMARY KEY must include all columns in the table's partitioning function")
 	tk.MustExec(`create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3`)
 	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
-	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3 convert to global index`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3 update indexes (a global)`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 	tk.MustExec(`drop table t`)
 	tk.MustExec("set tidb_enable_global_index=ON")
 	tk.MustExec(`create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3`)
 	tk.MustExec(`drop table t`)
 	tk.MustContainErrMsg(`create table t (a int key global, b int) partition by hash(b) partitions 3`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
-	tk.MustContainErrMsg(`create table t (a int unique, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed, since the unique index is not including all partitioning columns, but GLOBAL is not given as IndexOption")
-	tk.MustContainErrMsg(`create table t (a int unique key, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed, since the unique index is not including all partitioning columns, but GLOBAL is not given as IndexOption")
-	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed, since the unique index is not including all partitioning columns, but GLOBAL is not given as IndexOption")
+	tk.MustContainErrMsg(`create table t (a int unique, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
+	tk.MustContainErrMsg(`create table t (a int unique key, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
+	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
 	createTable := "CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
@@ -3792,10 +3792,9 @@ func TestGlobalIndexExplicitOption(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`b`) PARTITIONS 3"
 	tk.MustExec(createTable)
-	res := tk.MustQuery(`show create table t`)
-	res.Check(testkit.Rows("t " + createTable))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("t " + createTable))
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3`)
-	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed, since the unique index is not including all partitioning columns, but GLOBAL is not given as IndexOption")
-	tk.MustExec(`alter table t partition by hash(b) partitions 3 convert to global index`)
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
+	tk.MustExec(`alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL)`)
 }

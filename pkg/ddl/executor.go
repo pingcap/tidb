@@ -2429,11 +2429,6 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		partNames = append(partNames, piOld.Definitions[0].Name.L)
 	}
 	newMeta := meta.Clone()
-	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
-	if err != nil {
-		return err
-	}
-	newPartInfo := newMeta.Partition
 
 	if spec.Partition != nil && len(spec.Partition.UpdateIndexes) > 0 {
 		for _, idxUpdate := range spec.Partition.UpdateIndexes {
@@ -2454,6 +2449,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 			}
 		}
 	}
+
 	for _, index := range newMeta.Indices {
 		if index.Unique {
 			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
@@ -2498,6 +2494,11 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 		}
 	}
+	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
+	if err != nil {
+		return err
+	}
+	newPartInfo := newMeta.Partition
 
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
