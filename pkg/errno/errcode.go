@@ -933,6 +933,9 @@ const (
 	ErrInvalidJSONType                                       = 3853
 	ErrCannotConvertString                                   = 3854
 	ErrDependentByPartitionFunctional                        = 3855
+	ErrIncorrectCurrentPassword                              = 3891
+	ErrMissingCurrentPassword                                = 3892
+	ErrCurrentPasswordNotRequired                            = 3893
 	ErrInvalidJSONValueForFuncIndex                          = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907

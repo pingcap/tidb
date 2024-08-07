@@ -120,6 +120,9 @@ type Manager interface {
 
 	// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
 	GetAuthPlugin(user, host string) (string, error)
+
+	// Checks the current password of the account
+	CheckCurrentPassword(user, host, password string, sessionVars *variable.SessionVars) error
 }
 
 const key keyType = 0

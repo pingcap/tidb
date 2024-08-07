@@ -949,6 +949,9 @@ const (
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrInvalidJSONType                                       = 3853
+	ErrIncorrectCurrentPassword                              = 3891
+	ErrMissingCurrentPassword                                = 3892
+	ErrCurrentPasswordNotRequired                            = 3893
 	ErrInvalidJsonValueForFuncIndex                          = 3903 //nolint: revive
 	ErrJsonValueOutOfRangeForFuncIndex                       = 3904 //nolint: revive
 	ErrFunctionalIndexDataIsTooLong                          = 3907
