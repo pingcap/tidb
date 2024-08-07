@@ -130,7 +130,25 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	}
 	child := p.Children()[0]
 	if childProj, ok := child.(*PhysicalProjection); ok {
+<<<<<<< HEAD:planner/core/rule_eliminate_projection.go
 		childProj.SetSchema(p.Schema())
+=======
+		// when current projection is an empty projection(schema pruned by column pruner), no need to reset child's schema
+		// TODO: avoid producing empty projection in column pruner.
+		if p.Schema().Len() != 0 {
+			childProj.SetSchema(p.Schema())
+		}
+		// If any of the consecutive projection operators has the AvoidColumnEvaluator set to true,
+		// we need to set the AvoidColumnEvaluator of the remaining projection to true.
+		if proj.AvoidColumnEvaluator {
+			childProj.AvoidColumnEvaluator = true
+		}
+	}
+	for i, col := range p.Schema().Columns {
+		if p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan.Has(int(col.UniqueID)) && !child.Schema().Columns[i].Equal(nil, col) {
+			return p
+		}
+>>>>>>> 724b7eda3a7 (pkg/planner, tests: set the AvoidColumnEvaluator correctly in ProjectionElimination (#55219)):pkg/planner/core/rule_eliminate_projection.go
 	}
 	return child
 }
