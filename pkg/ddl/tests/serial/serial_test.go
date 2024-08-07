@@ -418,7 +418,10 @@ func createMockStore(t *testing.T) (store kv.Storage) {
 	var err error
 	store, err = mockstore.NewMockStore()
 	require.NoError(t, err)
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
 	t.Cleanup(func() {
+		dom.Close()
 		require.NoError(t, store.Close())
 	})
 	return
