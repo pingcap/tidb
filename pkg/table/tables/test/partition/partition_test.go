@@ -2343,11 +2343,11 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 		`alter table t partition by range (a+2) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
 			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
 			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
-			`partition pLast values less than (maxvalue)) convert to global index`,
+			`partition pLast values less than (maxvalue)) update indexes (idx_a local, idx_dc global, idx_b global)`,
 		// KEY
-		`alter table t partition by key(b) partitions 3 convert to global index`,
+		`alter table t partition by key(b) partitions 3 update indexes(idx_a global, idx_b local, idx_dc global)`,
 		// Hash
-		`alter table t partition by hash(a) partitions 7 convert to global index`,
+		`alter table t partition by hash(a) partitions 7 update indexes (idx_dc global, idx_a local, idx_b global)`,
 	}
 	if limitSizeOfTest {
 		tAlter = tAlter[:2]

@@ -2430,74 +2430,11 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 	newMeta := meta.Clone()
 
-	if spec.Partition != nil && len(spec.Partition.UpdateIndexes) > 0 {
-		for _, idxUpdate := range spec.Partition.UpdateIndexes {
-			idxOffset := -1
-			for i := range newMeta.Indices {
-				if strings.EqualFold(newMeta.Indices[i].Name.L, idxUpdate.Name) {
-					idxOffset = i
-					break
-				}
-			}
-			if idxOffset == -1 {
-				return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(idxUpdate.Name)
-			}
-			if idxUpdate.Option != nil && idxUpdate.Option.Global {
-				newMeta.Indices[idxOffset].Global = true
-			} else {
-				newMeta.Indices[idxOffset].Global = false
-			}
-		}
-	}
-
-	for _, index := range newMeta.Indices {
-		if index.Unique {
-			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
-			if err != nil {
-				return err
-			}
-			if !ck {
-				indexTp := ""
-				if !ctx.GetSessionVars().EnableGlobalIndex {
-					if index.Primary {
-						indexTp = "PRIMARY KEY"
-					} else {
-						indexTp = "UNIQUE INDEX"
-					}
-				} else if t.Meta().IsCommonHandle {
-					indexTp = "CLUSTERED INDEX"
-				}
-				if indexTp != "" {
-					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
-				}
-				if !index.Global {
-					return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
-				}
-			}
-		}
-	}
-	if newMeta.PKIsHandle {
-		// This case is covers when the Handle is the PK (only ints), since it would not
-		// have an entry in the tblInfo.Indices
-		indexCols := []*model.IndexColumn{{
-			Name:   newMeta.GetPkName(),
-			Length: types.UnspecifiedLength,
-		}}
-		ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
-		if err != nil {
-			return err
-		}
-		if !ck {
-			if !ctx.GetSessionVars().EnableGlobalIndex {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-			}
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
-		}
-	}
 	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
 	if err != nil {
 		return err
 	}
+
 	newPartInfo := newMeta.Partition
 
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
