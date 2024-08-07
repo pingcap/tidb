@@ -114,6 +114,11 @@ go_test(
         "//pkg/statistics/handle/util",
         "//pkg/tablecodec",
         "//pkg/util/table-filter",
+<<<<<<< HEAD
+=======
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_gogo_protobuf//proto",
+>>>>>>> d662428574e (br:  disk space check follow up (#54596))
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
