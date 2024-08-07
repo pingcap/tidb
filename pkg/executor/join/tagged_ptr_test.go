@@ -43,7 +43,7 @@ func TestTagHelperInit(t *testing.T) {
 func TestTagHelper(t *testing.T) {
 	rawData := make([]byte, 10*1024*1024)
 	startPtr := unsafe.Pointer(&rawData[0])
-	endPtr := unsafe.Pointer(&rawData[len(rawData) - 1])
+	endPtr := unsafe.Pointer(&rawData[len(rawData)-1])
 	startUintptr := uintptr(0)
 	endUintptr := uintptr(0)
 	*(*unsafe.Pointer)(unsafe.Pointer(&startUintptr)) = startPtr
@@ -53,14 +53,14 @@ func TestTagHelper(t *testing.T) {
 	tagHelper.init(taggedBits)
 	taggedValue := uint64(0x1234) << (64 - initTaggedBits)
 	for {
-		if taggedValue & tagHelper.taggedMask != taggedValue {
+		if taggedValue&tagHelper.taggedMask != taggedValue {
 			taggedValue <<= 1
 		} else {
 			break
 		}
 	}
 	require.True(t, taggedValue != 0, "tagged value should not be zero")
-	// 
+	//
 	testPtrs := []unsafe.Pointer{startPtr, endPtr}
 	for _, testPtr := range testPtrs {
 		taggedPtr := tagHelper.toTaggedPtr(taggedValue, testPtr)
