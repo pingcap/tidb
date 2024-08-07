@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 	"math/rand"
 	"testing"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
