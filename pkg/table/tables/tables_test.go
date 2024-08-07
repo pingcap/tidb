@@ -1071,13 +1071,10 @@ func TestDupKeyCheckMode(t *testing.T) {
 	}
 
 	for _, txnMode := range []string{"optimistic", "pessimistic"} {
-		t.Run(txnMode+" DupKeyCheckDefault(check in place)", func(t *testing.T) {
+		t.Run(txnMode+" DupKeyCheckInPlace", func(t *testing.T) {
 			defer tk.MustExec("rollback")
 			memBuffer := prepareTxn(txnMode).GetMemBuffer()
 			oldLen, oldSize := memBuffer.Len(), memBuffer.Size()
-			tk.Session().GetSessionVars().PresumeKeyNotExists = false
-			tk.Session().GetSessionVars().StmtCtx.SetErrLevels(errctx.LevelMap{errctx.ErrGroupDupKey: errctx.LevelWarn})
-
 			// AddRecord should check dup key in store and memory buffer
 			for _, row := range [][]types.Datum{
 				types.MakeDatums(1, 5, 6),
@@ -1085,8 +1082,8 @@ func TestDupKeyCheckMode(t *testing.T) {
 				types.MakeDatums(21, 31, 41),
 				types.MakeDatums(200, 22, 23),
 			} {
-				expectAddRecordDupKeyErr(row, table.DupKeyCheckDefault)
-				// default mode should be DupKeyCheckDefault
+				expectAddRecordDupKeyErr(row, table.DupKeyCheckInPlace)
+				// default mode should be DupKeyCheckInPlace
 				expectAddRecordDupKeyErr(row)
 				require.Equal(t, oldLen, memBuffer.Len())
 				require.Equal(t, oldSize, memBuffer.Size())
@@ -1096,29 +1093,24 @@ func TestDupKeyCheckMode(t *testing.T) {
 			for _, row := range [][][]types.Datum{
 				{types.MakeDatums(1, 2, 3), types.MakeDatums(1, 12, 13)},
 			} {
-				expectUpdateRecordDupKeyErr(row, []bool{false, true, false}, table.DupKeyCheckDefault)
-				// default mode should be DupKeyCheckDefault
+				expectUpdateRecordDupKeyErr(row, []bool{false, true, false}, table.DupKeyCheckInPlace)
+				// default mode should be DupKeyCheckInPlace
 				expectUpdateRecordDupKeyErr(row, []bool{false, true, false})
 				require.Equal(t, oldLen, memBuffer.Len())
 				require.Equal(t, oldSize, memBuffer.Size())
 			}
 		})
 
-		t.Run(txnMode+" DupKeyCheckDefault(lazy)", func(t *testing.T) {
+		t.Run(txnMode+" DupKeyCheckLazy", func(t *testing.T) {
 			defer tk.MustExec("rollback")
 			memBuffer := prepareTxn(txnMode).GetMemBuffer()
 			oldLen, oldSize := memBuffer.Len(), memBuffer.Size()
-			tk.Session().GetSessionVars().PresumeKeyNotExists = true
-			tk.Session().GetSessionVars().StmtCtx.SetErrLevels(errctx.LevelMap{})
-
 			// AddRecord should check dup key in memory buffer
 			for _, row := range [][]types.Datum{
 				types.MakeDatums(21, 31, 41),
 				types.MakeDatums(200, 22, 23),
 			} {
-				expectAddRecordDupKeyErr(row, table.DupKeyCheckDefault)
-				// if DupKeyCheckMode mode specified, table.DupKeyCheckDefault should be used
-				expectAddRecordDupKeyErr(row)
+				expectAddRecordDupKeyErr(row, table.DupKeyCheckLazy)
 				require.Equal(t, oldLen, memBuffer.Len())
 				require.Equal(t, oldSize, memBuffer.Size())
 			}
@@ -1127,9 +1119,7 @@ func TestDupKeyCheckMode(t *testing.T) {
 			for _, row := range [][][]types.Datum{
 				{types.MakeDatums(21, 22, 23), types.MakeDatums(21, 32, 35)},
 			} {
-				expectUpdateRecordDupKeyErr(row, []bool{false, true, false}, table.DupKeyCheckDefault)
-				// default mode should be DupKeyCheckDefault
-				expectUpdateRecordDupKeyErr(row, []bool{false, true, false})
+				expectUpdateRecordDupKeyErr(row, []bool{false, true, false}, table.DupKeyCheckLazy)
 				require.Equal(t, oldLen, memBuffer.Len())
 				require.Equal(t, oldSize, memBuffer.Size())
 			}
@@ -1139,7 +1129,7 @@ func TestDupKeyCheckMode(t *testing.T) {
 			for _, row := range [][]types.Datum{
 				types.MakeDatums(1, 12, 13),
 			} {
-				h := expectAddRecordSucc(row, table.DupKeyCheckDefault)
+				h := expectAddRecordSucc(row, table.DupKeyCheckLazy)
 				// 1 row and 2 indices added
 				require.Equal(t, curLen+3, memBuffer.Len())
 				curLen = memBuffer.Len()
@@ -1158,7 +1148,7 @@ func TestDupKeyCheckMode(t *testing.T) {
 			for _, row := range [][][]types.Datum{
 				{types.MakeDatums(11, 12, 13), types.MakeDatums(11, 2, 33)},
 			} {
-				h := expectUpdateRecordSucc(row, []bool{false, true, true}, table.DupKeyCheckDefault)
+				h := expectUpdateRecordSucc(row, []bool{false, true, true}, table.DupKeyCheckLazy)
 				// 1 row overridden. 2 indexes deleted and re-added.
 				require.Equal(t, curLen+4, memBuffer.Len())
 				curLen = memBuffer.Len()

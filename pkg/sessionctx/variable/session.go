@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1264,9 +1263,6 @@ type SessionVars struct {
 
 	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
 	EnableGlobalIndex bool
-
-	// PresumeKeyNotExists indicates lazy existence checking is enabled.
-	PresumeKeyNotExists bool
 
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
@@ -2756,11 +2752,6 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 // GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
 func (s *SessionVars) GetDivPrecisionIncrement() int {
 	return s.DivPrecisionIncrement
-}
-
-// LazyCheckKeyNotExists returns if we can lazy check key not exists.
-func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) == errctx.LevelError)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.

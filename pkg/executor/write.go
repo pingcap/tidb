@@ -56,7 +56,7 @@ var (
 func updateRecord(
 	ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool,
 	t table.Table,
-	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec,
+	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, dupKeyMode table.DupKeyCheckMode,
 ) (bool, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
@@ -179,7 +179,7 @@ func updateRecord(
 				return false, err
 			}
 
-			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx))
+			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx), dupKeyMode)
 			if err != nil {
 				return false, err
 			}
@@ -199,9 +199,9 @@ func updateRecord(
 			// If InHandleForeignKeyTrigger or ForeignKeyTriggerCtx.HasFKCascades is true indicate we may have
 			// foreign key cascade need to handle later, then we still need to write index value,
 			// otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
-			opts = []table.UpdateRecordOption{table.WithCtx(ctx)}
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode}
 		} else {
-			opts = []table.UpdateRecordOption{table.WithCtx(ctx), table.SkipWriteUntouchedIndices}
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode, table.SkipWriteUntouchedIndices}
 		}
 
 		// Update record to new value and update index.
