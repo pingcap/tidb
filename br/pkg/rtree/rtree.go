@@ -297,10 +297,11 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 }
 
 type ProgressRange struct {
-	Res        RangeTree
-	Incomplete []Range
-	Origin     Range
-	GroupKey   string
+	Res      RangeTree
+	Origin   Range
+	GroupKey string
+	// only for statistic
+	Complete bool
 }
 
 // Less impls btree.Item.
@@ -313,13 +314,24 @@ func (pr *ProgressRange) Less(than *ProgressRange) bool {
 // All the progress ranges it sorted do not overlap.
 type ProgressRangeTree struct {
 	*btree.BTreeG[*ProgressRange]
+
+	incompleteItemCount int
+	completeCallBack    func()
 }
 
 // NewProgressRangeTree returns an empty range tree.
 func NewProgressRangeTree() ProgressRangeTree {
 	return ProgressRangeTree{
 		BTreeG: btree.NewG[*ProgressRange](32, (*ProgressRange).Less),
+
+		incompleteItemCount: 0,
+		completeCallBack:    func() {},
 	}
+}
+
+// SetCallBack set the complete call back to update the progress.
+func (rangeTree *ProgressRangeTree) SetCallBack(callback func()) {
+	rangeTree.completeCallBack = callback
 }
 
 // find is a helper function to find an item that contains the range.
@@ -347,6 +359,7 @@ func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
 			redact.Key(pr.Origin.StartKey), redact.Key(overlap.Origin.StartKey), redact.Key(overlap.Origin.EndKey))
 	}
 	rangeTree.ReplaceOrInsert(pr)
+	rangeTree.incompleteItemCount += 1
 	return nil
 }
 
@@ -373,49 +386,23 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	return ret, nil
 }
 
-type incompleteRangesFetcherItem struct {
-	pr       *ProgressRange
-	complete bool
-}
-
-type IncompleteRangesFetcher struct {
-	items []*incompleteRangesFetcherItem
-	left  int
-}
-
-func (rangeTree *ProgressRangeTree) Iter() *IncompleteRangesFetcher {
-	items := make([]*incompleteRangesFetcherItem, 0, rangeTree.Len())
+func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []Range {
+	incompleteRanges := make([]Range, 0, 8*rangeTree.incompleteItemCount)
 	rangeTree.Ascend(func(item *ProgressRange) bool {
-		items = append(items, &incompleteRangesFetcherItem{
-			pr:       item,
-			complete: false,
-		})
-		return true
-	})
-	return &IncompleteRangesFetcher{
-		items: items,
-		left:  len(items),
-	}
-}
-
-func (iter *IncompleteRangesFetcher) GetIncompleteRanges() []Range {
-	incompleteRanges := make([]Range, 0, 64*len(iter.items))
-	for _, item := range iter.items {
-		if item.complete {
-			continue
-		}
-
-		incomplete := item.pr.Res.GetIncompleteRange(item.pr.Origin.StartKey, item.pr.Origin.EndKey)
+		// NOTE: maybe there is a late response whose range overlaps with an existing item, which
+		// may cause the complete range tree to become incomplete. Therefore, `item.Complete` is
+		// only for statistic.
+		incomplete := item.Res.GetIncompleteRange(item.Origin.StartKey, item.Origin.EndKey)
 		if len(incomplete) == 0 {
-			item.complete = true
-			iter.left -= 1
-			continue
+			if !item.Complete {
+				item.Complete = true
+				rangeTree.incompleteItemCount -= 1
+				rangeTree.completeCallBack()
+			}
+			return true
 		}
 		incompleteRanges = append(incompleteRanges, incomplete...)
-	}
+		return true
+	})
 	return incompleteRanges
-}
-
-func (iter *IncompleteRangesFetcher) Len() int {
-	return iter.left
 }
