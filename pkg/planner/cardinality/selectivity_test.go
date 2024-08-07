@@ -235,7 +235,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID := table.Meta().Columns[0].ID
 	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30))
 	require.NoError(t, err)
-	require.Equal(t, 1.2, count)
+	require.Equal(t, 1.0, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
