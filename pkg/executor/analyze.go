@@ -124,12 +124,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		prepareV2AnalyzeJobInfo(task.colExec)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
 	}
-	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockKillPendingAnalyzeJob")); _err_ == nil {
 		dom := domain.GetDomain(e.Ctx())
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
-	})
+	}
 TASKLOOP:
 	for _, task := range tasks {
 		select {
@@ -154,12 +154,12 @@ TASKLOOP:
 		return err
 	}
 
-	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockKillFinishedAnalyzeJob")); _err_ == nil {
 		dom := domain.GetDomain(e.Ctx())
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
-	})
+	}
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
@@ -415,7 +415,7 @@ func (e *AnalyzeExec) handleResultsError(
 		}
 	}
 	logutil.BgLogger().Info("use single session to save analyze results")
-	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
+	failpoint.Eval(_curpkg_("handleResultsErrorSingleThreadPanic"))
 	subSctxs := []sessionctx.Context{e.Ctx()}
 	return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
 }
@@ -510,7 +510,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if !ok {
 			break
 		}
-		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
+		failpoint.Eval(_curpkg_("handleAnalyzeWorkerPanic"))
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:

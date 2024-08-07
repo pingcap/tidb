@@ -281,14 +281,14 @@ func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
 
 func failpointError() error {
 	var err error
-	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("enableAggSpillIntest")); _err_ == nil {
 		if val.(bool) {
 			num := rand.Intn(1000)
 			if num < 3 {
 				err = errors.Errorf("Random fail is triggered in ParallelAggSpillDiskAction")
 			}
 		}
-	})
+	}
 	return err
 }
 

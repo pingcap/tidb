@@ -262,11 +262,11 @@ func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 
 func checkSQLKiller(killer *sqlkiller.SQLKiller, fpName string) error {
 	err := killer.HandleSignal()
-	failpoint.Inject(fpName, func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_(fpName)); _err_ == nil {
 		if val.(bool) {
 			err = exeerrors.ErrQueryInterrupted
 		}
-	})
+	}
 	return err
 }
 

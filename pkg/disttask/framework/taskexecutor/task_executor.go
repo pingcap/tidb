@@ -306,9 +306,9 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 	}
 	execute.SetFrameworkInfo(stepExecutor, resource)
 
-	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
-		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockExecSubtaskInitEnvErr")); _err_ == nil {
+		return errors.New("mockExecSubtaskInitEnvErr")
+	}
 	if err := stepExecutor.Init(runStepCtx); err != nil {
 		e.onError(err)
 		return e.getError()
@@ -367,9 +367,9 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 			}
 		}
 
-		failpoint.Inject("cancelBeforeRunSubtask", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("cancelBeforeRunSubtask")); _err_ == nil {
 			runStepCancel(nil)
-		})
+		}
 
 		e.runSubtask(runStepCtx, stepExecutor, subtask)
 	}
@@ -402,17 +402,17 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		}()
 		return stepExecutor.RunSubtask(ctx, subtask)
 	}()
-	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockRunSubtaskCancel")); _err_ == nil {
 		if val.(bool) {
 			err = ErrCancelSubtask
 		}
-	})
+	}
 
-	failpoint.Inject("MockRunSubtaskContextCanceled", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockRunSubtaskContextCanceled")); _err_ == nil {
 		if val.(bool) {
 			err = context.Canceled
 		}
-	})
+	}
 
 	if err != nil {
 		e.onError(err)
@@ -423,18 +423,18 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		return
 	}
 
-	failpoint.Inject("mockTiDBShutdown", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockTiDBShutdown")); _err_ == nil {
 		if MockTiDBDown(e.id, e.GetTaskBase()) {
-			failpoint.Return()
+			return
 		}
-	})
+	}
 
-	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockExecutorRunErr")); _err_ == nil {
 		if val.(bool) {
 			e.onError(errors.New("MockExecutorRunErr"))
 		}
-	})
-	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("MockExecutorRunCancel")); _err_ == nil {
 		if taskID, ok := val.(int); ok {
 			mgr, err := storage.GetTaskManager()
 			if err != nil {
@@ -446,7 +446,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 				}
 			}
 		}
-	})
+	}
 	e.onSubtaskFinished(ctx, stepExecutor, subtask)
 }
 
@@ -456,11 +456,11 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 			e.onError(err)
 		}
 	}
-	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockSubtaskFinishedCancel")); _err_ == nil {
 		if val.(bool) {
 			e.onError(ErrCancelSubtask)
 		}
-	})
+	}
 
 	finished := e.markSubTaskCanceledOrFailed(ctx, subtask)
 	if finished {
@@ -474,7 +474,7 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 		return
 	}
 
-	failpoint.InjectCall("syncAfterSubtaskFinish")
+	failpoint.Call(_curpkg_("syncAfterSubtaskFinish"))
 }
 
 // GetTaskBase implements TaskExecutor.GetTaskBase.

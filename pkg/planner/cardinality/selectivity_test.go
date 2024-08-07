@@ -235,7 +235,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID := table.Meta().Columns[0].ID
 	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30))
 	require.NoError(t, err)
-	require.Equal(t, 0.2, count)
+	require.Equal(t, 1.2, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
@@ -248,7 +248,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	idxID := table.Meta().Indices[0].ID
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
 	require.NoError(t, err)
-	require.Equal(t, 0.1, count)
+	require.Equal(t, 1.0, count)
 
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
 	require.NoError(t, err)
@@ -264,7 +264,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID = table.Meta().Columns[0].ID
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30))
 	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
+	require.Equal(t, 1.0, count)
 
 	testKit.MustExec("drop table t")
 	testKit.MustExec("create table t(a int, b int, index idx(b))")
@@ -277,12 +277,12 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID = table.Meta().Columns[0].ID
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
 	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
+	require.Equal(t, 1.0, count)
 
 	idxID = table.Meta().Indices[0].ID
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
 	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
+	require.Equal(t, 1.0, count)
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
@@ -1189,8 +1189,8 @@ func TestCrossValidationSelectivity(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
-		"TableReader 0.00 root  data:Selection",
-		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  gt(test.t.c, 1000)",
 		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
 }
 
@@ -1212,8 +1212,8 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// From the real-time stats, we are able to know the total count is 11.
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_7 0.00 root  data:Selection_6",
-		"└─Selection_6 0.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"TableReader_7 1.00 root  data:Selection_6",
+		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
 		"  └─TableFullScan_5 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 

@@ -128,7 +128,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 			return nil
 		}
 
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 
 		if err := w.mergeInputIntoResultMap(sctx, input); err != nil {
 			return err
@@ -168,7 +168,7 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 		return
 	}
 
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 
 	execStart := time.Now()
 	updateExecTime(w.stats, execStart)
@@ -253,7 +253,7 @@ func (w *HashAggFinalWorker) cleanup(start time.Time, waitGroup *sync.WaitGroup)
 }
 
 func intestBeforeFinalWorkerStart() {
-	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("enableAggSpillIntest")); _err_ == nil {
 		if val.(bool) {
 			num := rand.Intn(50)
 			if num < 3 {
@@ -262,11 +262,11 @@ func intestBeforeFinalWorkerStart() {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}
-	})
+	}
 }
 
 func (w *HashAggFinalWorker) intestDuringFinalWorkerRun(err *error) {
-	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("enableAggSpillIntest")); _err_ == nil {
 		if val.(bool) {
 			num := rand.Intn(10000)
 			if num < 5 {
@@ -279,5 +279,5 @@ func (w *HashAggFinalWorker) intestDuringFinalWorkerRun(err *error) {
 				*err = errors.New("Random fail is triggered in final worker")
 			}
 		}
-	})
+	}
 }

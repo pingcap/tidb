@@ -190,9 +190,9 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	stats := domain.GetDomain(ds.SCtx()).StatsHandle()
 	tblStats := stats.GetPartitionStats(ds.TableInfo, ds.PhysicalTableID)
 	skipPseudoCheckForTest := false
-	failpoint.Inject("disablePseudoCheck", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("disablePseudoCheck")); _err_ == nil {
 		skipPseudoCheckForTest = true
-	})
+	}
 	// Since we can not get the stats tbl, this table is not analyzed. So we don't need to consider load stats.
 	if tblStats.Pseudo && !skipPseudoCheckForTest {
 		return

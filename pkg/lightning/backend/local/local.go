@@ -183,7 +183,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 		return nil, common.ErrInvalidConfig.GenWithStack("unsupported compression type %s", f.compressionType)
 	}
 
-	failpoint.Inject("LoggingImportBytes", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("LoggingImportBytes")); _err_ == nil {
 		opts = append(opts, grpc.WithContextDialer(func(ctx context.Context, target string) (net.Conn, error) {
 			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", target)
 			if err != nil {
@@ -191,7 +191,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 			}
 			return &loggingConn{Conn: conn}, nil
 		}))
-	})
+	}
 
 	conn, err := grpc.DialContext(ctx, addr, opts...)
 	if err != nil {
@@ -891,18 +891,18 @@ func (local *Backend) prepareAndSendJob(
 	// the table when table is created.
 	needSplit := len(initialSplitRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 	// split region by given ranges
-	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("failToSplit")); _err_ == nil {
 		needSplit = true
-	})
+	}
 	if needSplit {
 		var err error
 		logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
 		backOffTime := 10 * time.Second
 		maxbackoffTime := 120 * time.Second
 		for i := 0; i < maxRetryTimes; i++ {
-			failpoint.Inject("skipSplitAndScatter", func() {
-				failpoint.Break()
-			})
+			if _, _err_ := failpoint.Eval(_curpkg_("skipSplitAndScatter")); _err_ == nil {
+				break
+			}
 
 			err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
@@ -987,13 +987,13 @@ func (local *Backend) generateAndSendJob(
 						return nil
 					}
 
-					failpoint.Inject("beforeGenerateJob", nil)
-					failpoint.Inject("sendDummyJob", func(_ failpoint.Value) {
+					failpoint.Eval(_curpkg_("beforeGenerateJob"))
+					if _, _err_ := failpoint.Eval(_curpkg_("sendDummyJob")); _err_ == nil {
 						// this is used to trigger worker failure, used together
 						// with WriteToTiKVNotEnoughDiskSpace
 						jobToWorkerCh <- &regionJob{}
 						time.Sleep(5 * time.Second)
-					})
+					}
 					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Range, regionSplitSize, regionSplitKeys)
 					if err != nil {
 						if common.IsContextCanceledError(err) {
@@ -1045,9 +1045,9 @@ func (local *Backend) generateJobForRange(
 	keyRange common.Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
-	failpoint.Inject("fakeRegionJobs", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("fakeRegionJobs")); _err_ == nil {
 		if ctx.Err() != nil {
-			failpoint.Return(nil, ctx.Err())
+			return nil, ctx.Err()
 		}
 		key := [2]string{string(keyRange.Start), string(keyRange.End)}
 		injected := fakeRegionJobs[key]
@@ -1056,8 +1056,8 @@ func (local *Backend) generateJobForRange(
 		for _, job := range injected.jobs {
 			job.stage = regionScanned
 		}
-		failpoint.Return(injected.jobs, injected.err)
-	})
+		return injected.jobs, injected.err
+	}
 
 	start, end := keyRange.Start, keyRange.End
 	pairStart, pairEnd, err := data.GetFirstAndLastKey(start, end)
@@ -1226,10 +1226,9 @@ func (local *Backend) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
-	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
-		failpoint.Return(
-			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("WriteToTiKVNotEnoughDiskSpace")); _err_ == nil {
+		return errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again")
+	}
 	if local.ShouldCheckTiKV {
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
@@ -1371,7 +1370,7 @@ func (local *Backend) ImportEngine(
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
-	failpoint.Inject("ReadyForImportEngine", func() {})
+	failpoint.Eval(_curpkg_("ReadyForImportEngine"))
 
 	err = local.doImport(ctx, e, regionRanges, regionSplitSize, regionSplitKeys)
 	if err == nil {
@@ -1421,10 +1420,10 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 	)
 	defer workerCancel()
 
-	failpoint.Inject("injectVariables", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("injectVariables")); _err_ == nil {
 		jobToWorkerCh = testJobToWorkerCh
 		testJobWg = &jobWg
-	})
+	}
 
 	retryer := startRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 
@@ -1476,17 +1475,16 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		}
 	}()
 
-	failpoint.Inject("skipStartWorker", func() {
-		failpoint.Goto("afterStartWorker")
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("skipStartWorker")); _err_ == nil {
+		goto afterStartWorker
+	}
 
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
 			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh, &jobWg)
 		})
 	}
-
-	failpoint.Label("afterStartWorker")
+afterStartWorker:
 
 	workGroup.Go(func() error {
 		err := local.prepareAndSendJob(

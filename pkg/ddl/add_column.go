@@ -60,12 +60,12 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorBeforeDecodeArgs")); _err_ == nil {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("occur an error before decode args"))
+			return ver, errors.New("occur an error before decode args")
 		}
-	})
+	}
 
 	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
 	if err != nil {
@@ -117,7 +117,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
-		failpoint.InjectCall("onAddColumnStateWriteReorg")
+		failpoint.Call(_curpkg_("onAddColumnStateWriteReorg"))
 		offset, err := LocateOffsetToMove(columnInfo.Offset, pos, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)

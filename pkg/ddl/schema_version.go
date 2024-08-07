@@ -362,14 +362,14 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 }
 
 func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSchemaVersion int64, timeStart time.Time) error {
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkDownBeforeUpdateGlobalVersion")); _err_ == nil {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
 			}
 			mockDDLErrOnce = -1
 		}
-	})
+	}
 
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	err := d.schemaSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
@@ -405,14 +405,14 @@ func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job) error {
 		return err
 	}
 
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkDownBeforeUpdateGlobalVersion")); _err_ == nil {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
 			}
 			mockDDLErrOnce = -1
 		}
-	})
+	}
 
 	return waitSchemaChanged(ctx, d, latestSchemaVersion, job)
 }

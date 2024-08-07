@@ -600,12 +600,12 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 			indexJoins, _ := tryToGetIndexJoin(p, prop)
-			failpoint.Return(indexJoins, true, nil)
+			return indexJoins, true, nil
 		}
-	})
+	}
 
 	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
 		if hasMPPJoinHints(p.PreferJoinType) {

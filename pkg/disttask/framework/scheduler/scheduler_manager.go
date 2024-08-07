@@ -301,13 +301,13 @@ func (sm *Manager) failTask(id int64, currState proto.TaskState, err error) {
 
 func (sm *Manager) gcSubtaskHistoryTableLoop() {
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
-	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("historySubtaskTableGcInterval")); _err_ == nil {
 		if seconds, ok := val.(int); ok {
 			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
 		}
 
 		<-WaitTaskFinished
-	})
+	}
 
 	sm.logger.Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
@@ -413,9 +413,9 @@ func (sm *Manager) doCleanupTask() {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
 		return
 	}
-	failpoint.Inject("WaitCleanUpFinished", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("WaitCleanUpFinished")); _err_ == nil {
 		WaitCleanUpFinished <- struct{}{}
-	})
+	}
 	sm.logger.Info("cleanup routine success")
 }
 
@@ -442,9 +442,9 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		sm.logger.Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
 	}
 
-	failpoint.Inject("mockTransferErr", func() {
-		failpoint.Return(errors.New("transfer err"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockTransferErr")); _err_ == nil {
+		return errors.New("transfer err")
+	}
 
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }

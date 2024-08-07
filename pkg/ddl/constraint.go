@@ -37,11 +37,11 @@ func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		return rollingBackAddConstraint(d, t, job)
 	}
 
-	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorBeforeDecodeArgs")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("occur an error before decode args"))
+			return ver, errors.New("occur an error before decode args")
 		}
-	})
+	}
 
 	dbInfo, tblInfo, constraintInfoInMeta, constraintInfoInJob, err := checkAddCheckConstraint(t, job)
 	if err != nil {
@@ -355,11 +355,11 @@ func findDependentColsInExpr(expr ast.ExprNode) map[string]struct{} {
 
 func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tableInfo *model.TableInfo, constr *model.ConstraintInfo) error {
 	// Inject a fail-point to skip the remaining records check.
-	failpoint.Inject("mockVerifyRemainDataSuccess", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockVerifyRemainDataSuccess")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	// Get sessionctx from ddl context resource pool in ddl worker.
 	var sctx sessionctx.Context
 	sctx, err := w.sessPool.Get()

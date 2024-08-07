@@ -828,9 +828,9 @@ func (rc *LogClient) RestoreMetaKVFiles(
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
-	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-before-id-maps-saved")); _err_ == nil {
+		return errors.New("failpoint: failed before id maps saved")
+	}
 
 	log.Info("start to restore meta files",
 		zap.Int("total files", len(files)),
@@ -848,9 +848,9 @@ func (rc *LogClient) RestoreMetaKVFiles(
 			return errors.Trace(err)
 		}
 	}
-	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-after-id-maps-saved")); _err_ == nil {
+		return errors.New("failpoint: failed after id maps saved")
+	}
 
 	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := RestoreMetaKVFilesWithBatchMethod(
@@ -1087,18 +1087,18 @@ func (rc *LogClient) restoreMetaKvEntries(
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))
 
-		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
-			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("failed-to-restore-metakv")); _err_ == nil {
+			return 0, 0, errors.Errorf("failpoint: failed to restore metakv")
+		}
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.Ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 		// for failpoint, we need to flush the cache in rawKVClient every time
-		failpoint.Inject("do-not-put-metakv-in-batch", func(_ failpoint.Value) {
+		if _, _err_ := failpoint.Eval(_curpkg_("do-not-put-metakv-in-batch")); _err_ == nil {
 			if err := rc.rawKVClient.PutRest(ctx); err != nil {
-				failpoint.Return(0, 0, errors.Trace(err))
+				return 0, 0, errors.Trace(err)
 			}
-		})
+		}
 		kvCount++
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
@@ -1397,11 +1397,11 @@ NEXTSQL:
 					return errors.Trace(err)
 				}
 			}
-			failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("failed-before-create-ingest-index")); _err_ == nil {
 				if v != nil && v.(bool) {
-					failpoint.Return(errors.New("failed before create ingest index"))
+					return errors.New("failed before create ingest index")
 				}
-			})
+			}
 			// create the repaired index when first execution or not found it
 			if err := rc.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)

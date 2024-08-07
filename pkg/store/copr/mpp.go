@@ -280,10 +280,10 @@ func (c *MPPClient) CheckVisibility(startTime uint64) error {
 }
 
 func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, TTL int64) (int, error) {
-	failpoint.Inject("mppStoreCountSetLastUpdateTime", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("mppStoreCountSetLastUpdateTime")); _err_ == nil {
 		v, _ := strconv.ParseInt(value.(string), 10, 0)
 		c.lastUpdate = v
-	})
+	}
 
 	lastUpdate := atomic.LoadInt64(&c.lastUpdate)
 	now := time.Now().UnixMicro()
@@ -295,10 +295,10 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 		}
 	}
 
-	failpoint.Inject("mppStoreCountSetLastUpdateTimeP2", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("mppStoreCountSetLastUpdateTimeP2")); _err_ == nil {
 		v, _ := strconv.ParseInt(value.(string), 10, 0)
 		c.lastUpdate = v
-	})
+	}
 
 	if !atomic.CompareAndSwapInt64(&c.lastUpdate, lastUpdate, now) {
 		if isInit {
@@ -311,11 +311,11 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 	cnt := 0
 	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
 
-	failpoint.Inject("mppStoreCountPDError", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("mppStoreCountPDError")); _err_ == nil {
 		if value.(bool) {
 			err = errors.New("failed to get mpp store count")
 		}
-	})
+	}
 
 	if err != nil {
 		// always to update cache next time
@@ -328,9 +328,9 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 		}
 		cnt += 1
 	}
-	failpoint.Inject("mppStoreCountSetMPPCnt", func(value failpoint.Value) {
+	if value, _err_ := failpoint.Eval(_curpkg_("mppStoreCountSetMPPCnt")); _err_ == nil {
 		cnt = value.(int)
-	})
+	}
 
 	if !isInit || atomic.LoadInt64(&c.lastUpdate) == now {
 		atomic.StoreInt32(&c.cnt, int32(cnt))

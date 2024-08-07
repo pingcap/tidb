@@ -65,12 +65,12 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 			},
 		}
 	}
-	failpoint.Inject("assertRequestBuilderReplicaOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertRequestBuilderReplicaOption")); _err_ == nil {
 		assertScope := val.(string)
 		if builder.ReplicaRead.IsClosestRead() && assertScope != builder.ReadReplicaScope {
 			panic("request builder get staleness option fail")
 		}
-	})
+	}
 	err := builder.verifyTxnScope()
 	if err != nil {
 		builder.err = err
@@ -90,12 +90,12 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 				switch dag.Executors[0].Tp {
 				case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeIndexScan, tipb.ExecType_TypePartitionTableScan:
 					builder.Request.Concurrency = 2
-					failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+					if val, _err_ := failpoint.Eval(_curpkg_("testRateLimitActionMockConsumeAndAssert")); _err_ == nil {
 						if val.(bool) {
 							// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
 							builder.Request.Concurrency = oldConcurrency
 						}
-					})
+					}
 				}
 			}
 		}

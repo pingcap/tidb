@@ -246,7 +246,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("SetBindingTimeToZero")); _err_ == nil {
 			if val.(bool) && bindings != nil {
 				bindings = bindings.Copy()
 				for i := range bindings {
@@ -254,7 +254,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 					bindings[i].UpdateTime = types.ZeroTime
 				}
 			}
-		})
+		}
 		debugtrace.RecordAnyValuesWithNames(pctx,
 			"Used binding", useBinding,
 			"Enable binding", enableUseBinding,
@@ -459,19 +459,19 @@ var planBuilderPool = sync.Pool{
 var optimizeCnt int
 
 func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
-	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkOptimizeCountOne")); _err_ == nil {
 		// only count the optimization for SQL with specified text
 		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
 			optimizeCnt++
 			if optimizeCnt > 1 {
-				failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
+				return nil, nil, 0, errors.New("gofail wrong optimizerCnt error")
 			}
 		}
-	})
-	failpoint.Inject("mockHighLoadForOptimize", func() {
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForOptimize")); _err_ == nil {
 		sqlPrefixes := []string{"select"}
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
-	})
+	}
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -561,9 +561,9 @@ func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node ast.Node,
 	sctx.GetSessionVars().MapScalarSubQ = nil
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
-	failpoint.Inject("mockRandomPlanID", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockRandomPlanID")); _err_ == nil {
 		sctx.GetSessionVars().PlanID.Store(rand.Int31n(1000)) // nolint:gosec
-	})
+	}
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
