@@ -646,7 +646,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			} else {
 				tbInfo.Indices[idxOffset].Global = false
 			}
-			updateIndexes = append(updateIndexes, model.UpdateIndexInfo{idxUpdate.Name, tbInfo.Indices[idxOffset].Global})
+			updateIndexes = append(updateIndexes, model.UpdateIndexInfo{IndexName: idxUpdate.Name, Global: tbInfo.Indices[idxOffset].Global})
 			tbInfo.Partition.DDLUpdateIndexes = updateIndexes
 		}
 	}
