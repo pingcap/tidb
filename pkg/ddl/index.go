@@ -316,7 +316,6 @@ func BuildIndexInfo(
 	indexName model.CIStr,
 	isPrimary bool,
 	isUnique bool,
-	isGlobal bool,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	state model.SchemaState,
@@ -337,7 +336,6 @@ func BuildIndexInfo(
 		State:   state,
 		Primary: isPrimary,
 		Unique:  isUnique,
-		Global:  isGlobal,
 		MVIndex: mvIndex,
 	}
 
@@ -352,6 +350,7 @@ func BuildIndexInfo(
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
+		idxInfo.Global = indexOption.Global
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = model.IndexTypeBtree
@@ -668,7 +667,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				indexName,
 				isPK,
 				uniques[i],
-				global[i],
 				indexPartSpecifications[i],
 				indexOption[i],
 				model.StateNone,

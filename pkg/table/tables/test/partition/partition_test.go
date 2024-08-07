@@ -2304,8 +2304,10 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	tk2.MustExec(`set @@tidb_enable_global_index = ON`)
 
 	tBase := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b), key (c,b), unique key idx_dc(d,c), key(e))`
+	tBaseA := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b) Global, key (c,b), unique key idx_dc(d,c) Global, key(e))`
+	tBaseB := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a) Global, unique key idx_b(b), key (c,b), unique key idx_dc(d,c) Global, key(e))`
 	t2Str := `create table t2 ` + tBase
-	tStr := `create table t ` + tBase
+	tStr := `create table t `
 
 	rows := 100
 	pkInserts := 20
@@ -2316,16 +2318,16 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	twoThirdUintRangeStr := fmt.Sprintf("%d", 2*thirdUintRange)
 	tStart := []string{
 		// Non partitioned
-		tStr,
+		tStr + tBase,
 		// RANGE COLUMNS
-		tStr + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
+		tStr + tBaseA + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
 			`partition pMid values less than (` + twoThirdUintRangeStr + `), partition pLast values less than (maxvalue))`,
 		// KEY
-		tStr + ` partition by key(b) partitions 5`,
+		tStr + tBaseB + ` partition by key(b) partitions 5`,
 		// HASH
-		tStr + ` partition by hash(a) partitions 5`,
+		tStr + tBaseA + ` partition by hash(a) partitions 5`,
 		// HASH with function
-		tStr + ` partition by hash(a DIV 3) partitions 5`,
+		tStr + tBaseA + ` partition by hash(a DIV 3) partitions 5`,
 	}
 	if limitSizeOfTest {
 		tStart = tStart[:2]
@@ -2341,11 +2343,11 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 		`alter table t partition by range (a+2) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
 			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
 			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
-			`partition pLast values less than (maxvalue))`,
+			`partition pLast values less than (maxvalue)) convert to global index`,
 		// KEY
-		`alter table t partition by key(b) partitions 3`,
+		`alter table t partition by key(b) partitions 3 convert to global index`,
 		// Hash
-		`alter table t partition by hash(a) partitions 7`,
+		`alter table t partition by hash(a) partitions 7 convert to global index`,
 	}
 	if limitSizeOfTest {
 		tAlter = tAlter[:2]

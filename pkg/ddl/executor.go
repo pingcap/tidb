@@ -2455,7 +2455,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 				if indexTp != "" {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 				}
-				// Also mark the unique index as global index
+				if !spec.Partition.ConvertToGlobal {
+					return dbterror.ErrGlobalIndexNotExplicitlySet
+				}
 				index.Global = true
 			}
 		}
@@ -4555,6 +4557,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 			}
 			// index columns does not contain all partition columns, must set global
+			if indexOption == nil || !indexOption.Global {
+				return dbterror.ErrGlobalIndexNotExplicitlySet
+			}
 			global = true
 		}
 	}
@@ -4689,7 +4694,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	global := false
 	if unique && tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
 		if err != nil {
@@ -4700,7 +4704,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 			// index columns does not contain all partition columns, must set global
-			global = true
+			if indexOption == nil || !indexOption.Global {
+				return dbterror.ErrGlobalIndexNotExplicitlySet
+			}
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4712,7 +4718,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == model.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique, global,
+		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
@@ -4729,7 +4735,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		Type:           model.ActionAddIndex,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, indexOption != nil && indexOption.Global},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		Charset:        chs,
 		Collate:        coll,
