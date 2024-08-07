@@ -42,7 +42,6 @@ func applyUpdatesVectorSearch(ctx sessionctx.Context) {
 
 	for _, db := range is.AllSchemas() {
 		for _, table := range is.SchemaTables(db.Name) {
-
 			hasVectorData := false
 			hasVectorIndex := false
 			for _, col := range table.Meta().Columns {

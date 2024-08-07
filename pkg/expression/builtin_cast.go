@@ -706,7 +706,7 @@ func (b *builtinCastUnsupportedAsVectorFloat32Sig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastUnsupportedAsVectorFloat32Sig) evalVectorFloat32(row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
+func (b *builtinCastUnsupportedAsVectorFloat32Sig) evalVectorFloat32(chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
 	return types.ZeroVectorFloat32, false, errors.Errorf(
 		"cannot cast from %s to vector",
 		types.TypeStr(b.args[0].GetType().GetType()))
@@ -722,43 +722,43 @@ func (b *builtinCastVectorFloat32AsUnsupportedSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastVectorFloat32AsUnsupportedSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalInt(chunk.Row) (int64, bool, error) {
 	return 0, false, errors.Errorf(
 		"cannot cast from vector to %s",
 		types.TypeStr(b.tp.GetType()))
 }
 
-func (b *builtinCastVectorFloat32AsUnsupportedSig) evalReal(row chunk.Row) (float64, bool, error) {
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalReal(chunk.Row) (float64, bool, error) {
 	return 0, false, errors.Errorf(
 		"cannot cast from vector to %s",
 		types.TypeStr(b.tp.GetType()))
 }
 
-func (b *builtinCastVectorFloat32AsUnsupportedSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalDecimal(chunk.Row) (*types.MyDecimal, bool, error) {
 	return nil, false, errors.Errorf(
 		"cannot cast from vector to %s",
 		types.TypeStr(b.tp.GetType()))
 }
 
-func (b *builtinCastVectorFloat32AsUnsupportedSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalString(chunk.Row) (string, bool, error) {
 	return "", false, errors.Errorf(
 		"cannot cast from vector to %s",
 		types.TypeStr(b.tp.GetType()))
 }
 
-func (b *builtinCastVectorFloat32AsUnsupportedSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalTime(chunk.Row) (types.Time, bool, error) {
 	return types.ZeroTime, false, errors.Errorf(
 		"cannot cast from vector to %s",
 		types.TypeStr(b.tp.GetType()))
 }
 
-func (b *builtinCastVectorFloat32AsUnsupportedSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalDuration(chunk.Row) (types.Duration, bool, error) {
 	return types.ZeroDuration, false, errors.Errorf(
 		"cannot cast from vector to %s",
 		types.TypeStr(b.tp.GetType()))
 }
 
-func (b *builtinCastVectorFloat32AsUnsupportedSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
+func (b *builtinCastVectorFloat32AsUnsupportedSig) evalJSON(chunk.Row) (types.BinaryJSON, bool, error) {
 	return types.BinaryJSON{}, false, errors.Errorf(
 		"cannot cast from vector to %s",
 		types.TypeStr(b.tp.GetType()))

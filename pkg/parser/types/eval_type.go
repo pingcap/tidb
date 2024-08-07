@@ -45,7 +45,7 @@ func (et EvalType) IsStringKind() bool {
 		et == ETTimestamp || et == ETDuration || et == ETJson || et == ETVectorFloat32
 }
 
-// IsIntegerKind returns true for ETVectorXxx EvalTypes.
+// IsVectorKind returns true for ETVectorXxx EvalTypes.
 func (et EvalType) IsVectorKind() bool {
 	return et == ETVectorFloat32
 }

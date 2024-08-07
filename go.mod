@@ -138,7 +138,7 @@ require (
 	google.golang.org/grpc v1.59.0
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
-	gorm.io/gorm v1.25.7
+	gorm.io/gorm v1.25.11
 	honnef.co/go/tools v0.4.5
 	k8s.io/api v0.27.2
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0

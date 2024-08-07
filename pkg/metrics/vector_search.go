@@ -40,7 +40,6 @@ var (
 
 // InitVectorSearchMetrics initializes vector data type and vector search metrics.
 func InitVectorSearchMetrics() {
-
 	VectorSearchDistanceFnUsageCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -94,7 +93,6 @@ func InitVectorSearchMetrics() {
 			Help:      "Dimension of vector column when dimension is specified",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1~32768
 		}))
-
 }
 
 func RegisterVectorSearchMetrics() {

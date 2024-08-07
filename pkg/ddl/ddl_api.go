@@ -5268,7 +5268,7 @@ func checkVectorIndexForColumnModify(oldCol *table.Column, newCol *table.Column)
 		return errors.Errorf("currently HNSW index can not be removed")
 	}
 	if oldCol.FieldType.GetFlen() != newCol.FieldType.GetFlen() {
-		return errors.New("cannot modify vector column's dimention when HNSW index is defined")
+		return errors.New("cannot modify vector column's dimension when HNSW index is defined")
 	}
 	if oldCol.FieldType.GetType() != newCol.FieldType.GetType() {
 		return errors.New("cannot modify column data type when HNSW index is defined")
@@ -5372,7 +5372,7 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	}
 	if vi != nil {
 		if !col.FieldType.EvalType().IsVectorKind() || col.FieldType.GetFlen() <= 0 {
-			return errors.Errorf("HNSW index can only be defined on fixed-dimention vector columns")
+			return errors.Errorf("HNSW index can only be defined on fixed-dimension vector columns")
 		}
 		vi.Dimension = uint64(col.FieldType.GetFlen())
 	}
