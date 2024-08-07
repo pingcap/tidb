@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
-	logicalop.BaseLogicalPlan
+	BaseLogicalPlan
 
 	Lock         *ast.SelectLockInfo
 	TblID2Handle map[int64][]util.HandleCols
@@ -40,7 +40,7 @@ type LogicalLock struct {
 
 // Init initializes LogicalLock.
 func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeLock, &p, 0)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeLock, &p, 0)
 	return &p
 }
 
@@ -89,9 +89,9 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *logicalop.LogicalTopN
+	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
+		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	if topN != nil {
 		p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)
@@ -117,7 +117,7 @@ func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return getLockPhysicalPlans(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalLock(p, prop)
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
@@ -141,3 +141,14 @@ func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
+
+// IsSelectForUpdateLockType checks if the select lock type is for update type.
+func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
+	if lockType == ast.SelectLockForUpdate ||
+		lockType == ast.SelectLockForShare ||
+		lockType == ast.SelectLockForUpdateNoWait ||
+		lockType == ast.SelectLockForUpdateWaitN {
+		return true
+	}
+	return false
+}

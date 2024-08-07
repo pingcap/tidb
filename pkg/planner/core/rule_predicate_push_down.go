@@ -30,7 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
-type ppdSolver struct{}
+// PPDSolver stands for Predicate Push Down.
+type PPDSolver struct{}
 
 // exprPrefixAdder is the wrapper struct to add tidb_shard(x) = val for `OrigConds`
 // `cols` is the index columns for a unique shard index
@@ -41,7 +42,8 @@ type exprPrefixAdder struct {
 	lengths   []int
 }
 
-func (*ppdSolver) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (*PPDSolver) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	_, p := lp.PredicatePushDown(nil, opt)
 	return p, planChanged, nil
@@ -195,7 +197,8 @@ func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expres
 	return newConds
 }
 
-func (*ppdSolver) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*PPDSolver) Name() string {
 	return "predicate_push_down"
 }
 
