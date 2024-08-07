@@ -927,11 +927,14 @@ func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinTiDBDecodeKeySig.
+// evalString evals a builtinTiDBDecodeKeySig.
 func (b *builtinTiDBDecodeKeySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	s, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	if len(s) == 0 {
+		return "{}", false, nil
 	}
 	is, err := b.GetDomainInfoSchema(ctx)
 	if err != nil {
