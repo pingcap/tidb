@@ -17,6 +17,7 @@ package casetest
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -68,7 +69,7 @@ func TestGroupNDVs(t *testing.T) {
 		_, err = core.RecursiveDeriveStats4Test(lp)
 		require.NoError(t, err, comment)
 		var agg *core.LogicalAggregation
-		var join *core.LogicalJoin
+		var join *logicalop.LogicalJoin
 		stack := make([]base.LogicalPlan, 0, 2)
 		traversed := false
 		for !traversed {
@@ -76,7 +77,7 @@ func TestGroupNDVs(t *testing.T) {
 			case *core.LogicalAggregation:
 				agg = v
 				lp = lp.Children()[0]
-			case *core.LogicalJoin:
+			case *logicalop.LogicalJoin:
 				join = v
 				lp = v.Children()[0]
 				stack = append(stack, v.Children()[1])

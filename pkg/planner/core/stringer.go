@@ -73,7 +73,7 @@ func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int
 		strs = append(strs, "{"+x.FDs().String()+"}")
 	case *LogicalApply:
 		strs = append(strs, "{"+x.FDs().String()+"}")
-	case *LogicalJoin:
+	case *logicalop.LogicalJoin:
 		strs = append(strs, "{"+x.FDs().String()+"}")
 	default:
 	}
@@ -139,19 +139,19 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		idxs = idxs[:last]
 		id := "MergeJoin"
 		switch x.JoinType {
-		case SemiJoin:
+		case logicalop.SemiJoin:
 			id = "MergeSemiJoin"
-		case AntiSemiJoin:
+		case logicalop.AntiSemiJoin:
 			id = "MergeAntiSemiJoin"
-		case LeftOuterSemiJoin:
+		case logicalop.LeftOuterSemiJoin:
 			id = "MergeLeftOuterSemiJoin"
-		case AntiLeftOuterSemiJoin:
+		case logicalop.AntiLeftOuterSemiJoin:
 			id = "MergeAntiLeftOuterSemiJoin"
-		case LeftOuterJoin:
+		case logicalop.LeftOuterJoin:
 			id = "MergeLeftOuterJoin"
-		case RightOuterJoin:
+		case logicalop.RightOuterJoin:
 			id = "MergeRightOuterJoin"
-		case InnerJoin:
+		case logicalop.InnerJoin:
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
@@ -189,7 +189,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "ShowDDLJobs"
 	case *logicalop.LogicalSort, *PhysicalSort:
 		str = "Sort"
-	case *LogicalJoin:
+	case *logicalop.LogicalJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -232,7 +232,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 				str = fmt.Sprintf("DataScan(%s)", x.TableInfo.Name)
 			}
 		}
-	case *LogicalSelection:
+	case *logicalop.LogicalSelection:
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))

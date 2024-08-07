@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -151,12 +152,12 @@ func (ds *DataSource) ExplainInfo() string {
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
-	predicates = DeleteTrueExprs(ds, predicates)
+	predicates = constraint.DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
 	ds.AllConds = predicates
-	ds.PushedDownConds, predicates = expression.PushDownExprs(GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
@@ -476,13 +477,13 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
 		if len(ds.AllConds) != 0 {
 			// extract the not null attributes from selection conditions.
-			notnullColsUniqueIDs := ExtractNotNullFromConds(ds.AllConds, ds)
+			notnullColsUniqueIDs := util.ExtractNotNullFromConds(ds.AllConds, ds)
 
 			// extract the constant cols from selection conditions.
-			constUniqueIDs := ExtractConstantCols(ds.AllConds, ds.SCtx(), fds)
+			constUniqueIDs := util.ExtractConstantCols(ds.AllConds, ds.SCtx(), fds)
 
 			// extract equivalence cols.
-			equivUniqueIDs := ExtractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
+			equivUniqueIDs := util.ExtractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
 
 			// apply conditions to FD.
 			fds.MakeNotNull(notnullColsUniqueIDs)

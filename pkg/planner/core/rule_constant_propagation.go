@@ -17,8 +17,6 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
@@ -86,27 +84,4 @@ func (cp *ConstantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, 
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*ConstantPropagationSolver) Name() string {
 	return "constant_propagation"
-}
-
-// validComparePredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
-// return param1: return true, if the predicate is a compare constant predicate.
-// return param2: return the column side of predicate.
-func validCompareConstantPredicate(ctx expression.EvalContext, candidatePredicate expression.Expression) bool {
-	scalarFunction, ok := candidatePredicate.(*expression.ScalarFunction)
-	if !ok {
-		return false
-	}
-	if scalarFunction.FuncName.L != ast.GT && scalarFunction.FuncName.L != ast.GE &&
-		scalarFunction.FuncName.L != ast.LT && scalarFunction.FuncName.L != ast.LE &&
-		scalarFunction.FuncName.L != ast.EQ {
-		return false
-	}
-	column, _ := expression.ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
-	if column == nil {
-		column, _ = expression.ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
-	}
-	if column == nil {
-		return false
-	}
-	return true
 }

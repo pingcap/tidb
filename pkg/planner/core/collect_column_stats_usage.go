@@ -143,7 +143,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *Dat
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *LogicalJoin) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.LogicalJoin) {
 	// The only schema change is merging two schemas so there is no new column.
 	// Assume statistics of all the columns in EqualConditions/LeftConditions/RightConditions/OtherConditions are needed.
 	exprs := make([]expression.Expression, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
@@ -246,7 +246,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for i, expr := range x.Exprs {
 				c.updateColMapFromExpressions(schema.Columns[i], []expression.Expression{expr})
 			}
-		case *LogicalSelection:
+		case *logicalop.LogicalSelection:
 			// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
 			// regard statistics of the columns in the conditions as needed.
 			c.addPredicateColumnsFromExpressions(x.Conditions)
@@ -269,7 +269,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for i, col := range windowColumns {
 				c.updateColMapFromExpressions(col, x.WindowFuncDescs[i].Args)
 			}
-		case *LogicalJoin:
+		case *logicalop.LogicalJoin:
 			c.collectPredicateColumnsForJoin(x)
 		case *LogicalApply:
 			c.collectPredicateColumnsForJoin(&x.LogicalJoin)

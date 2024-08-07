@@ -103,7 +103,7 @@ func (rs *ResultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 
 func (*ResultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 	switch lp.(type) {
-	case *LogicalSelection, *logicalop.LogicalProjection, *logicalop.LogicalLimit, *logicalop.LogicalTableDual:
+	case *logicalop.LogicalSelection, *logicalop.LogicalProjection, *logicalop.LogicalLimit, *logicalop.LogicalTableDual:
 		return true
 	}
 	return false
@@ -112,7 +112,7 @@ func (*ResultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 // extractHandleCols does the best effort to get the handle column.
 func (rs *ResultReorder) extractHandleCol(lp base.LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
-	case *LogicalSelection, *logicalop.LogicalLimit:
+	case *logicalop.LogicalSelection, *logicalop.LogicalLimit:
 		handleCol := rs.extractHandleCol(lp.Children()[0])
 		if handleCol == nil {
 			return nil // fail to extract handle column from the child, just return nil.

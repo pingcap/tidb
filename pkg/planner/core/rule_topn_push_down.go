@@ -15,11 +15,9 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -56,39 +54,6 @@ func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.Lo
 // Name implements the base.LogicalOptRule.<1st> interface.
 func (*PushDownTopNOptimizer) Name() string {
 	return "topn_push_down"
-}
-
-func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *logicalop.LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is added and pushed into %v_%v's ",
-			topN.TP(), topN.ID(), p.TP(), p.ID()))
-		if idx == 0 {
-			buffer.WriteString("left ")
-		} else {
-			buffer.WriteString("right ")
-		}
-		buffer.WriteString("table")
-		return buffer.String()
-	}
-	reason := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's joinType is %v, and all ByItems[", p.TP(), p.ID(), p.JoinType.String()))
-		for i, item := range topN.ByItems {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		buffer.WriteString("] contained in ")
-		if idx == 0 {
-			buffer.WriteString("left ")
-		} else {
-			buffer.WriteString("right ")
-		}
-		buffer.WriteString("table")
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
 func appendNewTopNTraceStep(topN *logicalop.LogicalTopN, union *LogicalUnionAll, opt *optimizetrace.LogicalOptimizeOp) {

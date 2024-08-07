@@ -16,7 +16,7 @@ package join
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"

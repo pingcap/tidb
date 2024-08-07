@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"strings"
 	"testing"
 
@@ -53,7 +54,7 @@ type indexJoinContext struct {
 	dataSourceNode *DataSource
 	dsNames        types.NameSlice
 	path           *util.AccessPath
-	joinNode       *LogicalJoin
+	joinNode       *logicalop.LogicalJoin
 	joinColNames   types.NameSlice
 }
 
@@ -64,7 +65,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		do.StatsHandle().Close()
 	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
-	joinNode := LogicalJoin{}.Init(ctx.GetPlanCtx(), 0)
+	joinNode := logicalop.LogicalJoin{}.Init(ctx.GetPlanCtx(), 0)
 	dataSourceNode := DataSource{}.Init(ctx.GetPlanCtx(), 0)
 	dsSchema := expression.NewSchema()
 	var dsNames types.NameSlice

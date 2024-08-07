@@ -15,6 +15,7 @@
 package join
 
 import (
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"sort"
 	"strconv"
 	"testing"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"

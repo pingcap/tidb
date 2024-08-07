@@ -145,3 +145,15 @@ var ExhaustPhysicalPlans4LogicalLock func(lp base.LogicalPlan, prop *property.Ph
 // ExhaustPhysicalPlans4LogicalUnionScan will be called by LogicalUnionScan in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalUnionScan func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalSelection will be called by LogicalSelection in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalSelection func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalJoin will be called by LogicalJoin in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// WindowIsTopN is used in DeriveTopNFromWindow rule.
+// todo: remove it after logical_datasource is migrated to logicalop.
+var WindowIsTopN func(p base.LogicalPlan) (bool, uint64)

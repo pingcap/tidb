@@ -23,10 +23,10 @@ import (
 )
 
 func TestGetOperand(t *testing.T) {
-	require.Equal(t, OperandJoin, GetOperand(&plannercore.LogicalJoin{}))
+	require.Equal(t, OperandJoin, GetOperand(&logicalop.LogicalJoin{}))
 	require.Equal(t, OperandAggregation, GetOperand(&plannercore.LogicalAggregation{}))
 	require.Equal(t, OperandProjection, GetOperand(&logicalop.LogicalProjection{}))
-	require.Equal(t, OperandSelection, GetOperand(&plannercore.LogicalSelection{}))
+	require.Equal(t, OperandSelection, GetOperand(&logicalop.LogicalSelection{}))
 	require.Equal(t, OperandApply, GetOperand(&plannercore.LogicalApply{}))
 	require.Equal(t, OperandMaxOneRow, GetOperand(&logicalop.LogicalMaxOneRow{}))
 	require.Equal(t, OperandTableDual, GetOperand(&logicalop.LogicalTableDual{}))
