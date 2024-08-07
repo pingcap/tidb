@@ -651,6 +651,7 @@ type InfoSchemaTableNameExtractor struct {
 	colRegexp map[string][]collate.WildcardPattern
 }
 
+// Extract all object names and like operator in predicates
 func (e *InfoSchemaTableNameExtractor) Extract(
 	ctx base.PlanContext,
 	schema *expression.Schema,

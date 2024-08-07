@@ -3693,7 +3693,6 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 	return nil
 }
 
-// ClusterIndexUsage cannot be pushed down, use the previous logic
 func (e *memtableRetriever) setDataForClusterIndexUsage(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
@@ -3807,6 +3806,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 	return nil
 }
 
+// Currently, ClusterIndexUsage will not be be pushed down, so just use the previous logic
 func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	err := e.setDataForClusterIndexUsage(ctx, sctx, schemas)
 	if err != nil {
