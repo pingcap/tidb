@@ -32,20 +32,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
-// maxMinEliminator tries to eliminate max/min aggregate function.
+// MaxMinEliminator tries to eliminate max/min aggregate function.
 // For SQL like `select max(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id desc limit 1 where id is not null) t;`.
 // For SQL like `select min(id) from t;`, we could optimize it to `select min(id) from (select id from t order by id limit 1 where id is not null) t;`.
 // For SQL like `select max(id), min(id) from t;`, we could optimize it to the cartesianJoin result of the two queries above if `id` has an index.
-type maxMinEliminator struct {
+type MaxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (a *MaxMinEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return a.eliminateMaxMin(p, opt), planChanged, nil
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
-func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, aggs []*LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (plan base.LogicalPlan) {
+func (*MaxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, aggs []*LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (plan base.LogicalPlan) {
 	plan = aggs[0]
 	sctx := plan.SCtx()
 	joins := make([]*LogicalJoin, 0)
@@ -64,7 +65,7 @@ func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, a
 // checkColCanUseIndex checks whether there is an AccessPath satisfy the conditions:
 // 1. all of the selection's condition can be pushed down as AccessConds of the path.
 // 2. the path can keep order for `col` after pushing down the conditions.
-func (a *maxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expression.Column, conditions []expression.Expression) bool {
+func (a *MaxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expression.Column, conditions []expression.Expression) bool {
 	switch p := plan.(type) {
 	case *LogicalSelection:
 		conditions = append(conditions, p.Conditions...)
@@ -108,7 +109,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 
 // cloneSubPlans shallow clones the subPlan. We only consider `Selection` and `DataSource` here,
 // because we have restricted the subPlan in `checkColCanUseIndex`.
-func (a *maxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan {
+func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan {
 	switch p := plan.(type) {
 	case *LogicalSelection:
 		newConditions := make([]expression.Expression, len(p.Conditions))
@@ -141,7 +142,7 @@ func (a *maxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 // `select max(a) from t` + `select min(a) from t` + `select max(b) from t`.
 // Then we check whether `a` and `b` have indices. If any of the used column has no index, we cannot eliminate
 // this aggregation.
-func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (aggs []*LogicalAggregation, canEliminate bool) {
+func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (aggs []*LogicalAggregation, canEliminate bool) {
 	for _, f := range agg.AggFuncs {
 		// We must make sure the args of max/min is a simple single column.
 		col, ok := f.Args[0].(*expression.Column)
@@ -173,7 +174,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 }
 
 // eliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
-func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *LogicalAggregation {
+func (*MaxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *LogicalAggregation {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
 	ctx := agg.SCtx()
@@ -214,7 +215,7 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *opt
 }
 
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
-func (a *maxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// CTE's logical optimization is indenpent.
 	if _, ok := p.(*LogicalCTE); ok {
 		return p
@@ -260,7 +261,8 @@ func (a *maxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrac
 	return p
 }
 
-func (*maxMinEliminator) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*MaxMinEliminator) Name() string {
 	return "max_min_eliminate"
 }
 

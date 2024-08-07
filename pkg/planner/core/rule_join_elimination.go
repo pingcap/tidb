@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 )
 
-type outerJoinEliminator struct {
+// OuterJoinEliminator is used to eliminate outer join.
+type OuterJoinEliminator struct {
 }
 
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
@@ -38,7 +39,7 @@ type outerJoinEliminator struct {
 //  2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
 //     If the parent only use the columns from left table with 'distinct' label. The left outer join can
 //     be eliminated.
-func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	var innerChildIdx int
 	switch p.JoinType {
 	case LeftOuterJoin:
@@ -96,7 +97,7 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 }
 
 // extract join keys as a schema for inner child of a outer join
-func (*outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChildIdx int) *expression.Schema {
+func (*OuterJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChildIdx int) *expression.Schema {
 	joinKeys := make([]*expression.Column, 0, len(join.EqualConditions))
 	for _, eqCond := range join.EqualConditions {
 		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
@@ -121,7 +122,7 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64
 }
 
 // check whether one of unique keys sets is contained by inner join keys
-func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
 	for _, keyInfo := range innerPlan.Schema().Keys {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
@@ -138,7 +139,7 @@ func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.Logic
 }
 
 // check whether one of index sets is contained by inner join index
-func (*outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
 	ds, ok := innerPlan.(*DataSource)
 	if !ok {
 		return false, nil
@@ -195,7 +196,7 @@ func GetDupAgnosticAggCols(
 	return true, newAggCols
 }
 
-func (o *outerJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	// CTE's logical optimization is independent.
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
@@ -249,13 +250,15 @@ func (o *outerJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	return p, nil
 }
 
-func (o *outerJoinEliminator) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (o *OuterJoinEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	p, err := o.doOptimize(p, nil, nil, opt)
 	return p, planChanged, err
 }
 
-func (*outerJoinEliminator) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*OuterJoinEliminator) Name() string {
 	return "outer_join_eliminate"
 }
 

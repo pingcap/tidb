@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -214,7 +213,7 @@ func TestCancel(t *testing.T) {
 			return enterCnt.Load() == exitCnt.Load()
 		}, 10*time.Second, 10*time.Millisecond)
 	}
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -252,7 +251,6 @@ func TestCancel(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow"))
 	}()
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
 	canceled := atomicutil.NewBool(false)
 	cancelResult := atomicutil.NewBool(false)
@@ -268,20 +266,17 @@ func TestCancel(t *testing.T) {
 			canceled.Store(true)
 		}
 	}
-	dom.DDL().SetHook(hook.Clone())
 
-	resetHook := func(h *callback.TestDDLCallback) {
-		h.OnJobRunBeforeExported = nil
+	resetHook := func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
-		dom.DDL().SetHook(h.Clone())
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	}
-	registerHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
+	registerHook := func(onJobRunBefore bool) {
 		if onJobRunBefore {
-			h.OnJobRunBeforeExported = hookFunc
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", hookFunc)
 		} else {
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hookFunc)
 		}
-		dom.DDL().SetHook(h.Clone())
 	}
 
 	waitDDLWorkerExited()
@@ -290,14 +285,14 @@ func TestCancel(t *testing.T) {
 		i.Store(int64(j))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
 		if tc.onJobBefore {
-			resetHook(hook)
+			resetHook()
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
 			waitDDLWorkerExited()
 			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(true)
-			registerHook(hook, true)
+			registerHook(true)
 			if tc.expectCancelled {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
@@ -309,14 +304,14 @@ func TestCancel(t *testing.T) {
 			}
 		}
 		if tc.onJobUpdate {
-			resetHook(hook)
+			resetHook()
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
 			waitDDLWorkerExited()
 			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(false)
-			registerHook(hook, false)
+			registerHook(false)
 			if tc.expectCancelled {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
@@ -331,7 +326,7 @@ func TestCancel(t *testing.T) {
 }
 
 func TestCancelForAddUniqueIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -342,14 +337,12 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2, 2)")
 	tk.MustExec("insert into t values(1, 1, 1)")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var testCancelState model.SchemaState
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState == testCancelState && job.State == model.JobStateRollingback {
 			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
-	}
-	dom.DDL().SetHook(hook.Clone())
+	})
 
 	testCancelState = model.StateWriteOnly
 	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
