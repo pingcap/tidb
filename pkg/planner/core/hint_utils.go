@@ -500,19 +500,19 @@ func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
-		if ts.TableAsName.L != "" {
+		if ts.TableAsName != nil && ts.TableAsName.L != "" {
 			return &ts.DBName, ts.TableAsName
 		}
 		return &ts.DBName, &ts.Table.Name
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		if is.TableAsName.L != "" {
+		if is.TableAsName != nil && is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		if is.TableAsName.L != "" {
+		if is.TableAsName != nil && is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
