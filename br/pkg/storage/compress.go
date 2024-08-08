@@ -100,6 +100,11 @@ func InterceptDecompressReader(
 	if compressType == NoCompression {
 		return fileReader, nil
 	}
+	fileReader = &OffsetReader{
+		Reader: fileReader,
+		Closer: fileReader,
+		Seeker: fileReader,
+	}
 	r, err := newCompressReader(compressType, cfg, fileReader)
 	if err != nil {
 		return nil, errors.Trace(err)

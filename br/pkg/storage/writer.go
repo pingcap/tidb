@@ -10,6 +10,8 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -52,6 +54,27 @@ type interceptBuffer interface {
 	Bytes() []byte
 	Reset()
 	Compressed() bool
+}
+
+type OffsetReader struct {
+	io.Reader
+	io.Seeker
+	io.Closer
+	offset atomic.Int64
+}
+
+func (r *OffsetReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.offset.Add(int64(n))
+	return n, err
+}
+
+func (r *OffsetReader) Seek(offset int64, whence int) (int64, error) {
+	return r.offset.Load(), nil
+}
+
+func (r *OffsetReader) GetFileSize() (int64, error) {
+	return 0, errors.Annotatef(berrors.ErrUnsupportedOperation, "OffsetReader doesn't support GetFileSize now")
 }
 
 func createSuffixString(compressType CompressType) string {
