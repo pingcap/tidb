@@ -39,7 +39,7 @@ func genPlanCloneForPlanCacheCode() ([]byte, error) {
 		PointGetPlan{}, BatchPointGetPlan{}, PhysicalLimit{},
 		PhysicalIndexJoin{}, PhysicalIndexHashJoin{},
 		PhysicalIndexLookUpReader{}, PhysicalIndexMergeReader{},
-		Update{}, Delete{}, Insert{}, PhysicalLock{}}
+		Update{}, Delete{}, Insert{}, PhysicalLock{}, PhysicalUnionScan{}}
 	c := new(codeGen)
 	c.write(codeGenPrefix)
 	for _, s := range structures {
