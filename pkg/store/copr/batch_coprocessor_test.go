@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -128,13 +129,13 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
-		nilResult := balanceBatchCopTask(nil, nilTaskSet, false, 0)
+		nilResult := balanceBatchCopTask(nil, nilTaskSet, false, 0, nil)
 		require.True(t, nilResult == nil)
 	}
 
 	{
 		emptyTaskSet := make([]*batchCopTask, 0)
-		emptyResult := balanceBatchCopTask(nil, emptyTaskSet, false, 0)
+		emptyResult := balanceBatchCopTask(nil, emptyTaskSet, false, 0, nil)
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
 	}
@@ -146,7 +147,7 @@ func TestDeepCopyStoreTaskMap(t *testing.T) {
 		task.regionInfos = append(task.regionInfos, RegionInfo{})
 	}
 
-	storeTasks2 := deepCopyStoreTaskMap(storeTasks1)
+	storeTasks2 := deepCopyStoreTaskMap(storeTasks1, 0)
 	for _, task := range storeTasks2 {
 		task.regionInfos = append(task.regionInfos, RegionInfo{})
 	}
@@ -318,5 +319,34 @@ func TestGetAllUsedTiFlashStores(t *testing.T) {
 	for _, store := range allUsedTiFlashStores {
 		_, ok := allUsedTiFlashStoresMap[store.StoreID()]
 		require.True(t, ok)
+	}
+}
+
+func BenchmarkBalanceBatchCopTaskWithContinuity(b *testing.B) {
+	b.StopTimer()
+	replicaNum := 3
+	storeCount := 10
+	regionCount := 200000
+	storeTasks := buildStoreTaskMap(storeCount)
+	regionInfos := buildRegionInfos(storeCount, regionCount, replicaNum)
+
+	benchCase := []struct {
+		shuffle bool
+	}{
+		{false},
+		{true},
+	}
+	for _, c := range benchCase {
+		b.Run(fmt.Sprint("Shuffle: ", c.shuffle), func(b *testing.B) {
+			b.StopTimer()
+			for i := 0; i < b.N; i++ {
+				if c.shuffle {
+					rand.Shuffle(len(regionInfos), func(i, j int) { regionInfos[i], regionInfos[j] = regionInfos[j], regionInfos[i] })
+				}
+				b.StartTimer()
+				_, _ = balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
+				b.StopTimer()
+			}
+		})
 	}
 }
