@@ -170,8 +170,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiDBHotRegions:
 			err = e.setDataForTiDBHotRegions(ctx, sctx)
 		case infoschema.TableConstraints:
-			dbs := getAllSchemas()
-			err = e.setDataFromTableConstraints(ctx, sctx, dbs)
+			err = e.setDataFromTableConstraints(ctx, sctx)
 		case infoschema.TableSessionVar:
 			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
@@ -2119,7 +2118,7 @@ func (e *memtableRetriever) setDataForHotRegionByMetrics(metrics []helper.HotTab
 }
 
 // setDataFromTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
-func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaTableConstraintsExtractor)
 	if !ok {

@@ -304,4 +304,5 @@ select * from information_schema.table_constraints where table_schema = 'executo
 --sorted_result
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' or table_name = 'tc';
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
+--sorted_result
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
