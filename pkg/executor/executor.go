@@ -1151,8 +1151,8 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.tblID2Handle) == 0 || (!logicalop.IsSelectForUpdateLockType(e.Lock.LockType)) {
+	// If there's no handle or it's not a `SELECT FOR UPDATE` or `SELECT FOR SHARE` statement.
+	if len(e.tblID2Handle) == 0 || (!logicalop.IsSupportedSelectLockType(e.Lock.LockType)) {
 		return nil
 	}
 

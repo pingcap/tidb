@@ -944,33 +944,9 @@ func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
 	return nil
 }
 
-// isSelectForUpdateLockType checks if the select lock type is the supported for update type.
-func isSelectForUpdateLockType(lockType ast.SelectLockType) bool {
-	if lockType == ast.SelectLockForUpdate ||
-		lockType == ast.SelectLockForUpdateNoWait ||
-		lockType == ast.SelectLockForUpdateWaitN {
-		return true
-	}
-	return false
-}
-
-// isSelectForShareLockType checks if the select lock type is supported for  type.
-func isSelectForShareLockType(lockType ast.SelectLockType) bool {
-	if lockType == ast.SelectLockForShare ||
-		lockType == ast.SelectLockForShareNoWait {
-		return true
-	}
-	return false
-}
-
-// IsSupportedSelectLockType checks if the lockType is supported to acquire pessimsitic locks if necessary.
-func IsSupportedSelectLockType(lockType ast.SelectLockType) bool {
-	return isSelectForUpdateLockType(lockType) || isSelectForShareLockType(lockType)
-}
-
 func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
 	if lockInfo != nil {
-		if logicalop.IsSelectForUpdateLockType(lockInfo.LockType) {
+		if logicalop.IsSupportedSelectLockType(lockInfo.LockType) {
 			// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 			// is disabled (either by beginning transaction with START TRANSACTION or by setting
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
