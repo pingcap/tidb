@@ -227,11 +227,11 @@ func TestBasic(t *testing.T) {
 	txn, err = re.Store().Begin()
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{
-		Type: model.ActionRenameTable,
-		SchemaID: dbID,
-		TableID: tbID,
+		Type:        model.ActionRenameTable,
+		SchemaID:    dbID,
+		TableID:     tbID,
 		OldSchemaID: dbID,
-		Version: is.SchemaMetaVersion() + 1,
+		Version:     is.SchemaMetaVersion() + 1,
 	})
 	require.NoError(t, err)
 	err = txn.Rollback()
