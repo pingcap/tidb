@@ -57,7 +57,7 @@ func (s *OperatorTestSource[T]) Close() error {
 }
 
 // String implements disttask/operator.Operator.
-func (s *OperatorTestSource[T]) String() string {
+func (*OperatorTestSource[T]) String() string {
 	return "testSource"
 }
 
@@ -97,7 +97,7 @@ func (s *OperatorTestSink[T]) SetSource(dataCh operator.DataChannel[T]) {
 }
 
 // String implements disttask/operator.Operator.
-func (s *OperatorTestSink[T]) String() string {
+func (*OperatorTestSink[T]) String() string {
 	return "testSink"
 }
 
