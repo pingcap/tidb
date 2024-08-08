@@ -638,7 +638,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				if strings.EqualFold("primary", idxUpdate.Name) &&
 					tbInfo.PKIsHandle {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
-
 				}
 				return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(idxUpdate.Name)
 			}
