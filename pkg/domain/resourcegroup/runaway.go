@@ -546,10 +546,7 @@ func (r *RunawayChecker) CheckKillAction() bool {
 			}
 		}
 	}
-	if r.setting.Action != rmpb.RunawayAction_Kill {
-		return false
-	}
-	return true
+	return r.setting.Action == rmpb.RunawayAction_Kill
 }
 
 // Rule returns the rule of the runaway checker.
