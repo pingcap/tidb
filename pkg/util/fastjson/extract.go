@@ -42,10 +42,10 @@ func unexpectedEOF(err error) error {
 }
 
 // next iterates and returns the top-level key and value as token. The odd
-// invocations it returns key tokens, the even invocations it returns value
-// tokens. If the value is a JSON array or object, all tokens belongs to the
-// value will be returned.
-func (i *topLevelJSONTokenIter) next() ([]json.Token, error) {
+// invocations return key tokens, the even invocations return value tokens. If
+// the value is a JSON array or object, all tokens belongs to the value will be
+// returned.
+func (i *topLevelJSONTokenIter) next(discard bool) ([]json.Token, error) {
 	if i.level == 0 {
 		t, err := i.d.Token()
 		if err != nil {
@@ -81,8 +81,10 @@ func (i *topLevelJSONTokenIter) next() ([]json.Token, error) {
 		case '{', '[':
 			i.level++
 			// go to below loop to consume this level
-			longValue = make([]json.Token, 0, 16)
-			longValue = append(longValue, t)
+			if !discard {
+				longValue = make([]json.Token, 0, 16)
+				longValue = append(longValue, t)
+			}
 		}
 	}
 
@@ -91,7 +93,10 @@ func (i *topLevelJSONTokenIter) next() ([]json.Token, error) {
 		if err != nil {
 			return nil, unexpectedEOF(err)
 		}
-		longValue = append(longValue, t)
+		if !discard {
+			longValue = append(longValue, t)
+		}
+
 		delim, ok := t.(json.Delim)
 		if !ok {
 			continue
@@ -117,7 +122,7 @@ func ExtractTopLevelMembers(content []byte, keys []string) (map[string][]json.To
 	ret := make(map[string][]json.Token, len(keys))
 	iter := newTopLevelJSONTokenIter(content)
 	for len(remainKeys) > 0 {
-		key, err := iter.next()
+		key, err := iter.next(false)
 		if err != nil {
 			return nil, err
 		}
@@ -131,14 +136,14 @@ func ExtractTopLevelMembers(content []byte, keys []string) (map[string][]json.To
 		}
 		_, ok = remainKeys[keyStr]
 		if ok {
-			val, err2 := iter.next()
+			val, err2 := iter.next(false)
 			if err2 != nil {
 				return nil, err2
 			}
 			ret[keyStr] = val
 			delete(remainKeys, keyStr)
 		} else {
-			_, err2 := iter.next()
+			_, err2 := iter.next(true)
 			if err2 != nil {
 				return nil, err2
 			}

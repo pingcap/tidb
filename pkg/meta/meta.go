@@ -1137,10 +1137,9 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 			continue
 		}
 
-		tbInfo := &model.TableNameInfo{}
-		err = json.Unmarshal(r.Value, tbInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
+		tbInfo, err2 := FastUnmarshalTableNameInfo(r.Value)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
 		}
 
 		tables = append(tables, tbInfo)
