@@ -172,5 +172,14 @@ JOIN tle50fd846
 WHERE ISNULL(tcd8c2aac.col_21) OR tcd8c2aac.col_21='yJTkLeL5^yJ'
 GROUP BY tcd8c2aac.col_21
 HAVING ISNULL(tcd8c2aac.col_21)
-LIMIT 48579914;`).Check(testkit.Rows())
+LIMIT 48579914;`).Check(testkit.Rows(
+		"Limit_16 12.80 root  offset:0, count:48579914",
+		"└─HashAgg_17 12.80 root  group by:test.tcd8c2aac.col_21, funcs:group_concat(test.tcd8c2aac.col_21 order by test.tcd8c2aac.col_21 separator \",\")->Column#14",
+		"  └─HashJoin_20 160000.00 root  CARTESIAN inner join",
+		"    ├─IndexLookUp_27(Build) 16.00 root  ",
+		"    │ ├─IndexRangeScan_24(Build) 20.00 cop[tikv] table:tcd8c2aac, index:idx_12(col_21) range:[NULL,NULL], [\"\\x00Y\",\"\\x00Y\"], keep order:false, stats:pseudo",
+		"    │ └─Selection_26(Probe) 16.00 cop[tikv]  or(isnull(test.tcd8c2aac.col_21), eq(test.tcd8c2aac.col_21, \"yJTkLeL5^yJ\"))",
+		"    │   └─TableRowIDScan_25 20.00 cop[tikv] table:tcd8c2aac keep order:false, stats:pseudo",
+		"    └─IndexReader_31(Probe) 10000.00 root  index:IndexFullScan_30",
+		"      └─IndexFullScan_30 10000.00 cop[tikv] table:tle50fd846, index:PRIMARY(col_48) keep order:false, stats:pseudo"))
 }
