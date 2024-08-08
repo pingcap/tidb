@@ -15,7 +15,6 @@
 package server
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -76,7 +75,7 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 		}
 
 		if (i<<1)+1 >= len(paramTypes) {
-			return pos, errors.Trace(mysql.ErrMalformPacket)
+			return pos, mysql.ErrMalformPacket
 		}
 
 		tp := paramTypes[i<<1]
@@ -100,14 +99,14 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 			length = 8
 		case mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
 			if len(paramValues) < (pos + 1) {
-				err = errors.Trace(mysql.ErrMalformPacket)
+				err = mysql.ErrMalformPacket
 				return
 			}
 			length = uint64(paramValues[pos])
 			pos++
 		case mysql.TypeNewDecimal, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			if len(paramValues) < (pos + 1) {
-				err = errors.Trace(mysql.ErrMalformPacket)
+				err = mysql.ErrMalformPacket
 				return
 			}
 			var n int
@@ -116,7 +115,7 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 		case mysql.TypeUnspecified, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
 			mysql.TypeEnum, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeBit:
 			if len(paramValues) < (pos + 1) {
-				err = errors.Trace(mysql.ErrMalformPacket)
+				err = mysql.ErrMalformPacket
 				return
 			}
 			var n int
@@ -129,7 +128,7 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 		}
 
 		if len(paramValues) < (pos + int(length)) {
-			err = errors.Trace(mysql.ErrMalformPacket)
+			err = mysql.ErrMalformPacket
 			return
 		}
 		params[i] = param.BinaryParam{
