@@ -1139,6 +1139,9 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
 	if noopFuncsMode == variable.OnInt {
+		// Set `ForShareLockEnabledByNoop` properly before returning.
+		// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
+		// executed as `for update` statements despite setting of noop functions.
 		if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
 			stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
 			!p.sctx.GetSessionVars().SharedLockPromotion {
