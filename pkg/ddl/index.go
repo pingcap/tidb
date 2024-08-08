@@ -1710,20 +1710,20 @@ func writeChunkToLocal(
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		handleDataBuf := extractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
 			// restoreDataBuf should not truncate index values.
 			for i, datum := range handleDataBuf {
 				restoreDataBuf[i] = *datum.Clone()
 			}
 		}
-		h, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
+		h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 		for i, index := range indexes {
 			idxID := index.Meta().ID
-			idxDataBuf = extractDatumByOffsets(ectx,
+			idxDataBuf = ExtractDatumByOffsets(ectx,
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			idxData := idxDataBuf[:len(index.Meta().Columns)]
 			var rsData []types.Datum
