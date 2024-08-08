@@ -79,6 +79,7 @@ go_library(
         "//pkg/extension",
         "//pkg/infoschema/context",
         "//pkg/kv",
+        "//pkg/param",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",

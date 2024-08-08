@@ -206,7 +206,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-		err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		_, err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
 		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
 		errReset := stmt.Reset()
 		if errReset != nil {

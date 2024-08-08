@@ -25,6 +25,7 @@ go_library(
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/param",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",

@@ -364,9 +364,10 @@ const (
 	GetMvccInfo = "get_mvcc_info"
 
 	// Sequence function.
-	NextVal = "nextval"
-	LastVal = "lastval"
-	SetVal  = "setval"
+	NextVal         = "nextval"
+	LastVal         = "lastval"
+	SetVal          = "setval"
+	QueryAttrString = "mysql_query_attribute_string"
 )
 
 type FuncCallExprType int8

@@ -35,17 +35,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// decodeAndParse uses the `parseBinaryParams` and `parse.ExecArgs` to parse the params passed through binary protocol
+// decodeAndParse uses the `parseBinaryParams` and `expression.ExecBinaryParam` to parse the params passed through binary protocol
 // It helps to test the integration of these two functions
 func decodeAndParse(typectx types.Context, args []expression.Expression, boundParams [][]byte,
 	nullBitmap, paramTypes, paramValues []byte, enc *util.InputDecoder) (err error) {
 	binParams := make([]param.BinaryParam, len(args))
-	err = parseBinaryParams(binParams, boundParams, nullBitmap, paramTypes, paramValues, enc)
+	_, err = parseBinaryParams(binParams, boundParams, nullBitmap, paramTypes, paramValues, enc)
 	if err != nil {
 		return err
 	}
 
-	parsedArgs, err := param.ExecArgs(typectx, binParams)
+	parsedArgs, err := expression.ExecBinaryParam(typectx, binParams)
 	if err != nil {
 		return err
 	}
