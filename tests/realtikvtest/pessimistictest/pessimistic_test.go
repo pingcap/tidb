@@ -3603,7 +3603,7 @@ func TestEndTxnOnLockExpire(t *testing.T) {
 	}
 }
 
-func TestForShareWithUpgrade(t *testing.T) {
+func TestForShareWithPromotion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -3623,7 +3623,7 @@ func TestForShareWithUpgrade(t *testing.T) {
 		{true, true},
 	} {
 		tk.MustExec(fmt.Sprintf("set @@tidb_enable_noop_functions = %v", tt.ForShareNoopEnable))
-		tk.MustExec(fmt.Sprintf("set @@tidb_enable_shared_lock_upgrade = %v", tt.ForShareUpgradeEnabled))
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_shared_lock_promotion = %v", tt.ForShareUpgradeEnabled))
 
 		tk1.MustExec("begin")
 		tk1.MustQuery("select * from t for update").Check(testkit.Rows("1 10"))

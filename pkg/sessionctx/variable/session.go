@@ -1658,9 +1658,9 @@ type SessionVars struct {
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
 
-	// SharedLockUpgrade indicates whether the `select for lock` statements would be executed as the
+	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
-	SharedLockUpgrade bool
+	SharedLockPromotion bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

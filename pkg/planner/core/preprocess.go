@@ -1141,7 +1141,7 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 	if noopFuncsMode == variable.OnInt {
 		if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
 			stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
-			!p.sctx.GetSessionVars().SharedLockUpgrade {
+			!p.sctx.GetSessionVars().SharedLockPromotion {
 			p.sctx.GetSessionVars().StmtCtx.ForShareLockEnabledByNoop = true
 		}
 		return
@@ -1156,11 +1156,11 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 
-	// When `tidb_enable_shared_lock_upgrade` is enabled, the `for share` statements would be
+	// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
 	// executed as `for update` statements.
 	if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
 		stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
-		!p.sctx.GetSessionVars().SharedLockUpgrade {
+		!p.sctx.GetSessionVars().SharedLockPromotion {
 		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 		if noopFuncsMode == variable.OffInt {
 			p.err = err

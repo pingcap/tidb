@@ -967,9 +967,9 @@ const (
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
 
-	// TiDBEnableSharedLockUpgrade indicates whether the `select for share` statement would be executed
+	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
-	TiDBEnableSharedLockUpgrade = "tidb_enable_shared_lock_upgrade"
+	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
 )
 
 // TiDB vars that have only global scope
@@ -1529,7 +1529,7 @@ const (
 	DefDefaultWeekFormat                              = "0"
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
-	DefTiDBEnableSharedLockUpgrade                    = false
+	DefTiDBEnableSharedLockPromotion                  = false
 )
 
 // Process global variables.
