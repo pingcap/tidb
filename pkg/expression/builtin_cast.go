@@ -29,6 +29,7 @@ import (
 	"strings"
 	gotime "time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -1008,7 +1009,11 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
 		if types.ErrOverflow.Equal(err) {
+<<<<<<< HEAD
 			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+=======
+			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			err = ec.HandleErrorWithAlias(err, err, warnErr)
 		} else if types.ErrTruncated.Equal(err) {
 			// This behavior is consistent with MySQL.

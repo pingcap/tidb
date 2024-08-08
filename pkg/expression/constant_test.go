@@ -21,6 +21,11 @@ import (
 	"testing"
 	"time"
 
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/errors"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -184,7 +189,11 @@ func TestConstantPropagation(t *testing.T) {
 			newConds := solver.PropagateConstant(ctx, conds)
 			var result []string
 			for _, v := range newConds {
+<<<<<<< HEAD
 				result = append(result, v.String())
+=======
+				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			}
 			sort.Strings(result)
 			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)
@@ -246,7 +255,11 @@ func TestConstantFolding(t *testing.T) {
 		ctx := mock.NewContext()
 		expr := tt.condition(ctx)
 		newConds := FoldConstant(ctx, expr)
+<<<<<<< HEAD
 		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
+=======
+		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "different for expr %s", tt.condition)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	}
 }
 
@@ -308,7 +321,11 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 	}
 	for _, tt := range tests {
 		newConds := FoldConstant(ctx, tt.condition)
+<<<<<<< HEAD
 		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
+=======
+		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx, errors.RedactLogDisable), "different for expr %s", tt.condition)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	}
 }
 

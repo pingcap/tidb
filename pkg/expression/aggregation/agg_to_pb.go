@@ -107,7 +107,11 @@ func AggFuncToPBExpr(ctx expression.PushDownContext, aggFunc *AggFuncDesc, store
 	for _, arg := range aggFunc.Args {
 		pbArg := pc.ExprToPB(arg)
 		if pbArg == nil {
+<<<<<<< HEAD
 			return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
+=======
+			return nil, errors.New(aggFunc.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + " can't be converted to PB.")
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		}
 		children = append(children, pbArg)
 	}
@@ -121,7 +125,11 @@ func AggFuncToPBExpr(ctx expression.PushDownContext, aggFunc *AggFuncDesc, store
 		for _, arg := range aggFunc.OrderByItems {
 			pbArg := expression.SortByItemToPB(ctx.EvalCtx(), client, arg.Expr, arg.Desc)
 			if pbArg == nil {
+<<<<<<< HEAD
 				return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
+=======
+				return nil, errors.New(aggFunc.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + " can't be converted to PB.")
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			}
 			orderBy = append(orderBy, pbArg)
 		}

@@ -209,3 +209,17 @@ func Key(key []byte) string {
 	}
 	return strings.ToUpper(hex.EncodeToString(key))
 }
+
+// WriteRedact is to write string with redact into `strings.Builder`
+func WriteRedact(build *strings.Builder, v string, redact string) {
+	if redact == errors.RedactLogMarker {
+		build.WriteString("‹")
+		build.WriteString(v)
+		build.WriteString("›")
+		return
+	} else if redact == errors.RedactLogEnable {
+		build.WriteString("?")
+		return
+	}
+	build.WriteString(v)
+}

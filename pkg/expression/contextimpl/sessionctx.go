@@ -211,6 +211,11 @@ func (ctx *SessionEvalContext) GetMaxAllowedPacket() uint64 {
 	return ctx.sctx.GetSessionVars().MaxAllowedPacket
 }
 
+// GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
+func (ctx *SessionEvalContext) GetTiDBRedactLog() string {
+	return ctx.sctx.GetSessionVars().EnableRedactLog
+}
+
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 func (ctx *SessionEvalContext) GetDefaultWeekFormatMode() string {
 	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)

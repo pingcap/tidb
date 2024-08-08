@@ -664,12 +664,20 @@ func (r *builder) buildFromIn(
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
+<<<<<<< HEAD
 			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
+=======
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e.StringWithCtx(evalCtx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			return getFullRange(), hasNull
 		}
 		dt, err := v.Eval(evalCtx, chunk.Row{})
 		if err != nil {
+<<<<<<< HEAD
 			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
+=======
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e.StringWithCtx(evalCtx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			return getFullRange(), hasNull
 		}
 		if dt.IsNull() {
