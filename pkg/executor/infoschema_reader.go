@@ -112,31 +112,40 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		e.is = is
-		dbs := is.AllSchemaNames()
-		slices.SortFunc(dbs, func(a, b model.CIStr) int {
-			return strings.Compare(a.L, b.L)
-		})
+
+		var getAllSchemas = func() []model.CIStr {
+			dbs := is.AllSchemaNames()
+			slices.SortFunc(dbs, func(a, b model.CIStr) int {
+				return strings.Compare(a.L, b.L)
+			})
+			return dbs
+		}
+
 		var err error
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
-			e.setDataFromSchemata(sctx, dbs)
+			err = e.setDataFromSchemata(sctx)
 		case infoschema.TableStatistics:
-			err = e.setDataForStatistics(ctx, sctx, dbs)
+			err = e.setDataForStatistics(ctx, sctx)
 		case infoschema.TableTables:
-			err = e.setDataFromTables(ctx, sctx, dbs)
+			err = e.setDataFromTables(ctx, sctx)
 		case infoschema.TableReferConst:
+			dbs := getAllSchemas()
 			err = e.setDataFromReferConst(ctx, sctx, dbs)
 		case infoschema.TableSequences:
+			dbs := getAllSchemas()
 			err = e.setDataFromSequences(ctx, sctx, dbs)
 		case infoschema.TablePartitions:
-			err = e.setDataFromPartitions(ctx, sctx, dbs)
+			err = e.setDataFromPartitions(ctx, sctx)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
 			err = e.setDataForAnalyzeStatus(ctx, sctx)
 		case infoschema.TableTiDBIndexes:
+			dbs := getAllSchemas()
 			err = e.setDataFromIndexes(ctx, sctx, dbs)
 		case infoschema.TableViews:
+			dbs := getAllSchemas()
 			err = e.setDataFromViews(ctx, sctx, dbs)
 		case infoschema.TableEngines:
 			e.setDataFromEngines()
@@ -145,6 +154,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableCollations:
 			e.setDataFromCollations()
 		case infoschema.TableKeyColumn:
+			dbs := getAllSchemas()
 			err = e.setDataFromKeyColumnUsage(ctx, sctx, dbs)
 		case infoschema.TableMetricTables:
 			e.setDataForMetricTables()
@@ -163,12 +173,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiDBHotRegions:
 			err = e.setDataForTiDBHotRegions(ctx, sctx)
 		case infoschema.TableConstraints:
+			dbs := getAllSchemas()
 			err = e.setDataFromTableConstraints(ctx, sctx, dbs)
 		case infoschema.TableSessionVar:
 			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
+			dbs := getAllSchemas()
 			err = e.dataForTableTiFlashReplica(ctx, sctx, dbs)
 		case infoschema.TableTiKVStoreStatus:
 			err = e.dataForTiKVStoreStatus(ctx, sctx)
@@ -201,14 +213,18 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableRunawayWatches:
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
+			dbs := getAllSchemas()
 			err = e.setDataFromCheckConstraints(ctx, sctx, dbs)
 		case infoschema.TableTiDBCheckConstraints:
+			dbs := getAllSchemas()
 			err = e.setDataFromTiDBCheckConstraints(ctx, sctx, dbs)
 		case infoschema.TableKeywords:
 			err = e.setDataFromKeywords()
 		case infoschema.TableTiDBIndexUsage:
+			dbs := getAllSchemas()
 			err = e.setDataFromIndexUsage(ctx, sctx, dbs)
 		case infoschema.ClusterTableTiDBIndexUsage:
+			dbs := getAllSchemas()
 			err = e.setDataForClusterIndexUsage(ctx, sctx, dbs)
 		}
 		if err != nil {
@@ -235,13 +251,16 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getAutoIncrementID(ctx context.Context, sctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) (int64, error) {
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(ctx, schema, tblInfo.Name)
-	if err != nil {
-		return 0, err
+func getAutoIncrementID(
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+) int64 {
+	tbl, ok := is.TableByID(tblInfo.ID)
+	if !ok {
+		return 0
 	}
-	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1, nil
+	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
@@ -335,18 +354,19 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []model.CIStr) {
+func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
-	if ok && extractor.SkipRequest {
-		return
+	ex, ok := e.extractor.(*plannercore.InfoSchemaSchemataExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaSchemataExtractor", e.extractor)
 	}
+	if ex.SkipRequest {
+		return nil
+	}
+	schemas := ex.ListSchemas(e.is)
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schemaName := range schemas {
-		if ok && extractor.Filter("schema_name", schemaName.L) {
-			continue
-		}
 		schema, _ := e.is.SchemaByName(schemaName)
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
@@ -377,36 +397,33 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 		rows = append(rows, record)
 	}
 	e.rows = rows
+	return nil
 }
 
-func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaStatisticsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaStatisticsExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
-	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, table := range tables {
+		schema := schemas[i]
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, table := range tables {
-			if ok && extractor.Filter("table_name", table.Name.L) {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			e.setDataForStatisticsInTable(schema, table, extractor)
-		}
+		e.setDataForStatisticsInTable(schema, table, ex)
 	}
 	return nil
 }
 
-func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaTablesExtractor) {
+func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaStatisticsExtractor) {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		if !extractor.Filter("index_name", "primary") {
@@ -499,7 +516,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, tabl
 func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
@@ -563,152 +580,159 @@ func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	return false
 }
 
-func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromOneTable(
+	sctx sessionctx.Context,
+	loc *time.Location,
+	checker privilege.Manager,
+	schema model.CIStr,
+	table *model.TableInfo,
+	rows [][]types.Datum,
+	useStatsCache bool,
+) ([][]types.Datum, error) {
+	collation := table.Collate
+	if collation == "" {
+		collation = mysql.DefaultCollationName
+	}
+	createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+
+	createOptions := ""
+
+	if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+		return rows, nil
+	}
+	pkType := "NONCLUSTERED"
+	if !table.IsView() {
+		if table.GetPartitionInfo() != nil {
+			createOptions = "partitioned"
+		} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
+			createOptions = "cached=on"
+		}
+		var autoIncID any
+		hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
+		if hasAutoIncID {
+			autoIncID = getAutoIncrementID(e.is, sctx, table)
+		}
+		tableType := "BASE TABLE"
+		if util.IsSystemView(schema.L) {
+			tableType = "SYSTEM VIEW"
+		}
+		if table.IsSequence() {
+			tableType = "SEQUENCE"
+		}
+		if table.HasClusteredIndex() {
+			pkType = "CLUSTERED"
+		}
+		shardingInfo := infoschema.GetShardingInfo(schema, table)
+		var policyName any
+		if table.PlacementPolicyRef != nil {
+			policyName = table.PlacementPolicyRef.Name.O
+		}
+
+		var rowCount, avgRowLength, dataLength, indexLength uint64
+		if useStatsCache {
+			if table.GetPartitionInfo() == nil {
+				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+				if err != nil {
+					return rows, err
+				}
+			} else {
+				// needs to update all partitions for partition table.
+				for _, pi := range table.GetPartitionInfo().Definitions {
+					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+					if err != nil {
+						return rows, err
+					}
+				}
+			}
+			rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
+		}
+
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.O,              // TABLE_SCHEMA
+			table.Name.O,          // TABLE_NAME
+			tableType,             // TABLE_TYPE
+			"InnoDB",              // ENGINE
+			uint64(10),            // VERSION
+			"Compact",             // ROW_FORMAT
+			rowCount,              // TABLE_ROWS
+			avgRowLength,          // AVG_ROW_LENGTH
+			dataLength,            // DATA_LENGTH
+			uint64(0),             // MAX_DATA_LENGTH
+			indexLength,           // INDEX_LENGTH
+			uint64(0),             // DATA_FREE
+			autoIncID,             // AUTO_INCREMENT
+			createTime,            // CREATE_TIME
+			nil,                   // UPDATE_TIME
+			nil,                   // CHECK_TIME
+			collation,             // TABLE_COLLATION
+			nil,                   // CHECKSUM
+			createOptions,         // CREATE_OPTIONS
+			table.Comment,         // TABLE_COMMENT
+			table.ID,              // TIDB_TABLE_ID
+			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
+			pkType,                // TIDB_PK_TYPE
+			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+		)
+		rows = append(rows, record)
+	} else {
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.O,              // TABLE_SCHEMA
+			table.Name.O,          // TABLE_NAME
+			"VIEW",                // TABLE_TYPE
+			nil,                   // ENGINE
+			nil,                   // VERSION
+			nil,                   // ROW_FORMAT
+			nil,                   // TABLE_ROWS
+			nil,                   // AVG_ROW_LENGTH
+			nil,                   // DATA_LENGTH
+			nil,                   // MAX_DATA_LENGTH
+			nil,                   // INDEX_LENGTH
+			nil,                   // DATA_FREE
+			nil,                   // AUTO_INCREMENT
+			createTime,            // CREATE_TIME
+			nil,                   // UPDATE_TIME
+			nil,                   // CHECK_TIME
+			nil,                   // TABLE_COLLATION
+			nil,                   // CHECKSUM
+			nil,                   // CREATE_OPTIONS
+			"VIEW",                // TABLE_COMMENT
+			table.ID,              // TIDB_TABLE_ID
+			nil,                   // TIDB_ROW_ID_SHARDING_INFO
+			pkType,                // TIDB_PK_TYPE
+			nil,                   // TIDB_PLACEMENT_POLICY_NAME
+		)
+		rows = append(rows, record)
+	}
+	return rows, nil
+}
+
+func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 
 	var rows [][]types.Datum
-	createTimeTp := mysql.TypeDatetime
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
 	}
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTablesExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
-	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
-			continue
-		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
+
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, table := range tables {
+		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		for _, table := range tables {
-			if ok && extractor.Filter("table_name", table.Name.L) {
-				continue
-			}
-			collation := table.Collate
-			if collation == "" {
-				collation = mysql.DefaultCollationName
-			}
-			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime().In(loc)), createTimeTp, types.DefaultFsp)
-
-			createOptions := ""
-
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			pkType := "NONCLUSTERED"
-			if !table.IsView() {
-				if table.GetPartitionInfo() != nil {
-					createOptions = "partitioned"
-				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
-					createOptions = "cached=on"
-				}
-				var err error
-				var autoIncID any
-				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
-				if hasAutoIncID {
-					autoIncID, err = getAutoIncrementID(ctx, sctx, schema, table)
-					if err != nil {
-						return err
-					}
-				}
-				tableType := "BASE TABLE"
-				if util.IsSystemView(schema.L) {
-					tableType = "SYSTEM VIEW"
-				}
-				if table.IsSequence() {
-					tableType = "SEQUENCE"
-				}
-				if table.HasClusteredIndex() {
-					pkType = "CLUSTERED"
-				}
-				shardingInfo := infoschema.GetShardingInfo(schema, table)
-				var policyName any
-				if table.PlacementPolicyRef != nil {
-					policyName = table.PlacementPolicyRef.Name.O
-				}
-
-				var rowCount, avgRowLength, dataLength, indexLength uint64
-				if useStatsCache {
-					if table.GetPartitionInfo() == nil {
-						err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-						if err != nil {
-							return err
-						}
-					} else {
-						// needs to update all partitions for partition table.
-						for _, pi := range table.GetPartitionInfo().Definitions {
-							err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
-							if err != nil {
-								return err
-							}
-						}
-					}
-					rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
-				}
-
-				record := types.MakeDatums(
-					infoschema.CatalogVal, // TABLE_CATALOG
-					schema.O,              // TABLE_SCHEMA
-					table.Name.O,          // TABLE_NAME
-					tableType,             // TABLE_TYPE
-					"InnoDB",              // ENGINE
-					uint64(10),            // VERSION
-					"Compact",             // ROW_FORMAT
-					rowCount,              // TABLE_ROWS
-					avgRowLength,          // AVG_ROW_LENGTH
-					dataLength,            // DATA_LENGTH
-					uint64(0),             // MAX_DATA_LENGTH
-					indexLength,           // INDEX_LENGTH
-					uint64(0),             // DATA_FREE
-					autoIncID,             // AUTO_INCREMENT
-					createTime,            // CREATE_TIME
-					nil,                   // UPDATE_TIME
-					nil,                   // CHECK_TIME
-					collation,             // TABLE_COLLATION
-					nil,                   // CHECKSUM
-					createOptions,         // CREATE_OPTIONS
-					table.Comment,         // TABLE_COMMENT
-					table.ID,              // TIDB_TABLE_ID
-					shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
-					pkType,                // TIDB_PK_TYPE
-					policyName,            // TIDB_PLACEMENT_POLICY_NAME
-				)
-				rows = append(rows, record)
-			} else {
-				record := types.MakeDatums(
-					infoschema.CatalogVal, // TABLE_CATALOG
-					schema.O,              // TABLE_SCHEMA
-					table.Name.O,          // TABLE_NAME
-					"VIEW",                // TABLE_TYPE
-					nil,                   // ENGINE
-					nil,                   // VERSION
-					nil,                   // ROW_FORMAT
-					nil,                   // TABLE_ROWS
-					nil,                   // AVG_ROW_LENGTH
-					nil,                   // DATA_LENGTH
-					nil,                   // MAX_DATA_LENGTH
-					nil,                   // INDEX_LENGTH
-					nil,                   // DATA_FREE
-					nil,                   // AUTO_INCREMENT
-					createTime,            // CREATE_TIME
-					nil,                   // UPDATE_TIME
-					nil,                   // CHECK_TIME
-					nil,                   // TABLE_COLLATION
-					nil,                   // CHECKSUM
-					nil,                   // CREATE_OPTIONS
-					"VIEW",                // TABLE_COMMENT
-					table.ID,              // TIDB_TABLE_ID
-					nil,                   // TIDB_ROW_ID_SHARDING_INFO
-					pkType,                // TIDB_PK_TYPE
-					nil,                   // TIDB_PLACEMENT_POLICY_NAME
-				)
-				rows = append(rows, record)
-			}
 		}
 	}
 	e.rows = rows
@@ -720,7 +744,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
@@ -764,7 +788,7 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
@@ -1112,185 +1136,180 @@ func calcCharOctLength(lenInChar int, cs string) int {
 	return lenInBytes
 }
 
-func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context) error {
 	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
 
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaPartitionsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaPartitionsExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
-
-	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, table := range tables {
+		schema := schemas[i]
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
 			continue
 		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, table := range tables {
-			if ok && extractor.Filter("table_name", table.Name.L) {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
-				continue
-			}
-			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+		createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
-			var rowCount, dataLength, indexLength uint64
-			if useStatsCache {
-				if table.GetPartitionInfo() == nil {
-					err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+		var rowCount, dataLength, indexLength uint64
+		if useStatsCache {
+			if table.GetPartitionInfo() == nil {
+				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+				if err != nil {
+					return err
+				}
+			} else {
+				// needs to update needed partitions for partition table.
+				for _, pi := range table.GetPartitionInfo().Definitions {
+					if ex.Filter("partition_name", pi.Name.L) {
+						continue
+					}
+					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
 					if err != nil {
 						return err
 					}
-				} else {
-					// needs to update needed partitions for partition table.
-					for _, pi := range table.GetPartitionInfo().Definitions {
-						if ok && extractor.Filter("partition_name", pi.Name.L) {
-							continue
-						}
-						err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
-						if err != nil {
-							return err
-						}
-					}
 				}
 			}
-			if table.GetPartitionInfo() == nil {
-				rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
-				dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, table.ID, rowCount)
+		}
+		if table.GetPartitionInfo() == nil {
+			rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
+			dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, table.ID, rowCount)
+			avgRowLength := uint64(0)
+			if rowCount != 0 {
+				avgRowLength = dataLength / rowCount
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal, // TABLE_CATALOG
+				schema.O,              // TABLE_SCHEMA
+				table.Name.O,          // TABLE_NAME
+				nil,                   // PARTITION_NAME
+				nil,                   // SUBPARTITION_NAME
+				nil,                   // PARTITION_ORDINAL_POSITION
+				nil,                   // SUBPARTITION_ORDINAL_POSITION
+				nil,                   // PARTITION_METHOD
+				nil,                   // SUBPARTITION_METHOD
+				nil,                   // PARTITION_EXPRESSION
+				nil,                   // SUBPARTITION_EXPRESSION
+				nil,                   // PARTITION_DESCRIPTION
+				rowCount,              // TABLE_ROWS
+				avgRowLength,          // AVG_ROW_LENGTH
+				dataLength,            // DATA_LENGTH
+				nil,                   // MAX_DATA_LENGTH
+				indexLength,           // INDEX_LENGTH
+				nil,                   // DATA_FREE
+				createTime,            // CREATE_TIME
+				nil,                   // UPDATE_TIME
+				nil,                   // CHECK_TIME
+				nil,                   // CHECKSUM
+				nil,                   // PARTITION_COMMENT
+				nil,                   // NODEGROUP
+				nil,                   // TABLESPACE_NAME
+				nil,                   // TIDB_PARTITION_ID
+				nil,                   // TIDB_PLACEMENT_POLICY_NAME
+			)
+			rows = append(rows, record)
+		} else {
+			for i, pi := range table.GetPartitionInfo().Definitions {
+				if ex.Filter("partition_name", pi.Name.L) {
+					continue
+				}
+				rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
+				dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, pi.ID, rowCount)
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
+				}
+
+				var partitionDesc string
+				if table.Partition.Type == model.PartitionTypeRange {
+					partitionDesc = strings.Join(pi.LessThan, ",")
+				} else if table.Partition.Type == model.PartitionTypeList {
+					if len(pi.InValues) > 0 {
+						buf := bytes.NewBuffer(nil)
+						for i, vs := range pi.InValues {
+							if i > 0 {
+								buf.WriteString(",")
+							}
+							if len(vs) != 1 {
+								buf.WriteString("(")
+							}
+							buf.WriteString(strings.Join(vs, ","))
+							if len(vs) != 1 {
+								buf.WriteString(")")
+							}
+						}
+						partitionDesc = buf.String()
+					}
+				}
+
+				partitionMethod := table.Partition.Type.String()
+				partitionExpr := table.Partition.Expr
+				if len(table.Partition.Columns) > 0 {
+					switch table.Partition.Type {
+					case model.PartitionTypeRange:
+						partitionMethod = "RANGE COLUMNS"
+					case model.PartitionTypeList:
+						partitionMethod = "LIST COLUMNS"
+					case model.PartitionTypeKey:
+						partitionMethod = "KEY"
+					default:
+						return errors.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
+					}
+					buf := bytes.NewBuffer(nil)
+					for i, col := range table.Partition.Columns {
+						if i > 0 {
+							buf.WriteString(",")
+						}
+						buf.WriteString("`")
+						buf.WriteString(col.String())
+						buf.WriteString("`")
+					}
+					partitionExpr = buf.String()
+				}
+
+				var policyName any
+				if pi.PlacementPolicyRef != nil {
+					policyName = pi.PlacementPolicyRef.Name.O
 				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.O,              // TABLE_SCHEMA
 					table.Name.O,          // TABLE_NAME
-					nil,                   // PARTITION_NAME
+					pi.Name.O,             // PARTITION_NAME
 					nil,                   // SUBPARTITION_NAME
-					nil,                   // PARTITION_ORDINAL_POSITION
+					i+1,                   // PARTITION_ORDINAL_POSITION
 					nil,                   // SUBPARTITION_ORDINAL_POSITION
-					nil,                   // PARTITION_METHOD
+					partitionMethod,       // PARTITION_METHOD
 					nil,                   // SUBPARTITION_METHOD
-					nil,                   // PARTITION_EXPRESSION
+					partitionExpr,         // PARTITION_EXPRESSION
 					nil,                   // SUBPARTITION_EXPRESSION
-					nil,                   // PARTITION_DESCRIPTION
+					partitionDesc,         // PARTITION_DESCRIPTION
 					rowCount,              // TABLE_ROWS
 					avgRowLength,          // AVG_ROW_LENGTH
 					dataLength,            // DATA_LENGTH
-					nil,                   // MAX_DATA_LENGTH
+					uint64(0),             // MAX_DATA_LENGTH
 					indexLength,           // INDEX_LENGTH
-					nil,                   // DATA_FREE
+					uint64(0),             // DATA_FREE
 					createTime,            // CREATE_TIME
 					nil,                   // UPDATE_TIME
 					nil,                   // CHECK_TIME
 					nil,                   // CHECKSUM
-					nil,                   // PARTITION_COMMENT
+					pi.Comment,            // PARTITION_COMMENT
 					nil,                   // NODEGROUP
 					nil,                   // TABLESPACE_NAME
-					nil,                   // TIDB_PARTITION_ID
-					nil,                   // TIDB_PLACEMENT_POLICY_NAME
+					pi.ID,                 // TIDB_PARTITION_ID
+					policyName,            // TIDB_PLACEMENT_POLICY_NAME
 				)
 				rows = append(rows, record)
-			} else {
-				for i, pi := range table.GetPartitionInfo().Definitions {
-					if ok && extractor.Filter("partition_name", pi.Name.L) {
-						continue
-					}
-					rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
-					dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, pi.ID, rowCount)
-					avgRowLength := uint64(0)
-					if rowCount != 0 {
-						avgRowLength = dataLength / rowCount
-					}
-
-					var partitionDesc string
-					if table.Partition.Type == model.PartitionTypeRange {
-						partitionDesc = strings.Join(pi.LessThan, ",")
-					} else if table.Partition.Type == model.PartitionTypeList {
-						if len(pi.InValues) > 0 {
-							buf := bytes.NewBuffer(nil)
-							for i, vs := range pi.InValues {
-								if i > 0 {
-									buf.WriteString(",")
-								}
-								if len(vs) != 1 {
-									buf.WriteString("(")
-								}
-								buf.WriteString(strings.Join(vs, ","))
-								if len(vs) != 1 {
-									buf.WriteString(")")
-								}
-							}
-							partitionDesc = buf.String()
-						}
-					}
-
-					partitionMethod := table.Partition.Type.String()
-					partitionExpr := table.Partition.Expr
-					if len(table.Partition.Columns) > 0 {
-						switch table.Partition.Type {
-						case model.PartitionTypeRange:
-							partitionMethod = "RANGE COLUMNS"
-						case model.PartitionTypeList:
-							partitionMethod = "LIST COLUMNS"
-						case model.PartitionTypeKey:
-							partitionMethod = "KEY"
-						default:
-							return errors.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
-						}
-						buf := bytes.NewBuffer(nil)
-						for i, col := range table.Partition.Columns {
-							if i > 0 {
-								buf.WriteString(",")
-							}
-							buf.WriteString("`")
-							buf.WriteString(col.String())
-							buf.WriteString("`")
-						}
-						partitionExpr = buf.String()
-					}
-
-					var policyName any
-					if pi.PlacementPolicyRef != nil {
-						policyName = pi.PlacementPolicyRef.Name.O
-					}
-					record := types.MakeDatums(
-						infoschema.CatalogVal, // TABLE_CATALOG
-						schema.O,              // TABLE_SCHEMA
-						table.Name.O,          // TABLE_NAME
-						pi.Name.O,             // PARTITION_NAME
-						nil,                   // SUBPARTITION_NAME
-						i+1,                   // PARTITION_ORDINAL_POSITION
-						nil,                   // SUBPARTITION_ORDINAL_POSITION
-						partitionMethod,       // PARTITION_METHOD
-						nil,                   // SUBPARTITION_METHOD
-						partitionExpr,         // PARTITION_EXPRESSION
-						nil,                   // SUBPARTITION_EXPRESSION
-						partitionDesc,         // PARTITION_DESCRIPTION
-						rowCount,              // TABLE_ROWS
-						avgRowLength,          // AVG_ROW_LENGTH
-						dataLength,            // DATA_LENGTH
-						uint64(0),             // MAX_DATA_LENGTH
-						indexLength,           // INDEX_LENGTH
-						uint64(0),             // DATA_FREE
-						createTime,            // CREATE_TIME
-						nil,                   // UPDATE_TIME
-						nil,                   // CHECK_TIME
-						nil,                   // CHECKSUM
-						pi.Comment,            // PARTITION_COMMENT
-						nil,                   // NODEGROUP
-						nil,                   // TABLESPACE_NAME
-						pi.ID,                 // TIDB_PARTITION_ID
-						policyName,            // TIDB_PLACEMENT_POLICY_NAME
-					)
-					rows = append(rows, record)
-				}
 			}
 		}
 	}
@@ -1300,7 +1319,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 
 func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
@@ -1401,7 +1420,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 
 func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
@@ -1703,12 +1722,16 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
 	for _, schema := range schemas {
+		// `constraint_schema` and `table_schema` are always the same in MySQL.
 		if ok && extractor.Filter("constraint_schema", schema.L) {
+			continue
+		}
+		if ok && extractor.Filter("table_schema", schema.L) {
 			continue
 		}
 		tables, err := e.is.SchemaTableInfos(ctx, schema)
@@ -1722,7 +1745,7 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			rs := keyColumnUsageInTable(schema, table)
+			rs := keyColumnUsageInTable(schema, table, extractor)
 			rows = append(rows, rs...)
 		}
 	}
@@ -1792,7 +1815,7 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	e.rows = rows
 }
 
-func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types.Datum {
+func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaBaseExtractor) [][]types.Datum {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
@@ -1830,6 +1853,11 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 			// Only handle unique/primary key
 			continue
 		}
+
+		if extractor != nil && extractor.Filter("constraint_name", idxName) {
+			continue
+		}
+
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
 			if col.Hidden {
@@ -2093,13 +2121,16 @@ func (e *memtableRetriever) setDataForHotRegionByMetrics(metrics []helper.HotTab
 // setDataFromTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
 func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		if ok && extractor.Filter("constraint_schema", schema.L) {
+			continue
+		}
+		if ok && extractor.Filter("table_schema", schema.L) {
 			continue
 		}
 		tables, err := e.is.SchemaTableInfos(ctx, schema)
@@ -2136,6 +2167,9 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 					ctype = infoschema.UniqueKeyType
 				} else {
 					// The index has no constriant.
+					continue
+				}
+				if ok && extractor.Filter("constraint_name", cname) {
 					continue
 				}
 				record := types.MakeDatums(
@@ -2551,7 +2585,7 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 
 func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
@@ -3701,7 +3735,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}

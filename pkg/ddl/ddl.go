@@ -21,18 +21,15 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -66,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -83,11 +79,10 @@ const (
 
 	shardRowIDBitsMax = 15
 
-	batchAddingJobs = 10
+	batchAddingJobs = 100
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 10
-	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -191,12 +186,17 @@ type DDL interface {
 	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
-	// GetHook gets the hook. It's exported for testing.
-	GetHook() Callback
-	// SetHook sets the hook.
-	SetHook(h Callback)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
+}
+
+type jobSubmitResult struct {
+	err   error
+	jobID int64
+	// merged indicates whether the job is merged into another job together with
+	// other jobs. we only merge multiple create table jobs into one job when fast
+	// create table is enabled.
+	merged bool
 }
 
 // JobWrapper is used to wrap a job and some other information.
@@ -207,9 +207,9 @@ type JobWrapper struct {
 	// exported for test.
 	IDAllocated bool
 	// job submission is run in async, we use this channel to notify the caller.
-	// for local job we might combine multiple jobs into one, append the ErrChs to
-	// this slice.
-	ErrChs   []chan error
+	// when fast create table enabled, we might combine multiple jobs into one, and
+	// append the channel to this slice.
+	ResultCh []chan jobSubmitResult
 	cacheErr error
 }
 
@@ -219,14 +219,19 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
-		ErrChs:      []chan error{make(chan error)},
+		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
 
-// NotifyError notifies the error to all error channels.
-func (t *JobWrapper) NotifyError(err error) {
-	for _, errCh := range t.ErrChs {
-		errCh <- err
+// NotifyResult notifies the job submit result.
+func (t *JobWrapper) NotifyResult(err error) {
+	merged := len(t.ResultCh) > 1
+	for _, resultCh := range t.ResultCh {
+		resultCh <- jobSubmitResult{
+			err:    err,
+			jobID:  t.ID,
+			merged: merged,
+		}
 	}
 }
 
@@ -235,23 +240,17 @@ type ddl struct {
 	m          sync.RWMutex
 	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 	limitJobCh chan *JobWrapper
-	// limitJobChV2 is used to limit the number of jobs being executed in local worker.
-	limitJobChV2 chan *JobWrapper
 
 	*ddlCtx
 	sessPool          *sess.Pool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
-	// used in the concurrency ddl.
-	localWorkerPool *workerPool
 	// get notification if any DDL job submitted or finished.
 	ddlJobNotifyCh    chan struct{}
 	sysTblMgr         systable.Manager
 	minJobIDRefresher *systable.MinJobIDRefresher
 
-	// localJobCh is used to delivery job in local TiDB nodes.
-	localJobCh chan *JobWrapper
-	// globalIDLocal locks global id to reduce write conflict.
+	// globalIDLock locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
 	executor     *executor
 }
@@ -349,23 +348,11 @@ type ddlCtx struct {
 		// jobCtxMap maps job ID to job's ctx.
 		jobCtxMap map[int64]*JobContext
 	}
-
-	// hook may be modified.
-	mu hookStruct
 }
 
-// TODO remove it after we remove hook.
-type hookStruct struct {
-	sync.RWMutex
-	// see newDefaultCallBack for its value in normal flow.
-	hook Callback
-}
-
-// the schema synchronization mechanism now requires strict incremental schema versions.
-// Therefore, we require a distributed lock to ensure the sequential commit of schema diffs from different TiDB nodes.
-type etcdLockInfo struct {
-	se *concurrency.Session
-	mu *concurrency.Mutex
+// SchemaLoader is used to avoid import loop, the only impl is domain currently.
+type SchemaLoader interface {
+	Reload() error
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -375,18 +362,10 @@ type schemaVersionManager struct {
 	schemaVersionMu sync.Mutex
 	// lockOwner stores the job ID that is holding the lock.
 	lockOwner atomicutil.Int64
-
-	ctx          context.Context
-	etcdClient   *clientv3.Client
-	lockInfoMaps map[int64]*etcdLockInfo
 }
 
-func newSchemaVersionManager(ctx context.Context, etcdClient *clientv3.Client) *schemaVersionManager {
-	return &schemaVersionManager{
-		ctx:          ctx,
-		etcdClient:   etcdClient,
-		lockInfoMaps: make(map[int64]*etcdLockInfo),
-	}
+func newSchemaVersionManager() *schemaVersionManager {
+	return &schemaVersionManager{}
 }
 
 func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storage) (schemaVersion int64, err error) {
@@ -411,17 +390,6 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 	if ownerID != jobID {
 		sv.schemaVersionMu.Lock()
 		sv.lockOwner.Store(jobID)
-		if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
-			se, err := concurrency.NewSession(sv.etcdClient)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
-			if err := mu.Lock(sv.ctx); err != nil {
-				return errors.Trace(err)
-			}
-			sv.lockInfoMaps[jobID] = &etcdLockInfo{se: se, mu: mu}
-		}
 	}
 	return nil
 }
@@ -430,24 +398,6 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
-		if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
-			delete(sv.lockInfoMaps, jobID)
-			err := lockInfo.mu.Unlock(sv.ctx)
-		outer:
-			for err != nil {
-				logutil.DDLLogger().Error("unlock schema version", zap.Error(err))
-				select {
-				case <-sv.ctx.Done():
-					break outer
-				case <-time.After(time.Second):
-				}
-				// retry unlock
-				err = lockInfo.mu.Unlock(sv.ctx)
-			}
-			if err := lockInfo.se.Close(); err != nil {
-				logutil.DDLLogger().Error("close etcd session", zap.Error(err))
-			}
-		}
 		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
 	}
@@ -519,6 +469,19 @@ type reorgContexts struct {
 	sync.RWMutex
 	// reorgCtxMap maps job ID to reorg context.
 	reorgCtxMap map[int64]*reorgCtx
+	beOwnerTS   int64
+}
+
+func (r *reorgContexts) getOwnerTS() int64 {
+	r.RLock()
+	defer r.RUnlock()
+	return r.beOwnerTS
+}
+
+func (r *reorgContexts) setOwnerTS(ts int64) {
+	r.Lock()
+	r.beOwnerTS = ts
+	r.Unlock()
 }
 
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
@@ -536,7 +499,7 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 		return existedRC
 	}
 	rc := &reorgCtx{}
-	rc.doneCh = make(chan error, 1)
+	rc.doneCh = make(chan reorgFnResult, 1)
 	// initial reorgCtx
 	rc.setRowCount(rowCount)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
@@ -570,16 +533,11 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
-func (dc *ddlCtx) initJobDoneCh(jobID int64) {
-	dc.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
-}
-
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
-	if ch, ok := dc.ddlJobDoneChMap.Load(jobID); ok {
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
+	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
+		// broadcast done event as we might merge multiple jobs into one when fast
+		// create table is enabled.
+		close(ch)
 	}
 }
 
@@ -603,6 +561,8 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
+// TODO this is called after ddl started, will cause panic if related DDL are executed
+// in between.
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
 	d.executor.statsHandle = h
@@ -640,9 +600,7 @@ func NewDDL(ctx context.Context, options ...Option) (DDL, Executor) {
 }
 
 func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
-	opt := &Options{
-		Hook: &BaseCallback{},
-	}
+	opt := &Options{}
 	for _, o := range options {
 		o(opt)
 	}
@@ -692,18 +650,15 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
-	ddlCtx.mu.hook = opt.Hook
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
-	ddlCtx.schemaVersionManager = newSchemaVersionManager(ddlCtx.ctx, opt.EtcdCli)
+	ddlCtx.schemaVersionManager = newSchemaVersionManager()
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *JobWrapper, batchAddingJobs),
-		limitJobChV2:      make(chan *JobWrapper, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobNotifyCh:    make(chan struct{}, 100),
-		localJobCh:        make(chan *JobWrapper, 1),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -721,7 +676,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchMDL = d.SwitchMDL
-	variable.SwitchFastCreateTable = d.SwitchFastCreateTable
 
 	e := &executor{
 		ctx:             d.ctx,
@@ -734,10 +688,8 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		schemaLoader:    d.schemaLoader,
 		lease:           d.lease,
 		ownerManager:    d.ownerManager,
-		limitJobChV2:    d.limitJobChV2,
 		ddlJobDoneChMap: &d.ddlJobDoneChMap,
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
-		mu:              &d.mu,
 		globalIDLock:    &d.globalIDLock,
 	}
 	d.executor = e
@@ -768,33 +720,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
-func (d *ddl) prepareLocalModeWorkers() {
-	var idAllocator atomic.Uint64
-	workerFactory := func(tp workerType) func() (pools.Resource, error) {
-		return func() (pools.Resource, error) {
-			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx)
-			sessForJob, err := d.sessPool.Get()
-			if err != nil {
-				return nil, err
-			}
-			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = sess.NewSession(sessForJob)
-			wk.seqAllocator = &idAllocator
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
-			return wk, nil
-		}
-	}
-	// local worker count at least 2 at most 10.
-	localCnt := min(max(runtime.GOMAXPROCS(0)/4, 2), localWorkerCnt)
-	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localCnt, localCnt, 0), jobTypeLocal)
-	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return()
-		}
-	})
-	d.wg.Run(d.startLocalWorkerLoop)
-}
-
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
@@ -804,10 +729,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.sysTblMgr = systable.NewManager(d.sessPool)
 	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
 	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobsV1)
-	})
-	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
+		d.limitDDLJobs()
 	})
 	d.wg.Run(func() {
 		d.minJobIDRefresher.Start(d.ctx)
@@ -822,8 +744,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.ownerManager.SetListener(&ownerListener{
 		ddl: d,
 	})
-
-	d.prepareLocalModeWorkers()
 
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
@@ -919,9 +839,6 @@ func (d *ddl) close() {
 	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
-	if d.localWorkerPool != nil {
-		d.localWorkerPool.close()
-	}
 
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -967,22 +884,6 @@ func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
 	d.binlogCli = binlogCli
 }
 
-// GetHook implements DDL.GetHook interface.
-func (d *ddl) GetHook() Callback {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	return d.mu.hook
-}
-
-// SetHook set the customized hook.
-func (d *ddl) SetHook(h Callback) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.hook = h
-}
-
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
 	return d.minJobIDRefresher
 }
@@ -1008,7 +909,7 @@ func (d *ddl) startCleanDeadTableLock() {
 				continue
 			}
 			for se, tables := range deadLockTables {
-				err := d.CleanDeadTableLock(tables, se)
+				err := d.cleanDeadTableLock(tables, se)
 				if err != nil {
 					logutil.DDLLogger().Info("clean dead table lock failed.", zap.Error(err))
 				}
@@ -1017,6 +918,32 @@ func (d *ddl) startCleanDeadTableLock() {
 			return
 		}
 	}
+}
+
+// cleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &LockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []any{arg},
+	}
+
+	ctx, err := d.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.Put(ctx)
+	err = d.executor.DoDDLJob(ctx, job)
+	return errors.Trace(err)
 }
 
 // SwitchMDL enables MDL or disable MDL.
@@ -1063,114 +990,6 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 	logutil.DDLLogger().Info("switch metadata lock feature", zap.Bool("enable", enable))
 	return nil
-}
-
-// SwitchFastCreateTable switch fast create table
-func (d *ddl) SwitchFastCreateTable(val bool) error {
-	old := variable.EnableFastCreateTable.Load()
-	if old == val {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
-
-	// Check if there is any DDL running.
-	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
-	sessCtx, err := d.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer d.sessPool.Put(sessCtx)
-	se := sess.NewSession(sessCtx)
-	rows, err := se.Execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) != 0 {
-		return errors.New("please wait for all jobs done")
-	}
-
-	if err := d.switchFastCreateTable(val); err != nil {
-		return errors.Trace(err)
-	}
-
-	variable.EnableFastCreateTable.Store(val)
-	logutil.DDLLogger().Info("switch fast create table", zap.Bool("val", val))
-	return nil
-}
-
-// disableFastCreateTable disable fast create table feature.
-func (*ddl) disableFastCreateTable(m *meta.Meta) error {
-	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !fastCreateTableInitialized {
-		return nil
-	}
-	if err := m.ClearAllDatabaseNames(); err != nil {
-		return errors.Trace(err)
-	}
-	if err := m.ClearAllTableNames(); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(m.SetFastCreateTableInitialized(false))
-}
-
-// enableFastCreateTable enable fast create table feature.
-func (*ddl) enableFastCreateTable(m *meta.Meta) error {
-	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if fastCreateTableInitialized {
-		return nil
-	}
-
-	if err := m.ClearAllDatabaseNames(); err != nil {
-		return errors.Trace(err)
-	}
-	if err := m.ClearAllTableNames(); err != nil {
-		return errors.Trace(err)
-	}
-
-	dbs, err := m.ListDatabases()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, dbInfo := range dbs {
-		if err := m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	for _, dbInfo := range dbs {
-		tables, err := m.ListTables(dbInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tableInfo := range tables {
-			if err := m.CreateTableName(dbInfo.Name.L, tableInfo.Name.L, tableInfo.ID); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	return errors.Trace(m.SetFastCreateTableInitialized(true))
-}
-
-func (d *ddl) switchFastCreateTable(val bool) (err error) {
-	return kv.RunInNewTxn(kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-
-		if val {
-			err = d.enableFastCreateTable(m)
-		} else {
-			err = d.disableFastCreateTable(m)
-		}
-		return errors.Trace(err)
-	})
 }
 
 // RecoverInfo contains information needed by DDL.RecoverTable.

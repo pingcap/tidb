@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -349,17 +348,6 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		}
 	}
 	return nil
-}
-
-func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
-	stats := &property.StatsInfo{
-		RowCount: math.Min(limitCount, childProfile.RowCount),
-		ColNDVs:  make(map[int64]float64, len(childProfile.ColNDVs)),
-	}
-	for id, c := range childProfile.ColNDVs {
-		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
-	}
-	return stats
 }
 
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist

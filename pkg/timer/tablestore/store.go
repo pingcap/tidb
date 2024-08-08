@@ -22,35 +22,29 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/timer/api"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"github.com/tikv/client-go/v2/util"
+	clitutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
 type tableTimerStoreCore struct {
-	pool     sessionPool
+	pool     util.SessionPool
 	dbName   string
 	tblName  string
-	etcd     *clientv3.Client
 	notifier api.TimerWatchEventNotifier
 }
 
 // NewTableTimerStore create a new timer store based on table
-func NewTableTimerStore(clusterID uint64, pool sessionPool, dbName, tblName string, etcd *clientv3.Client) *api.TimerStore {
+func NewTableTimerStore(clusterID uint64, pool util.SessionPool, dbName, tblName string, etcd *clientv3.Client) *api.TimerStore {
 	var notifier api.TimerWatchEventNotifier
 	if etcd != nil {
 		notifier = NewEtcdNotifier(clusterID, etcd)
@@ -434,7 +428,7 @@ func checkUpdateConstraints(update *api.TimerUpdate, eventID string, version uin
 }
 
 func executeSQL(ctx context.Context, exec sqlexec.SQLExecutor, sql string, args ...any) ([]chunk.Row, error) {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalTimer)
+	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalTimer)
 	rs, err := exec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err

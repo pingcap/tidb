@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -643,8 +643,6 @@ func testGetColumn(t table.Table, name string, isExist bool) error {
 func TestAddColumn(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
-	d := dom.DDL()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -672,8 +670,7 @@ func TestAddColumn(t *testing.T) {
 
 	checkOK := false
 
-	tc := &callback.TestDDLCallback{Do: dom}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkOK {
 			return
 		}
@@ -689,9 +686,7 @@ func TestAddColumn(t *testing.T) {
 		if newCol.State == model.StatePublic {
 			checkOK = true
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(tc)
+	})
 
 	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColName, "", defaultColValue, dom)
 	testCheckJobDone(t, store, jobID, true)
@@ -704,8 +699,6 @@ func TestAddColumn(t *testing.T) {
 
 func TestAddColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
-
-	d := dom.DDL()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -740,8 +733,7 @@ func TestAddColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	tc := &callback.TestDDLCallback{Do: dom}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -761,9 +753,7 @@ func TestAddColumns(t *testing.T) {
 				checkOK = true
 			}
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(tc)
+	})
 
 	jobID := testCreateColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColNames, positions, defaultColValue, dom)
 
@@ -809,9 +799,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	var hookErr error
 	var mu sync.Mutex
 
-	d := dom.DDL()
-	tc := &callback.TestDDLCallback{Do: dom}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -823,9 +811,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 			checkOK = true
 			return
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(tc)
+	})
 
 	jobID := testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colName, false, dom)
 	testCheckJobDone(t, store, jobID, false)
@@ -871,9 +857,7 @@ func TestDropColumns(t *testing.T) {
 	var hookErr error
 	var mu sync.Mutex
 
-	d := dom.DDL()
-	tc := &callback.TestDDLCallback{Do: dom}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -887,9 +871,7 @@ func TestDropColumns(t *testing.T) {
 				return
 			}
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(tc)
+	})
 
 	jobID := testDropColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colNames, false, dom)
 	testCheckJobDone(t, store, jobID, false)
@@ -912,7 +894,7 @@ func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
 }
 
 func TestWriteDataWriteOnlyMode(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -920,29 +902,21 @@ func TestWriteDataWriteOnlyMode(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("CREATE TABLE t (`col1` bigint(20) DEFAULT 1,`col2` float,UNIQUE KEY `key1` (`col1`))")
 
-	originalCallback := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originalCallback)
-
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		tk2.MustExec("insert ignore into t values (1, 2)")
 		tk2.MustExec("insert ignore into t values (2, 2)")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t change column `col1` `col1` varchar(20)")
 
-	hook = &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		tk2.MustExec("insert ignore into t values (1)")
 		tk2.MustExec("insert ignore into t values (2)")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t drop column `col1`")
-	dom.DDL().SetHook(originalCallback)
 }

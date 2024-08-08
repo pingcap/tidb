@@ -79,6 +79,12 @@ var (
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
 	_ base.PhysicalPlan = &PhysicalTableSample{}
+
+	_ PhysicalJoin = &PhysicalHashJoin{}
+	_ PhysicalJoin = &PhysicalMergeJoin{}
+	_ PhysicalJoin = &PhysicalIndexJoin{}
+	_ PhysicalJoin = &PhysicalIndexHashJoin{}
+	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
 type tableScanAndPartitionInfo struct {
@@ -159,6 +165,9 @@ const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
 
 // Clone clones the PhysPlanPartInfo.
 func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
+	if pi == nil {
+		return nil
+	}
 	cloned := new(PhysPlanPartInfo)
 	cloned.PruningConds = util.CloneExprs(pi.PruningConds)
 	cloned.PartitionNames = util.CloneCIStrs(pi.PartitionNames)
@@ -435,6 +444,9 @@ type PushedDownLimit struct {
 
 // Clone clones this pushed-down list.
 func (p *PushedDownLimit) Clone() *PushedDownLimit {
+	if p == nil {
+		return nil
+	}
 	cloned := new(PushedDownLimit)
 	*cloned = *p
 	return cloned
@@ -1208,6 +1220,11 @@ type PhysicalApply struct {
 	OuterSchema []*expression.CorrelatedColumn
 }
 
+// PhysicalJoinImplement has an extra bool return value compared with PhysicalJoin interface.
+// This will override basePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
+// base.PhysicalJoin interface.
+func (*PhysicalApply) PhysicalJoinImplement() bool { return false }
+
 // Clone implements op.PhysicalPlan interface.
 func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalApply)
@@ -1251,6 +1268,15 @@ func (la *PhysicalApply) MemoryUsage() (sum int64) {
 	return
 }
 
+// PhysicalJoin provides some common methods for join operators.
+// Note that PhysicalApply is deliberately excluded from this interface.
+type PhysicalJoin interface {
+	base.PhysicalPlan
+	PhysicalJoinImplement()
+	getInnerChildIdx() int
+	GetJoinType() JoinType
+}
+
 type basePhysicalJoin struct {
 	physicalSchemaProducer
 
@@ -1276,14 +1302,21 @@ type basePhysicalJoin struct {
 	RightNAJoinKeys []*expression.Column
 }
 
+func (p *basePhysicalJoin) GetJoinType() JoinType {
+	return p.JoinType
+}
+
+// PhysicalJoinImplement implements base.PhysicalJoin interface.
+func (*basePhysicalJoin) PhysicalJoinImplement() {}
+
 func (p *basePhysicalJoin) getInnerChildIdx() int {
 	return p.InnerChildIdx
 }
 
 func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, bool) {
 	cloned := new(basePhysicalJoin)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
-	if err != nil {
+	base, ok := p.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *base
@@ -1538,7 +1571,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
-	innerTask base.Task
+	innerPlan base.PhysicalPlan
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges ranger.MutableRanges
@@ -1568,8 +1601,8 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
 		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
-	if p.innerTask != nil {
-		sum += p.innerTask.MemoryUsage()
+	if p.innerPlan != nil {
+		sum += p.innerPlan.MemoryUsage()
 	}
 	if p.CompareFilters != nil {
 		sum += p.CompareFilters.MemoryUsage()
@@ -1968,8 +2001,8 @@ func (p *basePhysicalAgg) IsFinalAgg() bool {
 
 func (p *basePhysicalAgg) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, bool) {
 	cloned := new(basePhysicalAgg)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
-	if err != nil {
+	base, ok := p.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *base
@@ -2386,7 +2419,7 @@ type PhysicalWindow struct {
 	WindowFuncDescs []*aggregation.WindowFuncDesc
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
-	Frame           *WindowFrame
+	Frame           *logicalop.WindowFrame
 
 	// on which store the window function executes.
 	storeTp kv.StoreType

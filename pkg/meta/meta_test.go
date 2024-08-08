@@ -237,7 +237,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t"),
 		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
+	err = m.CreateTableOrView(1, tbInfo)
 	require.NoError(t, err)
 
 	n, err = m.GetAutoIDAccessors(1, 1).RowID().Inc(10)
@@ -248,7 +248,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
+	err = m.CreateTableOrView(1, tbInfo)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
@@ -275,7 +275,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("bb"),
 		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo2)
+	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
 
 	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
@@ -309,7 +309,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.DropTableOrView(1, dbInfo.Name.L, tbInfo2.ID, tbInfo2.Name.L)
+	err = m.DropTableOrView(1, tbInfo2.ID)
 	require.NoError(t, err)
 	err = m.GetAutoIDAccessors(1, tbInfo2.ID).Del()
 	require.NoError(t, err)
@@ -341,7 +341,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo100)
+	err = m.CreateTableOrView(1, tbInfo100)
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
@@ -367,7 +367,7 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
+	err = m.CreateTableAndSetAutoID(1, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
@@ -377,9 +377,9 @@ func TestMeta(t *testing.T) {
 	require.Equal(t, []byte(strconv.FormatInt(1234, 10)), val)
 	require.Equal(t, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc}, key)
 
-	err = m.DropDatabase(1, dbInfo.Name.L)
+	err = m.DropDatabase(1)
 	require.NoError(t, err)
-	err = m.DropDatabase(currentDBID, dbInfo.Name.L)
+	err = m.DropDatabase(currentDBID)
 	require.NoError(t, err)
 
 	dbs, err = m.ListDatabases()
@@ -650,111 +650,6 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
 	require.Equal(t, dbID, anotherDBID)
-
-	err = txn.Rollback()
-	require.NoError(t, err)
-}
-
-func TestName(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	// TestDatabaseNameKey
-	m := meta.NewMeta(txn)
-	key := m.DatabaseNameKey("db")
-	require.Equal(t, string(key), "DBNames:db")
-
-	// TestCheckDatabaseNameExists
-	err = m.CheckDatabaseNameExists(m.DatabaseNameKey("db"))
-	require.True(t, meta.ErrDBNotExists.Equal(err))
-	// TestCheckDatabaseNameNotExists
-	err = m.CheckDatabaseNameNotExists(m.DatabaseNameKey("db"))
-	require.NoError(t, err)
-	// TestCreateDatabase
-	err = m.CreateDatabaseName("db", 1)
-	require.NoError(t, err)
-	err = m.CheckDatabaseNameExists(m.DatabaseNameKey("db"))
-	require.NoError(t, err)
-	err = m.CheckDatabaseNameNotExists(m.DatabaseNameKey("db"))
-	require.True(t, meta.ErrDBExists.Equal(err))
-
-	// TestTableNameKey
-	key = m.TableNameKey("db", "tb")
-	require.Equal(t, string(key), "Names:db\x00tb")
-
-	// TestCheckTableNameExists
-	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	// TestCheckTableNameNotExists
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
-	require.NoError(t, err)
-
-	// TestCreateTable
-	err = m.CreateTableName("db", "tb", 1)
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
-	require.True(t, meta.ErrTableExists.Equal(err))
-	err = m.CreateTableName("db", "t", 2)
-	require.NoError(t, err)
-
-	err = m.CreateTableName("db", "tb", 3)
-	require.True(t, meta.ErrTableExists.Equal(err))
-
-	err = m.CreateDatabaseName("d", 4)
-	require.NoError(t, err)
-	err = m.CreateTableName("d", "btb", 3)
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("d", "btb"))
-	require.NoError(t, err)
-
-	// TestDropTableName
-	err = m.DropTableName("db1", "b")
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	err = m.DropTableName("db", "tb")
-	require.NoError(t, err)
-
-	// TestDropDatabaseName
-	err = m.DropDatabaseName("xx")
-	require.True(t, meta.ErrDBNotExists.Equal(err))
-	err = m.DropDatabaseName("d")
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("d", "btb"))
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db", "t"))
-	require.NoError(t, err)
-
-	// TestClearAllTableNames
-	err = m.ClearAllTableNames()
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db1", "t"))
-	require.NoError(t, err)
-
-	// TestClearAllDatabaseNames
-	err = m.ClearAllDatabaseNames()
-	require.NoError(t, err)
-
-	// TestFastCreateTableInitialized
-	v, err := m.GetFastCreateTableInitialized()
-	require.NoError(t, err)
-	require.Equal(t, v, false)
-	err = m.SetFastCreateTableInitialized(true)
-	require.NoError(t, err)
-	v, err = m.GetFastCreateTableInitialized()
-	require.NoError(t, err)
-	require.Equal(t, v, true)
-	err = m.SetFastCreateTableInitialized(false)
-	require.NoError(t, err)
-	v, err = m.GetFastCreateTableInitialized()
-	require.NoError(t, err)
-	require.Equal(t, v, false)
 
 	err = txn.Rollback()
 	require.NoError(t, err)

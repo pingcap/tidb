@@ -1872,20 +1872,20 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
-		if !sctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if tbl.Meta().Revision != tableInfo.Revision && !sctx.GetSessionVars().IsPessimisticReadConsistency() {
 			var copyTableInfo *model.TableInfo
+
+			infoIndices := make(map[string]int64, len(tableInfo.Indices))
+			for _, idx := range tableInfo.Indices {
+				infoIndices[idx.Name.L] = idx.ID
+			}
+
 			for i, idx := range tbl.Meta().Indices {
 				if idx.State != model.StatePublic {
 					continue
 				}
-				found := false
-				for _, idxx := range tableInfo.Indices {
-					if idx.Name.L == idxx.Name.L && idx.ID == idxx.ID {
-						found = true
-						break
-					}
-				}
-				if !found {
+				id, found := infoIndices[idx.Name.L]
+				if !found || id != idx.ID {
 					if copyTableInfo == nil {
 						copyTableInfo = tbl.Meta().Clone()
 					}
@@ -1899,19 +1899,19 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 				}
 			}
 			// Check the column change.
+			infoColumns := make(map[string]int64, len(tableInfo.Columns))
+			for _, col := range tableInfo.Columns {
+				infoColumns[col.Name.L] = col.ID
+			}
 			for _, col := range tbl.Meta().Columns {
 				if col.State != model.StatePublic {
 					continue
 				}
-				found := false
-				for _, coll := range tableInfo.Columns {
-					if col.Name.L == coll.Name.L && col.ID != coll.ID {
-						logutil.BgLogger().Info("public column changed", zap.String("column", col.Name.L), zap.String("old_col", coll.Name.L), zap.Int64("new id", col.ID), zap.Int64("old id", coll.ID))
-						found = true
-						break
-					}
-				}
-				if found {
+				colid, found := infoColumns[col.Name.L]
+				if found && colid != col.ID {
+					logutil.BgLogger().Info("public column changed",
+						zap.String("column", col.Name.L), zap.String("old_col", col.Name.L),
+						zap.Int64("new id", col.ID), zap.Int64("old id", col.ID))
 					if !skipLock {
 						sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
 					}

@@ -44,16 +44,12 @@ var (
 	enableHashJoinV2 = atomic.Bool{}
 )
 
-func init() {
-	enableHashJoinV2.Store(true)
-}
-
 // IsHashJoinV2Enabled return true if hash join v2 is enabled
 func IsHashJoinV2Enabled() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
 	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
 	// change this
-	return enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
+	return !heapObjectsCanMove() && enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
 }
 
 // SetEnableHashJoinV2 enable/disable hash join v2
@@ -401,6 +397,7 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
+		e.ProbeWorkers[i].JoinProbe.ResetProbeCollision()
 	}
 }
 
@@ -443,6 +440,11 @@ func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 
 func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
 	e.workerWg.Wait()
+	if e.stats != nil {
+		for _, prober := range e.ProbeWorkers {
+			e.stats.hashStat.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
+		}
+	}
 	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
@@ -863,12 +865,20 @@ func (*hashJoinRuntimeStatsV2) Tp() int {
 func (e *hashJoinRuntimeStatsV2) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{total:")
+		buf.WriteString("build_hash_table:{concurrency:")
+		buf.WriteString(strconv.Itoa(e.concurrent))
+		buf.WriteString(", total:")
 		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(int64(e.fetchAndBuildHashTable) - e.maxBuildHashTable - e.maxPartitionData)))
+		buf.WriteString(", partition:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.partitionData)))
+		buf.WriteString(", max partition:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxPartitionData)))
 		buf.WriteString(", build:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.buildHashTable)))
+		buf.WriteString(", max build:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable)))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
