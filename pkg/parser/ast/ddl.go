@@ -737,6 +737,21 @@ type IndexOption struct {
 	Global       bool
 }
 
+// IsEmpty is true if only default options are given
+// and it should not be added to the output
+func (n *IndexOption) IsEmpty() bool {
+	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault ||
+		n.KeyBlockSize > 0 ||
+		n.Tp != model.IndexTypeInvalid ||
+		len(n.ParserName.O) > 0 ||
+		n.Comment != "" ||
+		n.Global ||
+		n.Visibility != IndexVisibilityDefault {
+		return false
+	}
+	return true
+}
+
 // Restore implements Node interface.
 func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 	hasPrevOption := false
@@ -941,7 +956,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.Option != nil {
+	if n.Option != nil && !n.Option.IsEmpty() {
 		ctx.WritePlain(" ")
 		if err := n.Option.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing Constraint Option")
@@ -1844,7 +1859,7 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(")")
 
-	if n.IndexOption.Tp != model.IndexTypeInvalid || n.IndexOption.KeyBlockSize > 0 || n.IndexOption.Comment != "" || len(n.IndexOption.ParserName.O) > 0 || n.IndexOption.Visibility != IndexVisibilityDefault || n.IndexOption.Global {
+	if n.IndexOption != nil && !n.IndexOption.IsEmpty() {
 		ctx.WritePlain(" ")
 		if err := n.IndexOption.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.IndexOption")
