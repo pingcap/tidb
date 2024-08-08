@@ -18,6 +18,11 @@ import (
 	"testing"
 	"time"
 
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -49,7 +54,13 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	require.NoError(t, err)
 
 	res := EvaluateExprWithNull(ctx, schema, outerIfNull)
+<<<<<<< HEAD
 	require.Equal(t, "ifnull(Column#1, 1)", res.String())
+=======
+	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx, errors.RedactLogDisable))
+	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(ctx, errors.RedactLogEnable))
+	require.Equal(t, "ifnull(Column#1, ‹1›)", res.StringWithCtx(ctx, errors.RedactLogMarker))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(ctx, schema, outerIfNull)
@@ -133,6 +144,7 @@ func TestIsBinaryLiteral(t *testing.T) {
 	require.False(t, IsBinaryLiteral(col))
 }
 
+<<<<<<< HEAD
 func TestConstItem(t *testing.T) {
 	ctx := createContext(t)
 	sf := newFunction(ast.Rand)
@@ -143,6 +155,29 @@ func TestConstItem(t *testing.T) {
 	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
 	sf = newFunction(ast.Abs, NewOne())
 	require.True(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+=======
+func TestConstLevel(t *testing.T) {
+	ctxConst := NewZero()
+	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
+	ctx := contextstatic.NewStaticEvalContext()
+	for _, c := range []struct {
+		exp   Expression
+		level ConstLevel
+	}{
+		{newFunctionWithMockCtx(ast.Rand), ConstNone},
+		{newFunctionWithMockCtx(ast.UUID), ConstNone},
+		{newFunctionWithMockCtx(ast.GetParam, NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Abs, NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Abs, newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Plus, newColumn(1), NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
+	} {
+		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.StringWithCtx(ctx, errors.RedactLogDisable))
+	}
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 }
 
 func TestVectorizable(t *testing.T) {

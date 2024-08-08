@@ -21,6 +21,7 @@ import (
 	"strings"
 	gotime "time"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -906,8 +907,13 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 		if !b.inUnion || bufreal[i] >= 0 {
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 				if types.ErrOverflow.Equal(err) {
+<<<<<<< HEAD
 					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
 					err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
+=======
+					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0].StringWithCtx(ctx, perrors.RedactLogDisable))
+					err = ec.HandleErrorWithAlias(err, err, warnErr)
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 				} else if types.ErrTruncated.Equal(err) {
 					// This behavior is consistent with MySQL.
 					err = nil

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -855,7 +856,11 @@ func appendTableDualTraceStep(replaced LogicalPlan, dual LogicalPlan, conditions
 			if i > 0 {
 				buffer.WriteString(",")
 			}
+<<<<<<< HEAD
 			buffer.WriteString(cond.String())
+=======
+			buffer.WriteString(cond.StringWithCtx(ectx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		}
 		buffer.WriteString("] are constant false or null")
 		return buffer.String()
@@ -877,7 +882,11 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 				if i > 0 {
 					buffer.WriteString(",")
 				}
+<<<<<<< HEAD
 				buffer.WriteString(cond.String())
+=======
+				buffer.WriteString(cond.StringWithCtx(evalCtx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			}
 			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
 			return buffer.String()
@@ -899,7 +908,11 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *logicalOpti
 			if i > 0 {
 				buffer.WriteString(",")
 			}
+<<<<<<< HEAD
 			buffer.WriteString(cond.String())
+=======
+			buffer.WriteString(cond.StringWithCtx(ectx, errors.RedactLogDisable))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		}
 		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()

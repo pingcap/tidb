@@ -104,7 +104,11 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		}
 		evalCtx.Buffer.Truncate(i)
 		if !cf.truncated {
+<<<<<<< HEAD
 			sc.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(cf.Args[0].String()))
+=======
+			sc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(cf.Args[0].StringWithCtx(evalCtx.Ctx, errors.RedactLogDisable)))
+>>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 		}
 		cf.truncated = true
 	}
