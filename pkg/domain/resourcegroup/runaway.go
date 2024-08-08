@@ -473,7 +473,7 @@ type RunawayChecker struct {
 	setting  *rmpb.RunawaySettings
 
 	markedByRule  atomic.Bool
-	markedByWatch bool
+	markedByWatch atomic.Bool
 	watchAction   rmpb.RunawayAction
 }
 
@@ -486,7 +486,7 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 		planDigest:        planDigest,
 		setting:           setting,
 		markedByRule:      atomic.Bool{},
-		markedByWatch:     false,
+		markedByWatch:     atomic.Bool{},
 	}
 	if setting != nil {
 		c.deadline = startTime.Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
@@ -505,7 +505,7 @@ func (r *RunawayChecker) BeforeExecutor() error {
 			if action == rmpb.RunawayAction_NoneAction && r.setting != nil {
 				action = r.setting.Action
 			}
-			r.markedByWatch = true
+			r.markedByWatch.Store(true)
 			now := time.Now()
 			r.watchAction = action
 			r.markRunaway(RunawayMatchTypeWatch, action, &now)
@@ -525,15 +525,29 @@ func (r *RunawayChecker) BeforeExecutor() error {
 	return nil
 }
 
+// CheckAction is used to check current action of the query.
+func (r *RunawayChecker) CheckAction() rmpb.RunawayAction {
+	if r == nil {
+		return rmpb.RunawayAction_NoneAction
+	}
+	if r.markedByRule.Load() {
+		return r.setting.Action
+	}
+	if r.markedByWatch.Load() {
+		return r.watchAction
+	}
+	return rmpb.RunawayAction_NoneAction
+}
+
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
 func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
-	if r.setting == nil && !r.markedByWatch {
+	if r.setting == nil && !r.markedByWatch.Load() {
 		return nil
 	}
 	marked := r.markedByRule.Load()
 	if !marked {
 		// note: now we don't check whether query is in watch list again.
-		if r.markedByWatch {
+		if r.markedByWatch.Load() {
 			if r.watchAction == rmpb.RunawayAction_CoolDown {
 				req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 			}
@@ -553,7 +567,7 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		// execution time exceeds the threshold, mark the query as runaway
 		if r.markedByRule.CompareAndSwap(false, true) {
 			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-			if !r.markedByWatch {
+			if !r.markedByWatch.Load() {
 				r.markQuarantine(&now)
 			}
 		}
@@ -581,7 +595,7 @@ func (r *RunawayChecker) CheckCopRespError(err error) error {
 			now := time.Now()
 			if r.deadline.Before(now) && r.markedByRule.CompareAndSwap(false, true) {
 				r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-				if !r.markedByWatch {
+				if !r.markedByWatch.Load() {
 					r.markQuarantine(&now)
 				}
 				return exeerrors.ErrResourceGroupQueryRunawayInterrupted
