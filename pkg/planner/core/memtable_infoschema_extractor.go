@@ -212,12 +212,12 @@ func (e *InfoSchemaBaseExtractor) Filter(colName string, val string) bool {
 	return false
 }
 
-// InfoSchemaIndexesExtractor is the predicate extractor for information_schema.tables.
+// InfoSchemaIndexesExtractor is the predicate extractor for information_schema.tidb_indexes.
 type InfoSchemaIndexesExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
-// InfoSchemaIndexesExtractor lists related tables and their corresponding schemas from predicate.
+// ListSchemasAndTable lists related tables and their corresponding schemas from predicate.
 // If there is no error, returning schema slice and table slice are guaranteed to have the same length.
 func (e *InfoSchemaIndexesExtractor) ListSchemasAndTables(
 	ctx context.Context,
@@ -258,7 +258,7 @@ func (e *InfoSchemaTablesExtractor) ListSchemasAndTables(
 	return listTablesForEachSchema(ctx, is, schemas)
 }
 
-// InfoSchemaViewsExtractor is the predicate extractor for information_schema.partitions.
+// InfoSchemaViewsExtractor is the predicate extractor for information_schema.views.
 type InfoSchemaViewsExtractor struct {
 	InfoSchemaBaseExtractor
 }
@@ -277,7 +277,7 @@ func (e *InfoSchemaViewsExtractor) ListSchemasAndTables(
 	return listTablesForEachSchema(ctx, is, schemas)
 }
 
-// InfoSchemaKeyColumnUsageExtractor is the predicate extractor for information_schema.key_column.
+// InfoSchemaKeyColumnUsageExtractor is the predicate extractor for information_schema.key_column_usage.
 type InfoSchemaKeyColumnUsageExtractor struct {
 	InfoSchemaBaseExtractor
 }
@@ -296,7 +296,7 @@ func (e *InfoSchemaKeyColumnUsageExtractor) ListSchemasAndTables(
 	return listTablesForEachSchema(ctx, is, schemas)
 }
 
-// InfoSchemaTableConstraintsExtractor is the predicate extractor for information_schema.key_column.
+// InfoSchemaTableConstraintsExtractor is the predicate extractor for information_schema.constraints.
 type InfoSchemaTableConstraintsExtractor struct {
 	InfoSchemaBaseExtractor
 }
