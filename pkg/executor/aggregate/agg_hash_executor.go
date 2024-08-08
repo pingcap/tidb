@@ -398,7 +398,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
-	e.spillHelper = newSpillHelper(e.memTracker, e.FinalAggFuncs, func() *chunk.Chunk {
+	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, e.FinalAggFuncs, func() *chunk.Chunk {
 		return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
 	}, spillChunkFieldTypes)
 
