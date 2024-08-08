@@ -217,7 +217,7 @@ type InfoSchemaIndexesExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
-// ListSchemasAndTable lists related tables and their corresponding schemas from predicate.
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
 // If there is no error, returning schema slice and table slice are guaranteed to have the same length.
 func (e *InfoSchemaIndexesExtractor) ListSchemasAndTables(
 	ctx context.Context,
