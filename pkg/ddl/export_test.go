@@ -32,14 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-type resultChanForTest struct {
-	ch chan IndexRecordChunk
-}
-
-func (r *resultChanForTest) AddTask(rs IndexRecordChunk) {
-	r.ch <- rs
-}
-
 func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
 	batchSize int) (*chunk.Chunk, error) {
 	resPool := pools.NewResourcePool(func() (pools.Resource, error) {
