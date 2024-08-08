@@ -30,7 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatter bool) {
+func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatter, scatterRegionByClusterLevel bool) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
 	regionIDs := make([]uint64, 0, len(parts))
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
@@ -42,7 +42,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 		}
 	} else {
 		for _, def := range parts {
-			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, tbInfo.ID, scatter))
+			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, tbInfo.ID, scatter, scatterRegionByClusterLevel))
 		}
 	}
 	if scatter {
@@ -50,7 +50,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 	}
 }
 
-func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
+func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatter, scatterRegionByClusterLevel bool) {
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
@@ -58,7 +58,7 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatter)
 	} else {
-		regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, tbInfo.ID, tbInfo.ID, scatter))
+		regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, tbInfo.ID, tbInfo.ID, scatter, scatterRegionByClusterLevel))
 	}
 	if scatter {
 		WaitScatterRegionFinish(ctxWithTimeout, store, regionIDs...)
@@ -118,9 +118,15 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 }
 
 // SplitRecordRegion is to split region in store by table prefix.
-func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTableID, tableID int64, scatter bool) uint64 {
+func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTableID, tableID int64, scatter, scatterRegionByClusterLevel bool) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(physicalTableID)
-	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter, &tableID)
+	tmpTableID := &tableID
+	if scatterRegionByClusterLevel {
+		// Scatter region base on group, the group divided by table ID in PD.
+		// When `tmpTableID` is nil, PD will scatter region in all stores instead of group.
+		tmpTableID = nil
+	}
+	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter, tmpTableID)
 	if err != nil {
 		// It will be automatically split by TiKV later.
 		logutil.DDLLogger().Warn("split table region failed", zap.Error(err))
