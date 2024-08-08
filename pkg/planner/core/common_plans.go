@@ -269,6 +269,7 @@ type SQLBindPlan struct {
 	Details   []*SQLBindOpDetail
 }
 
+// SQLBindOpDetail TODO
 type SQLBindOpDetail struct {
 	NormdOrigSQL string
 	BindSQL      string
