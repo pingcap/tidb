@@ -288,7 +288,7 @@ func doOptimize(
 		return nil, nil, 0, err
 	}
 
-	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
+	if !sctx.GetSessionVars().InRestrictedSQL && !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
 	planCounter := PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
