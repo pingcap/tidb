@@ -162,7 +162,6 @@ func getRetTypes() []*types.FieldType {
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
-		// types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
 	}
 }
@@ -173,7 +172,6 @@ func getColumns() []*expression.Column {
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
-		// {Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 	}
 }
@@ -205,7 +203,6 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	var aggFirstRow *aggregation.AggFuncDesc
 	var aggSum *aggregation.AggFuncDesc
 	var aggCount *aggregation.AggFuncDesc
-	// var aggAvg *aggregation.AggFuncDesc
 	var aggMin *aggregation.AggFuncDesc
 	var aggMax *aggregation.AggFuncDesc
 	aggFirstRow, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
@@ -223,11 +220,6 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 		t.Fatal(err)
 	}
 
-	// aggAvg, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncAvg, []expression.Expression{childCols[1]}, false)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-
 	aggMin, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncMin, []expression.Expression{childCols[1]}, false)
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +231,6 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	}
 
 	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggSum, aggCount, aggMin, aggMax}
-	// aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggSum, aggCount, aggAvg, aggMin, aggMax}
 
 	aggExec := &aggregate.HashAggExec{
 		BaseExecutor:     exec.NewBaseExecutor(ctx, schema, 0, child),
@@ -394,7 +385,7 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 	})
 }
 
-// sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1) from t group by t.col0;
+// sql: select col0, sum(col1), count(col1), min(col1), max(col1) from t group by t.col0;
 func TestGetCorrectResult(t *testing.T) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 
