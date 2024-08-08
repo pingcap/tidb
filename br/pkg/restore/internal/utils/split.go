@@ -41,7 +41,7 @@ func (rs *RegionSplitter) SplitWaitAndScatter(ctx context.Context, region *split
 // note: all ranges and rewrite rules must have raw key.
 func (rs *RegionSplitter) ExecuteSplit(
 	ctx context.Context,
-	ranges []rtree.Range,
+	ranges []rtree.RangeStats,
 ) error {
 	if len(ranges) == 0 {
 		log.Info("skip split regions, no range")
@@ -153,8 +153,8 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 }
 
 // SortRanges checks if the range overlapped and sort them.
-func SortRanges(ranges []rtree.Range) ([]rtree.Range, error) {
-	rangeTree := rtree.NewRangeTree()
+func SortRanges(ranges []rtree.RangeStats) ([]rtree.RangeStats, error) {
+	rangeTree := rtree.NewRangeStatsTree()
 	for _, rg := range ranges {
 		if out := rangeTree.InsertRange(rg); out != nil {
 			log.Error("insert ranges overlapped",

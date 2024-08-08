@@ -33,8 +33,8 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
-func generateTables() []snapclient.CreatedTable {
-	return []snapclient.CreatedTable{
+func generateTables() []*snapclient.CreatedTable {
+	return []*snapclient.CreatedTable{
 		{
 			Table: &model.TableInfo{
 				ID: 1,
@@ -56,26 +56,15 @@ func generateTables() []snapclient.CreatedTable {
 	}
 }
 
-func TestContextManagerOfflineLeave(t *testing.T) {
+func TestContextManagerOffline(t *testing.T) {
 	ctx := context.Background()
-	brContextManager, err := snapclient.NewBRContextManager(ctx, nil, nil, nil, false)
+	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, nil, nil, nil, false)
 	require.NoError(t, err)
 	tables := generateTables()
-	err = brContextManager.Enter(ctx, tables)
+	err = placementRuleManager.SetPlacementRule(ctx, tables)
 	require.NoError(t, err)
-	err = brContextManager.Leave(ctx, tables)
+	err = placementRuleManager.ResetPlacementRules(ctx)
 	require.NoError(t, err)
-	brContextManager.Close(ctx)
-}
-
-func TestContextManagerOfflineClose(t *testing.T) {
-	ctx := context.Background()
-	brContextManager, err := snapclient.NewBRContextManager(ctx, nil, nil, nil, false)
-	require.NoError(t, err)
-	tables := generateTables()
-	err = brContextManager.Enter(ctx, tables)
-	require.NoError(t, err)
-	brContextManager.Close(ctx)
 }
 
 func TestContextManagerOnlineNoStores(t *testing.T) {
@@ -105,14 +94,13 @@ func TestContextManagerOnlineNoStores(t *testing.T) {
 
 	pdClient := utiltest.NewFakePDClient(stores, false, nil)
 	pdHTTPCli := utiltest.NewFakePDHTTPClient()
-	brContextManager, err := snapclient.NewBRContextManager(ctx, pdClient, pdHTTPCli, nil, true)
+	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, pdClient, pdHTTPCli, nil, true)
 	require.NoError(t, err)
 	tables := generateTables()
-	err = brContextManager.Enter(ctx, tables)
+	err = placementRuleManager.SetPlacementRule(ctx, tables)
 	require.NoError(t, err)
-	err = brContextManager.Leave(ctx, tables)
+	err = placementRuleManager.ResetPlacementRules(ctx)
 	require.NoError(t, err)
-	brContextManager.Close(ctx)
 }
 
 func generateRegions() []*pd.Region {
@@ -248,12 +236,11 @@ func TestContextManagerOnlineLeave(t *testing.T) {
 	pdClient := utiltest.NewFakePDClient(stores, false, nil)
 	pdClient.SetRegions(regions)
 	pdHTTPCli := utiltest.NewFakePDHTTPClient()
-	brContextManager, err := snapclient.NewBRContextManager(ctx, pdClient, pdHTTPCli, nil, true)
+	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, pdClient, pdHTTPCli, nil, true)
 	require.NoError(t, err)
 	tables := generateTables()
-	err = brContextManager.Enter(ctx, tables)
+	err = placementRuleManager.SetPlacementRule(ctx, tables)
 	require.NoError(t, err)
-	err = brContextManager.Leave(ctx, tables)
+	err = placementRuleManager.ResetPlacementRules(ctx)
 	require.NoError(t, err)
-	brContextManager.Close(ctx)
 }
