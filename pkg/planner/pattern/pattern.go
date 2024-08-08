@@ -83,7 +83,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandJoin
 	case *plannercore.LogicalAggregation:
 		return OperandAggregation
-	case *plannercore.LogicalProjection:
+	case *logicalop.LogicalProjection:
 		return OperandProjection
 	case *plannercore.LogicalSelection:
 		return OperandSelection
@@ -93,7 +93,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandTableDual
 	case *plannercore.DataSource:
 		return OperandDataSource
-	case *plannercore.LogicalUnionScan:
+	case *logicalop.LogicalUnionScan:
 		return OperandUnionScan
 	case *plannercore.LogicalUnionAll:
 		return OperandUnionAll
@@ -101,7 +101,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandSort
 	case *logicalop.LogicalTopN:
 		return OperandTopN
-	case *plannercore.LogicalLock:
+	case *logicalop.LogicalLock:
 		return OperandLock
 	case *logicalop.LogicalLimit:
 		return OperandLimit
@@ -115,7 +115,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandIndexScan
 	case *logicalop.LogicalShow:
 		return OperandShow
-	case *plannercore.LogicalWindow:
+	case *logicalop.LogicalWindow:
 		return OperandWindow
 	default:
 		return OperandUnsupported

@@ -173,7 +173,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// WriteOnlyTable: update t set c2 = 1 where c1 = 4 and c2 = 4
-	err = writeOnlyTbl.UpdateRecord(context.Background(), ctx.GetTableCtx(), kv.IntHandle(4), types.MakeDatums(4, 4), types.MakeDatums(4, 1), touchedSlice(writeOnlyTbl))
+	err = writeOnlyTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(4), types.MakeDatums(4, 4), types.MakeDatums(4, 1), touchedSlice(writeOnlyTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -183,7 +183,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// DeleteOnlyTable: update t set c2 = 3 where c1 = 4 and c2 = 1
-	err = delOnlyTbl.UpdateRecord(context.Background(), ctx.GetTableCtx(), kv.IntHandle(4), types.MakeDatums(4, 1), types.MakeDatums(4, 3), touchedSlice(writeOnlyTbl))
+	err = delOnlyTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(4), types.MakeDatums(4, 1), types.MakeDatums(4, 3), touchedSlice(writeOnlyTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -250,7 +250,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 	}
 
 	// WriteOnlyTable: update t set c2 = 5 where c1 = 7 and c2 = 7
-	err = writeTbl.UpdateRecord(context.Background(), ctx.GetTableCtx(), kv.IntHandle(7), types.MakeDatums(7, 7), types.MakeDatums(7, 5), touchedSlice(writeTbl))
+	err = writeTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(7), types.MakeDatums(7, 7), types.MakeDatums(7, 5), touchedSlice(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -328,7 +328,7 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	}
 
 	// WriteOnlyTable update t set c2 = 7 where c1 = 8 and c2 = 8
-	err = writeTbl.UpdateRecord(context.Background(), ctx.GetTableCtx(), kv.IntHandle(8), types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedSlice(writeTbl))
+	err = writeTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(8), types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedSlice(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -383,7 +383,7 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 	}
 
 	// DeleteOnlyTable update t set c2 = 10 where c1 = 9
-	err = delTbl.UpdateRecord(context.Background(), ctx.GetTableCtx(), kv.IntHandle(9), types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedSlice(delTbl))
+	err = delTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(9), types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedSlice(delTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}

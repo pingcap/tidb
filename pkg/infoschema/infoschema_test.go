@@ -102,7 +102,8 @@ func TestBasic(t *testing.T) {
 	internal.AddDB(t, re.Store(), dbInfo)
 	internal.AddTable(t, re.Store(), dbInfo, tblInfo)
 
-	builder, err := infoschema.NewBuilder(re, nil, infoschema.NewData()).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder := infoschema.NewBuilder(re, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	err = builder.InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := re.Store().Begin()
@@ -279,7 +280,8 @@ func TestInfoTables(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(re, nil, infoschema.NewData()).InitWithDBInfos(nil, nil, nil, 0)
+	builder := infoschema.NewBuilder(re, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 
@@ -343,7 +345,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	dbInfo.Deprecated.Tables = []*model.TableInfo{}
 	dbInfos := []*model.DBInfo{dbInfo}
 	data := infoschema.NewData()
-	builder, err := infoschema.NewBuilder(re, nil, data).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder := infoschema.NewBuilder(re, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.False(t, is.HasTemporaryTable())
@@ -363,7 +366,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder, err := infoschema.NewBuilder(re, nil, data).InitWithOldInfoSchema(curIs)
+				builder = infoschema.NewBuilder(re, nil, data, variable.SchemaCacheSize.Load() > 0)
+				err := builder.InitWithOldInfoSchema(curIs)
 				require.NoError(t, err)
 				change(m, builder)
 				curIs = builder.Build(math.MaxUint64)
@@ -446,7 +450,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.NoError(t, err)
 	newDB.Deprecated.Tables = tblInfos
 	require.True(t, ok)
-	builder, err = infoschema.NewBuilder(re, nil, data).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
+	builder = infoschema.NewBuilder(re, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err = builder.InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
 	require.True(t, builder.Build(math.MaxUint64).HasTemporaryTable())
 
@@ -576,7 +581,8 @@ func TestBuildBundle(t *testing.T) {
 		db.Deprecated.Tables, err = is.SchemaTableInfos(context.Background(), db.Name)
 		require.NoError(t, err)
 	}
-	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
+	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	err = builder.InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build(math.MaxUint64)
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
@@ -999,7 +1005,8 @@ func (tc *infoschemaTestContext) createSchema() {
 	internal.AddDB(tc.t, tc.re.Store(), dbInfo)
 	tc.dbInfo = dbInfo
 	// init infoschema
-	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithDBInfos([]*model.DBInfo{}, nil, nil, 1)
+	builder := infoschema.NewBuilder(tc.re, nil, tc.data, variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos([]*model.DBInfo{}, nil, nil, 1)
 	require.NoError(tc.t, err)
 	tc.is = builder.Build(math.MaxUint64)
 }
@@ -1183,7 +1190,8 @@ func (tc *infoschemaTestContext) applyDiffAndCheck(diff *model.SchemaDiff, check
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
 
-	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithOldInfoSchema(tc.is)
+	builder := infoschema.NewBuilder(tc.re, nil, tc.data, variable.SchemaCacheSize.Load() > 0)
+	err = builder.InitWithOldInfoSchema(tc.is)
 	require.NoError(tc.t, err)
 	// applyDiff
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), diff)

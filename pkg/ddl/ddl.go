@@ -186,10 +186,6 @@ type DDL interface {
 	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
-	// GetHook gets the hook. It's exported for testing.
-	GetHook() Callback
-	// SetHook sets the hook.
-	SetHook(h Callback)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 }
@@ -352,16 +348,11 @@ type ddlCtx struct {
 		// jobCtxMap maps job ID to job's ctx.
 		jobCtxMap map[int64]*JobContext
 	}
-
-	// hook may be modified.
-	mu hookStruct
 }
 
-// TODO remove it after we remove hook.
-type hookStruct struct {
-	sync.RWMutex
-	// see newDefaultCallBack for its value in normal flow.
-	hook Callback
+// SchemaLoader is used to avoid import loop, the only impl is domain currently.
+type SchemaLoader interface {
+	Reload() error
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -542,10 +533,6 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
-func (dc *ddlCtx) initJobDoneCh(jobID int64) {
-	dc.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
-}
-
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
 	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
 		// broadcast done event as we might merge multiple jobs into one when fast
@@ -574,6 +561,8 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
+// TODO this is called after ddl started, will cause panic if related DDL are executed
+// in between.
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
 	d.executor.statsHandle = h
@@ -611,9 +600,7 @@ func NewDDL(ctx context.Context, options ...Option) (DDL, Executor) {
 }
 
 func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
-	opt := &Options{
-		Hook: &BaseCallback{},
-	}
+	opt := &Options{}
 	for _, o := range options {
 		o(opt)
 	}
@@ -663,7 +650,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
-	ddlCtx.mu.hook = opt.Hook
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.schemaVersionManager = newSchemaVersionManager()
@@ -704,7 +690,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ownerManager:    d.ownerManager,
 		ddlJobDoneChMap: &d.ddlJobDoneChMap,
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
-		mu:              &d.mu,
 		globalIDLock:    &d.globalIDLock,
 	}
 	d.executor = e
@@ -899,22 +884,6 @@ func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
 	d.binlogCli = binlogCli
 }
 
-// GetHook implements DDL.GetHook interface.
-func (d *ddl) GetHook() Callback {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	return d.mu.hook
-}
-
-// SetHook set the customized hook.
-func (d *ddl) SetHook(h Callback) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.hook = h
-}
-
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
 	return d.minJobIDRefresher
 }
@@ -940,7 +909,7 @@ func (d *ddl) startCleanDeadTableLock() {
 				continue
 			}
 			for se, tables := range deadLockTables {
-				err := d.CleanDeadTableLock(tables, se)
+				err := d.cleanDeadTableLock(tables, se)
 				if err != nil {
 					logutil.DDLLogger().Info("clean dead table lock failed.", zap.Error(err))
 				}
@@ -949,6 +918,32 @@ func (d *ddl) startCleanDeadTableLock() {
 			return
 		}
 	}
+}
+
+// cleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &LockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []any{arg},
+	}
+
+	ctx, err := d.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.Put(ctx)
+	err = d.executor.DoDDLJob(ctx, job)
+	return errors.Trace(err)
 }
 
 // SwitchMDL enables MDL or disable MDL.

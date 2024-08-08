@@ -61,83 +61,6 @@ func GenHintsFromPhysicalPlan(p base.Plan) []*ast.TableOptimizerHint {
 	return GenHintsFromFlatPlan(flat)
 }
 
-func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
-	if asName != nil && asName.L != "" {
-		return *asName
-	}
-	return tblName
-}
-
-func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
-	if len(p.Children()) > 1 {
-		return nil, nil
-	}
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
-		if ts.TableAsName.L != "" {
-			return &ts.DBName, ts.TableAsName
-		}
-		return &ts.DBName, &ts.Table.Name
-	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		if is.TableAsName.L != "" {
-			return &is.DBName, is.TableAsName
-		}
-		return &is.DBName, &is.Table.Name
-	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		if is.TableAsName.L != "" {
-			return &is.DBName, is.TableAsName
-		}
-		return &is.DBName, &is.Table.Name
-	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection:
-		return extractTableAsName(p.Children()[0])
-	}
-	return nil, nil
-}
-
-func getJoinHints(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res []*ast.TableOptimizerHint) {
-	if parentOffset == -1 {
-		return res
-	}
-	for _, child := range children {
-		qbOffset := child.QueryBlockOffset()
-		if qbOffset == -1 {
-			continue
-		}
-		var dbName, tableName *model.CIStr
-		if qbOffset != parentOffset {
-			var blockAsNames []ast.HintTable
-			if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-				blockAsNames = *p
-			}
-			if qbOffset >= len(blockAsNames) {
-				continue
-			}
-			hintTable := blockAsNames[qbOffset]
-			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-			dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
-		} else {
-			dbName, tableName = extractTableAsName(child)
-		}
-		if tableName == nil || tableName.L == "" {
-			continue
-		}
-		qbName, err := h.GenerateQBName(nodeType, qbOffset)
-		if err != nil {
-			continue
-		}
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(joinType),
-			Tables:   []ast.HintTable{{DBName: *dbName, TableName: *tableName}},
-		})
-		break
-	}
-	return res
-}
-
 func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	qbName, err := h.GenerateQBName(nodeType, p.QueryBlockOffset())
 	if err != nil {
@@ -261,16 +184,122 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			})
 		}
 	case *PhysicalMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintSMJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintSMJ, p.QueryBlockOffset(), nodeType, pp.children...)
+		if hint != nil {
+			res = append(res, hint)
+		}
 	case *PhysicalHashJoin:
 		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
-		res = append(res, getJoinHints(p.SCtx(), h.HintHJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintHJ, p.QueryBlockOffset(), nodeType, pp.children...)
+		if hint != nil {
+			res = append(res, hint)
+		}
 	case *PhysicalIndexJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])
+		if hint != nil {
+			res = append(res, hint)
+		}
 	case *PhysicalIndexMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLMJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLMJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])
+		if hint != nil {
+			res = append(res, hint)
+		}
 	case *PhysicalIndexHashJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLHJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		hint := genJoinMethodHintForSinglePhysicalJoin(p.SCtx(), h.HintINLHJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])
+		if hint != nil {
+			res = append(res, hint)
+		}
 	}
 	return res
+}
+
+func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
+	if asName != nil && asName.L != "" {
+		return *asName
+	}
+	return tblName
+}
+
+func genJoinMethodHintForSinglePhysicalJoin(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res *ast.TableOptimizerHint) {
+	if parentOffset == -1 {
+		return res
+	}
+	for _, child := range children {
+		qbOffset, ht := extractHintTableForJoinNode(sctx, child, parentOffset)
+		if qbOffset < 0 || ht == nil {
+			continue
+		}
+		qbName, err := h.GenerateQBName(nodeType, qbOffset)
+		if err != nil {
+			continue
+		}
+		return &ast.TableOptimizerHint{
+			QBName:   qbName,
+			HintName: model.NewCIStr(joinType),
+			Tables:   []ast.HintTable{*ht},
+		}
+	}
+	return res
+}
+
+func extractHintTableForJoinNode(
+	sctx base.PlanContext,
+	joinNode base.PhysicalPlan,
+	parentOffset int,
+) (
+	qbOffset int,
+	ht *ast.HintTable,
+) {
+	qbOffset = joinNode.QueryBlockOffset()
+	if qbOffset == -1 {
+		return -1, nil
+	}
+	var dbName, tableName *model.CIStr
+	if qbOffset != parentOffset {
+		var blockAsNames []ast.HintTable
+		if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+			blockAsNames = *p
+		}
+		if qbOffset >= len(blockAsNames) {
+			return -1, nil
+		}
+		hintTable := blockAsNames[qbOffset]
+		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+		dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
+	} else {
+		dbName, tableName = extractTableAsName(joinNode)
+	}
+	if tableName == nil || tableName.L == "" {
+		return -1, nil
+	}
+	return qbOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
+}
+
+func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
+	if len(p.Children()) > 1 {
+		return nil, nil
+	}
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		ts := x.TablePlans[0].(*PhysicalTableScan)
+		if ts.TableAsName.L != "" {
+			return &ts.DBName, ts.TableAsName
+		}
+		return &ts.DBName, &ts.Table.Name
+	case *PhysicalIndexReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		if is.TableAsName.L != "" {
+			return &is.DBName, is.TableAsName
+		}
+		return &is.DBName, &is.Table.Name
+	case *PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		if is.TableAsName.L != "" {
+			return &is.DBName, is.TableAsName
+		}
+		return &is.DBName, &is.Table.Name
+	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection:
+		return extractTableAsName(p.Children()[0])
+	}
+	return nil, nil
 }

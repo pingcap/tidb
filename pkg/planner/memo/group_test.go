@@ -74,7 +74,7 @@ func TestGroupDeleteAll(t *testing.T) {
 	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0))
 	g := NewGroupWithSchema(expr, expression.NewSchema())
 	require.True(t, g.Insert(NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0))))
-	require.True(t, g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))))
+	require.True(t, g.Insert(NewGroupExpr(logicalop.LogicalProjection{}.Init(ctx, 0))))
 	require.Equal(t, 3, g.Equivalents.Len())
 	require.NotNil(t, g.GetFirstElem(pattern.OperandProjection))
 	require.True(t, g.Exists(expr))
@@ -113,7 +113,7 @@ func TestGroupFingerPrint(t *testing.T) {
 	require.True(t, ok)
 
 	// Plan tree should be: DataSource -> Selection -> Projection
-	proj, ok := logic1.(*plannercore.LogicalProjection)
+	proj, ok := logic1.(*logicalop.LogicalProjection)
 	require.True(t, ok)
 	sel, ok := logic1.Children()[0].(*plannercore.LogicalSelection)
 	require.True(t, ok)
@@ -161,11 +161,11 @@ func TestGroupGetFirstElem(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
+	expr0 := NewGroupExpr(logicalop.LogicalProjection{}.Init(ctx, 0))
 	expr1 := NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0))
-	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
+	expr2 := NewGroupExpr(logicalop.LogicalProjection{}.Init(ctx, 0))
 	expr3 := NewGroupExpr(logicalop.LogicalLimit{}.Init(ctx, 0))
-	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
+	expr4 := NewGroupExpr(logicalop.LogicalProjection{}.Init(ctx, 0))
 
 	g := NewGroupWithSchema(expr0, expression.NewSchema())
 	g.Insert(expr1)

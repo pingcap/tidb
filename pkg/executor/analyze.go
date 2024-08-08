@@ -22,7 +22,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -41,12 +40,10 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -165,7 +162,7 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
-		err = e.handleGlobalStats(globalStatsMap)
+		err = e.handleGlobalStats(statsHandle, globalStatsMap)
 		if err != nil {
 			return err
 		}
@@ -432,7 +429,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	resultsCh <-chan *statistics.AnalyzeResults,
 ) error {
 	partitionStatsConcurrency := len(subSctxs)
-
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	wg := util.NewWaitGroupPool(e.gp)
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
@@ -440,7 +437,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
-			worker.run(ctx1, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
+			worker.run(ctx1, statsHandle, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
 		})
 	}
 	tableIDs := map[int64]struct{}{}
@@ -462,7 +459,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			} else {
 				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
 			}
-			finishJobWithLog(e.Ctx(), results.Job, err)
+			finishJobWithLog(statsHandle, results.Job, err)
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
@@ -490,6 +487,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -513,7 +511,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			break
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
-		StartAnalyzeJob(e.Ctx(), task.job)
+		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
 			select {
@@ -568,147 +566,8 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 }
 
-// StartAnalyzeJob marks the state of the analyze job as running and sets the start time.
-func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
-	if job == nil || job.ID == nil {
-		return
-	}
-	job.StartTime = time.Now()
-	job.Progress.SetLastDumpTime(job.StartTime)
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("StartAnalyzeJob",
-				zap.Time("start_time", job.StartTime),
-				zap.Uint64("job id", *job.ID),
-			)
-		}
-	})
-}
-
-// UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
-func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
-	if job == nil || job.ID == nil {
-		return
-	}
-	delta := job.Progress.Update(rowCount)
-	if delta == 0 {
-		return
-	}
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("UpdateAnalyzeJob",
-				zap.Int64("increase processed_rows", delta),
-				zap.Uint64("job id", *job.ID),
-			)
-		}
-	})
-}
-
-// FinishAnalyzeMergeJob finishes analyze merge job
-func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
-	if job == nil || job.ID == nil {
-		return
-	}
-
-	job.EndTime = time.Now()
-	var sql string
-	var args []any
-	if analyzeErr != nil {
-		failReason := analyzeErr.Error()
-		const textMaxLength = 65535
-		if len(failReason) > textMaxLength {
-			failReason = failReason[:textMaxLength]
-		}
-		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-		args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
-	} else {
-		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-		args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
-	}
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
-	if err != nil {
-		var state string
-		if analyzeErr != nil {
-			state = statistics.AnalyzeFailed
-		} else {
-			state = statistics.AnalyzeFinished
-		}
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("FinishAnalyzeMergeJob",
-				zap.Time("end_time", job.EndTime),
-				zap.Uint64("job id", *job.ID),
-			)
-		}
-	})
-}
-
-// FinishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
-func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
-	if job == nil || job.ID == nil {
-		return
-	}
-	job.EndTime = time.Now()
-	var sql string
-	var args []any
-	// process_id is used to see which process is running the analyze job and kill the analyze job. After the analyze job
-	// is finished(or failed), process_id is useless and we set it to NULL to avoid `kill tidb process_id` wrongly.
-	if analyzeErr != nil {
-		failReason := analyzeErr.Error()
-		const textMaxLength = 65535
-		if len(failReason) > textMaxLength {
-			failReason = failReason[:textMaxLength]
-		}
-		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-		args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
-	} else {
-		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-		args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
-	}
-	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
-	if err != nil {
-		var state string
-		if analyzeErr != nil {
-			state = statistics.AnalyzeFailed
-		} else {
-			state = statistics.AnalyzeFinished
-		}
-		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
-	}
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("FinishAnalyzeJob",
-				zap.Int64("increase processed_rows", job.Progress.GetDeltaCount()),
-				zap.Time("end_time", job.EndTime),
-				zap.Uint64("job id", *job.ID),
-				zap.Error(analyzeErr),
-			)
-		}
-	})
-}
-
-func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
-	FinishAnalyzeJob(sctx, job, analyzeErr)
+func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, analyzeErr error) {
+	statsHandle.FinishAnalyzeJob(job, analyzeErr, statistics.TableAnalysisJob)
 	if job != nil {
 		var state string
 		if analyzeErr != nil {

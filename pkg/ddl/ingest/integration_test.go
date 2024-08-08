@@ -21,12 +21,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -158,10 +155,8 @@ func TestAddIndexIngestCancel(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
-	defHook := dom.DDL().GetHook()
-	customHook := newTestCallBack(t, dom)
 	cancelled := false
-	customHook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if cancelled {
 			return
 		}
@@ -178,33 +173,13 @@ func TestAddIndexIngestCancel(t *testing.T) {
 				cancelled = true
 			}
 		}
-	}
-	dom.DDL().SetHook(customHook)
+	})
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
-	dom.DDL().SetHook(defHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	ok, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
 	require.True(t, ok)
-}
-
-type testCallback struct {
-	ddl.Callback
-	OnJobRunBeforeExported func(job *model.Job)
-}
-
-func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
-	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
-	require.NoError(t, err)
-	return &testCallback{
-		Callback: defHookFactory(dom),
-	}
-}
-
-func (c *testCallback) OnJobRunBefore(job *model.Job) {
-	if c.OnJobRunBeforeExported != nil {
-		c.OnJobRunBeforeExported(job)
-	}
 }
 
 func TestIngestPartitionRowCount(t *testing.T) {
@@ -240,7 +215,7 @@ func TestAddIndexIngestClientError(t *testing.T) {
 }
 
 func TestAddIndexCancelOnNoneState(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
@@ -249,16 +224,14 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
 	tk.MustExec("insert into t values(1, 1, 1);")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	first := true
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState == model.StateNone && first {
 			_, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 			assert.NoError(t, err)
 			first = false
 		}
-	}
-	dom.DDL().SetHook(hook.Clone())
+	})
 	tk.MustGetErrCode("alter table t add index idx1(c1)", errno.ErrCancelledDDLJob)
 	available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
