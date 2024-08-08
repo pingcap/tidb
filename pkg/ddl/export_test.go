@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
 	"context"
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -40,18 +41,15 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 		return ctx, nil
 	}, 8, 8, 0)
 	sessPool := session.NewSessionPool(resPool)
-	poolSize := copReadChunkPoolSize()
-	srcChkPool := make(chan *chunk.Chunk, poolSize)
-	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
-	}
-	opCtx := NewLocalOperatorCtx(context.Background(), 1)
-	src := testutil.NewOperatorTestSource(TableScanTask{1, startKey, endKey})
-	scanOp := NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil)
-	sink := testutil.NewOperatorTestSink[IndexRecordChunk]()
+	srcChkPool := make(chan *chunk.Chunk, 1)
+	srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+	opCtx := ddl.NewLocalOperatorCtx(context.Background(), 1)
+	src := testutil.NewOperatorTestSource(ddl.TableScanTask{1, startKey, endKey})
+	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil)
+	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
-	operator.Compose[TableScanTask](src, scanOp)
-	operator.Compose[IndexRecordChunk](scanOp, sink)
+	operator.Compose[ddl.TableScanTask](src, scanOp)
+	operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
 
 	pipeline := operator.NewAsyncPipeline(src, scanOp, sink)
 	err := pipeline.Execute()
@@ -72,14 +70,8 @@ func ConvertRowToHandleAndIndexDatum(
 	handleDataBuf, idxDataBuf []types.Datum,
 	row chunk.Row, copCtx copr.CopContext, idxID int64) (kv.Handle, []types.Datum, error) {
 	c := copCtx.GetBase()
-	idxData := extractDatumByOffsets(ctx, row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
-	handleData := extractDatumByOffsets(ctx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
-	handle, err := buildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, time.Local, errctx.StrictNoWarningContext)
+	idxData := ddl.ExtractDatumByOffsets(ctx, row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
+	handleData := ddl.ExtractDatumByOffsets(ctx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+	handle, err := ddl.BuildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, time.Local, errctx.StrictNoWarningContext)
 	return handle, idxData, err
 }
-
-// ExtractDatumByOffsetsForTest is used for test.
-var ExtractDatumByOffsetsForTest = extractDatumByOffsets
-
-// CalculateRegionBatchForTest is used for test.
-var CalculateRegionBatchForTest = calculateRegionBatch

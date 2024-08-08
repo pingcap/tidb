@@ -169,7 +169,8 @@ func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, co
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func extractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
+// ExtractDatumByOffsets is exported for test.
+func ExtractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
 	for i, offset := range offsets {
 		c := expCols[offset]
 		row.DatumWithBuffer(offset, c.GetType(ctx), &buf[i])
@@ -177,7 +178,8 @@ func extractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []
 	return buf
 }
 
-func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
+// BuildHandle is exported for test.
+func BuildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 	pkInfo *model.IndexInfo, loc *time.Location, errCtx errctx.Context) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
