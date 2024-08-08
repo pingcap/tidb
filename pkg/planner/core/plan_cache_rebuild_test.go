@@ -202,6 +202,12 @@ func TestPlanCacheClone(t *testing.T) {
 		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'update t1 set a=a+1 where a=?'`,
 		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Lock
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? for update'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=? for update'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 }
 
 func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exec1, exec2 string) {

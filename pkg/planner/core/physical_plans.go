@@ -1867,7 +1867,7 @@ func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 type PhysicalLock struct {
 	basePhysicalPlan
 
-	Lock *ast.SelectLockInfo
+	Lock *ast.SelectLockInfo `plan-cache-clone:"shallow"`
 
 	TblID2Handle       map[int64][]util.HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
@@ -2100,6 +2100,7 @@ func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
+	tiflashPreAggMode string
 }
 
 func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
@@ -2115,6 +2116,7 @@ func (p *PhysicalHashAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, err
 		return nil, err
 	}
 	cloned.basePhysicalAgg = *base
+	cloned.tiflashPreAggMode = p.tiflashPreAggMode
 	return cloned, nil
 }
 
