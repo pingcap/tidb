@@ -855,6 +855,9 @@ func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
 	})
 	plannercore.AllowCartesianProduct.Store(false)
 
-	store, _ := session.CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
 }
