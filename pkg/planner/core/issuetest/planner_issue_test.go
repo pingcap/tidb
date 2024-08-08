@@ -143,4 +143,34 @@ func TestIssue54803(t *testing.T) {
 		"    └─TableReader_24 10.00 root partition:p0 data:Selection_23",
 		"      └─Selection_23 10.00 cop[tikv]  isnull(test.t1db47fc1.col_68), or(isnull(test.t1db47fc1.col_68), in(test.t1db47fc1.col_68, 62, 200, 196, 99))",
 		"        └─TableFullScan_22 10000.00 cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
+	// Issue55299
+	tk.MustExec(`
+CREATE TABLE tcd8c2aac (
+  col_21 char(87) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  KEY idx_12 (col_21(1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+	`)
+	tk.MustExec(`
+CREATE TABLE tle50fd846 (
+  col_42 date DEFAULT '1989-10-30',
+  col_43 varbinary(122) NOT NULL DEFAULT 'Vz!3_P0LOdG',
+  col_44 json DEFAULT NULL,
+  col_45 binary(129) DEFAULT NULL,
+  col_46 double NOT NULL DEFAULT '4264.32300782421',
+  col_47 char(251) NOT NULL DEFAULT 'g7uo-dlBEY22!fx3@&',
+  col_48 char(229) NOT NULL,
+  col_49 blob NOT NULL,
+  col_50 blob DEFAULT NULL,
+  col_51 json DEFAULT NULL,
+  PRIMARY KEY (col_48) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+	`)
+	tk.MustQuery(`
+EXPLAIN SELECT GROUP_CONCAT(tcd8c2aac.col_21 ORDER BY tcd8c2aac.col_21 SEPARATOR ',') AS r0
+FROM tcd8c2aac
+JOIN tle50fd846
+WHERE ISNULL(tcd8c2aac.col_21) OR tcd8c2aac.col_21='yJTkLeL5^yJ'
+GROUP BY tcd8c2aac.col_21
+HAVING ISNULL(tcd8c2aac.col_21)
+LIMIT 48579914;`).Check(testkit.Rows())
 }
