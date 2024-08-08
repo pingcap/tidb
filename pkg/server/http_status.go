@@ -430,7 +430,7 @@ func (s *Server) startHTTPServer() {
 	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
-	router.Handle("/test/ddl/hook", tikvhandler.NewDDLHookHandler(tikvHandlerTool.Store.(kv.Storage)))
+	router.Handle("/test/ddl/hook", tikvhandler.DDLHookHandler{})
 
 	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
 	router.Handle("/test/ttl/trigger/{db}/{table}", ttlhandler.NewTTLJobTriggerHandler(tikvHandlerTool.Store.(kv.Storage)))

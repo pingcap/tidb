@@ -82,7 +82,7 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 	switch p := lp.(type) {
 	case *DataSource:
 		return s.prune(p, opt)
-	case *LogicalUnionScan:
+	case *logicalop.LogicalUnionScan:
 		ds := p.Children()[0]
 		ds, err := s.prune(ds.(*DataSource), opt)
 		if err != nil {
@@ -93,7 +93,7 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
 			children := make([]base.LogicalPlan, 0, len(ua.Children()))
 			for _, child := range ua.Children() {
-				us := LogicalUnionScan{
+				us := logicalop.LogicalUnionScan{
 					Conditions: p.Conditions,
 					HandleCols: p.HandleCols,
 				}.Init(ua.SCtx(), ua.QueryBlockOffset())

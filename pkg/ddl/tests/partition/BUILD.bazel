@@ -14,7 +14,6 @@ go_test(
         "//pkg/ddl",
         "//pkg/ddl/logutil",
         "//pkg/ddl/testutil",
-        "//pkg/ddl/util/callback",
         "//pkg/domain",
         "//pkg/errno",
         "//pkg/kv",

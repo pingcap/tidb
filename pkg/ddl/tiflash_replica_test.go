@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -303,16 +303,15 @@ func TestSkipSchemaChecker(t *testing.T) {
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
 func TestCreateTableWithLike2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
 
 	tbl1 := external.GetTableByName(t, tk, "test", "t1")
 	doneCh := make(chan error, 2)
-	hook := &callback.TestDDLCallback{Do: dom}
 	var onceChecker sync.Map
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
 			job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
@@ -329,10 +328,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 			onceChecker.Store(job.ID, true)
 			go backgroundExec(store, "test", "create table t2 like t1", doneCh)
 		}
-	}
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originalHook)
-	dom.DDL().SetHook(hook)
+	})
 
 	// create table when refer table add column
 	tk.MustExec("alter table t1 add column d int")
@@ -378,7 +374,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	dom.DDL().SetHook(originalHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")

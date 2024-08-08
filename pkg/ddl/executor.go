@@ -186,7 +186,6 @@ type executor struct {
 	ownerManager    owner.Manager
 	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
 	ddlJobNotifyCh  chan struct{}
-	mu              *hookStruct // TODO remove it.
 	globalIDLock    *sync.Mutex
 }
 

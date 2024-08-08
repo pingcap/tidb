@@ -37,6 +37,7 @@ go_library(
         "//pkg/util/sqlexec",
         "@com_github_gorilla_mux//:mux",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//http",
