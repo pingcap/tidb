@@ -49,7 +49,8 @@ func ExtractNotNullFromConds(conditions []expression.Expression, p base.LogicalP
 }
 
 // ExtractConstantCols extracts constant columns from conditions.
-func ExtractConstantCols(conditions []expression.Expression, sctx base.PlanContext, fds *funcdep.FDSet) intset.FastIntSet {
+func ExtractConstantCols(conditions []expression.Expression, sctx base.PlanContext,
+	fds *funcdep.FDSet) intset.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -77,7 +78,8 @@ func ExtractConstantCols(conditions []expression.Expression, sctx base.PlanConte
 }
 
 // ExtractEquivalenceCols extracts equivalence columns from conditions.
-func ExtractEquivalenceCols(conditions []expression.Expression, sctx base.PlanContext, fds *funcdep.FDSet) [][]intset.FastIntSet {
+func ExtractEquivalenceCols(conditions []expression.Expression, sctx base.PlanContext,
+	fds *funcdep.FDSet) [][]intset.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]intset.FastIntSet, 0, len(equivObjsPair))
@@ -114,7 +116,8 @@ func ExtractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 				rhsUniqueID = scalarUniqueID
 			}
 		}
-		equivUniqueIDs = append(equivUniqueIDs, []intset.FastIntSet{intset.NewFastIntSet(lhsUniqueID), intset.NewFastIntSet(rhsUniqueID)})
+		equivUniqueIDs = append(equivUniqueIDs, []intset.FastIntSet{intset.NewFastIntSet(
+			lhsUniqueID), intset.NewFastIntSet(rhsUniqueID)})
 	}
 	return equivUniqueIDs
 }

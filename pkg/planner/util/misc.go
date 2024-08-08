@@ -316,7 +316,8 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
 			if name.TblName.L != firstName.TblName.L ||
-				(name.DBName.L != "" && firstName.DBName.L != "" && name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
+				(name.DBName.L != "" && firstName.DBName.L != "" &&
+					name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
 				return nil
 			}
 		}
@@ -345,5 +346,6 @@ func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 
 // GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
 func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
-	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
+	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(),
+		bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
 }
