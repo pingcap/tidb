@@ -15,6 +15,8 @@
 package contextstatic
 
 import (
+	"time"
+
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -273,4 +275,84 @@ func (ctx *StaticExprContext) GetWindowingUseHighPrecision() bool {
 // GetGroupConcatMaxLen implements the `ExprContext.GetGroupConcatMaxLen`.
 func (ctx *StaticExprContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.groupConcatMaxLen
+}
+
+var _ exprctx.StaticalizableExprContext = &StaticExprContext{}
+
+// GetLastPlanColumnID implements context.StaticalizableExprContext.
+func (ctx *StaticExprContext) GetLastPlanColumnID() int64 {
+	return ctx.columnIDAllocator.GetLastPlanColumnID()
+}
+
+// GetPlanCacheTracker implements context.StaticalizableExprContext.
+func (ctx *StaticExprContext) GetPlanCacheTracker() *contextutil.PlanCacheTracker {
+	return ctx.planCacheTracker
+}
+
+// GetStaticalizableEvalContext implements context.StaticalizableExprContext.
+func (ctx *StaticExprContext) GetStaticalizableEvalContext() exprctx.StaticalizableEvalContext {
+	return ctx.evalCtx
+}
+
+// MakeExprContextStatic converts the `exprctx.StaticalizableExprContext` to `StaticExprContext`.
+func MakeExprContextStatic(ctx exprctx.StaticalizableExprContext) *StaticExprContext {
+	staticEvalContext := MakeEvalContextStatic(ctx.GetStaticalizableEvalContext())
+
+	return NewStaticExprContext(
+		WithEvalCtx(staticEvalContext),
+		WithCharset(ctx.GetCharsetInfo()),
+		WithDefaultCollationForUTF8MB4(ctx.GetDefaultCollationForUTF8MB4()),
+		WithBlockEncryptionMode(ctx.GetBlockEncryptionMode()),
+		WithSysDateIsNow(ctx.GetSysdateIsNow()),
+		WithNoopFuncsMode(ctx.GetNoopFuncsMode()),
+		WithRng(ctx.Rng()),
+		WithPlanCacheTracker(ctx.GetPlanCacheTracker()),
+		WithColumnIDAllocator(
+			exprctx.NewSimplePlanColumnIDAllocator(ctx.GetLastPlanColumnID())),
+		WithConnectionID(ctx.ConnectionID()),
+		WithWindowingUseHighPrecision(ctx.GetWindowingUseHighPrecision()),
+		WithGroupConcatMaxLen(ctx.GetGroupConcatMaxLen()),
+	)
+}
+
+// MakeEvalContextStatic converts the `exprctx.StaticalizableEvalContext` to `StaticEvalContext`.
+func MakeEvalContextStatic(ctx exprctx.StaticalizableEvalContext) *StaticEvalContext {
+	typeCtx := ctx.TypeCtx()
+	errCtx := ctx.ErrCtx()
+
+	// TODO: at least provide some optional eval prop provider which is suitable to be used in the static context.
+	props := make([]exprctx.OptionalEvalPropProvider, 0, exprctx.OptPropsCnt)
+
+	params := variable.NewPlanCacheParamList()
+	for _, param := range ctx.AllParamValues() {
+		params.Append(param)
+	}
+
+	// TODO: use a more structural way to replace the closure.
+	// These closure makes sure the fields which may be changed in the execution of the next statement will not be embedded into them, to make
+	// sure it's safe to call them after the session continues to execute other statements.
+	staticCtx := NewStaticEvalContext(
+		WithWarnHandler(ctx.GetWarnHandler()),
+		WithSQLMode(ctx.SQLMode()),
+		WithTypeFlags(typeCtx.Flags()),
+		WithLocation(typeCtx.Location()),
+		WithErrLevelMap(errCtx.LevelMap()),
+		WithCurrentDB(ctx.CurrentDB()),
+		WithCurrentTime(func() func() (time.Time, error) {
+			currentTime, currentTimeErr := ctx.CurrentTime()
+
+			return func() (time.Time, error) {
+				return currentTime, currentTimeErr
+			}
+		}()),
+		WithMaxAllowedPacket(ctx.GetMaxAllowedPacket()),
+		WithDefaultWeekFormatMode(ctx.GetDefaultWeekFormatMode()),
+		WithDivPrecisionIncrement(ctx.GetDivPrecisionIncrement()),
+		WithPrivCheck(ctx.GetRequestVerificationFn()),
+		WithDynamicPrivCheck(ctx.GetDynamicPrivCheckFn()),
+		WithParamList(params),
+		WithOptionalProperty(props...),
+	)
+
+	return staticCtx
 }

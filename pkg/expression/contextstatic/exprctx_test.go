@@ -15,14 +15,16 @@
 package contextstatic
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/expression/context"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +74,7 @@ func checkDefaultStaticExprCtx(t *testing.T, ctx *StaticExprContext) {
 	require.NotNil(t, ctx.Rng())
 	require.True(t, ctx.IsUseCache())
 	require.NotNil(t, ctx.columnIDAllocator)
-	_, ok := ctx.columnIDAllocator.(*context.SimplePlanColumnIDAllocator)
+	_, ok := ctx.columnIDAllocator.(*exprctx.SimplePlanColumnIDAllocator)
 	require.True(t, ok)
 	require.Equal(t, uint64(0), ctx.ConnectionID())
 	require.Equal(t, true, ctx.GetWindowingUseHighPrecision())
@@ -81,7 +83,7 @@ func checkDefaultStaticExprCtx(t *testing.T, ctx *StaticExprContext) {
 
 type exprCtxOptionsTestState struct {
 	evalCtx       *StaticEvalContext
-	colIDAlloc    context.PlanColumnIDAllocator
+	colIDAlloc    exprctx.PlanColumnIDAllocator
 	rng           *mathutil.MysqlRng
 	skipCacheArgs []any
 }
@@ -89,7 +91,7 @@ type exprCtxOptionsTestState struct {
 func getExprCtxOptionsForTest() ([]StaticExprCtxOption, *exprCtxOptionsTestState) {
 	s := &exprCtxOptionsTestState{
 		evalCtx:    NewStaticEvalContext(WithLocation(time.FixedZone("UTC+11", 11*3600))),
-		colIDAlloc: context.NewSimplePlanColumnIDAllocator(1024),
+		colIDAlloc: exprctx.NewSimplePlanColumnIDAllocator(1024),
 		rng:        mathutil.NewWithSeed(12345678),
 	}
 	planCacheTracker := contextutil.NewPlanCacheTracker(s.evalCtx)
@@ -134,7 +136,7 @@ func TestExprCtxColumnIDAllocator(t *testing.T) {
 	ctx := NewStaticExprContext()
 	alloc := ctx.columnIDAllocator
 	require.NotNil(t, alloc)
-	_, ok := ctx.columnIDAllocator.(*context.SimplePlanColumnIDAllocator)
+	_, ok := ctx.columnIDAllocator.(*exprctx.SimplePlanColumnIDAllocator)
 	require.True(t, ok)
 	require.Equal(t, int64(1), ctx.AllocPlanColumnID())
 
@@ -145,7 +147,7 @@ func TestExprCtxColumnIDAllocator(t *testing.T) {
 	require.Equal(t, int64(3), ctx.AllocPlanColumnID())
 
 	// Apply with new allocator
-	alloc = context.NewSimplePlanColumnIDAllocator(1024)
+	alloc = exprctx.NewSimplePlanColumnIDAllocator(1024)
 	ctx3 := ctx.Apply(WithColumnIDAllocator(alloc))
 	require.Same(t, alloc, ctx3.columnIDAllocator)
 	require.NotSame(t, ctx.columnIDAllocator, ctx3.columnIDAllocator)
@@ -153,8 +155,39 @@ func TestExprCtxColumnIDAllocator(t *testing.T) {
 	require.Equal(t, int64(4), ctx.AllocPlanColumnID())
 
 	// New context with allocator
-	alloc = context.NewSimplePlanColumnIDAllocator(2048)
+	alloc = exprctx.NewSimplePlanColumnIDAllocator(2048)
 	ctx4 := NewStaticExprContext(WithColumnIDAllocator(alloc))
 	require.Same(t, alloc, ctx4.columnIDAllocator)
 	require.Equal(t, int64(2049), ctx4.AllocPlanColumnID())
+}
+
+func TestMakeExprContextStatic(t *testing.T) {
+	evalCtx := NewStaticEvalContext()
+	planCacheTracker := contextutil.NewPlanCacheTracker(evalCtx.warnHandler)
+	obj := NewStaticExprContext(
+		WithEvalCtx(evalCtx),
+		WithCharset("a", "b"),
+		WithDefaultCollationForUTF8MB4("c"),
+		WithBlockEncryptionMode("d"),
+		WithSysDateIsNow(true),
+		WithNoopFuncsMode(1),
+		WithRng(mathutil.NewWithSeed(12345678)),
+		WithPlanCacheTracker(&planCacheTracker),
+		WithColumnIDAllocator(exprctx.NewSimplePlanColumnIDAllocator(1)),
+		WithConnectionID(1),
+		WithWindowingUseHighPrecision(true),
+		WithGroupConcatMaxLen(1),
+	)
+
+	ignorePath := []string{
+		"^\\$\\.staticExprCtxState\\.evalCtx\\..*",
+		"^\\$\\.staticExprCtxState\\.planCacheTracker\\..*",
+		"^\\$\\.staticExprCtxState\\.columnIDAllocator\\..*",
+		"^\\$.*\\.mu",
+	}
+	h := deeptest.NewStaticTestHelper(ignorePath)
+	h.AssertNotEmpty(t, reflect.ValueOf(obj), "$")
+
+	staticObj := MakeExprContextStatic(obj)
+	h.Equal(t, reflect.ValueOf(obj), reflect.ValueOf(staticObj), "$")
 }
