@@ -954,12 +954,8 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 		e.viewMu.Unlock()
 	}
 
-	i := 0
-	for _, col := range e.extractor.ListColumns(tbl) {
-		if col.Hidden {
-			continue
-		}
-		i++
+	cols, ordinalPos := e.extractor.ListColumns(tbl)
+	for i, col := range cols {
 		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
@@ -1052,7 +1048,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			schema.O,              // TABLE_SCHEMA
 			tbl.Name.O,            // TABLE_NAME
 			col.Name.O,            // COLUMN_NAME
-			i,                     // ORDINAL_POSITION
+			ordinalPos[i],         // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
 			types.TypeToStr(colType, ft.GetCharset()), // DATA_TYPE

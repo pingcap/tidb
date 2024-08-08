@@ -793,17 +793,13 @@ func (e *InfoSchemaTableNameExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 
 	r := new(bytes.Buffer)
 
-	colNames := make([]string, len(e.colNames))
-	copy(colNames, e.colNames)
-	sort.Strings(colNames)
-
-	for _, colName := range colNames {
+	for _, colName := range e.colNames {
 		if pred, ok := e.ColPredicates[colName]; ok && len(pred) > 0 {
 			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(pred))
 		}
 	}
 
-	for _, colName := range colNames {
+	for _, colName := range e.colNames {
 		if patterns, ok := e.LikePatterns[colName]; ok && len(patterns) > 0 {
 			fmt.Fprintf(r, "%s_pattern:[%s], ", colName, extractStringFromStringSlice(patterns))
 		}
@@ -822,19 +818,22 @@ type ColumnsTableExtractor struct {
 	InfoSchemaTableNameExtractor
 }
 
-// ListColumns lists related columns for given table from predicate.
-// If no column found in predicate, it return all columns.
+// ListColumns lists unhidden columns and corresponding ordinal positions for given table from predicates.
+// If no column found in predicate, it return all visible columns.
 func (e *InfoSchemaTableNameExtractor) ListColumns(
 	tbl *model.TableInfo,
-) []*model.ColumnInfo {
+) ([]*model.ColumnInfo, []int) {
 	predCol, regexp := e.getPredicates(_columnName)
-	if len(predCol) == 0 && len(regexp) == 0 {
-		return tbl.Columns
-	}
 
 	columns := make([]*model.ColumnInfo, 0, len(predCol))
+	ordinalPos := make([]int, 0, len(predCol))
+	i := 0
 ForLoop:
 	for _, column := range tbl.Columns {
+		if column.Hidden {
+			continue
+		}
+		i++
 		if len(predCol) > 0 && !predCol.Exist(column.Name.L) {
 			continue
 		}
@@ -844,9 +843,10 @@ ForLoop:
 			}
 		}
 		columns = append(columns, column)
+		ordinalPos = append(ordinalPos, i)
 	}
 
-	return columns
+	return columns, ordinalPos
 }
 
 // InfoSchemaIndexesExtractor is the predicate extractor for information_schema.tidb_index_usage.

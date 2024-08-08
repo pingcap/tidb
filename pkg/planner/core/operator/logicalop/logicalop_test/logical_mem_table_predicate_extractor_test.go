@@ -1575,7 +1575,7 @@ func TestColumns(t *testing.T) {
 	}{
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
-			columnName: set.NewStringSet(),
+			columnName: set.NewStringSet("t"),
 		},
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name=lower('T');`,
