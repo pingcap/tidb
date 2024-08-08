@@ -50,7 +50,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		endKey := startKey.PrefixNext()
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		copChunk := ddl.FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
+		copChunk, err := ddl.FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
 		require.NoError(t, err)
 		require.NoError(t, txn.Rollback())
 

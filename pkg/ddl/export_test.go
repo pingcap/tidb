@@ -21,11 +21,12 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/testkit/disttaskhelper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -40,31 +41,38 @@ func (r *resultChanForTest) AddTask(rs IndexRecordChunk) {
 }
 
 func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
-	batchSize int) *chunk.Chunk {
-	variable.SetDDLReorgBatchSize(int32(batchSize))
-	task := &reorgBackfillTask{
-		id:            1,
-		startKey:      startKey,
-		endKey:        endKey,
-		physicalTable: tbl,
-	}
-	taskCh := make(chan *reorgBackfillTask, 5)
-	resultCh := make(chan IndexRecordChunk, 5)
+	batchSize int) (*chunk.Chunk, error) {
 	resPool := pools.NewResourcePool(func() (pools.Resource, error) {
 		ctx := mock.NewContext()
 		ctx.Store = store
 		return ctx, nil
 	}, 8, 8, 0)
 	sessPool := session.NewSessionPool(resPool)
-	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, sessPool, nil)
-	pool.chunkSender = &resultChanForTest{ch: resultCh}
-	pool.adjustSize(1)
-	pool.tasksCh <- task
-	rs := <-resultCh
-	close(taskCh)
-	pool.close(false)
-	sessPool.Close()
-	return rs.Chunk
+	poolSize := copReadChunkPoolSize()
+	srcChkPool := make(chan *chunk.Chunk, poolSize)
+	for i := 0; i < poolSize; i++ {
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+	}
+	opCtx := NewLocalOperatorCtx(context.Background(), 1)
+	src := disttaskhelper.NewOperatorTestSource(TableScanTask{1, startKey, endKey})
+	scanOp := NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil)
+	sink := disttaskhelper.NewOperatorTestSink[IndexRecordChunk]()
+
+	operator.Compose[TableScanTask](src, scanOp)
+	operator.Compose[IndexRecordChunk](scanOp, sink)
+
+	pipeline := operator.NewAsyncPipeline(src, scanOp, sink)
+	err := pipeline.Execute()
+	if err != nil {
+		return nil, err
+	}
+	err = pipeline.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	results := sink.Collect()
+	return results[0].Chunk, nil
 }
 
 func ConvertRowToHandleAndIndexDatum(

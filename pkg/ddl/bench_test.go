@@ -53,7 +53,7 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 	endKey := startKey.PrefixNext()
 	txn, err := store.Begin()
 	require.NoError(b, err)
-	copChunk := ddl.FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
+	copChunk, err := ddl.FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
 	require.NoError(b, err)
 	require.NoError(b, txn.Rollback())
 
