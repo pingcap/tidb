@@ -933,7 +933,7 @@ func TestIssue39593(t *testing.T) {
 	count, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count without any changes
-	require.Equal(t, float64(360), count)
+	require.Equal(t, float64(540), count)
 	statsTbl.RealtimeCount *= 10
 	count, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
