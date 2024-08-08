@@ -98,7 +98,8 @@ const (
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
 	// MaxTokenLimit is the max token limit value.
-	MaxTokenLimit = 1024 * 1024
+	MaxTokenLimit  = 1024 * 1024
+	DefSchemaLease = 45 * time.Second
 )
 
 // Valid config maps
@@ -912,7 +913,7 @@ var defaultConf = Config{
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
 	SplitTable:                   true,
-	Lease:                        "45s",
+	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,

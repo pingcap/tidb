@@ -750,6 +750,13 @@ func setGlobalVars() {
 	util.SetGOGC(cfg.Performance.GOGC)
 
 	ddlLeaseDuration := parseDuration(cfg.Lease)
+	if ddlLeaseDuration <= 0 {
+		// previous version allow set schema lease to 0, and mainly used on
+		// uni-store and for test, to be compatible we set it to default value here.
+		log.Warn("schema lease is invalid, use default value",
+			zap.String("lease", ddlLeaseDuration.String()))
+		ddlLeaseDuration = config.DefSchemaLease
+	}
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
