@@ -323,15 +323,15 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 func genJoinMethodHintForSinglePhysicalJoin(
 	sctx base.PlanContext,
 	joinType string,
-	parentOffset int,
+	parentQBOffset int,
 	nodeType h.NodeType,
 	onlyFirstTbl bool,
 	children ...base.PhysicalPlan,
 ) *ast.TableOptimizerHint {
-	if parentOffset == -1 {
+	if parentQBOffset == -1 {
 		return nil
 	}
-	hintTbls, hintQBName := genHintTblForJoinNodes(sctx, children, parentOffset, nodeType)
+	hintTbls, hintQBName := genHintTblForJoinNodes(sctx, children, parentQBOffset, nodeType)
 	effectiveHintTbls := slices.DeleteFunc(slices.Clone(hintTbls), func(ht *ast.HintTable) bool {
 		return ht == nil
 	})
@@ -363,7 +363,7 @@ func genJoinMethodHintForSinglePhysicalJoin(
 func genHintTblForJoinNodes(
 	sctx base.PlanContext,
 	joinedNodes []base.PhysicalPlan,
-	parentOffset int,
+	parentQBOffset int,
 	nodeType h.NodeType,
 ) (hintTbls []*ast.HintTable, hintQBNamePtr *model.CIStr) {
 	// 1. Use genHintTblForSingleJoinNode() to generate QB offset and table name for each join node.
@@ -376,10 +376,11 @@ func genHintTblForJoinNodes(
 	qbOffsets := make([]int, 0, len(joinedNodes))
 	guessQBOffsets := make(map[int]struct{})
 	for _, plan := range joinedNodes {
-		qbOffset, guessOffset, ht := genHintTblForSingleJoinNode(sctx, plan, parentOffset)
+		qbOffset, guessOffset, ht := genHintTblForSingleJoinNode(sctx, plan, parentQBOffset)
 		if qbOffset < 0 || ht == nil {
 			qbOffsets = append(qbOffsets, -1)
 			hintTbls = append(hintTbls, nil)
+			continue
 		}
 		// If we guessed the same QB offset for two different nodes, that's likely incorrect, and we stop use that.
 		// This may happen for queries like ... FROM t1 join (select * from t2 join t3) derived ... . We will guess
@@ -461,6 +462,7 @@ func genHintTblForSingleJoinNode(
 	}
 	guessQBOffset = false
 	var dbName, tableName *model.CIStr
+	// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 	if qbOffset != parentOffset {
 		var blockAsNames []ast.HintTable
 		if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
@@ -470,7 +472,6 @@ func genHintTblForSingleJoinNode(
 			return -1, false, nil
 		}
 		hintTable := blockAsNames[qbOffset]
-		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 		dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		// Current join reorder will break QB offset of the join operator by setting them to -1. In this case, we will
 		// get qbOffset == parentOffset == -1 when it comes here.
