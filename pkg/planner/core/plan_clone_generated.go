@@ -481,3 +481,27 @@ func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	}
 	return cloned, true
 }
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalLock)
+	*cloned = *op
+	basePlan, baseOK := op.basePhysicalPlan.cloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.basePhysicalPlan = *basePlan
+	if op.TblID2Handle != nil {
+		cloned.TblID2Handle = make(map[int64][]util.HandleCols, len(op.TblID2Handle))
+		for k, v := range op.TblID2Handle {
+			cloned.TblID2Handle[k] = util.CloneHandleCols(newCtx.GetSessionVars().StmtCtx, v)
+		}
+	}
+	if op.TblID2PhysTblIDCol != nil {
+		cloned.TblID2PhysTblIDCol = make(map[int64]*expression.Column, len(op.TblID2PhysTblIDCol))
+		for k, v := range op.TblID2PhysTblIDCol {
+			cloned.TblID2PhysTblIDCol[k] = v.Clone().(*expression.Column)
+		}
+	}
+	return cloned, true
+}

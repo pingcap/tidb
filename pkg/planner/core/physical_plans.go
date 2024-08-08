@@ -1867,7 +1867,7 @@ func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 type PhysicalLock struct {
 	basePhysicalPlan
 
-	Lock *ast.SelectLockInfo
+	Lock *ast.SelectLockInfo `plan-cache-clone:"shallow"`
 
 	TblID2Handle       map[int64][]util.HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
