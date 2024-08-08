@@ -321,6 +321,7 @@ func (p *BasePhysicalPlan) SetXthChildReqProps(x int, reqProps *property.Physica
 	p.childrenReqProps[x] = reqProps
 }
 
+// NewBasePhysicalPlan creates a new BasePhysicalPlan.
 func NewBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan, offset int) BasePhysicalPlan {
 	return BasePhysicalPlan{
 		Plan: baseimpl.NewBasePlan(ctx, tp, offset),
