@@ -246,14 +246,12 @@ var SkipWriteUntouchedIndices UpdateRecordOption = skipWriteUntouchedIndices{}
 type DupKeyCheckMode uint8
 
 const (
-	// DupKeyCheckDefault indicates using the default behavior.
-	// Currently, this means to use the return value `ctx.LazyCheckKeyNotExists()`.
-	// If the above method returns true, it will only check the duplicated key in the memory buffer,
-	// otherwise, it will also check the duplicated key in the storage.
-	// TODO: add `DupKeyCheckLazy` to indicate only checking the duplicated key in the memory buffer.
-	// After `DupKeyCheckLazy` added, `DupKeyCheckDefault` will be renamed to `DupKeyCheckInPlace` to force check
-	// the duplicated key in place.
-	DupKeyCheckDefault DupKeyCheckMode = iota
+	// DupKeyCheckInPlace indicates to check the duplicated key in place, both in the memory buffer and storage.
+	DupKeyCheckInPlace DupKeyCheckMode = iota
+	// DupKeyCheckLazy indicates to check the duplicated key lazily.
+	// It means only checking the duplicated key in the memory buffer and checking keys in storage will be postponed
+	// to the subsequence stage such as lock or commit phase.
+	DupKeyCheckLazy
 	// DupKeyCheckSkip indicates skipping the duplicated key check.
 	DupKeyCheckSkip
 )

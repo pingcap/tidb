@@ -271,8 +271,8 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					return nil, err
 				}
 			}
-			if !opt.IgnoreAssertion && (!untouched) {
-				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
+			if !opt.IgnoreAssertion && !untouched {
+				if opt.DupKeyCheck == table.DupKeyCheckLazy && !txn.IsPessimistic() {
 					err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				} else {
 					err = txn.SetAssertion(key, kv.SetAssertNotExist)
@@ -288,7 +288,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
-		} else if (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && !keyIsTempIdxKey {
+		} else if opt.DupKeyCheck == table.DupKeyCheckLazy && !keyIsTempIdxKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
 			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
@@ -308,7 +308,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// The index key value is not found or deleted.
 		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
-			lazyCheck := (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && err != nil
+			lazyCheck := opt.DupKeyCheck == table.DupKeyCheckLazy && err != nil
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
 				val = tempVal.Encode(value)

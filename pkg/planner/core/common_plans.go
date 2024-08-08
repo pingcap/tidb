@@ -371,6 +371,7 @@ type Insert struct {
 	SelectPlan base.PhysicalPlan
 
 	IsReplace bool
+	IgnoreErr bool
 
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
@@ -431,6 +432,8 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	AllAssignmentsAreConstant bool
+
+	IgnoreError bool
 
 	VirtualAssignmentsOffset int
 

@@ -21,7 +21,6 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/domain/resourcegroup",
-        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/keyspace",
         "//pkg/kv",
