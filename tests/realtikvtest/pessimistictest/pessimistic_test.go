@@ -3655,3 +3655,37 @@ func TestForShareWithPromotion(t *testing.T) {
 		tk1.MustExec("rollback")
 	}
 }
+
+func TestForShareWithPromotionPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int key, b int)")
+	tk.MustExec("insert into t values(1, 10)")
+	tk.MustExec("set innodb_lock_wait_timeout = 1")
+	tk.MustExec(`set @pk=1`)
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_enable_noop_functions = %v", 1))
+	tk.MustExec(`prepare st from 'select * from t where a=? for share'`)
+
+	tk.MustExec(`execute st using @pk`)
+	tk.MustExec(`begin`)
+	tk.MustExec(`execute st using @pk`)
+	// can't reuse since it's in txn now.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`rollback`)
+
+	// can't reuse since the `tidb_enable_shared_lock_promotion` is changed.
+	tk.MustExec(`execute st using @pk`)
+	tk.MustExec(fmt.Sprintf("set @@tidb_enable_shared_lock_promotion = %v", 1))
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`begin`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`rollback`)
+}
