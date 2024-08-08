@@ -41,8 +41,10 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 		return ctx, nil
 	}, 8, 8, 0)
 	sessPool := session.NewSessionPool(resPool)
-	srcChkPool := make(chan *chunk.Chunk, 1)
-	srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+	srcChkPool := make(chan *chunk.Chunk, 10)
+	for i := 0; i < 10; i++ {
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+	}
 	opCtx := ddl.NewLocalOperatorCtx(context.Background(), 1)
 	src := testutil.NewOperatorTestSource(ddl.TableScanTask{1, startKey, endKey})
 	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil)
