@@ -484,3 +484,13 @@ func init() {
 		logutil.BgLogger().Warn("set manager session TTL failed", zap.Error(err))
 	}
 }
+
+// DeleteLeader deletes the leader key.
+func DeleteLeader(ctx context.Context, cli *clientv3.Client, key string) error {
+	ownerKey, _, _, _, err := getOwnerInfo(ctx, ctx, cli, key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = cli.Delete(ctx, ownerKey)
+	return err
+}
