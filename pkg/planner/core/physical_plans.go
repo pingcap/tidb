@@ -2100,6 +2100,7 @@ func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
+	tiflashPreAggMode string
 }
 
 func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
@@ -2115,6 +2116,7 @@ func (p *PhysicalHashAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, err
 		return nil, err
 	}
 	cloned.basePhysicalAgg = *base
+	cloned.tiflashPreAggMode = p.tiflashPreAggMode
 	return cloned, nil
 }
 

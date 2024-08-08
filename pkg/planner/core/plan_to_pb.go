@@ -15,12 +15,15 @@
 package core
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -110,6 +113,18 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 			return nil, errors.Trace(err)
 		}
 		executorID = p.ExplainID().String()
+		// If p.tiflashPreAggMode is empty, means no need to consider preagg mode.
+		// For example it's the the second stage of hashagg.
+		if len(p.tiflashPreAggMode) != 0 {
+			if preAggModeVal, ok := variable.ToTiPBTiFlashPreAggMode(p.tiflashPreAggMode); !ok {
+				err = fmt.Errorf("unexpected tiflash pre agg mode: %v", p.tiflashPreAggMode)
+			} else {
+				aggExec.PreAggMode = &preAggModeVal
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return &tipb.Executor{
 		Tp:                            tipb.ExecType_TypeAggregation,
