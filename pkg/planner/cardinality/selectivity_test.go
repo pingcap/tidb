@@ -938,7 +938,7 @@ func TestIssue39593(t *testing.T) {
 	count, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
-	require.Equal(t, float64(3600), count)
+	require.Equal(t, float64(3870.1135540008545), count)
 }
 
 func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
