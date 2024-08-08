@@ -281,21 +281,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
-	dupKeyCheck := table.DupKeyCheckInPlace
-	if (txn.IsPessimistic() && !e.IgnoreError) || txn.IsPipelined() {
-		// - If `txn.Pipelined()`, it means current is using `@@tidb_dml_type="bulk"` to insert rows.
-		//   `DupKeyCheckLazy` should be used in "bulk" mode to avoid request storage and improve the performance.
-		// - If `txn.IsPessimistic()`, we can use `DupKeyCheckLazy` to postpone the storage constraints check
-		//   to subsequence stages such as lock.
-		//   One exception is `UPDATE IGNORE ...`, `DupKeyCheckInPlace` should be used to ensure executor can get the
-		//   dup-key error immediately and ignore it then.
-		// - If the current txn is optimistic, `DupKeyCheckInPlace` is always used
-		//   even if `tidb_constraint_check_in_place` is `OFF`.
-		//   This is because `tidb_constraint_check_in_place` is only designed for insert cases, see comments in issue:
-		//   https://github.com/pingcap/tidb/issues/54492#issuecomment-2229941881
-		dupKeyCheck = table.DupKeyCheckLazy
-	}
-
+	dupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreError)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		err := exec.Next(ctx, e.Children(0), chk)
@@ -597,4 +583,41 @@ func (e *UpdateExec) GetFKCascades() []*FKCascadeExec {
 // HasFKCascades implements WithForeignKeyTrigger interface.
 func (e *UpdateExec) HasFKCascades() bool {
 	return len(e.fkCascades) > 0
+}
+
+// optimizeDupKeyCheckForUpdate trys to optimize the DupKeyCheckMode for an update statement.
+// If the DupKeyCheckMode of the current statement can be optimized, it will return `DupKeyCheckLazy` to avoid the
+// redundant requests to TiKV, otherwise, `DupKeyCheckInPlace` will be returned.
+// The second argument `ignoreNeedsCheckInPlace` is true if `IGNORE` keyword is used in the update statement.
+func optimizeDupKeyCheckForUpdate(txn kv.Transaction, ignoreNeedsCheckInPlace bool) table.DupKeyCheckMode {
+	if txn.IsPipelined() {
+		// It means `@@tidb_dml_type='bulk'` which indicates to insert rows in "bulk" mode.
+		// At this time, `DupKeyCheckLazy` should be used to improve the performance.
+		// If "bulk" mode and IGNORE keyword are used together, "bulk" is prior, see:
+		// https://github.com/pingcap/tidb/issues/55187#issuecomment-2268356459
+		return table.DupKeyCheckLazy
+	}
+
+	if ignoreNeedsCheckInPlace {
+		// For `UPDATE IGNORE ...` and `INSERT IGNORE ... ON DUPLICATE KEY UPDATE ...` statements,
+		// `DupKeyCheckInPlace` should be used to make sure the executor can get the error
+		// immediately and ignore it then.
+		return table.DupKeyCheckInPlace
+	}
+
+	if txn.IsPessimistic() {
+		// We can just check duplicated key lazily without keys in storage for the below cases:
+		// - `txn.Pipelined()` is true.
+		//    It means the user is using `@@tidb_dml_type="bulk"` to insert rows in bulk mode.
+		//    DupKeyCheckLazy should be used to improve the performance.
+		// - The current transaction is pessimistic.
+		//   The duplicate key check can be postponed to the lock stage.
+		// Please notice that for optimistic transaction, it always returns `DupKeyCheckInPlace` even if
+		// `tidb_constraint_check_in_place` is `OFF`.
+		// That is because `tidb_constraint_check_in_place` is only designed for insert cases, see comments in issue:
+		// https://github.com/pingcap/tidb/issues/54492#issuecomment-2229941881
+		return table.DupKeyCheckLazy
+	}
+
+	return table.DupKeyCheckInPlace
 }

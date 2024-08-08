@@ -237,28 +237,12 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
-	// If the current row has some conflicts, the operation will be changed to update.
-	// If this happens, there still may be another index that has a conflict,
-	// so we need to determine DupKeyCheckMode here.
-	updateDupKeyCheck := table.DupKeyCheckInPlace
-	if (txn.IsPessimistic() && !e.IgnoreErr) || txn.IsPipelined() {
-		// - If `txn.Pipelined()`, it means current is using `@@tidb_dml_type="bulk"` to insert rows.
-		//   `DupKeyCheckLazy` should be used in "bulk" mode to avoid request storage and improve the performance.
-		// - If `txn.IsPessimistic()`, we can use `DupKeyCheckLazy` to postpone the storage constraints check
-		//   to subsequence stages such as acquiring pessimistic locks.
-		//   However, if the current statement is `INSERT IGNORE ... ON DUPLICATE KEY ...`,
-		//   `DupKeyCheckInPlace` should be used.
-		//   It is because the executor should get the dup-key error immediately and ignore it.
-		// - If the current txn is optimistic, `DupKeyCheckInPlace` is always used
-		//   even if `tidb_constraint_check_in_place` is `OFF`.
-		//   This is because `tidb_constraint_check_in_place` is only designed for insert cases, see comments in issue:
-		//   https://github.com/pingcap/tidb/issues/54492#issuecomment-2229941881
-		//   Though it is still in an insert statement, but it seems some old tests still think it should
-		//   check constraints in place, see test:
-		//   https://github.com/pingcap/tidb/blob/3117d3fae50bbb5dabcde7b9589f92bfbbda5dc6/pkg/executor/test/writetest/write_test.go#L419-L426
-		updateDupKeyCheck = table.DupKeyCheckLazy
-	}
-
+	// Use `optimizeDupKeyCheckForUpdate` to determine the update operation when the row meets the conflict in
+	// `INSERT ... ON DUPLICATE KEY UPDATE` statement.
+	// Though it is in an insert statement, `ON DUP KEY UPDATE` follows the dup-key check behavior of update.
+	// For example, it will ignore variable `tidb_constraint_check_in_place`, see the test case:
+	// https://github.com/pingcap/tidb/blob/3117d3fae50bbb5dabcde7b9589f92bfbbda5dc6/pkg/executor/test/writetest/write_test.go#L419-L426
+	updateDupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreErr)
 	// Do not use `updateDupKeyCheck` for `AddRecord` because it is not optimized for insert.
 	// It seems that we can just use `DupKeyCheckSkip` here because all constraints are checked.
 	// But we still use `optimizeDupKeyCheckForNormalInsert` to make the refactor same behavior with the original code.
