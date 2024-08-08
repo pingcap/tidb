@@ -89,6 +89,9 @@ var (
 )
 
 func suppressErrorTooLongKeyKey(sctx sessionctx.Context) bool {
+	if sctx == nil {
+		return false
+	}
 	if suppress, ok := sctx.Value(SuppressErrorTooLongKeyKey).(bool); ok && suppress {
 		return true
 	}
