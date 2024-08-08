@@ -39,9 +39,13 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD
 const (
 	CheckpointMetaPath = "checkpoint.meta"
 	CheckpointDir      = "/checkpoints"
+=======
+const CheckpointDir = "checkpoints"
+>>>>>>> 2ce3cdb0339 (br: fix checkpoint path (#55266))
 
 	CheckpointDataDir     = CheckpointDir + "/data"
 	CheckpointChecksumDir = CheckpointDir + "/checksum"
