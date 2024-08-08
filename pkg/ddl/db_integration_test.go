@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -3094,16 +3093,13 @@ func TestIssue52680(t *testing.T) {
 }
 
 func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	originCfg := config.GetGlobalConfig()
 	defer func() {
 		config.StoreGlobalConfig(originCfg)
 	}()
 
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex {
 			return
 		}
@@ -3112,8 +3108,7 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 			newCfg.MaxIndexLength = 1000
 			config.StoreGlobalConfig(&newCfg)
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")

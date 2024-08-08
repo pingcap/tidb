@@ -642,3 +642,33 @@ r0
 1
 1
 1
+set autocommit=ON;
+use test;
+drop table if exists t1;
+create table t1 (cc1 int,cc2 text);
+insert into t1 values (1, 'aaaa'),(2, 'bbbb'),(3, 'cccc');
+drop table if exists t2;
+create table t2 (cc1 int,cc2 text,primary key(cc1));
+insert into t2 values (2, '2');
+set tidb_executor_concurrency = 1;
+set tidb_window_concurrency = 100;
+explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+id	estRows	task	access object	operator info
+Sort_15	20000.00	root		Column#8, Column#9, Column#10
+└─Union_18	20000.00	root		
+  ├─Projection_20	10000.00	root		test.t2.cc2->Column#8, test.t2.cc2->Column#9, test.t2.cc1->Column#10
+  │ └─TableReader_22	10000.00	root		data:TableFullScan_21
+  │   └─TableFullScan_21	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection_23	10000.00	root		cast(Column#7, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8, test.t1.cc2->Column#9, test.t1.cc1->Column#10
+    └─Shuffle_28	10000.00	root		execution info: concurrency:100, data sources:[TableReader_26]
+      └─Window_24	10000.00	root		count(1)->Column#7 over(partition by test.t1.cc1)
+        └─Sort_27	10000.00	root		test.t1.cc1
+          └─ShuffleReceiver_30	10000.00	root		
+            └─TableReader_26	10000.00	root		data:TableFullScan_25
+              └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+a	b	c
+1	aaaa	1
+1	bbbb	2
+1	cccc	3
+2	2	2

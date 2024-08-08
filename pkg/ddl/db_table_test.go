@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -106,7 +106,7 @@ func TestAddNotNullColumnWhileInsertOnDupUpdate(t *testing.T) {
 }
 
 func TestTransactionOnAddDropColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
@@ -130,11 +130,8 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 		},
 	}
 
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -152,8 +149,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 				}
 			}
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(store, "test", "alter table t1 add column c int not null after a", done)
@@ -749,16 +745,12 @@ func TestAddColumn2(t *testing.T) {
 	tk.MustExec("create table t1 (a int key, b int);")
 	defer tk.MustExec("drop table if exists t1, t2")
 
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{Do: dom}
 	var writeOnlyTable table.Table
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			writeOnlyTable, _ = dom.InfoSchema().TableByID(job.TableID)
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(store, "test", "alter table t1 add column c int not null", done)
@@ -789,24 +781,26 @@ func TestAddColumn2(t *testing.T) {
 	// Test for _tidb_rowid
 	var re *testkit.Result
 	tk.MustExec("create table t2 (a int);")
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		// allow write _tidb_rowid first
-		tk.MustExec("set @@tidb_opt_write_row_id=1")
-		tk.MustExec("begin")
-		tk.MustExec("insert into t2 (a,_tidb_rowid) values (1,2);")
-		re = tk.MustQuery(" select a,_tidb_rowid from t2;")
-		tk.MustExec("commit")
-	}
-	dom.DDL().SetHook(hook)
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("set @@tidb_opt_write_row_id=1")
+		tk2.MustExec("begin")
+		tk2.MustExec("insert into t2 (a,_tidb_rowid) values (1,2);")
+		re = tk2.MustQuery(" select a,_tidb_rowid from t2;")
+		tk2.MustExec("commit")
+	})
 
 	go backgroundExec(store, "test", "alter table t2 add column b int not null default 3", done)
 	err = <-done
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 }
 
 func TestDropTables(t *testing.T) {

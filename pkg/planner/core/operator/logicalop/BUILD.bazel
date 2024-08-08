@@ -17,6 +17,7 @@ go_library(
         "logical_sort.go",
         "logical_table_dual.go",
         "logical_top_n.go",
+        "logical_union_scan.go",
         "logical_window.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
