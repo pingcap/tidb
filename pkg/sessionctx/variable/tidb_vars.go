@@ -286,11 +286,15 @@ const (
 
 // TiDB system variable names that both in session and global scope.
 const (
-	// TiDBBuildStatsConcurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
-	// those indices can be scanned concurrently, with the cost of higher system performance impact.
+	// TiDBBuildStatsConcurrency specifies the number of concurrent workers used for analyzing tables or partitions.
+	// When multiple tables or partitions are specified in the analyze statement, TiDB will process them concurrently.
+	// Additionally, this setting controls the concurrency for building NDV (Number of Distinct Values) for special indexes,
+	// such as generated columns composed indexes.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
 
-	// TiDBBuildSamplingStatsConcurrency is used to control the concurrency of build sampling stats task.
+	// TiDBBuildSamplingStatsConcurrency is used to control the concurrency of building stats using sampling.
+	// 1. The number of concurrent workers to merge FMSketches and Sample Data from different regions.
+	// 2. The number of concurrent workers to build TopN and Histogram concurrently.
 	TiDBBuildSamplingStatsConcurrency = "tidb_build_sampling_stats_concurrency"
 
 	// TiDBDistSQLScanConcurrency is used to set the concurrency of a distsql scan task.
@@ -299,7 +303,8 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
-	// TiDBAnalyzeDistSQLScanConcurrency is used to set the concurrency of a distsql scan task for analyze statement.
+	// TiDBAnalyzeDistSQLScanConcurrency is the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
+	// For auto analyze, the value is controlled by tidb_sysproc_scan_concurrency variable.
 	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
 
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
@@ -863,7 +868,7 @@ const (
 	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
 	// TiDBOptUseInvisibleIndexes indicates whether to use invisible indexes.
 	TiDBOptUseInvisibleIndexes = "tidb_opt_use_invisible_indexes"
-	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
+	// TiDBAnalyzePartitionConcurrency is the number of concurrent workers to save statistics to the system tables.
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
 	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
@@ -1042,9 +1047,11 @@ const (
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
-	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
+	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
+	// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
 	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
+	// For now, it controls the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
 	TiDBSysProcScanConcurrency = "tidb_sysproc_scan_concurrency"
 	// TiDBServerMemoryLimit indicates the memory limit of the tidb-server instance.
 	TiDBServerMemoryLimit = "tidb_server_memory_limit"

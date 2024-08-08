@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-type aggregationEliminator struct {
+// AggregationEliminator is used to eliminate aggregation grouped by unique key.
+type AggregationEliminator struct {
 	aggregationEliminateChecker
 }
 
@@ -256,11 +257,12 @@ func wrapCastFunction(ctx expression.BuildContext, arg expression.Expression, ta
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
-func (a *aggregationEliminator) optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, planChanged, err := a.optimize(ctx, child, opt)
+		newChild, planChanged, err := a.Optimize(ctx, child, opt)
 		if err != nil {
 			return nil, planChanged, err
 		}
@@ -278,6 +280,7 @@ func (a *aggregationEliminator) optimize(ctx context.Context, p base.LogicalPlan
 	return p, planChanged, nil
 }
 
-func (*aggregationEliminator) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (*AggregationEliminator) Name() string {
 	return "aggregation_eliminate"
 }

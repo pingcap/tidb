@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -1386,28 +1387,6 @@ func TestTiFlashAvailableAfterDownOneStore(t *testing.T) {
 	CheckTableAvailable(s.dom, t, 1, []string{})
 }
 
-// TestDLLCallback copied from ddl.TestDDLCallback, but smaller
-type TestDDLCallback struct {
-	*ddl.BaseCallback
-	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
-	// domain to reload schema before your ddl stepping into the next state change.
-	Do ddl.SchemaLoader
-
-	// Only need this for now
-	OnJobRunBeforeExported func(*model.Job)
-}
-
-// OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
-func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
-	logutil.DDLLogger().Info("on job run before", zap.String("job", job.String()))
-	if tc.OnJobRunBeforeExported != nil {
-		tc.OnJobRunBeforeExported(job)
-		return
-	}
-
-	tc.BaseCallback.OnJobRunBefore(job)
-}
-
 func TestTiFlashReorgPartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
@@ -1430,14 +1409,9 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	require.True(t, ok)
 
 	// Note that the mock TiFlash does not have any data or regions, so the wait for regions being available will fail
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
 	done := false
 
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if !done && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
 			// Let it fail once (to check that code path) then increase the count to skip retry
 			if job.ErrorCount > 0 {
@@ -1445,11 +1419,11 @@ func TestTiFlashReorgPartition(t *testing.T) {
 				done = true
 			}
 		}
-	}
+	})
 	tk.MustContainErrMsg(`alter table ddltiflash reorganize partition p0 into (partition p0 values less than (500000), partition p500k values less than (1000000))`, "[ddl] add partition wait for tiflash replica to complete")
 
 	done = false
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if !done && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
 			// Let it fail once (to check that code path) then mock the regions into the partitions
 			if job.ErrorCount > 0 {
@@ -1479,7 +1453,7 @@ func TestTiFlashReorgPartition(t *testing.T) {
 				done = true
 			}
 		}
-	}
+	})
 	tk.MustExec(`alter table ddltiflash reorganize partition p0 into (partition p0 values less than (500000), partition p500k values less than (1000000))`)
 	tk.MustExec(`admin check table ddltiflash`)
 	_, ok = s.tiflash.GetPlacementRule(ruleName)

@@ -274,6 +274,7 @@ import (
 	tableSample       "TABLESAMPLE"
 	terminated        "TERMINATED"
 	then              "THEN"
+	tidbCurrentTSO    "TIDB_CURRENT_TSO"
 	tinyblobType      "TINYBLOB"
 	tinyIntType       "TINYINT"
 	tinytextType      "TINYTEXT"
@@ -281,7 +282,6 @@ import (
 	trailing          "TRAILING"
 	trigger           "TRIGGER"
 	trueKwd           "TRUE"
-	tidbCurrentTSO    "TiDB_CURRENT_TSO"
 	union             "UNION"
 	unique            "UNIQUE"
 	unlock            "UNLOCK"
@@ -7950,7 +7950,7 @@ FunctionNameOptionalBraces:
 |	"CURRENT_DATE"
 |	"CURRENT_ROLE"
 |	"UTC_DATE"
-|	"TiDB_CURRENT_TSO"
+|	"TIDB_CURRENT_TSO"
 
 FunctionNameDatetimePrecision:
 	"CURRENT_TIME"

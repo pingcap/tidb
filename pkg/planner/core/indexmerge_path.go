@@ -1003,7 +1003,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		}
 	}
 
-	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, tableFilters, ds.TableStats.HistColl)
+	mvp := buildPartialPathUp4MVIndex(combinedPartialPaths, true, tableFilters, ds.TableStats.HistColl)
 
 	ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, mvp)
 	return nil
@@ -1085,7 +1085,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			path.IndexFilters = append(path.IndexFilters, clonedIdxFilters...)
 		}
 
-		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, ds.buildPartialPathUp4MVIndex(
+		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, buildPartialPathUp4MVIndex(
 			partialPaths,
 			isIntersection,
 			tableFilters,
@@ -1097,7 +1097,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 }
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
-func (*DataSource) buildPartialPathUp4MVIndex(
+func buildPartialPathUp4MVIndex(
 	partialPaths []*util.AccessPath,
 	isIntersection bool,
 	remainingFilters []expression.Expression,
