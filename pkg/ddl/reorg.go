@@ -142,7 +142,7 @@ func newReorgSessCtx(store kv.Storage) sessionctx.Context {
 
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
 // make it a var for testing.
-var ReorgWaitTimeout = 10 * time.Second
+var ReorgWaitTimeout = 5 * time.Second
 
 func (rc *reorgCtx) notifyJobState(state model.JobState) {
 	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
