@@ -246,7 +246,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			return nil, err
 		}
 
-		opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
+		ignoreAssertion := opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
 		if !distinct || skipCheck || untouched {
 			val := idxVal
@@ -271,7 +271,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					return nil, err
 				}
 			}
-			if !opt.IgnoreAssertion && !untouched {
+			if !ignoreAssertion && !untouched {
 				if opt.DupKeyCheck == table.DupKeyCheckLazy && !txn.IsPessimistic() {
 					err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				} else {
@@ -346,7 +346,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					return nil, err
 				}
 			}
-			if opt.IgnoreAssertion {
+			if ignoreAssertion {
 				continue
 			}
 			if lazyCheck && !txn.IsPessimistic() {
