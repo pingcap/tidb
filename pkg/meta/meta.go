@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/fastjson"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
@@ -1146,6 +1147,51 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 	}
 
 	return tables, nil
+}
+
+var tableNameInfoFields = []string{"id", "name"}
+
+func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
+	m, err := fastjson.ExtractTopLevelMembers(data, tableNameInfoFields)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	idTokens, ok := m["id"]
+	if !ok {
+		return nil, errors.New("id field not found in JSON")
+	}
+	if len(idTokens) != 1 {
+		return nil, errors.Errorf("unexpected id field in JSON, %v", idTokens)
+	}
+	num, ok := idTokens[0].(json.Number)
+	if !ok {
+		return nil, errors.Errorf(
+			"id field is not a number, got %T %v", idTokens[0], idTokens[0],
+		)
+	}
+	id, err := num.Int64()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	nameTokens, ok := m["name"]
+	if !ok {
+		return nil, errors.New("name field not found in JSON")
+	}
+	// 6 tokens; {, O, ..., L, ..., }
+	if len(nameTokens) != 6 {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+	name, ok := nameTokens[2].(string)
+	if !ok {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+
+	return &model.TableNameInfo{
+		ID:   id,
+		Name: model.NewCIStr(name),
+	}, nil
 }
 
 // ListDatabases shows all databases.
