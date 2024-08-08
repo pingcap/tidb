@@ -62,7 +62,6 @@ var extractableColumns = map[string][]string{
 	// Used by InfoSchemaStatisticsExtractor and setDataForStatistics.
 	infoschema.TableStatistics: {
 		_tableSchema, _tableName,
-		_indexName,
 	},
 	// See infoschema.schemataCols for full columns.
 	// Used by InfoSchemaSchemataExtractor and setDataFromSchemata.
@@ -74,7 +73,7 @@ var extractableColumns = map[string][]string{
 	infoschema.TableTiDBIndexes: {
 		_tableSchema,
 		_tableName,
-		_indexName,
+		"key_name",
 	},
 	// See infoschema.tableViewsCols for full columns.
 	// Used by InfoSchemaViewsExtractor and setDataFromViews.

@@ -337,22 +337,22 @@ executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
 executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader';
 TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
-executor__infoschema_reader	t_int	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
-executor__infoschema_reader	t_implicit	0	PRIMARY	1	a	NULL		NULL	1	YES	NO	0
-executor__infoschema_reader	t_common	0	PRIMARY	1	a	NULL		NULL	1	YES	YES	0
 executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
 executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
+executor__infoschema_reader	t_common	0	PRIMARY	1	a	NULL		NULL	1	YES	YES	0
+executor__infoschema_reader	t_implicit	0	PRIMARY	1	a	NULL		NULL	1	YES	NO	0
+executor__infoschema_reader	t_int	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and table_name = 't';
 TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
 executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
 executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' or table_name = 't';
 TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
-executor__infoschema_reader	t_int	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
-executor__infoschema_reader	t_implicit	0	PRIMARY	1	a	NULL		NULL	1	YES	NO	0
-executor__infoschema_reader	t_common	0	PRIMARY	1	a	NULL		NULL	1	YES	YES	0
 executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
 executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
+executor__infoschema_reader	t_common	0	PRIMARY	1	a	NULL		NULL	1	YES	YES	0
+executor__infoschema_reader	t_implicit	0	PRIMARY	1	a	NULL		NULL	1	YES	NO	0
+executor__infoschema_reader	t_int	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
 select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and column_name = 'c';
 TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
 executor__infoschema_reader	t	1	idx	1	c	NULL		NULL	1	YES	NO	0
@@ -381,19 +381,19 @@ CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	
 def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t	a	1	1	NULL	NULL	NULL
 select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
-def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_int	a	1	1	NULL	NULL	NULL
-def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_implicit	a	1	NULL	NULL	NULL	NULL
-def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_common	a	1	NULL	NULL	NULL	NULL
 def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t	a	1	1	NULL	NULL	NULL
+def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_common	a	1	NULL	NULL	NULL	NULL
+def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_implicit	a	1	NULL	NULL	NULL	NULL
+def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_int	a	1	1	NULL	NULL	NULL
 select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and table_name = 't';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
 def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t	a	1	1	NULL	NULL	NULL
 select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' or table_name = 't';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
-def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_int	a	1	1	NULL	NULL	NULL
-def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_implicit	a	1	NULL	NULL	NULL	NULL
-def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_common	a	1	NULL	NULL	NULL	NULL
 def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t	a	1	1	NULL	NULL	NULL
+def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_common	a	1	NULL	NULL	NULL	NULL
+def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_implicit	a	1	NULL	NULL	NULL	NULL
+def	executor__infoschema_reader	PRIMARY	def	executor__infoschema_reader	t_int	a	1	1	NULL	NULL	NULL
 select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'c';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
 select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'non_exist';
@@ -403,23 +403,21 @@ select * from information_schema.table_constraints where table_name = 'tc';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_implicit	PRIMARY KEY
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_common	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t	PRIMARY KEY
+def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_common	PRIMARY KEY
+def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_implicit	PRIMARY KEY
+def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'tc';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' or table_name = 'tc';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_implicit	PRIMARY KEY
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_common	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t	PRIMARY KEY
+def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_common	PRIMARY KEY
+def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_implicit	PRIMARY KEY
+def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_implicit	PRIMARY KEY
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_common	PRIMARY KEY
 def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t	PRIMARY KEY

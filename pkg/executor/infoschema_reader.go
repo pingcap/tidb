@@ -1330,7 +1330,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 
 	var rows [][]types.Datum
 	for i, table := range tables {
-		rows, err = e.setDataFromIndex(ctx, sctx, schemas[i], table, rows)
+		rows, err = e.setDataFromIndex(ctx, sctx, ex, schemas[i], table, rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1341,6 +1341,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 
 func (e *memtableRetriever) setDataFromIndex(ctx context.Context,
 	sctx sessionctx.Context,
+	ex *plannercore.InfoSchemaIndexesExtractor,
 	schema model.CIStr,
 	tb *model.TableInfo,
 	rows [][]types.Datum) ([][]types.Datum, error) {
@@ -1350,29 +1351,31 @@ func (e *memtableRetriever) setDataFromIndex(ctx context.Context,
 	}
 
 	if tb.PKIsHandle {
-		var pkCol *model.ColumnInfo
-		for _, col := range tb.Cols() {
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				pkCol = col
-				break
+		if ex == nil || !ex.Filter("key_name", "PRIMARY") {
+			var pkCol *model.ColumnInfo
+			for _, col := range tb.Cols() {
+				if mysql.HasPriKeyFlag(col.GetFlag()) {
+					pkCol = col
+					break
+				}
 			}
+			record := types.MakeDatums(
+				schema.O,     // TABLE_SCHEMA
+				tb.Name.O,    // TABLE_NAME
+				0,            // NON_UNIQUE
+				"PRIMARY",    // KEY_NAME
+				1,            // SEQ_IN_INDEX
+				pkCol.Name.O, // COLUMN_NAME
+				nil,          // SUB_PART
+				"",           // INDEX_COMMENT
+				nil,          // Expression
+				0,            // INDEX_ID
+				"YES",        // IS_VISIBLE
+				"YES",        // CLUSTERED
+				0,            // IS_GLOBAL
+			)
+			rows = append(rows, record)
 		}
-		record := types.MakeDatums(
-			schema.O,     // TABLE_SCHEMA
-			tb.Name.O,    // TABLE_NAME
-			0,            // NON_UNIQUE
-			"PRIMARY",    // KEY_NAME
-			1,            // SEQ_IN_INDEX
-			pkCol.Name.O, // COLUMN_NAME
-			nil,          // SUB_PART
-			"",           // INDEX_COMMENT
-			nil,          // Expression
-			0,            // INDEX_ID
-			"YES",        // IS_VISIBLE
-			"YES",        // CLUSTERED
-			0,            // IS_GLOBAL
-		)
-		rows = append(rows, record)
 	}
 	for _, idxInfo := range tb.Indices {
 		if idxInfo.State != model.StatePublic {
@@ -1381,6 +1384,9 @@ func (e *memtableRetriever) setDataFromIndex(ctx context.Context,
 		isClustered := "NO"
 		if tb.IsCommonHandle && idxInfo.Primary {
 			isClustered = "YES"
+		}
+		if ex.Filter("key_name", idxInfo.Name.O) {
+			continue
 		}
 		for i, col := range idxInfo.Columns {
 			nonUniq := 1
@@ -1740,6 +1746,8 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
+		rs := keyColumnUsageInTable(schema, table, ex)
+		rows = append(rows, rs...)
 	}
 	e.rows = rows
 	return nil
@@ -1807,7 +1815,7 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	e.rows = rows
 }
 
-func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaBaseExtractor) [][]types.Datum {
+func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
@@ -2173,6 +2181,9 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 		}
 		//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
 		for _, fk := range tbl.ForeignKeys {
+			if ok && ex.Filter("constraint_name", fk.Name.O) {
+				continue
+			}
 			record := types.MakeDatums(
 				infoschema.CatalogVal,     // CONSTRAINT_CATALOG
 				schema.O,                  // CONSTRAINT_SCHEMA
