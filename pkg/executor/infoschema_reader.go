@@ -1338,7 +1338,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 	return nil
 }
 
-func (_ *memtableRetriever) setDataFromIndex(
+func (*memtableRetriever) setDataFromIndex(
 	sctx sessionctx.Context,
 	ex *plannercore.InfoSchemaIndexesExtractor,
 	schema model.CIStr,

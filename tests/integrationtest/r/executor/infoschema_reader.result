@@ -331,6 +331,7 @@ sleep(1)
 select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
 table_rows	avg_row_length	data_length	index_length
 3	18	54	6
+drop table if exists test.t;
 select * from information_schema.tidb_indexes where table_name = 't';
 TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
 executor__infoschema_reader	t	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
