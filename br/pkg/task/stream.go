@@ -436,18 +436,6 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 		m.ClusterVersion = clusterVersion
 	})
 
-	schemas := backup.NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
-		return backup.BuildFullSchema(storage, s.cfg.StartTS, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
-			fn(dbInfo, tableInfo)
-		})
-	}, 0)
-
-	err = schemas.BackupSchemas(ctx, metaWriter, nil, s.mgr.GetStorage(), nil,
-		s.cfg.StartTS, backup.DefaultSchemaConcurrency, 0, true, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1359,7 +1347,6 @@ func restoreStream(
 	// get the schemas ID replace information.
 	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &restore.InitSchemaConfig{
 		IsNewTask:         newTask,
-		HasFullRestore:    len(cfg.FullBackupStorage) > 0,
 		TableFilter:       cfg.TableFilter,
 		TiFlashRecorder:   cfg.tiflashRecorder,
 		FullBackupStorage: fullBackupStorage,
@@ -1676,14 +1663,21 @@ func getFullBackupTS(
 
 func parseFullBackupTablesStorage(
 	cfg *RestoreConfig,
+<<<<<<< HEAD
 ) (*restore.FullBackupStorageConfig, error) {
 	var storageName string
 	if len(cfg.FullBackupStorage) > 0 {
 		storageName = cfg.FullBackupStorage
 	} else {
 		storageName = cfg.Storage
+=======
+) (*logclient.FullBackupStorageConfig, error) {
+	if len(cfg.FullBackupStorage) == 0 {
+		log.Info("the full backup path is not specified, so BR will try to get id maps")
+		return nil, nil
+>>>>>>> ce45eff1580 (br: error if the log restore has no full backup schema or id maps (#54421))
 	}
-	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(cfg.FullBackupStorage, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
