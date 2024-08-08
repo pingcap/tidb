@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/disttaskhelper"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -61,7 +61,7 @@ func TestBackfillOperators(t *testing.T) {
 		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey, nil)
-		sink := disttaskhelper.NewOperatorTestSink[ddl.TableScanTask]()
+		sink := testutil.NewOperatorTestSink[ddl.TableScanTask]()
 
 		operator.Compose[ddl.TableScanTask](src, sink)
 
@@ -94,9 +94,9 @@ func TestBackfillOperators(t *testing.T) {
 
 		ctx := context.Background()
 		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-		src := disttaskhelper.NewOperatorTestSource(opTasks...)
+		src := testutil.NewOperatorTestSource(opTasks...)
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil)
-		sink := disttaskhelper.NewOperatorTestSink[ddl.IndexRecordChunk]()
+		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
 		operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
@@ -140,12 +140,12 @@ func TestBackfillOperators(t *testing.T) {
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		mockEngine.SetHook(onWrite)
 
-		src := disttaskhelper.NewOperatorTestSource(chunkResults...)
+		src := testutil.NewOperatorTestSource(chunkResults...)
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
 			opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
 			srcChkPool, 3, reorgMeta, nil, &ddl.EmptyRowCntListener{})
-		sink := disttaskhelper.NewOperatorTestSink[ddl.IndexWriteResult]()
+		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
 		operator.Compose[ddl.IndexWriteResult](ingestOp, sink)

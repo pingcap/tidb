@@ -315,7 +315,6 @@ go_test(
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/testkit",
-        "//pkg/testkit/disttaskhelper",
         "//pkg/testkit/external",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",

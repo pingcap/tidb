@@ -27,7 +27,6 @@ go_test(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/testkit",
-        "//pkg/testkit/disttaskhelper",
         "//pkg/testkit/testfailpoint",
         "//pkg/util/chunk",
         "//tests/realtikvtest",

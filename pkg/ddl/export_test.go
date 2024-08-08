@@ -21,12 +21,12 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/testkit/disttaskhelper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -46,9 +46,9 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
 	}
 	opCtx := NewLocalOperatorCtx(context.Background(), 1)
-	src := disttaskhelper.NewOperatorTestSource(TableScanTask{1, startKey, endKey})
+	src := testutil.NewOperatorTestSource(TableScanTask{1, startKey, endKey})
 	scanOp := NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil)
-	sink := disttaskhelper.NewOperatorTestSink[IndexRecordChunk]()
+	sink := testutil.NewOperatorTestSink[IndexRecordChunk]()
 
 	operator.Compose[TableScanTask](src, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, sink)
