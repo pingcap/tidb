@@ -819,7 +819,6 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		case IndexVisibilityInvisible:
 			ctx.WriteKeyWord("INVISIBLE")
 		}
-		hasPrevOption = true
 	}
 	return nil
 }
