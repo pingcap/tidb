@@ -707,6 +707,9 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			accesses[offset] = cond
 			continue
 		}
+		if mergedAccesses[offset] == nil || offset != i {
+			filters = append(filters, cond)
+		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
 		newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
