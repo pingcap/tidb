@@ -735,6 +735,11 @@ func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expres
 	retType := col.GetType(ctx.GetEvalCtx())
 	args := make([]expression.Expression, 0, len(points)/2)
 	args = append(args, col)
+	if len(points) == 2 {
+		if points[0].value.IsNull() && points[0].value.IsNull() {
+			return expression.NewFunctionInternal(ctx, ast.IsNull, retType, args...)
+		}
+	}
 	for i := 0; i < len(points); i = i + 2 {
 		value := &expression.Constant{
 			Value:   points[i].value,

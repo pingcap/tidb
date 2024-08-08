@@ -177,13 +177,13 @@ WHERE ISNULL(tcd8c2aac.col_21) OR tcd8c2aac.col_21='yJTkLeL5^yJ'
 GROUP BY tcd8c2aac.col_21
 HAVING ISNULL(tcd8c2aac.col_21)
 LIMIT 48579914;`).Check(testkit.Rows(
-		"Limit_16 12.80 root  offset:0, count:48579914",
-		"└─HashAgg_17 12.80 root  group by:test.tcd8c2aac.col_21, funcs:group_concat(test.tcd8c2aac.col_21 order by test.tcd8c2aac.col_21 separator \",\")->Column#14",
-		"  └─HashJoin_20 160000.00 root  CARTESIAN inner join",
-		"    ├─IndexLookUp_27(Build) 16.00 root  ",
-		"    │ ├─IndexRangeScan_24(Build) 20.00 cop[tikv] table:tcd8c2aac, index:idx_12(col_21) range:[NULL,NULL], [\"\\x00Y\",\"\\x00Y\"], keep order:false, stats:pseudo",
-		"    │ └─Selection_26(Probe) 16.00 cop[tikv]  or(isnull(test.tcd8c2aac.col_21), eq(test.tcd8c2aac.col_21, \"yJTkLeL5^yJ\"))",
-		"    │   └─TableRowIDScan_25 20.00 cop[tikv] table:tcd8c2aac keep order:false, stats:pseudo",
+		"Limit_16 6.40 root  offset:0, count:48579914",
+		"└─HashAgg_17 6.40 root  group by:test.tcd8c2aac.col_21, funcs:group_concat(test.tcd8c2aac.col_21 order by test.tcd8c2aac.col_21 separator \",\")->Column#14",
+		"  └─HashJoin_20 80000.00 root  CARTESIAN inner join",
+		"    ├─IndexLookUp_27(Build) 8.00 root  ",
+		"    │ ├─Selection_26(Build) 8.00 cop[tikv]  isnull(test.tcd8c2aac.col_21)",
+		"    │ │ └─IndexRangeScan_24 10.00 cop[tikv] table:tcd8c2aac, index:idx_12(col_21) range:[NULL,NULL], keep order:false, stats:pseudo",
+		"    │ └─TableRowIDScan_25(Probe) 8.00 cop[tikv] table:tcd8c2aac keep order:false, stats:pseudo",
 		"    └─IndexReader_31(Probe) 10000.00 root  index:IndexFullScan_30",
 		"      └─IndexFullScan_30 10000.00 cop[tikv] table:tle50fd846, index:PRIMARY(col_48) keep order:false, stats:pseudo"))
 	tk.MustQuery(`SELECT GROUP_CONCAT(tcd8c2aac.col_21 ORDER BY tcd8c2aac.col_21 SEPARATOR ',') AS r0
@@ -226,10 +226,9 @@ WHERE ISNULL(ta31c32a7.col_63)
 GROUP BY ta31c32a7.col_63
 HAVING ISNULL(ta31c32a7.col_63)
 LIMIT 65122436;`).Check(testkit.Rows(
-		"Limit_13 25.60 root  offset:0, count:65122436",
-		"└─StreamAgg_46 25.60 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#6)->Column#3",
-		"  └─IndexReader_47 25.60 root  index:StreamAgg_17",
-		"    └─StreamAgg_17 25.60 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#6",
-		"      └─Selection_41 32.00 cop[tikv]  isnull(test.ta31c32a7.col_63)",
-		"        └─IndexRangeScan_40 40.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], [1531.4023068774668,1531.4023068774668], [1780.7418079754723,1780.7418079754723], [5904.959667345741,5904.959667345741], keep order:true, stats:pseudo"))
+		"Limit_13 6.40 root  offset:0, count:65122436",
+		"└─StreamAgg_37 6.40 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#6)->Column#3",
+		"  └─IndexReader_38 6.40 root  index:StreamAgg_17",
+		"    └─StreamAgg_17 6.40 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#6",
+		"      └─IndexRangeScan_34 10.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], keep order:true, stats:pseudo"))
 }
