@@ -266,7 +266,7 @@ func TestHashJoinRandomFail(t *testing.T) {
 	joinTypes = append(joinTypes, plannercore.LeftOuterJoin)
 	joinTypes = append(joinTypes, plannercore.RightOuterJoin)
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1000; i++ {
 		for j, joinType := range joinTypes {
 			for k, param := range params {
 				log.Info(fmt.Sprintf("xzxdebug start new testcase %d %d ---------------", j, k))

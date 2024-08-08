@@ -419,6 +419,7 @@ type HashJoinV2Exec struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
+	log.Info("xzxdebug Closed is called")
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
