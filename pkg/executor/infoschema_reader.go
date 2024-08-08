@@ -1330,7 +1330,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 
 	var rows [][]types.Datum
 	for i, table := range tables {
-		rows, err = e.setDataFromIndex(ctx, sctx, ex, schemas[i], table, rows)
+		rows, err = e.setDataFromIndex(sctx, ex, schemas[i], table, rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1339,7 +1339,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromIndex(ctx context.Context,
+func (_ *memtableRetriever) setDataFromIndex(
 	sctx sessionctx.Context,
 	ex *plannercore.InfoSchemaIndexesExtractor,
 	schema model.CIStr,
@@ -1443,7 +1443,7 @@ func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionct
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(tables))
 	for i, table := range tables {
 		schema := schemas[i]
 		if !table.IsView() {
@@ -2132,7 +2132,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(tables))
 	for i, tbl := range tables {
 		schema := schemas[i]
 		if ok && ex.Filter("constraint_schema", schema.L) {
