@@ -1150,6 +1150,7 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 
 var tableNameInfoFields = []string{"id", "name"}
 
+// FastUnmarshalTableNameInfo is exported for testing.
 func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 	m, err := fastjson.ExtractTopLevelMembers(data, tableNameInfoFields)
 	if err != nil {

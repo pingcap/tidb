@@ -32,9 +32,9 @@ func TestIter(t *testing.T) {
 
 	for _, ca := range failCases {
 		i := newTopLevelJSONTokenIter([]byte(ca[0]))
-		_, err := i.next()
+		_, err := i.next(false)
 		for err == nil {
-			_, err = i.next()
+			_, err = i.next(false)
 		}
 		require.ErrorContains(t, err, ca[1], "content: %s", ca[0])
 	}
@@ -59,11 +59,11 @@ func TestIter(t *testing.T) {
 	for content, expected := range succCases {
 		i := newTopLevelJSONTokenIter([]byte(content))
 		for _, e := range expected {
-			tok, err := i.next()
+			tok, err := i.next(false)
 			require.NoError(t, err, "content: %s", content)
 			require.Equal(t, e, tok, "content: %s", content)
 		}
-		_, err := i.next()
+		_, err := i.next(false)
 		require.ErrorIs(t, err, io.EOF, "content: %s", content)
 	}
 }
