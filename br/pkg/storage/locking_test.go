@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -67,7 +68,7 @@ func TestRWLock(t *testing.T) {
 	require.NoError(t, err)
 	lock2, err := storage.TryLockRemoteRead(ctx, strg, "test.lock", "I wanna read it too!")
 	require.NoError(t, err)
-	_, err = storage.TryLockRemoteWrite(ctx, strg, "test.lock", "I wanna write it, you gotta out!")
+	_, err = storage.TryLockRemoteWrite(ctx, strg, "test.lock", "I wanna write it, you get out!")
 	require.Error(t, err)
 	require.NoError(t, lock.Unlock(ctx))
 	require.NoError(t, lock2.Unlock(ctx))
@@ -76,4 +77,39 @@ func TestRWLock(t *testing.T) {
 	requireFileExists(t, filepath.Join(path, "test.lock.WRIT"))
 	require.NoError(t, l.Unlock(ctx))
 	requireFileNotExists(t, filepath.Join(path, "test.lock.WRIT"))
+}
+
+func TestConcurrentLock(t *testing.T) {
+	ctx := context.Background()
+	strg, path := createMockStorage(t)
+
+	errChA := make(chan error, 1)
+	errChB := make(chan error, 1)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-1", "1*pause"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-2", "1*pause"))
+
+	go func() {
+		_, err := storage.TryLockRemote(ctx, strg, "test.lock", "I wanna read it, but I hesitated before send my intention!")
+		errChA <- err
+	}()
+
+	go func() {
+		_, err := storage.TryLockRemote(ctx, strg, "test.lock", "I wanna read it too, but I hesitated before committing!")
+		errChB <- err
+	}()
+
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-1")
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-2")
+
+	// There is exactly one error.
+	errA := <-errChA
+	errB := <-errChB
+	if errA == nil {
+		require.Error(t, errB)
+	} else {
+		require.NoError(t, errB)
+	}
+
+	requireFileExists(t, filepath.Join(path, "test.lock"))
 }

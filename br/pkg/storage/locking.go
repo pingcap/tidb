@@ -15,15 +15,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
-// ExclusiveWrite is a write that in a strong consistency storage, it will either:
-// - The written file won't be override by other `ExclusiveWrite` writers.
-// - Or it files.
+// ExclusiveWrite is a write that in a strong consistency storage.
+//
+// It is pretty like a "write if not exist", but it is atomic:
+//
+// if the write is success and the file wasn't deleted, no other `ExclusiveWrite`
+// over the same file was success.
 type ExclusiveWrite struct {
 	// Target is the target file of this txn.
 	// There shouldn't be other files shares this prefix with this file, or the txn will fail.
@@ -54,6 +58,7 @@ func (c *VerifyWriteContext) IntentFileName() string {
 //
 // In each phase, before writing, it will verify whether the storage is suitable for writing, that is:
 // - There shouldn't be any other intention files.
+// - Verify() returns no error. (If there is one.)
 func (w ExclusiveWrite) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
 	txnID := uuid.New()
 	cx := VerifyWriteContext{
@@ -68,12 +73,13 @@ func (w ExclusiveWrite) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 		if w.Verify != nil {
 			err = multierr.Append(err, w.Verify(cx))
 		}
-		return multierr.Append(err, assertNoOtherFileOfPrefix(cx, s, w.Target, intentFileName))
+		return multierr.Append(err, cx.assertOnlyMyIntent())
 	}
 
 	if err := checkConflict(); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during initial check")
 	}
+	failpoint.Inject("exclusive-write-commit-to-1", func() {})
 
 	if err := s.WriteFile(cx, intentFileName, []byte{}); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during writing intention file")
@@ -88,14 +94,16 @@ func (w ExclusiveWrite) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 	if err := checkConflict(); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during checking whether there are other intentions")
 	}
+	failpoint.Inject("exclusive-write-commit-to-2", func() {})
 
 	return txnID, s.WriteFile(cx, w.Target, w.Content(txnID))
 }
 
-func assertNoOtherFileOfPrefix(ctx context.Context, s ExternalStorage, pfx string, expect string) error {
+// assertNoOtherOfPrefixExpect asserts that there is no other file with the same prefix than the expect file.
+func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect string) error {
 	fileName := path.Base(pfx)
 	dirName := path.Dir(pfx)
-	return s.WalkDir(ctx, &WalkOption{
+	return cx.Storage.WalkDir(cx, &WalkOption{
 		SubDir:    dirName,
 		ObjPrefix: fileName,
 	}, func(path string, size int64) error {
@@ -104,6 +112,11 @@ func assertNoOtherFileOfPrefix(ctx context.Context, s ExternalStorage, pfx strin
 		}
 		return nil
 	})
+}
+
+// assertOnlyMyIntent asserts that there is no other intention file than our intention file.
+func (cx VerifyWriteContext) assertOnlyMyIntent() error {
+	return cx.assertNoOtherOfPrefixExpect(cx.Target, cx.IntentFileName())
 }
 
 // LockMeta is the meta information of a lock.
@@ -165,6 +178,14 @@ type RemoteLock struct {
 	path    string
 }
 
+func tryFetchRemoteLock(ctx context.Context, storage ExternalStorage, path string) error {
+	meta, err := readLockMeta(ctx, storage, path)
+	if err != nil {
+		return err
+	}
+	return ErrLocked{Meta: meta}
+}
+
 // TryLockRemote tries to create a "lock file" at the external storage.
 // If success, we will create a file at the path provided. So others may not access the file then.
 // Will return a `ErrLocked` if there is another process already creates the lock file.
@@ -191,6 +212,9 @@ func TryLockRemote(ctx context.Context, storage ExternalStorage, path, hint stri
 	lock.storage = storage
 	lock.path = path
 	lock.txnID, err = writer.CommitTo(ctx, storage)
+	if err != nil {
+		err = errors.Annotatef(err, "there is something about the lock: %s", tryFetchRemoteLock(ctx, storage, path))
+	}
 	return
 }
 
@@ -218,8 +242,9 @@ func (l RemoteLock) Unlock(ctx context.Context) error {
 }
 
 func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
+	target := fmt.Sprintf("%s.WRIT", path)
 	writer := ExclusiveWrite{
-		Target: fmt.Sprintf("%s.WRIT", path),
+		Target: target,
 		Content: func(txnID uuid.UUID) []byte {
 			meta := MakeLockMeta(hint)
 			meta.TxnID = txnID[:]
@@ -234,20 +259,25 @@ func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint
 			return res
 		},
 		Verify: func(ctx VerifyWriteContext) error {
-			return assertNoOtherFileOfPrefix(ctx, ctx.Storage, ctx.Target, ctx.IntentFileName())
+			return ctx.assertNoOtherOfPrefixExpect(path, ctx.IntentFileName())
 		},
 	}
 
 	lock.storage = storage
-	lock.path = path
+	lock.path = target
 	lock.txnID, err = writer.CommitTo(ctx, storage)
+	if err != nil {
+		err = errors.Annotatef(err, "there is something about the lock: %s", tryFetchRemoteLock(ctx, storage, target))
+	}
 	return
 }
 
 func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
-	readSpec := rand.Int63()
+	readID := rand.Int63()
+	target := fmt.Sprintf("%s.READ.%016x", path, readID)
+	writeLock := fmt.Sprintf("%s.WRIT", target)
 	writer := ExclusiveWrite{
-		Target: fmt.Sprintf("%s.READ.%016x", path, readSpec),
+		Target: target,
 		Content: func(txnID uuid.UUID) []byte {
 			meta := MakeLockMeta(hint)
 			meta.TxnID = txnID[:]
@@ -262,12 +292,16 @@ func TryLockRemoteRead(ctx context.Context, storage ExternalStorage, path, hint 
 			return res
 		},
 		Verify: func(ctx VerifyWriteContext) error {
-			return assertNoOtherFileOfPrefix(ctx, ctx.Storage, fmt.Sprintf("%s.WRIT", ctx.Target), "")
+			return ctx.assertNoOtherOfPrefixExpect(writeLock, "")
 		},
 	}
 
 	lock.storage = storage
-	lock.path = path
+	lock.path = target
 	lock.txnID, err = writer.CommitTo(ctx, storage)
+	if err != nil {
+		err = errors.Annotatef(err, "there is something about the lock: %s", tryFetchRemoteLock(ctx, storage, writeLock))
+	}
+
 	return
 }
