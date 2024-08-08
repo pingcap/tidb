@@ -35,7 +35,7 @@ import (
 // SessionBindingHandle is used to handle all session sql bind operations.
 type SessionBindingHandle interface {
 	// CreateSessionBinding creates a binding to the cache.
-	CreateSessionBinding(sctx sessionctx.Context, binding Binding) (err error)
+	CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
 
 	// DropSessionBinding drops a binding by the sql digest.
 	DropSessionBinding(sqlDigest string) error
@@ -75,17 +75,23 @@ func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindi
 
 // CreateSessionBinding creates a Bindings to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, binding Binding) (err error) {
-	if err := prepareHints(sctx, &binding); err != nil {
-		return err
-	}
-	binding.Db = strings.ToLower(binding.Db)
-	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
-	binding.CreateTime = now
-	binding.UpdateTime = now
+func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
+	for _, binding := range bindings {
+		if err := prepareHints(sctx, binding); err != nil {
+			return err
+		}
+		binding.Db = strings.ToLower(binding.Db)
+		now := types.NewTime(
+			types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())),
+			mysql.TypeTimestamp,
+			3,
+		)
+		binding.CreateTime = now
+		binding.UpdateTime = now
 
-	// update the BindMeta to the cache.
-	h.appendSessionBinding(parser.DigestNormalized(binding.OriginalSQL).String(), []Binding{binding})
+		// update the BindMeta to the cache.
+		h.appendSessionBinding(parser.DigestNormalized(binding.OriginalSQL).String(), []Binding{*binding})
+	}
 	return nil
 }
 

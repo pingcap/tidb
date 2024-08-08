@@ -264,10 +264,14 @@ const (
 type SQLBindPlan struct {
 	baseSchemaProducer
 
-	SQLBindOp    SQLBindOpType
+	IsGlobal  bool
+	SQLBindOp SQLBindOpType
+	Details   []*SQLBindOpDetail
+}
+
+type SQLBindOpDetail struct {
 	NormdOrigSQL string
 	BindSQL      string
-	IsGlobal     bool
 	BindStmt     ast.StmtNode
 	Db           string
 	Charset      string

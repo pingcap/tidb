@@ -55,7 +55,7 @@ type GlobalBindingHandle interface {
 
 	// CreateGlobalBinding creates a Bindings to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
-	CreateGlobalBinding(sctx sessionctx.Context, binding Binding) (err error)
+	CreateGlobalBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
 
 	// DropGlobalBinding drop Bindings to the storage and Bindings int the cache.
 	DropGlobalBinding(sqlDigest string) (deletedRows uint64, err error)
@@ -256,9 +256,11 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 
 // CreateGlobalBinding creates a Bindings to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, binding Binding) (err error) {
-	if err := prepareHints(sctx, &binding); err != nil {
-		return err
+func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
+	for _, binding := range bindings {
+		if err := prepareHints(sctx, binding); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		if err == nil {
@@ -272,34 +274,44 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 			return err
 		}
 
-		now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+		for _, binding := range bindings {
+			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
-		updateTs := now.String()
-		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-			deleted, updateTs, binding.OriginalSQL, updateTs)
-		if err != nil {
-			return err
-		}
+			updateTs := now.String()
+			_, err = exec(
+				sctx,
+				`UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+				deleted,
+				updateTs,
+				binding.OriginalSQL,
+				updateTs,
+			)
+			if err != nil {
+				return err
+			}
 
-		binding.CreateTime = now
-		binding.UpdateTime = now
+			binding.CreateTime = now
+			binding.UpdateTime = now
 
-		// Insert the Bindings to the storage.
-		_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
-			binding.OriginalSQL,
-			binding.BindSQL,
-			strings.ToLower(binding.Db),
-			binding.Status,
-			binding.CreateTime.String(),
-			binding.UpdateTime.String(),
-			binding.Charset,
-			binding.Collation,
-			binding.Source,
-			binding.SQLDigest,
-			binding.PlanDigest,
-		)
-		if err != nil {
-			return err
+			// Insert the Bindings to the storage.
+			_, err = exec(
+				sctx,
+				`INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+				binding.OriginalSQL,
+				binding.BindSQL,
+				strings.ToLower(binding.Db),
+				binding.Status,
+				binding.CreateTime.String(),
+				binding.UpdateTime.String(),
+				binding.Charset,
+				binding.Collation,
+				binding.Source,
+				binding.SQLDigest,
+				binding.PlanDigest,
+			)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})

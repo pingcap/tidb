@@ -1324,6 +1324,8 @@ import (
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
+	StringLitOrUserVariable                "stringLit or user variable"
+    StringLitOrUserVariableList            "stringLit or user variable list"
 	BindingStatusType                      "binding status type value"
 	StringList                             "string list"
 	SubPartDefinition                      "SubPartition definition"
@@ -13945,14 +13947,34 @@ CreateBindingStmt:
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" StringLitOrUserVariableList
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			PlanDigest:  $9,
+			PlanDigests:  $9.([]*ast.StringOrUserVar),
 		}
 
 		$$ = x
+	}
+
+StringLitOrUserVariableList:
+	StringLitOrUserVariable
+	{
+		$$ = []*ast.StringOrUserVar{$1.(*ast.StringOrUserVar)}
+	}
+|	StringLitOrUserVariableList ',' StringLitOrUserVariable
+	{
+		$$ = append($1.([]*ast.StringOrUserVar), $3.(*ast.StringOrUserVar))
+	}
+
+StringLitOrUserVariable:
+	stringLit
+	{
+		$$ = &ast.StringOrUserVar{StringLit: $1}
+	}
+|	UserVariable
+	{
+		$$ = &ast.StringOrUserVar{UserVar: $1.(*ast.VariableExpr)}
 	}
 
 /*******************************************************************
