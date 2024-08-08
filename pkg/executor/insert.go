@@ -245,7 +245,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		// - If `txn.Pipelined()`, it means current is using `@@tidb_dml_type="bulk"` to insert rows.
 		//   `DupKeyCheckLazy` should be used in "bulk" mode to avoid request storage and improve the performance.
 		// - If `txn.IsPessimistic()`, we can use `DupKeyCheckLazy` to postpone the storage constraints check
-		//   to subsequence stages such as lock.
+		//   to subsequence stages such as acquiring pessimistic locks.
 		//   However, if the current statement is `INSERT IGNORE ... ON DUPLICATE KEY ...`,
 		//   `DupKeyCheckInPlace` should be used.
 		//   It is because the executor should get the dup-key error immediately and ignore it.
