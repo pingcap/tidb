@@ -88,7 +88,7 @@ var (
 	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
 )
 
-func suppressErrorTooLongKeyKey(sctx sessionctx.Context) bool {
+func suppressErrorTooLongKeyForSchemaTracker(sctx sessionctx.Context) bool {
 	if sctx == nil {
 		return false
 	}
@@ -133,7 +133,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		}
 		sumLength += indexColumnLength
 
-		if !suppressErrorTooLongKeyKey(ctx) && sumLength > maxIndexLength {
+		if !suppressErrorTooLongKeyForSchemaTracker(ctx) && sumLength > maxIndexLength {
 			// The sum of all lengths must be shorter than the max length for prefix.
 
 			// The multiple column index and the unique index in which the length sum exceeds the maximum size
@@ -265,7 +265,7 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	// Specified length must be shorter than the max length for prefix.
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	if indexColumnLen > maxIndexLength {
-		if ctx == nil || (ctx.GetSessionVars().SQLMode.HasStrictMode() && !suppressErrorTooLongKeyKey(ctx)) {
+		if ctx == nil || (ctx.GetSessionVars().SQLMode.HasStrictMode() && !suppressErrorTooLongKeyForSchemaTracker(ctx)) {
 			// return error in strict sql mode
 			return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
 		}
