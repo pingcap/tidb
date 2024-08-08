@@ -249,17 +249,15 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 }
 
 func getAutoIncrementID(
-	ctx context.Context,
 	is infoschema.InfoSchema,
 	sctx sessionctx.Context,
-	schema model.CIStr,
 	tblInfo *model.TableInfo,
-) (int64, error) {
-	tbl, err := is.TableByName(ctx, schema, tblInfo.Name)
-	if err != nil {
-		return 0, err
+) int64 {
+	tbl, ok := is.TableByID(tblInfo.ID)
+	if !ok {
+		return 0
 	}
-	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1, nil
+	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
@@ -580,7 +578,6 @@ func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
-	ctx context.Context,
 	sctx sessionctx.Context,
 	loc *time.Location,
 	checker privilege.Manager,
@@ -607,14 +604,10 @@ func (e *memtableRetriever) setDataFromOneTable(
 		} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
 			createOptions = "cached=on"
 		}
-		var err error
 		var autoIncID any
 		hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 		if hasAutoIncID {
-			autoIncID, err = getAutoIncrementID(ctx, e.is, sctx, schema, table)
-			if err != nil {
-				return rows, err
-			}
+			autoIncID = getAutoIncrementID(e.is, sctx, table)
 		}
 		tableType := "BASE TABLE"
 		if util.IsSystemView(schema.L) {
@@ -734,7 +727,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		return errors.Trace(err)
 	}
 	for i, table := range tables {
-		rows, err = e.setDataFromOneTable(ctx, sctx, loc, checker, schemas[i], table, rows, useStatsCache)
+		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1747,8 +1740,6 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
-		rs := keyColumnUsageInTable(schema, table)
-		rows = append(rows, rs...)
 	}
 	e.rows = rows
 	return nil
@@ -1816,7 +1807,7 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	e.rows = rows
 }
 
-func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types.Datum {
+func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaBaseExtractor) [][]types.Datum {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
@@ -1854,6 +1845,11 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 			// Only handle unique/primary key
 			continue
 		}
+
+		if extractor != nil && extractor.Filter("constraint_name", idxName) {
+			continue
+		}
+
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
 			if col.Hidden {
@@ -2160,6 +2156,9 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 				ctype = infoschema.UniqueKeyType
 			} else {
 				// The index has no constriant.
+				continue
+			}
+			if ok && ex.Filter("constraint_name", cname) {
 				continue
 			}
 			record := types.MakeDatums(

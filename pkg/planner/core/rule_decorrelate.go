@@ -105,10 +105,10 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan, outerSchemas []*
 	return newCorCols
 }
 
-// decorrelateSolver tries to convert apply plan to join plan.
-type decorrelateSolver struct{}
+// DecorrelateSolver tries to convert apply plan to join plan.
+type DecorrelateSolver struct{}
 
-func (*decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
+func (*DecorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
 		switch f.Name {
@@ -121,8 +121,8 @@ func (*decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*e
 	return defaultValueMap
 }
 
-// optimize implements logicalOptRule interface.
-func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.Children()[0]
@@ -148,13 +148,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			innerPlan = sel.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			appendRemoveSelectionTraceStep(apply, sel, opt)
-			return s.optimize(ctx, p, opt)
+			return s.Optimize(ctx, p, opt)
 		} else if m, ok := innerPlan.(*logicalop.LogicalMaxOneRow); ok {
 			if m.Children()[0].MaxOneRow() {
 				innerPlan = m.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
 				appendRemoveMaxOneRowTraceStep(m, opt)
-				return s.optimize(ctx, p, opt)
+				return s.Optimize(ctx, p, opt)
 			}
 		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
 			// After the column pruning, some expressions in the projection operator may be pruned.
@@ -202,7 +202,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				np, planChanged, err := s.optimize(ctx, p, opt)
+				np, planChanged, err := s.Optimize(ctx, p, opt)
 				if err != nil {
 					return nil, planChanged, err
 				}
@@ -211,7 +211,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				return proj, planChanged, nil
 			}
 			appendRemoveProjTraceStep(apply, proj, opt)
-			return s.optimize(ctx, p, opt)
+			return s.Optimize(ctx, p, opt)
 		} else if li, ok := innerPlan.(*logicalop.LogicalLimit); ok {
 			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
 			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
@@ -228,7 +228,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				innerPlan = li.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
 				appendRemoveLimitTraceStep(li, opt)
-				return s.optimize(ctx, p, opt)
+				return s.Optimize(ctx, p, opt)
 			}
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.CanPullUpAgg() && agg.canPullUp() {
@@ -278,7 +278,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 					newAggFuncs = append(newAggFuncs, desc)
 				}
 				agg.AggFuncs = newAggFuncs
-				np, planChanged, err := s.optimize(ctx, p, opt)
+				np, planChanged, err := s.Optimize(ctx, p, opt)
 				if err != nil {
 					return nil, planChanged, err
 				}
@@ -356,7 +356,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 							appendAddProjTraceStep(apply, proj, opt)
 						}
 						appendModifyAggTraceStep(outerPlan, apply, agg, sel, appendedGroupByCols, appendedAggFuncs, eqCondWithCorCol, opt)
-						return s.optimize(ctx, p, opt)
+						return s.Optimize(ctx, p, opt)
 					}
 					sel.Conditions = originalExpr
 					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
@@ -368,7 +368,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			innerPlan = sort.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			appendRemoveSortTraceStep(sort, opt)
-			return s.optimize(ctx, p, opt)
+			return s.Optimize(ctx, p, opt)
 		}
 	}
 NoOptimize:
@@ -378,7 +378,7 @@ NoOptimize:
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, planChanged, err := s.optimize(ctx, child, opt)
+		np, planChanged, err := s.Optimize(ctx, child, opt)
 		if err != nil {
 			return nil, planChanged, err
 		}
@@ -388,7 +388,8 @@ NoOptimize:
 	return p, planChanged, nil
 }
 
-func (*decorrelateSolver) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*DecorrelateSolver) Name() string {
 	return "decorrelate"
 }
 

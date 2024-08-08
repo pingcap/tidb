@@ -152,7 +152,7 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 			}
 		}
 	}
-	p.SetMaxOneRow(checkMaxOneRowCond(eqCols, childSchema[0]))
+	p.SetMaxOneRow(ruleutil.CheckMaxOneRowCond(eqCols, childSchema[0]))
 }
 
 // PushDownTopN inherits BaseLogicalPlan.<5th> implementation.

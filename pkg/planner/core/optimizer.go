@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -96,32 +97,32 @@ const (
 	flagResolveExpand
 )
 
-var optRuleList = []logicalOptRule{
-	&gcSubstituter{},
-	&columnPruner{},
-	&resultReorder{},
-	&buildKeySolver{},
-	&decorrelateSolver{},
-	&semiJoinRewriter{},
-	&aggregationEliminator{},
-	&skewDistinctAggRewriter{},
-	&projectionEliminator{},
-	&maxMinEliminator{},
-	&constantPropagationSolver{},
-	&convertOuterToInnerJoin{},
-	&ppdSolver{},
-	&outerJoinEliminator{},
-	&partitionProcessor{},
-	&collectPredicateColumnsPoint{},
-	&aggregationPushDownSolver{},
-	&deriveTopNFromWindow{},
-	&predicateSimplification{},
-	&pushDownTopNOptimizer{},
-	&syncWaitStatsLoadPoint{},
-	&joinReOrderSolver{},
-	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-	&pushDownSequenceSolver{},
-	&resolveExpand{},
+var optRuleList = []base.LogicalOptRule{
+	&GcSubstituter{},
+	&ColumnPruner{},
+	&ResultReorder{},
+	&rule.BuildKeySolver{},
+	&DecorrelateSolver{},
+	&SemiJoinRewriter{},
+	&AggregationEliminator{},
+	&SkewDistinctAggRewriter{},
+	&ProjectionEliminator{},
+	&MaxMinEliminator{},
+	&ConstantPropagationSolver{},
+	&ConvertOuterToInnerJoin{},
+	&PPDSolver{},
+	&OuterJoinEliminator{},
+	&PartitionProcessor{},
+	&CollectPredicateColumnsPoint{},
+	&AggregationPushDownSolver{},
+	&DeriveTopNFromWindow{},
+	&PredicateSimplification{},
+	&PushDownTopNOptimizer{},
+	&SyncWaitStatsLoadPoint{},
+	&JoinReOrderSolver{},
+	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&PushDownSequenceSolver{},
+	&ResolveExpand{},
 }
 
 // Interaction Rule List
@@ -129,20 +130,7 @@ var optRuleList = []logicalOptRule{
 1. The related rule has been trigger and changed the plan
 2. The interaction rule is enabled
 */
-var optInteractionRuleList = map[logicalOptRule]logicalOptRule{}
-
-// logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
-type logicalOptRule interface {
-	/* Return Parameters:
-	1. base.LogicalPlan: The optimized base.LogicalPlan after rule is applied
-	2. bool: Used to judge whether the plan is changed or not by logical rule.
-		 If the plan is changed, it will return true.
-		 The default value is false. It means that no interaction rule will be triggered.
-	3. error: If there is error during the rule optimizer, it will be thrown
-	*/
-	optimize(context.Context, base.LogicalPlan, *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error)
-	name() string
-}
+var optInteractionRuleList = map[base.LogicalOptRule]base.LogicalOptRule{}
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (base.Plan, error) {
@@ -999,7 +987,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}()
 	}
 	var err error
-	var againRuleList []logicalOptRule
+	var againRuleList []base.LogicalOptRule
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
@@ -1007,9 +995,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace)
+		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		logic, planChanged, err = rule.optimize(ctx, logic, opt)
+		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -1022,8 +1010,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
-		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace)
-		logic, _, err = rule.optimize(ctx, logic, opt)
+		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
+		logic, _, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -1033,8 +1021,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	return logic, err
 }
 
-func isLogicalRuleDisabled(r logicalOptRule) bool {
-	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.name())
+func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
+	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.Name())
 	return disabled
 }
 

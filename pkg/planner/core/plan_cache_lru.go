@@ -150,9 +150,9 @@ func (l *LRUPlanCache) DeleteAll() {
 
 	// update metrics
 	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
-		core_metrics.GetPlanCacheInstanceMemoryUsage().Sub(float64(l.memoryUsageTotal))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(false).Sub(float64(l.memoryUsageTotal))
 	}
-	core_metrics.GetPlanCacheInstanceNumCounter().Sub(float64(l.size))
+	core_metrics.GetPlanCacheInstanceNumCounter(false).Sub(float64(l.size))
 
 	// reset all fields
 	l.size = 0
@@ -256,14 +256,14 @@ func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
 	}
 
 	if in != nil && out != nil { // replace plan
-		core_metrics.GetPlanCacheInstanceMemoryUsage().Sub(float64(out.MemoryUsage()))
-		core_metrics.GetPlanCacheInstanceMemoryUsage().Add(float64(in.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(false).Sub(float64(out.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(false).Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage() - out.MemoryUsage()
 	} else if in != nil { // put plan
-		core_metrics.GetPlanCacheInstanceMemoryUsage().Add(float64(in.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(false).Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage()
 	} else { // delete plan
-		core_metrics.GetPlanCacheInstanceMemoryUsage().Sub(float64(out.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(false).Sub(float64(out.MemoryUsage()))
 		l.memoryUsageTotal -= out.MemoryUsage()
 	}
 }
@@ -273,8 +273,8 @@ func updateInstancePlanNum(in, out *planCacheEntry) {
 	if in != nil && out != nil { // replace plan
 		return
 	} else if in != nil { // put plan
-		core_metrics.GetPlanCacheInstanceNumCounter().Add(1)
+		core_metrics.GetPlanCacheInstanceNumCounter(false).Add(1)
 	} else { // delete plan
-		core_metrics.GetPlanCacheInstanceNumCounter().Sub(1)
+		core_metrics.GetPlanCacheInstanceNumCounter(false).Sub(1)
 	}
 }
