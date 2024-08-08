@@ -52,6 +52,7 @@ go_test(
     race = "on",
     shard_count = 25,
     deps = [
+        "//pkg/config",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
         "//pkg/domain",

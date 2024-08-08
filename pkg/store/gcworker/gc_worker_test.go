@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -169,7 +170,7 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 	require.NoError(t, err)
 	store.GetOracle().Close()
 	store.(tikv.Storage).SetOracle(s.oracle)
-	dom := bootstrap(t, store, 0)
+	dom := bootstrap(t, store, config.DefSchemaLease)
 	s.store, s.dom = store, dom
 
 	s.tikvStore = s.store.(tikv.Storage)
