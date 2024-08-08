@@ -175,6 +175,10 @@ func convertPoint(sctx planctx.PlanContext, point *point, newTp *types.FieldType
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
 		} else if (newTp.GetType() == mysql.TypeNewDecimal || newTp.GetType() == mysql.TypeLonglong) && terror.ErrorEqual(err, types.ErrOverflow) {
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal/TypeLonglong values.
+		} else if newTp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
+		} else if (newTp.GetType() == mysql.TypeNewDecimal || mysql.IsIntegerType(newTp.GetType()) || newTp.GetType() == mysql.TypeFloat) && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal/TypeTiny/TypeShort/TypeInt24/TypeLong/TypeLonglong/TypeFloat values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
 			// tests in TestIndexRange/TestIndexRangeForDecimal
