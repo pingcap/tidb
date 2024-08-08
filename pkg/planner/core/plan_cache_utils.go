@@ -389,6 +389,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.InTxn()))
 	hash = append(hash, bool2Byte(vars.IsAutocommit()))
 	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
+	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
+	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
 	return string(hash), binding, true, "", nil
 }
