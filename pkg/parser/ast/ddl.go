@@ -739,49 +739,72 @@ type IndexOption struct {
 
 // Restore implements Node interface.
 func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
+	hasPrevOption := false
 	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
-		ctx.WritePlain(" ")
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
 			ctx.WriteKeyWord(n.PrimaryKeyTp.String())
 			return nil
 		})
+		hasPrevOption = true
 	}
 	if n.KeyBlockSize > 0 {
-		ctx.WriteKeyWord(" KEY_BLOCK_SIZE")
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("KEY_BLOCK_SIZE")
 		ctx.WritePlainf("=%d", n.KeyBlockSize)
+		hasPrevOption = true
 	}
 
 	if n.Tp != model.IndexTypeInvalid {
-		ctx.WriteKeyWord(" USING ")
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("USING ")
 		ctx.WritePlain(n.Tp.String())
+		hasPrevOption = true
 	}
 
 	if len(n.ParserName.O) > 0 {
-		ctx.WriteKeyWord(" WITH PARSER ")
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("WITH PARSER ")
 		ctx.WriteName(n.ParserName.O)
+		hasPrevOption = true
 	}
 
 	if n.Comment != "" {
-		ctx.WriteKeyWord(" COMMENT ")
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("COMMENT ")
 		ctx.WriteString(n.Comment)
+		hasPrevOption = true
 	}
 
 	if n.Global {
-		ctx.WritePlain(" ")
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
 			ctx.WriteKeyWord("GLOBAL")
 			return nil
 		})
+		hasPrevOption = true
 	}
 
 	if n.Visibility != IndexVisibilityDefault {
-		ctx.WritePlain(" ")
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
 		switch n.Visibility {
 		case IndexVisibilityVisible:
 			ctx.WriteKeyWord("VISIBLE")
 		case IndexVisibilityInvisible:
 			ctx.WriteKeyWord("INVISIBLE")
 		}
+		hasPrevOption = true
 	}
 	return nil
 }
@@ -919,6 +942,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	if n.Option != nil {
+		ctx.WritePlain(" ")
 		if err := n.Option.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing Constraint Option")
 		}
@@ -1821,6 +1845,7 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain(")")
 
 	if n.IndexOption.Tp != model.IndexTypeInvalid || n.IndexOption.KeyBlockSize > 0 || n.IndexOption.Comment != "" || len(n.IndexOption.ParserName.O) > 0 || n.IndexOption.Visibility != IndexVisibilityDefault || n.IndexOption.Global {
+		ctx.WritePlain(" ")
 		if err := n.IndexOption.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.IndexOption")
 		}

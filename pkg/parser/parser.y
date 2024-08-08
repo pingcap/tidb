@@ -3603,6 +3603,10 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey, StrValue: "Global"}
 	}
+|	"UNIQUE" "LOCAL"
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
+	}
 |	"UNIQUE" %prec lowerThanKey
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
