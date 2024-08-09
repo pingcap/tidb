@@ -499,11 +499,16 @@ func (r *RunawayChecker) BeforeExecutor() error {
 		// Take action if needed.
 		switch action {
 		case rmpb.RunawayAction_Kill:
+			// Return an error to interrupt the query.
 			return exeerrors.ErrResourceGroupQueryRunawayQuarantine
 		case rmpb.RunawayAction_CoolDown:
-			// This action should be done in BeforeCopRequest.
+			// This action will be handled in `BeforeCopRequest`.
+			return nil
+		case rmpb.RunawayAction_DryRun:
+			// Noop.
 			return nil
 		default:
+			// Continue to examine other convicts.
 		}
 	}
 	return nil
@@ -519,37 +524,37 @@ func (r *RunawayChecker) CheckAction() rmpb.RunawayAction {
 		return r.watchAction
 	}
 	if r.markedByRule.Load() {
-		return r.setting.Action
+		return r.settings.Action
 	}
 	return rmpb.RunawayAction_NoneAction
 }
 
-// CheckKillAction checks whether the query should be killed.
-func (r *RunawayChecker) CheckKillAction() bool {
-	if r.setting == nil && !r.markedByWatch {
+// CheckRuleKillAction checks whether the query should be killed according to the group settings.
+func (r *RunawayChecker) CheckRuleKillAction() bool {
+	// If the group settings are not available and it's not marked by watch, skip this part.
+	if r.settings == nil && !r.markedByWatch {
 		return false
 	}
-	// mark by rule
-	marked := r.markedByRule.Load()
-	if !marked {
+	// If the group settings are available and it's not marked by rule, check the execution time.
+	if r.settings != nil && !r.markedByRule.Load() {
 		now := time.Now()
 		until := r.deadline.Sub(now)
 		if until > 0 {
 			return false
 		}
-		if r.markedByRule.CompareAndSwap(false, true) {
-			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-			if !r.markedByWatch {
-				r.markQuarantine(&now)
-			}
-		}
+		r.markRunawayByIdentify(r.settings.Action, &now)
+		return r.settings.Action == rmpb.RunawayAction_Kill
 	}
-	return r.setting.Action == rmpb.RunawayAction_Kill
+	return false
 }
 
 // Rule returns the rule of the runaway checker.
 func (r *RunawayChecker) Rule() string {
-	return fmt.Sprintf("execElapsedTimeMs:%s", time.Duration(r.setting.Rule.ExecElapsedTimeMs)*time.Millisecond)
+	var execElapsedTime time.Duration
+	if r.settings != nil {
+		execElapsedTime = time.Duration(r.settings.Rule.ExecElapsedTimeMs) * time.Millisecond
+	}
+	return fmt.Sprintf("execElapsedTime:%s", execElapsedTime)
 }
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
