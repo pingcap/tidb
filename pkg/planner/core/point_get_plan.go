@@ -1267,6 +1267,8 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt) *Ba
 					break
 				}
 			}
+		} else if tbl.GetPartitionInfo() == nil && !tbl.IsCommonHandle && colName.Name.Name.L == model.ExtraHandleName.L {
+			handleCol = model.NewExtraHandleColInfo()
 		}
 		if handleCol == nil {
 			// Downgrade to use unique index
