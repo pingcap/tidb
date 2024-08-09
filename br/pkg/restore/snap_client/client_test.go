@@ -77,7 +77,7 @@ func TestCreateTables(t *testing.T) {
 			},
 		}
 	}
-	rules, newTables, err := client.CreateTables(m.Domain, tables, 0)
+	rules, newTables, err := client.CreateTablesTest(m.Domain, tables, 0)
 	require.NoError(t, err)
 	// make sure tables and newTables have same order
 	for i, tbl := range tables {
@@ -191,7 +191,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 			Collate: "utf8mb4_bin",
 		},
 	}
-	_, _, err = client.CreateTables(cluster.Domain, []*metautil.Table{table}, 0)
+	_, _, err = client.CreateTablesTest(cluster.Domain, []*metautil.Table{table}, 0)
 	require.NoError(t, err)
 
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
