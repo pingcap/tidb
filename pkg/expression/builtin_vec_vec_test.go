@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,31 +15,19 @@
 package expression
 
 import (
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-func newVector(str string) types.VectorFloat32 {
-	vec, _ := types.ParseVectorFloat32(str)
+// create a vector include NaN in values.
+func createVectorTestSample(vector []float32) types.VectorFloat32 {
+	vec := types.InitVectorFloat32(len(vector))
+	copy(vec.Elements(), vector)
 	return vec
-}
-
-type vectorFloat32Gener struct {
-	vec types.VectorFloat32
-}
-
-func (g *vectorFloat32Gener) gen() interface{} {
-	return g.vec
-}
-
-type vectorFloat32TextGener struct {
-	vec string
-}
-
-func (g *vectorFloat32TextGener) gen() interface{} {
-	return g.vec
 }
 
 var vecBuiltinVecCases = map[string][]vecExprBenchCase{
@@ -47,49 +35,249 @@ var vecBuiltinVecCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETVectorFloat32},
-			geners:        []dataGenerator{&vectorFloat32Gener{newVector("[1.1,2.2]")}}},
+			geners:        []dataGenerator{newVectorFloat32RandGener(3)},
+		},
+		// Null vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32},
+			geners:        []dataGenerator{newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()})},
+		},
 	},
 	ast.VecL1Distance: {
 		{
 			retEvalType:   types.ETReal,
 			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
-			geners:        []dataGenerator{&vectorFloat32Gener{newVector("[1.1,2.2]")}, &vectorFloat32Gener{newVector("[2.2,3.3]")}}},
+			geners: []dataGenerator{
+				newVectorFloat32RandGener(3),
+				newVectorFloat32RandGener(3),
+			},
+		},
+		// Null vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			geners: []dataGenerator{
+				newVectorFloat32RandGener(3),
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+			},
+		},
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			geners: []dataGenerator{
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+			},
+		},
+		// NaN vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
+		// +-Inf vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{1.0})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
 	},
 	ast.VecL2Distance: {
 		{
 			retEvalType:   types.ETReal,
 			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
-			geners:        []dataGenerator{&vectorFloat32Gener{newVector("[1.1,2.2]")}, &vectorFloat32Gener{newVector("[2.2,3.3]")}}},
+			geners: []dataGenerator{
+				newVectorFloat32RandGener(3),
+				newVectorFloat32RandGener(3),
+			},
+		},
+		// Null vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			geners: []dataGenerator{
+				newVectorFloat32RandGener(3),
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+			},
+		},
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			geners: []dataGenerator{
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+			},
+		},
+		// NaN vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
+		// +-Inf vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{1.0})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
 	},
 	ast.VecCosineDistance: {
 		{
 			retEvalType:   types.ETReal,
 			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
-			geners:        []dataGenerator{&vectorFloat32Gener{newVector("[1.1,2.2]")}, &vectorFloat32Gener{newVector("[2.2,3.3]")}}},
+			geners: []dataGenerator{
+				newVectorFloat32RandGener(3),
+				newVectorFloat32RandGener(3),
+			},
+		},
+		// Null vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			geners: []dataGenerator{
+				newVectorFloat32RandGener(3),
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+			},
+		},
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			geners: []dataGenerator{
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+			},
+		},
+		// NaN vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.NaN())})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(1.1)})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
+		// +-Inf vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{1.0})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
 	},
 	ast.VecNegativeInnerProduct: {
 		{
 			retEvalType:   types.ETReal,
 			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
-			geners:        []dataGenerator{&vectorFloat32Gener{newVector("[1.1,2.2]")}, &vectorFloat32Gener{newVector("[2.2,3.3]")}}},
+			geners: []dataGenerator{
+				newVectorFloat32RandGener(3),
+				newVectorFloat32RandGener(3),
+			},
+		},
+		// Null vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			geners: []dataGenerator{
+				newVectorFloat32RandGener(3),
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+			},
+		},
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			geners: []dataGenerator{
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+				newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()}),
+			},
+		},
+		// NaN vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.NaN())})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(1.1)})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
+		// +-Inf vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{1.0})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
 	},
 	ast.VecL2Norm: {
 		{
 			retEvalType:   types.ETReal,
 			childrenTypes: []types.EvalType{types.ETVectorFloat32},
-			geners:        []dataGenerator{&vectorFloat32Gener{newVector("[1.1,2.2]")}}},
+			geners:        []dataGenerator{newVectorFloat32RandGener(3)},
+		},
+		// Null vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32},
+			geners:        []dataGenerator{newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()})},
+		},
+		// NaN vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.NaN())})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
+		// +-Inf vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32},
+			constants: []*Constant{
+				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
+			},
+		},
 	},
 	ast.VecAsText: {
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETVectorFloat32},
-			geners:        []dataGenerator{&vectorFloat32Gener{newVector("[1.1,2.2]")}}},
+			geners:        []dataGenerator{newVectorFloat32RandGener(3)},
+		},
+		// Null vector test, need 'Null' result.
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETVectorFloat32},
+			geners:        []dataGenerator{newNullWrappedGener(1.0, &vectorFloat32RandGener{3, newDefaultRandGen()})},
+		},
 	},
 	ast.VecFromText: {
 		{
 			retEvalType:   types.ETVectorFloat32,
 			childrenTypes: []types.EvalType{types.ETString},
-			geners:        []dataGenerator{&vectorFloat32TextGener{"[1.1,2.2,3.3]"}}},
+			geners:        []dataGenerator{&constStrGener{"[1.1,2.2,3.3]"}},
+		},
+		// Null string test, need 'Null' result.
+		{
+			retEvalType:   types.ETVectorFloat32,
+			childrenTypes: []types.EvalType{types.ETString},
+			geners:        []dataGenerator{newNullWrappedGener(1.1, &constStrGener{"[1.1,2.2,3.3]"})},
+		},
 	},
 }
 

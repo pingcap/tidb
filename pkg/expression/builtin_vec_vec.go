@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,13 +39,13 @@ func (b *builtinVecDimsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
-	i64s := result.Int64s()
+	res := result.Int64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+		if result.IsNull(i) {
 			continue
 		}
 		length := buf.GetVectorFloat32(i).Len()
-		i64s[i] = int64(length)
+		res[i] = int64(length)
 	}
 	return nil
 }
@@ -77,14 +77,17 @@ func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 	result.MergeNulls(col1, col2)
 	res := result.Float64s()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		x := col1.GetVectorFloat32(i)
 		y := col2.GetVectorFloat32(i)
 		d, err := x.L1Distance(y)
 		if err != nil {
 			return err
 		}
-		if math.IsNaN(d) == true {
-			res[i] = 0
+		if math.IsNaN(d) || math.IsInf(d, 0) {
+			result.SetNull(i, true)
 			continue
 		}
 		res[i] = d
@@ -119,11 +122,18 @@ func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 	result.MergeNulls(col1, col2)
 	res := result.Float64s()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		x := col1.GetVectorFloat32(i)
 		y := col2.GetVectorFloat32(i)
 		d, err := x.L2Distance(y)
 		if err != nil {
 			return err
+		}
+		if math.IsNaN(d) || math.IsInf(d, 0) {
+			result.SetNull(i, true)
+			continue
 		}
 		res[i] = d
 	}
@@ -157,11 +167,18 @@ func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *
 	result.MergeNulls(col1, col2)
 	res := result.Float64s()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		x := col1.GetVectorFloat32(i)
 		y := col2.GetVectorFloat32(i)
 		d, err := x.NegativeInnerProduct(y)
 		if err != nil {
 			return err
+		}
+		if math.IsNaN(d) || math.IsInf(d, 0) {
+			result.SetNull(i, true)
+			continue
 		}
 		res[i] = d
 	}
@@ -194,13 +211,19 @@ func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(col1, col2)
 	res := result.Float64s()
-
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		x := col1.GetVectorFloat32(i)
 		y := col2.GetVectorFloat32(i)
 		d, err := x.CosineDistance(y)
 		if err != nil {
 			return err
+		}
+		if math.IsNaN(d) || math.IsInf(d, 0) {
+			result.SetNull(i, true)
+			continue
 		}
 		res[i] = d
 	}
@@ -225,10 +248,13 @@ func (b *builtinVecL2NormSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 	result.MergeNulls(col1)
 	res := result.Float64s()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		v := col1.GetVectorFloat32(i)
 		d := v.L2Norm()
-		if math.IsNaN(d) {
-			res[i] = 0
+		if math.IsNaN(d) || math.IsInf(d, 0) {
+			result.SetNull(i, true)
 			continue
 		}
 		res[i] = d
@@ -259,11 +285,9 @@ func (b *builtinVecFromTextSig) vecEvalVectorFloat32(ctx EvalContext, input *chu
 		v := buf.GetString(i)
 		vec, err := types.ParseVectorFloat32(v)
 		if err != nil {
-			result.AppendVectorFloat32(types.ZeroVectorFloat32)
 			return err
 		}
 		if err = vec.CheckDimsFitColumn(b.tp.GetFlen()); err != nil {
-			result.AppendVectorFloat32(types.ZeroVectorFloat32)
 			return err
 		}
 		result.AppendVectorFloat32(vec)

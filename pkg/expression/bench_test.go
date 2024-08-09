@@ -387,6 +387,25 @@ func (g *jsonStringGener) gen() any {
 	return j.String()
 }
 
+type vectorFloat32RandGener struct {
+	dimension int
+	randGen   *defaultRandGen
+}
+
+func newVectorFloat32RandGener(dimension int) *vectorFloat32RandGener {
+	return &vectorFloat32RandGener{dimension, newDefaultRandGen()}
+}
+
+func (g *vectorFloat32RandGener) gen() interface{} {
+	var values []float32
+	for i := 0; i < g.dimension; i++ {
+		values = append(values, g.randGen.Float32())
+	}
+	vec := types.InitVectorFloat32(g.dimension)
+	copy(vec.Elements(), values)
+	return vec
+}
+
 type decimalStringGener struct {
 	randGen *defaultRandGen
 }
@@ -1684,7 +1703,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					require.NoErrorf(t, err, commentf(i))
 					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						require.Equal(t, output.GetVectorFloat32(i), val, commentf(i))
+						require.Equal(t, output.GetVectorFloat32(i).Compare(val), 0, commentf(i))
 					}
 					i++
 				}
