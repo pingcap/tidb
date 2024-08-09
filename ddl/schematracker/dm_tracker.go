@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
+<<<<<<< HEAD:ddl/schematracker/dm_tracker.go
 var _ ddl.DDL = SchemaTracker{}
 
 // SchemaTracker is used to track schema changes by DM. It implements DDL interface and by applying DDL, it updates the
@@ -52,6 +53,16 @@ var _ ddl.DDL = SchemaTracker{}
 // It embeds an InfoStore which stores DBInfo and TableInfo. The DBInfo and TableInfo can be treated as immutable, so
 // after reading them by SchemaByName or TableByName, later modifications made by SchemaTracker will not change them.
 // SchemaTracker is not thread-safe.
+=======
+// SchemaTracker is used to track schema changes by DM. It implements
+// ddl.Executor interface and by applying DDL, it updates the table structure to
+// keep tracked with upstream changes.
+//
+// It embeds an InfoStore which stores DBInfo and TableInfo. The DBInfo and
+// TableInfo can be treated as immutable, so after reading them by SchemaByName
+// or TableByName, later modifications made by SchemaTracker will not change
+// them. SchemaTracker is not thread-safe.
+>>>>>>> 5d867dd45ce (ddl: improve priority of suppressErrorTooLongKeyKey for DM (#55164)):pkg/ddl/schematracker/dm_tracker.go
 type SchemaTracker struct {
 	*InfoStore
 }
