@@ -58,16 +58,24 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-		if err != nil {
-			return err
-		}
-		if isGetVarBinaryLiteral(sctx, usingParam) {
-			binVal, convErr := val.ToBytes()
-			if convErr != nil {
-				return convErr
+		var (
+			val types.Datum
+			err error
+		)
+		if c, ok := usingParam.(*expression.Constant); ok {
+			val = c.Value
+		} else {
+			val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+			if err != nil {
+				return err
 			}
-			val.SetBinaryLiteral(binVal)
+			if isGetVarBinaryLiteral(sctx, usingParam) {
+				binVal, convErr := val.ToBytes()
+				if convErr != nil {
+					return convErr
+				}
+				val.SetBinaryLiteral(binVal)
+			}
 		}
 		if markers != nil {
 			param := markers[i].(*driver.ParamMarkerExpr)

@@ -1307,6 +1307,10 @@ func IsRuntimeConstExpr(expr Expression) bool {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return false
 		}
+		// If the GetVar is not folded, it's not readonly and can't be treated as a constant.
+		if x.FuncName.L == ast.GetVar {
+			return false
+		}
 		for _, arg := range x.GetArgs() {
 			if !IsRuntimeConstExpr(arg) {
 				return false
