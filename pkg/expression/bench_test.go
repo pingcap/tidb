@@ -396,7 +396,7 @@ func newVectorFloat32RandGener(dimension int) *vectorFloat32RandGener {
 	return &vectorFloat32RandGener{dimension, newDefaultRandGen()}
 }
 
-func (g *vectorFloat32RandGener) gen() interface{} {
+func (g *vectorFloat32RandGener) gen() any {
 	var values []float32
 	for i := 0; i < g.dimension; i++ {
 		values = append(values, g.randGen.Float32())
