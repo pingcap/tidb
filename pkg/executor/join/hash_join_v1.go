@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-
 	"runtime/trace"
 	"sync/atomic"
 	"time"
