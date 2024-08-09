@@ -176,7 +176,8 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 	rs1 := tk.MustQueryWithContext(context.Background(), sql, args...)
 	if !strings.Contains(sql, "information_schema") || strings.Contains(sql, "statements_summary") ||
 		strings.Contains(sql, "slow_query") ||
-		strings.Contains(sql, "cluster_config") {
+		strings.Contains(sql, "cluster_config") ||
+		strings.Contains(sql, "TIDB_TRX") {
 		return rs1
 	}
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor", "return(true)")
