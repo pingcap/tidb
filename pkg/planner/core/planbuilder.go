@@ -752,7 +752,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, erro
 			return nil, err
 		}
 		if len(processedSQLDigests) == 0 {
-			return nil, errors.New("plan digest is empty")
+			return nil, errors.New("sql digest is empty")
 		}
 		details := make([]*SQLBindOpDetail, 0, len(processedSQLDigests))
 		for _, sqlDigest := range processedSQLDigests {
