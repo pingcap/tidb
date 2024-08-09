@@ -272,17 +272,6 @@ func (p *BasePhysicalPlan) CloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 		}
 		cloned.children = append(cloned.children, clonedPP)
 	}
-	for _, probe := range p.probeParents {
-		clonedProbe, ok := probe.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		clonedPP, ok := clonedProbe.(base.PhysicalPlan)
-		if !ok {
-			return nil, false
-		}
-		cloned.probeParents = append(cloned.probeParents, clonedPP)
-	}
 	return cloned, true
 }
 
