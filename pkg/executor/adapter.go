@@ -1393,6 +1393,13 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
 		}
 	}
+	// record RU
+	ruDetailsRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
+	if sessVars.StmtCtx.RuntimeStatsColl != nil && ruDetailsRaw != nil {
+		ruDetails := ruDetailsRaw.(*util.RUDetails)
+		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), &execdetails.RURuntimeStats{RUDetails: ruDetails})
+	}
+
 	succ := err == nil
 	if a.Plan != nil {
 		// If this statement has a Plan, the StmtCtx.plan should have been set when it comes here,

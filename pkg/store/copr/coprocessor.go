@@ -1469,6 +1469,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		resp.startKey = task.ranges.At(0).StartKey
 	}
 	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
+	// check execution info
+	if worker.req.RunawayChecker != nil {
+		if err := worker.req.RunawayChecker.CheckThresholds(bo.GetCtx(), resp.detail.ScanDetail.ProcessedKeys); err != nil {
+			return nil, err
+		}
+	}
 	resp.respTime = costTime
 
 	if err := worker.handleCopCache(task, resp, cacheKey, cacheValue); err != nil {

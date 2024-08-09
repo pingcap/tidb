@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/cursor"
@@ -51,6 +52,7 @@ type ProcessInfo struct {
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
+	RunawayChecker        *resourcegroup.RunawayChecker
 	StatsInfo             func(any) map[string]uint64
 	RuntimeStatsColl      *execdetails.RuntimeStatsColl
 	User                  string
