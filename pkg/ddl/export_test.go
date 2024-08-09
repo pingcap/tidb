@@ -47,7 +47,7 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 	}
 	opCtx := ddl.NewLocalOperatorCtx(context.Background(), 1)
 	src := testutil.NewOperatorTestSource(ddl.TableScanTask{1, startKey, endKey})
-	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil)
+	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil, 0)
 	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 	operator.Compose[ddl.TableScanTask](src, scanOp)

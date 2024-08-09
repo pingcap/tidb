@@ -85,6 +85,10 @@ func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *ses
 	if err != nil {
 		return nil, err
 	}
+	workerCnt := info.ReorgMeta.Concurrency
+	if workerCnt == 0 {
+		workerCnt = int(variable.GetDDLReorgWorkerCounter())
+	}
 	return &txnBackfillScheduler{
 		ctx:          ctx,
 		reorgInfo:    info,
@@ -93,7 +97,7 @@ func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *ses
 		tbl:          tbl,
 		decodeColMap: decColMap,
 		jobCtx:       jobCtx,
-		workers:      make([]*backfillWorker, 0, variable.GetDDLReorgWorkerCounter()),
+		workers:      make([]*backfillWorker, 0, workerCnt),
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
 	}, nil
@@ -230,8 +234,11 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	}
 }
 
-func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
+	workerCnt := b.reorgInfo.ReorgMeta.Concurrency
+	if workerCnt == 0 {
+		workerCnt = int(variable.GetDDLReorgWorkerCounter())
+	}
 	return min(workerCnt, maxBackfillWorkerSize)
 }
 

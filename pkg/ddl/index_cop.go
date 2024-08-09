@@ -28,7 +28,6 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -40,20 +39,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	kvutil "github.com/tikv/client-go/v2/util"
 )
-
-// copReadBatchSize is the batch size of coprocessor read.
-// It multiplies the tidb_ddl_reorg_batch_size by 10 to avoid
-// sending too many cop requests for the same handle range.
-func copReadBatchSize() int {
-	return 10 * int(variable.GetDDLReorgBatchSize())
-}
-
-// copReadChunkPoolSize is the size of chunk pool, which
-// represents the max concurrent ongoing coprocessor requests.
-// It multiplies the tidb_ddl_reorg_worker_cnt by 10.
-func copReadChunkPoolSize() int {
-	return 10 * int(variable.GetDDLReorgWorkerCounter())
-}
 
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	err := se.Begin(context.Background())

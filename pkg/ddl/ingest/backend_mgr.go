@@ -49,6 +49,7 @@ type BackendCtxMgr interface {
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
+		importConc int,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// EncodeJobSortPath encodes the job ID to the local disk sort path.
@@ -114,6 +115,7 @@ func (m *litBackendCtxMgr) Register(
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
+	concurrency int,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -131,7 +133,7 @@ func (m *litBackendCtxMgr) Register(
 		logutil.Logger(ctx).Error(LitErrCreateDirFail, zap.Error(err))
 		return nil, err
 	}
-	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName)
+	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName, concurrency)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
