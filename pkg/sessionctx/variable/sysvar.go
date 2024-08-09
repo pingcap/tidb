@@ -1349,7 +1349,7 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(InstancePlanCacheTargetMemSize.Load(), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v, str := parseByteSize(strings.ToUpper(val))
+			v, str := parseByteSize(val)
 			if str == "" {
 				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize)))
 			}
@@ -1364,7 +1364,7 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(InstancePlanCacheMaxMemSize.Load(), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v, str := parseByteSize(strings.ToUpper(val))
+			v, str := parseByteSize(val)
 			if str == "" {
 				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize)))
 			}
