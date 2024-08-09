@@ -1344,28 +1344,34 @@ var defaultSysVars = []*SysVar{
 			EnableInstancePlanCache.Store(TiDBOptOn(val))
 			return nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheTargetMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheTargetMemSize)), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32,
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheTargetMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheTargetMemSize)), Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(InstancePlanCacheTargetMemSize.Load(), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v := TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize))
-			if v > InstancePlanCacheMaxMemSize.Load() {
+			v, str := parseByteSize(val)
+			if str == "" {
+				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize)))
+			}
+			if v > uint64(InstancePlanCacheMaxMemSize.Load()) {
 				return errors.New("tidb_instance_plan_cache_target_mem_size must be less than tidb_instance_plan_cache_max_mem_size")
 			}
-			InstancePlanCacheTargetMemSize.Store(v)
+			InstancePlanCacheTargetMemSize.Store(int64(v))
 			return nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheMaxMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheMaxMemSize)), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32,
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheMaxMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheMaxMemSize)), Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(InstancePlanCacheMaxMemSize.Load(), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v := TidbOptInt64(val, int64(DefTiDBInstancePlanCacheMaxMemSize))
-			if v < InstancePlanCacheTargetMemSize.Load() {
+			v, str := parseByteSize(val)
+			if str == "" {
+				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize)))
+			}
+			if v < uint64(InstancePlanCacheTargetMemSize.Load()) {
 				return errors.New("tidb_instance_plan_cache_max_mem_size must be greater than tidb_instance_plan_cache_target_mem_size")
 			}
-			InstancePlanCacheMaxMemSize.Store(v)
+			InstancePlanCacheMaxMemSize.Store(int64(v))
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,
