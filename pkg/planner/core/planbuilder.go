@@ -838,9 +838,6 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 }
 
 func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (base.Plan, error) {
-	if len(v.PlanDigests) == 0 {
-		return nil, errors.New("plan digest is empty")
-	}
 	processedPlanDigests := make([]string, 0, len(v.PlanDigests))
 	for _, planDigestSource := range v.PlanDigests {
 		var str string
@@ -854,16 +851,20 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 			if err != nil {
 				return nil, err
 			}
-
 		} else {
 			str = planDigestSource.StringLit
 		}
-		planDigests := strings.Split(str, ",")
-		for _, planDigest := range planDigests {
-			processedPlanDigests = append(processedPlanDigests, strings.TrimSpace(planDigest))
+		split := strings.Split(str, ",")
+		for _, single := range split {
+			trimmed := strings.TrimSpace(single)
+			if len(trimmed) > 0 {
+				processedPlanDigests = append(processedPlanDigests, trimmed)
+			}
 		}
 	}
-
+	if len(processedPlanDigests) == 0 {
+		return nil, errors.New("plan digest is empty")
+	}
 	opDetails := make([]*SQLBindOpDetail, 0, len(processedPlanDigests))
 	for _, planDigest := range processedPlanDigests {
 		rows, err := fetchRecordFromClusterStmtSummary(b.ctx, planDigest)
