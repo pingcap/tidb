@@ -105,6 +105,7 @@ func TestCancel(t *testing.T) {
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/block-on-brie", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/block-on-brie")
 
 	req := require.New(t)
 	ch := make(chan struct{})
