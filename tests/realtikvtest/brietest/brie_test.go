@@ -170,4 +170,9 @@ func TestExistedTables(t *testing.T) {
 		t.Fatal("Restore operation exceeded")
 	case <-done:
 	}
+
+	for i := 0; i < 10; i++ {
+		tableName := fmt.Sprintf("foo%d", i)
+		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
+	}
 }
