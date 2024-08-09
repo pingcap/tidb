@@ -691,7 +691,7 @@ func (c *castAsVectorFloat32FunctionClass) getFunction(ctx BuildContext, args []
 		sig.setPbCode(tipb.ScalarFuncSig_CastVectorFloat32AsVectorFloat32)
 	case types.ETString:
 		sig = &builtinCastStringAsVectorFloat32Sig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsVectorFloat32)
+		// sig.setPbCode(tipb.ScalarFuncSig_CastStringAsVectorFloat32)
 	default:
 		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "VectorFloat32")
 	}

@@ -57,6 +57,7 @@ var (
 	_ builtinFunc = &builtinInTimeSig{}
 	_ builtinFunc = &builtinInDurationSig{}
 	_ builtinFunc = &builtinInJSONSig{}
+	_ builtinFunc = &builtinInVectorFloat32Sig{}
 	_ builtinFunc = &builtinRowSig{}
 	_ builtinFunc = &builtinSetStringVarSig{}
 	_ builtinFunc = &builtinSetIntVarSig{}
@@ -153,6 +154,9 @@ func (c *inFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	case types.ETJson:
 		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_InJson)
+	case types.ETVectorFloat32:
+		sig = &builtinInVectorFloat32Sig{baseBuiltinFunc: bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_InVectorFloat32)
 	default:
 		return nil, errors.Errorf("%s is not supported for IN()", args[0].GetType(ctx.GetEvalCtx()).EvalType())
 	}
@@ -676,6 +680,39 @@ func (b *builtinInJSONSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 			continue
 		}
 		result := types.CompareBinaryJSON(evaledArg, arg0)
+		if result == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+type builtinInVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinInVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinInVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, err
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalVectorFloat32(ctx, row)
+		if err != nil {
+			return 0, true, err
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		result := arg0.Compare(evaledArg)
 		if result == 0 {
 			return 1, false, nil
 		}
