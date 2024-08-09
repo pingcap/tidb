@@ -423,7 +423,7 @@ func TestGetCorrectResult(t *testing.T) {
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
 
 	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 5; i++ {
 		executeCorrecResultTest(t, ctx, nil, dataSource, result)
 		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
 	}
