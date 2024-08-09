@@ -207,9 +207,9 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
 	}
+	var smallTasks int
 	if tryRowHint {
-		var smallTasks int
-		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks, c.store.numcpu)
+		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(req, tasks, c.store.numcpu)
 		if len(tasks)-smallTasks < it.concurrency {
 			it.concurrency = len(tasks) - smallTasks
 		}
@@ -218,7 +218,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-
 	if it.req.KeepOrder {
 		if it.smallTaskConcurrency > 20 {
 			it.smallTaskConcurrency = 20
@@ -229,6 +228,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		it.respChan = make(chan *copResponse)
 		it.sendRate = util.NewRateLimit(it.concurrency + it.smallTaskConcurrency)
 	}
+
+	it.skipSender = smallTasks == it.smallTaskConcurrency &&
+		len(tasks) <= it.concurrency+it.smallTaskConcurrency &&
+		len(tasks) <= it.sendRate.GetCapacity()
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
 	return it, nil
 }
@@ -611,15 +614,15 @@ func isSmallTask(task *copTask) bool {
 
 // smallTaskConcurrency counts the small tasks of tasks,
 // then returns the task count and extra concurrency for small tasks.
-func smallTaskConcurrency(tasks []*copTask, numcpu int) (int, int) {
+func smallTaskConcurrency(req *kv.Request, tasks []*copTask, numcpu int) (int, int) {
 	res := 0
 	for _, task := range tasks {
 		if isSmallTask(task) {
 			res++
 		}
 	}
-	if res == 0 {
-		return 0, 0
+	if res <= req.Concurrency {
+		return res, res
 	}
 	// Calculate the extra concurrency for small tasks
 	// extra concurrency = tasks / (1 + sigma * sqrt(log(tasks ^ 2)))
@@ -688,6 +691,9 @@ type copIterator struct {
 
 	runawayChecker  *resourcegroup.RunawayChecker
 	unconsumedStats *unconsumedCopRuntimeStats
+
+	// skipSender indicates whether opening a sender in an individual goroutine.
+	skipSender bool
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -822,11 +828,52 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 	runtime.KeepAlive(ballast)
 }
 
+// runWithTask is a worker function which doesn't receive task from channel, run it directly instead.
+func (worker *copIteratorWorker) runWithTask(ctx context.Context, task *copTask) {
+	defer func() {
+		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
+			if val.(bool) {
+				worker.memTracker.Consume(10 * MockResponseSizeForTest)
+				worker.memTracker.Consume(10 * MockResponseSizeForTest)
+			}
+		})
+	}()
+	respCh := worker.respChan
+	if respCh == nil {
+		respCh = task.respChan
+	}
+	worker.handleTask(ctx, task, respCh)
+	if worker.respChan != nil {
+		// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
+		// there is a task finished.
+		worker.sendToRespCh(finCopResp, worker.respChan, false)
+	}
+	if task.respChan != nil {
+		close(task.respChan)
+	}
+}
+
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
+	it.unconsumedStats = &unconsumedCopRuntimeStats{}
+	// try skip sender goroutine
+	if it.skipSender {
+		var waitFor atomic.Int64
+		waitFor.Add(int64(len(it.tasks)))
+		for _, task := range it.tasks {
+			worker := it.buildCopWorker(nil, enableCollectExecutionInfo)
+			go func(task *copTask) {
+				it.sendRate.GetToken(it.finishCh)
+				worker.runWithTask(ctx, task)
+				if waitFor.Add(-1) == 0 && it.respChan != nil {
+					close(it.respChan)
+				}
+			}(task)
+		}
+		return
+	}
 	taskCh := make(chan *copTask, 1)
 	smallTaskCh := make(chan *copTask, 1)
-	it.unconsumedStats = &unconsumedCopRuntimeStats{}
 	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
@@ -836,23 +883,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		} else {
 			ch = smallTaskCh
 		}
-		worker := &copIteratorWorker{
-			taskCh:                     ch,
-			wg:                         &it.wg,
-			store:                      it.store,
-			req:                        it.req,
-			respChan:                   it.respChan,
-			finishCh:                   it.finishCh,
-			vars:                       it.vars,
-			kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
-			memTracker:                 it.memTracker,
-			replicaReadSeed:            it.replicaReadSeed,
-			enableCollectExecutionInfo: enableCollectExecutionInfo,
-			pagingTaskIdx:              &it.pagingTaskIdx,
-			storeBatchedNum:            &it.storeBatchedNum,
-			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
-			unconsumedStats:            it.unconsumedStats,
-		}
+		worker := it.buildCopWorker(ch, enableCollectExecutionInfo)
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
@@ -872,6 +903,26 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		}
 	})
 	go taskSender.run(it.req.ConnID)
+}
+
+func (it *copIterator) buildCopWorker(ch <-chan *copTask, enableCollectExecutionInfo bool) *copIteratorWorker {
+	return &copIteratorWorker{
+		taskCh:                     ch,
+		wg:                         &it.wg,
+		store:                      it.store,
+		req:                        it.req,
+		respChan:                   it.respChan,
+		finishCh:                   it.finishCh,
+		vars:                       it.vars,
+		kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+		memTracker:                 it.memTracker,
+		replicaReadSeed:            it.replicaReadSeed,
+		enableCollectExecutionInfo: enableCollectExecutionInfo,
+		pagingTaskIdx:              &it.pagingTaskIdx,
+		storeBatchedNum:            &it.storeBatchedNum,
+		storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
+		unconsumedStats:            it.unconsumedStats,
+	}
 }
 
 func (sender *copIteratorTaskSender) run(connID uint64) {
