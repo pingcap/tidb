@@ -87,6 +87,7 @@ var extractableColumns = map[string][]string{
 		_tableSchema,
 		_constraintSchema,
 		_tableName,
+		_constraintName,
 	},
 	// See infoschema.tableConstraintsCols for full columns.
 	// Used by InfoSchemaTableConstraintsExtractor and setDataFromTableConstraints.
