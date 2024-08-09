@@ -132,42 +132,33 @@ func TestCancel(t *testing.T) {
 }
 
 func TestExistedTables(t *testing.T) {
-	// Create a context with a 20-second timeout for the entire test.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-
 	tk := initTestKit(t)
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
-	tk.MustExec("create table foo(pk int primary key auto_increment, v varchar(255));")
-	tk.MustExec("create table baa(pk int primary key auto_increment, v varchar(255));")
-	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
-	tk.MustExec("insert into baa(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
+	for i := 0; i < 10; i++ {
+		tableName := fmt.Sprintf("foo%d", i)
+		tk.MustExec(fmt.Sprintf("create table %s(pk int primary key auto_increment, v varchar(255));", tableName))
+		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
+	}
 
-	// Record time for the backup operation
-	backupStartTime := time.Now()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		backupQuery := fmt.Sprintf("BACKUP DATABASE `test` TO 'local://%s'", sqlTmp)
+		backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s'", sqlTmp)
 		_ = tk.MustQuery(backupQuery)
 	}()
 	select {
-	case <-done:
-		backupDuration := time.Since(backupStartTime)
-		t.Logf("Backup operation took: %s", backupDuration)
-	case <-ctx.Done():
+	case <-time.After(20 * time.Second):
 		t.Fatal("Backup operation exceeded")
+	case <-done:
 	}
 
-	// Record time for the restore operation
-	restoreStartTime := time.Now()
 	done = make(chan struct{})
 	go func() {
 		defer close(done)
-		restoreQuery := fmt.Sprintf("RESTORE DATABASE `test` FROM 'local://%s'", sqlTmp)
+		restoreQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s'", sqlTmp)
 		res, err := tk.Exec(restoreQuery)
 		require.NoError(t, err)
 
@@ -175,10 +166,8 @@ func TestExistedTables(t *testing.T) {
 		require.ErrorContains(t, err, "table already exists")
 	}()
 	select {
-	case <-done:
-		restoreDuration := time.Since(restoreStartTime)
-		t.Logf("Restore operation took: %s", restoreDuration)
-	case <-ctx.Done():
+	case <-time.After(20 * time.Second):
 		t.Fatal("Restore operation exceeded")
+	case <-done:
 	}
 }

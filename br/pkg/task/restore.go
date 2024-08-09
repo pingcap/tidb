@@ -844,9 +844,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
-			return errors.Trace(err)
-		}
 	}
 
 	archiveSize := reader.ArchiveSize(ctx, files)
@@ -914,6 +911,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
+	} else if checkpointFirstRun && cfg.CheckRequirements {
+		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
