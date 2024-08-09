@@ -16,11 +16,11 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"go.uber.org/zap"
