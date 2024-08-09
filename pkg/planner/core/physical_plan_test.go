@@ -518,3 +518,76 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	require.Equal(t, 1, len(correlated))
 	require.Equal(t, "test.t2.company_no", correlated[0].StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 }
+
+func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	getPhysicalPlan := func(sql string) base.Plan {
+		tk.MustExec(sql)
+		info := tk.Session().ShowProcess()
+		require.NotNil(t, info)
+		p, ok := info.Plan.(base.Plan)
+		require.True(t, ok)
+		return p
+	}
+
+	var findProjBelowUnion func(p base.Plan) (projsBelowUnion, normalProjs []*core.PhysicalProjection)
+	findProjBelowUnion = func(p base.Plan) (projsBelowUnion, normalProjs []*core.PhysicalProjection) {
+		if p == nil {
+			return projsBelowUnion, normalProjs
+		}
+		switch v := p.(type) {
+		case *core.PhysicalUnionAll:
+			for _, child := range v.Children() {
+				if proj, ok := child.(*core.PhysicalProjection); ok {
+					projsBelowUnion = append(projsBelowUnion, proj)
+				}
+			}
+		default:
+			for _, child := range p.(base.PhysicalPlan).Children() {
+				if proj, ok := child.(*core.PhysicalProjection); ok {
+					normalProjs = append(normalProjs, proj)
+				}
+				subProjsBelowUnion, subNormalProjs := findProjBelowUnion(child)
+				projsBelowUnion = append(projsBelowUnion, subProjsBelowUnion...)
+				normalProjs = append(normalProjs, subNormalProjs...)
+			}
+		}
+		return projsBelowUnion, normalProjs
+	}
+
+	checkResult := func(sql string) {
+		p := getPhysicalPlan(sql)
+		projsBelowUnion, normalProjs := findProjBelowUnion(p)
+		if proj, ok := p.(*core.PhysicalProjection); ok {
+			normalProjs = append(normalProjs, proj)
+		}
+		require.NotEmpty(t, projsBelowUnion)
+		for _, proj := range projsBelowUnion {
+			require.True(t, proj.AvoidColumnEvaluator)
+		}
+		for _, proj := range normalProjs {
+			require.False(t, proj.AvoidColumnEvaluator)
+		}
+	}
+
+	// Test setup
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1 (cc1 int, cc2 text);`)
+	tk.MustExec(`insert into t1 values (1, 'aaaa'), (2, 'bbbb'), (3, 'cccc');`)
+	tk.MustExec(`create table t2 (cc1 int, cc2 text, primary key(cc1));`)
+	tk.MustExec(`insert into t2 values (2, '2');`)
+	tk.MustExec(`set tidb_executor_concurrency = 1;`)
+	tk.MustExec(`set tidb_window_concurrency = 100;`)
+
+	testCases := []string{
+		`select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a, b, c;`,
+		`select a+1, b+1 from (select cc1 as a, cc2 as b from t1 union select cc2, cc1 from t1) tmp`,
+	}
+
+	for _, sql := range testCases {
+		checkResult(sql)
+	}
+}

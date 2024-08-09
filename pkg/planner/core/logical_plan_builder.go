@@ -172,8 +172,6 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	}
 	proj.SetSchema(projSchema)
 	proj.SetChildren(p)
-	// since expand will ref original col and make some change, do the copy in executor rather than ref the same chunk.column.
-	proj.AvoidColumnEvaluator = true
 	proj.Proj4Expand = true
 	newGbyItems := expression.RestoreGbyExpression(distinctGbyCols, gbyExprsRefPos)
 
@@ -1694,7 +1692,7 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 			}
 		}
 		b.optFlag |= flagEliminateProjection
-		proj := logicalop.LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+		proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
 		proj.SetSchema(u.Schema().Clone())
 		// reset the schema type to make the "not null" flag right.
 		for i, expr := range exprs {
@@ -7265,7 +7263,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 		}
 	}
 	b.optFlag |= flagEliminateProjection
-	proj := logicalop.LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(resSchema)
 	proj.SetChildren(recur)
 	return proj, nil
