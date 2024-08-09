@@ -70,7 +70,6 @@ go_test(
         "prefix_helper_test.go",
         "processinfo_test.go",
         "security_test.go",
-        "session_pool_test.go",
         "urls_test.go",
         "util_test.go",
         "wait_group_wrapper_test.go",
