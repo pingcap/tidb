@@ -18,11 +18,21 @@ go_library(
 go_test(
     name = "context_test",
     timeout = "short",
-    srcs = ["warn_test.go"],
+    srcs = [
+        "checksum_test.go",
+        "warn_test.go",
+    ],
     embed = [":context"],
     flaky = True,
     deps = [
+        "//pkg/distsql/context",
+        "//pkg/expression/context",
+        "//pkg/expression/contextsession",
+        "//pkg/expression/contextstatic",
         "//pkg/parser/terror",
+        "//pkg/planner/context",
+        "//pkg/util/hack",
+        "//pkg/util/ranger/context",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
