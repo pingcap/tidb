@@ -46,7 +46,7 @@ func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 	newDDL, newDDLExecutor := ddl.NewDDL(context.Background(),
 		ddl.WithStore(d.Store()),
 		ddl.WithInfoCache(d.InfoCache()),
-		ddl.WithLease(d.DDL().GetLease()),
+		ddl.WithLease(d.GetSchemaLease()),
 		ddl.WithSchemaLoader(d),
 	)
 	d.SetDDL(newDDL, newDDLExecutor)
@@ -92,7 +92,7 @@ func testRunInterruptedJob(t *testing.T, store kv.Storage, d *domain.Domain, job
 	done := make(chan error, 1)
 	go runInterruptedJob(t, store, d.DDLExecutor(), job, done)
 
-	ticker := time.NewTicker(d.DDL().GetLease())
+	ticker := time.NewTicker(d.GetSchemaLease())
 	defer ticker.Stop()
 	for {
 		select {
@@ -140,7 +140,7 @@ func TestStat(t *testing.T) {
 	done := make(chan error, 1)
 	go runInterruptedJob(t, store, dom.DDLExecutor(), job, done)
 
-	ticker := time.NewTicker(dom.DDL().GetLease() * 1)
+	ticker := time.NewTicker(dom.GetSchemaLease() * 1)
 	defer ticker.Stop()
 	ver := getDDLSchemaVer(t, dom.DDL())
 LOOP:

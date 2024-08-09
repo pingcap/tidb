@@ -2233,7 +2233,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
+			err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
 						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -2431,7 +2431,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
+			err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
 						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -2702,9 +2702,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// partition to be exchange with.
 	// So we need to rollback that change, instead of just cancelling.
 
-	if d.lease > 0 {
-		delayForAsyncCommit()
-	}
+	delayForAsyncCommit()
 
 	if defID != partDef.ID {
 		// Should never happen, should have been updated above, in previous state!
@@ -3451,7 +3449,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, partTbl, physTblIDs, elements)
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
+	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)

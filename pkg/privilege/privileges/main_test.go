@@ -35,7 +35,6 @@ func TestMain(m *testing.M) {
 	}
 	testsetup.SetupForCommonTest()
 
-	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 
 	goleak.VerifyTestMain(m, opts...)

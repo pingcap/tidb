@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
@@ -42,10 +41,6 @@ func TestMain(m *testing.M) {
 	// This is used to detect which codes are not tracked by TopSQL.
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true
-
-	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
-	// Set schema lease to avoid it from making CI slow.
-	session.SetSchemaLease(0)
 
 	tikv.EnableFailpoints()
 

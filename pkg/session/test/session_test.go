@@ -152,7 +152,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	}()
 	require.Error(t, domain.GetDomain(tk.Session()).Reload())
 
-	lease := domain.GetDomain(tk.Session()).DDL().GetLease()
+	lease := domain.GetDomain(tk.Session()).GetSchemaLease()
 	time.Sleep(lease * 2)
 
 	// Make sure executing insert statement is failed when server is invalid.

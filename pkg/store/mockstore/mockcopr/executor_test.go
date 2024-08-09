@@ -58,7 +58,6 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
-	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)

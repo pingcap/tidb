@@ -283,9 +283,8 @@ func (w *worker) doModifyColumn(
 	if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag()) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.GetFlag())
 
-		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
 		// We need to check after the flag is set
-		if d.lease > 0 && !noPreventNullFlag {
+		if !noPreventNullFlag {
 			delayForAsyncCommit()
 		}
 
@@ -588,7 +587,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 	// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/pkg/ddl/mockDelayInModifyColumnTypeWithData".
 	// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/pkg/ddl/mockDelayInModifyColumnTypeWithData"
 	failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)

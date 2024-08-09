@@ -74,7 +74,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 }
 
 func TestAddPrimaryKeyMergeProcess(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 0)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)

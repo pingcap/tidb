@@ -140,9 +140,8 @@ func newReorgSessCtx(store kv.Storage) sessionctx.Context {
 	return c
 }
 
-const defaultWaitReorgTimeout = 10 * time.Second
-
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
+// make it a var for testing.
 var ReorgWaitTimeout = 5 * time.Second
 
 func (rc *reorgCtx) notifyJobState(state model.JobState) {
@@ -226,7 +225,6 @@ func (rc *reorgCtx) getRowCount() int64 {
 func (w *worker) runReorgJob(
 	reorgInfo *reorgInfo,
 	tblInfo *model.TableInfo,
-	lease time.Duration,
 	reorgFn func() error,
 ) error {
 	job := reorgInfo.Job
@@ -268,16 +266,7 @@ func (w *worker) runReorgJob(
 		}()
 	}
 
-	waitTimeout := defaultWaitReorgTimeout
-	// if lease is 0, we are using a local storage,
-	// and we can wait the reorganization to be done here.
-	// if lease > 0, we don't need to wait here because
-	// we should update some job's progress context and try checking again,
-	// so we use a very little timeout here.
-	if lease > 0 {
-		waitTimeout = ReorgWaitTimeout
-	}
-
+	waitTimeout := ReorgWaitTimeout
 	// wait reorganization job done or timeout
 	select {
 	case res := <-rc.doneCh:
@@ -744,9 +733,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		})
 
 		info.first = true
-		if d.lease > 0 { // Only delay when it's not in test.
-			delayForAsyncCommit()
-		}
+		delayForAsyncCommit()
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -837,9 +824,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	)
 	if job.SnapshotVer == 0 {
 		info.first = true
-		if d.lease > 0 { // Only delay when it's not in test.
-			delayForAsyncCommit()
-		}
+		delayForAsyncCommit()
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
