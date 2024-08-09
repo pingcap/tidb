@@ -257,9 +257,9 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 }
 
 // checkVectorAggPushDown returns false if this aggregate function is not supported to push down.
-// - The aggregate function is not calculated over a Vector column (returns nil)
-// - The aggregate function is calculated over a Vector column and the function is supported (returns nil)
-// - The aggregate function is calculated over a Vector column and the function is not supported (returns error)
+// - The aggregate function is not calculated over a Vector column (returns true)
+// - The aggregate function is calculated over a Vector column and the function is supported (returns true)
+// - The aggregate function is calculated over a Vector column and the function is not supported (returns false)
 func checkVectorAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {
 	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow:
