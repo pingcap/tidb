@@ -1953,6 +1953,7 @@ const (
 	RunawayActionDryRun
 	RunawayActionCooldown
 	RunawayActionKill
+	RunawayActionSwitchGroup
 )
 
 // RunawayWatchType is the type of runaway watch.
@@ -1997,17 +1998,25 @@ func (t RunawayActionType) String() string {
 		return "COOLDOWN"
 	case RunawayActionKill:
 		return "KILL"
+	case RunawayActionSwitchGroup:
+		return "SWITCH_GROUP"
 	default:
 		return "DRYRUN"
 	}
 }
 
+// RunawayActionSettings is the settings of the runaway action.
+type RunawayActionSettings struct {
+	Type            RunawayActionType `json:"type"`
+	SwitchGroupName string            `json:"switch_group_name"`
+}
+
 // ResourceGroupRunawaySettings is the runaway settings of the resource group
 type ResourceGroupRunawaySettings struct {
-	ExecElapsedTimeMs uint64            `json:"exec_elapsed_time_ms"`
-	Action            RunawayActionType `json:"action"`
-	WatchType         RunawayWatchType  `json:"watch_type"`
-	WatchDurationMs   int64             `json:"watch_duration_ms"`
+	ExecElapsedTimeMs uint64                `json:"exec_elapsed_time_ms"`
+	Action            RunawayActionSettings `json:"action"`
+	WatchType         RunawayWatchType      `json:"watch_type"`
+	WatchDurationMs   int64                 `json:"watch_duration_ms"`
 }
 
 type ResourceGroupBackgroundSettings struct {
@@ -2083,7 +2092,11 @@ func (p *ResourceGroupSettings) String() string {
 	}
 	if p.Runaway != nil {
 		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
-		writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
+		if p.Runaway.Action.Type == RunawayActionSwitchGroup {
+			writeSettingItemToBuilder(sb, fmt.Sprintf("ACTION=%s(%s)", p.Runaway.Action.Type.String(), p.Runaway.Action.SwitchGroupName))
+		} else {
+			writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.Type.String())
+		}
 		if p.Runaway.WatchType != WatchNone {
 			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
 			if p.Runaway.WatchDurationMs > 0 {

@@ -60,7 +60,7 @@ func setWatchOption(ctx context.Context,
 			record.ResourceGroupName = resourceGroupOption.GroupNameStr.L
 		}
 	case ast.QueryWatchAction:
-		record.Action = rmpb.RunawayAction(op.ActionOption.Type)
+		record.SetAction(rmpb.RunawayAction(op.ActionOption.Type), op.ActionOption.SwitchGroupName.String())
 	case ast.QueryWatchType:
 		textOption := op.TextOption
 		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), textOption.PatternExpr, nil, nil, false)
@@ -144,12 +144,13 @@ func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclien
 	if rg == nil {
 		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(record.ResourceGroupName)
 	}
-	if record.Action == rmpb.RunawayAction_NoneAction {
+	if record.GetAction() == rmpb.RunawayAction_NoneAction {
 		if rg.RunawaySettings == nil {
 			return errors.Errorf("must set runaway config for resource group `%s`", record.ResourceGroupName)
 		}
-		record.Action = rg.RunawaySettings.Action
+		record.SetAction(rg.RunawaySettings.Action, rg.RunawaySettings.SwitchGroupName)
 	}
+	// TODO: validate the switch group.
 	if record.Watch == rmpb.RunawayWatchType_NoneWatch {
 		return errors.Errorf("must specify watch type")
 	}
