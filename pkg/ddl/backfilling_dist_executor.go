@@ -153,7 +153,7 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 		ddlObj.etcdCli,
 		discovery,
 		job.ReorgMeta.ResourceGroupName,
-		ingest.IngestConcurrency(job.ReorgMeta.Concurrency),
+		ingest.ResolveConcurrency(job.ReorgMeta.Concurrency),
 	)
 }
 

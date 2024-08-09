@@ -683,7 +683,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	importConc := ingest.IngestConcurrency(job.ReorgMeta.Concurrency)
+	importConc := ingest.ResolveConcurrency(job.ReorgMeta.Concurrency)
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
 		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, importConc)
 	if err != nil {
@@ -733,7 +733,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 
-	concurrency := ingest.IngestConcurrency(job.ReorgMeta.Concurrency)
+	concurrency := ingest.ResolveConcurrency(job.ReorgMeta.Concurrency)
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
 		dc.store,

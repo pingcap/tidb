@@ -91,8 +91,8 @@ func genConfig(
 	return c, nil
 }
 
-// IngestConcurrency is the concurrency used during ingest.
-func IngestConcurrency(hintConc int) int {
+// ResolveConcurrency gets the concurrency used for ingest mode of adding index.
+func ResolveConcurrency(hintConc int) int {
 	if hintConc > 0 {
 		return hintConc
 	}
@@ -113,7 +113,7 @@ func CopReadBatchSize(hintSize int) int {
 // represents the max concurrent ongoing coprocessor requests.
 // It multiplies the tidb_ddl_reorg_worker_cnt by 10.
 func CopReadChunkPoolSize(hintConc int) int {
-	return IngestConcurrency(hintConc) * 10
+	return ResolveConcurrency(hintConc) * 10
 }
 
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.
