@@ -688,7 +688,27 @@ const (
 		error_message TEXT DEFAULT NULL,
 		PRIMARY KEY (id),
 		KEY (created_by),
-		KEY (status));`
+		KEY (status)
+	);`
+
+	//CreateBrJobs is a table that BR uses.
+	CreateBrJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_br_jobs (
+		id          BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+		connID      BIGINT UNSIGNED,
+		queueTime   TIMESTAMP,  
+		kind        ENUM('BACKUP', 'RESTORE'), 
+		query       VARCHAR(255),
+		storage     VARCHAR(255),           
+		execTime    TIMESTAMP NULL,
+		state       VARCHAR(255), 
+		progress    INT,
+		finishTime  TIMESTAMP NULL,         
+		backupTS    BIGINT UNSIGNED DEFAULT 0,
+		restoreTS   BIGINT UNSIGNED DEFAULT 0,
+		archiveSize BIGINT UNSIGNED DEFAULT 0,
+		message     TEXT DEFAULT NULL,
+		lastUpdate  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	);`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -1105,16 +1125,22 @@ const (
 	// version 209
 	//   sets `tidb_resource_control_strict_mode` to off when a cluster upgrades from some version lower than v8.2.
 	version209 = 209
+
 	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
 	version210 = 210
 
 	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
 	version211 = 211
+
+	// version 212
+	// add new system table `mysql.tidb_br_jobs`, which is used for
+	// recording BR backup and restore jobs.
+	version212 = 212
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version211
+var currentBootstrapVersion int64 = version212
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1281,6 +1307,7 @@ var (
 		upgradeToVer209,
 		upgradeToVer210,
 		upgradeToVer211,
+		upgradeToVer212,
 	}
 )
 
@@ -3061,7 +3088,6 @@ func upgradeToVer210(s sessiontypes.Session, ver int64) {
 	if ver >= version210 {
 		return
 	}
-
 	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
 	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
 	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
@@ -3076,6 +3102,13 @@ func upgradeToVer211(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer212(s sessiontypes.Session, ver int64) {
+	if ver >= version212 {
+		return
+	}
+	mustExecute(s, CreateBrJobs)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3210,6 +3243,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateGlobalTaskHistory)
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
+	// Create tidb_br_jobs
+	mustExecute(s, CreateBrJobs)
 	// create runaway_watch
 	mustExecute(s, CreateRunawayWatchTable)
 	// create runaway_queries

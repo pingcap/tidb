@@ -45,7 +45,8 @@ func initTestKit(t *testing.T) *testkit.TestKit {
 
 func TestBackupAndRestore(t *testing.T) {
 	tk := initTestKit(t)
-	tk.MustExec("create database if not exists br")
+	tk.MustExec("drop database if exists br")
+	tk.MustExec("create database br")
 	tk.MustExec("use br")
 	tk.MustExec("create table t1(v int)")
 	tk.MustExec("insert into t1 values (1)")
@@ -53,7 +54,8 @@ func TestBackupAndRestore(t *testing.T) {
 	tk.MustExec("insert into t1 values (3)")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 
-	tk.MustExec("create database if not exists br02")
+	tk.MustExec("drop database if exists br02")
+	tk.MustExec("create database br02")
 	tk.MustExec("use br02")
 	tk.MustExec("create table t1(v int)")
 
@@ -75,7 +77,8 @@ func TestBackupAndRestore(t *testing.T) {
 
 func TestRestoreMultiTables(t *testing.T) {
 	tk := initTestKit(t)
-	tk.MustExec("create database if not exists br")
+	tk.MustExec("drop database if exists br")
+	tk.MustExec("create database br")
 	tk.MustExec("use br")
 
 	tablesNameSet := make(map[string]struct{})
