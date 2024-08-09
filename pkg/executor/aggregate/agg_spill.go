@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -77,7 +78,11 @@ func newSpillHelper(
 	aggFuncsForRestoring []aggfuncs.AggFunc,
 	finalWorkerAggFuncs []aggfuncs.AggFunc,
 	getNewSpillChunkFunc func() *chunk.Chunk,
-	spillChunkFieldTypes []*types.FieldType) *parallelHashAggSpillHelper {
+	spillChunkFieldTypes []*types.FieldType) (*parallelHashAggSpillHelper, error) {
+		if len(aggFuncsForRestoring) != len(finalWorkerAggFuncs) {
+			return nil, errors.NewNoStackError("len(aggFuncsForRestoring) != len(finalWorkerAggFuncs)")
+		}
+		
 	mu := new(sync.Mutex)
 	helper := &parallelHashAggSpillHelper{
 		lock: struct {
@@ -105,7 +110,7 @@ func newSpillHelper(
 		spillChunkFieldTypes: spillChunkFieldTypes,
 	}
 
-	return helper
+	return helper, nil
 }
 
 func (p *parallelHashAggSpillHelper) close() {
@@ -243,7 +248,7 @@ type processRowContext struct {
 	chunk                  *chunk.Chunk
 	rowPos                 int
 	keyColPos              int
-	aggRestoreFuncNum      int
+	aggFuncNum             int
 	restoreadData          *aggfuncs.AggPartialResultMapper
 	partialResultsRestored [][]aggfuncs.PartialResult
 	bInMap                 *int
@@ -251,15 +256,15 @@ type processRowContext struct {
 
 func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (totalMemDelta int64, totalExpandMem int64, err error) {
 	chunkNum := diskIO.NumChunks()
-	aggRestoreFuncNum := len(p.aggFuncsForRestoring)
+	aggFuncNum := len(p.aggFuncsForRestoring)
 	processRowContext := &processRowContext{
 		ctx:                    ctx,
 		chunk:                  nil, // Will be set in the loop
 		rowPos:                 0,   // Will be set in the loop
-		keyColPos:              aggRestoreFuncNum,
-		aggRestoreFuncNum:      aggRestoreFuncNum,
+		keyColPos:              aggFuncNum,
+		aggFuncNum:             aggFuncNum,
 		restoreadData:          restoreadData,
-		partialResultsRestored: make([][]aggfuncs.PartialResult, aggRestoreFuncNum),
+		partialResultsRestored: make([][]aggfuncs.PartialResult, aggFuncNum),
 		bInMap:                 bInMap,
 	}
 	for i := 0; i < chunkNum; i++ {
@@ -297,7 +302,7 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 	if ok {
 		exprCtx := context.ctx.GetExprCtx()
 		// The key has appeared before, merge results.
-		for aggPos := 0; aggPos < len(p.finalWorkerAggFuncs); aggPos++ {
+		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
 			memDelta, err := p.finalWorkerAggFuncs[aggPos].MergePartialResult(exprCtx.GetEvalCtx(), context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
 			if err != nil {
 				return totalMemDelta, 0, err
@@ -313,10 +318,10 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 			(*context.bInMap)++
 		}
 
-		results := make([]aggfuncs.PartialResult, context.aggRestoreFuncNum)
+		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
 		(*context.restoreadData)[key] = results
 
-		for aggPos := 0; aggPos < context.aggRestoreFuncNum; aggPos++ {
+		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
 			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
 		}
 	}
