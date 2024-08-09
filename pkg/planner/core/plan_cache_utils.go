@@ -186,7 +186,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
 	for id := range vars.StmtCtx.MDLRelatedTableIDs {
-		tbl, ok := is.TableByID(id)
+		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
 			return nil, nil, 0, errors.New("table not found in info schema")

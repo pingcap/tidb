@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -93,7 +94,7 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {
 	dom := domain.GetDomain(e.Ctx())
 	is := dom.InfoSchema()
-	table, ok := is.TableByID(key.tableID)
+	table, ok := is.TableByID(context.Background(), key.tableID)
 	if !ok {
 		return nil
 	}

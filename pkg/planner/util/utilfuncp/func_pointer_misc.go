@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 // this file is used for passing function pointer at init(){} to avoid some import cycles.
@@ -145,3 +146,16 @@ var ExhaustPhysicalPlans4LogicalLock func(lp base.LogicalPlan, prop *property.Ph
 // ExhaustPhysicalPlans4LogicalUnionScan will be called by LogicalUnionScan in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalUnionScan func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
+
+// *************************************** physical op related *******************************************
+
+// GetEstimatedProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.
+var GetEstimatedProbeCntFromProbeParents func(probeParents []base.PhysicalPlan) float64
+
+// GetActualProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.
+var GetActualProbeCntFromProbeParents func(pps []base.PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64
+
+// ****************************************** task related ***********************************************
+
+// AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
+var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task

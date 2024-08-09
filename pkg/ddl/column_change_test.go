@@ -60,7 +60,7 @@ func TestColumnAdd(t *testing.T) {
 	var jobID int64
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID = job.ID
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
@@ -110,7 +110,7 @@ func TestColumnAdd(t *testing.T) {
 	first = true
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID = job.ID
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
 		case model.StateWriteOnly:

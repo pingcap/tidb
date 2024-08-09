@@ -588,11 +588,11 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 	return &tmp
 }
 
-func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
-	return is.tableByID(id, true)
+func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
+	return is.tableByID(ctx, id, true)
 }
 
-func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok bool) {
+func (is *infoschemaV2) tableByID(ctx context.Context, id int64, noRefill bool) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
 	}
@@ -629,7 +629,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := is.loadTableInfo(context.Background(), id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := is.loadTableInfo(ctx, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil || ret == nil {
 		return nil, false
 	}
@@ -729,7 +729,7 @@ func (is *infoschemaV2) TableInfoByName(schema, table model.CIStr) (*model.Table
 
 // TableInfoByID implements InfoSchema.TableInfoByID
 func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(context.Background(), id)
 	return getTableInfo(tbl), ok
 }
 
@@ -938,7 +938,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 		return nil, nil, nil
 	}
 
-	tbl, ok := is.TableByID(pi.tableID)
+	tbl, ok := is.TableByID(context.Background(), pi.tableID)
 	if !ok {
 		// something wrong?
 		return nil, nil, nil
@@ -1194,7 +1194,7 @@ func allocByID(b *Builder, id int64) (autoid.Allocators, bool) {
 	} else {
 		is = b.infoSchema
 	}
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(context.Background(), id)
 	if !ok {
 		return autoid.Allocators{}, false
 	}
@@ -1256,7 +1256,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
 	}
 
-	table, ok := b.infoschemaV2.TableByID(tableID)
+	table, ok := b.infoschemaV2.TableByID(context.Background(), tableID)
 	if !ok {
 		return nil
 	}

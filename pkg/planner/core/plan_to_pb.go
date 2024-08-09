@@ -31,11 +31,6 @@ import (
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *basePhysicalPlan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
-	return nil, errors.Errorf("plan %s fails converts to PB", p.Plan.ExplainID())
-}
-
-// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalExpand) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	if len(p.LevelExprs) > 0 {
 		return p.toPBV2(ctx, storeType)
@@ -51,7 +46,7 @@ func (p *PhysicalExpand) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) 
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
-		expand.Child, err = p.children[0].ToPB(ctx, storeType)
+		expand.Child, err = p.Children()[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -78,7 +73,7 @@ func (p *PhysicalExpand) toPBV2(ctx *base.BuildPBContext, storeType kv.StoreType
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
-		expand2.Child, err = p.children[0].ToPB(ctx, storeType)
+		expand2.Child, err = p.Children()[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -108,7 +103,7 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
-		aggExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		aggExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -157,7 +152,7 @@ func (p *PhysicalStreamAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
-		aggExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		aggExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -179,7 +174,7 @@ func (p *PhysicalSelection) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
-		selExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		selExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -202,7 +197,7 @@ func (p *PhysicalProjection) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTy
 	if !(storeType == kv.TiFlash || storeType == kv.TiKV) {
 		return nil, errors.Errorf("the projection can only be pushed down to TiFlash or TiKV now, not %s", storeType.Name())
 	}
-	projExec.Child, err = p.children[0].ToPB(ctx, storeType)
+	projExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -226,7 +221,7 @@ func (p *PhysicalTopN) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
-		topNExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		topNExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -247,7 +242,7 @@ func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (
 	}
 	if storeType == kv.TiFlash {
 		var err error
-		limitExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		limitExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -530,11 +525,11 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		rightKeys = append(rightKeys, rightKey)
 	}
 
-	lChildren, err := p.children[0].ToPB(ctx, storeType)
+	lChildren, err := p.Children()[0].ToPB(ctx, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rChildren, err := p.children[1].ToPB(ctx, storeType)
+	rChildren, err := p.Children()[1].ToPB(ctx, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -690,7 +685,7 @@ func (p *PhysicalWindow) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) 
 	}
 
 	var err error
-	windowExec.Child, err = p.children[0].ToPB(ctx, storeType)
+	windowExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -720,7 +715,7 @@ func (p *PhysicalSort) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*
 	sortExec.IsPartialSort = &isPartialSort
 
 	var err error
-	sortExec.Child, err = p.children[0].ToPB(ctx, storeType)
+	sortExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -35,6 +35,7 @@ func init() {
 	utilfuncp.GetStreamAggs = getStreamAggs
 	utilfuncp.GetHashAggs = getHashAggs
 	utilfuncp.PruneByItems = pruneByItems
+	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
 	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
 	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
 	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
@@ -50,8 +51,11 @@ func init() {
 	utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan = exhaustPhysicalPlans4LogicalUnionScan
 	utilfuncp.ExhaustPhysicalPlans4LogicalProjection = exhaustPhysicalPlans4LogicalProjection
 
+	utilfuncp.GetActualProbeCntFromProbeParents = getActualProbeCntFromProbeParents
+	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
 	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
-	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
+
+	utilfuncp.AttachPlan2Task = attachPlan2Task
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

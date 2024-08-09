@@ -97,19 +97,13 @@ func (t *CopTask) getStoreType() kv.StoreType {
 }
 
 // Attach2Task implements PhysicalPlan interface.
-func (p *basePhysicalPlan) Attach2Task(tasks ...base.Task) base.Task {
-	t := tasks[0].ConvertToRootTask(p.SCtx())
-	return attachPlan2Task(p.self, t)
-}
-
-// Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 	// We need to pull the projection under unionScan upon unionScan.
 	// Since the projection only prunes columns, it's ok the put it upon unionScan.
 	if sel, ok := tasks[0].Plan().(*PhysicalSelection); ok {
-		if pj, ok := sel.children[0].(*PhysicalProjection); ok {
+		if pj, ok := sel.Children()[0].(*PhysicalProjection); ok {
 			// Convert unionScan->selection->projection to projection->unionScan->selection.
-			sel.SetChildren(pj.children...)
+			sel.SetChildren(pj.Children()...)
 			p.SetChildren(sel)
 			p.SetStats(tasks[0].Plan().StatsInfo())
 			rt, _ := tasks[0].(*RootTask)
@@ -120,15 +114,15 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	if pj, ok := tasks[0].Plan().(*PhysicalProjection); ok {
 		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
-		p.SetChildren(pj.children...)
+		p.SetChildren(pj.Children()...)
 		p.SetStats(tasks[0].Plan().StatsInfo())
 		rt, _ := tasks[0].(*RootTask)
-		rt.SetPlan(pj.children[0])
+		rt.SetPlan(pj.Children()[0])
 		pj.SetChildren(p)
-		return pj.Attach2Task(p.basePhysicalPlan.Attach2Task(tasks...))
+		return pj.Attach2Task(p.BasePhysicalPlan.Attach2Task(tasks...))
 	}
 	p.SetStats(tasks[0].Plan().StatsInfo())
-	return p.basePhysicalPlan.Attach2Task(tasks...)
+	return p.BasePhysicalPlan.Attach2Task(tasks...)
 }
 
 // Attach2Task implements PhysicalPlan interface.
@@ -649,7 +643,7 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 			pushedDownLimit.SetChildren(cop.tablePlan)
 			cop.tablePlan = pushedDownLimit
 			// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
-			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+			pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 			t = cop.ConvertToRootTask(p.SCtx())
 		}
 		if len(cop.idxMergePartPlans) == 0 {
@@ -665,7 +659,7 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 				cop = attachPlan2Task(pushedDownLimit, cop).(*CopTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
-				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+				pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 			}
 			t = cop.ConvertToRootTask(p.SCtx())
 			sunk = p.sinkIntoIndexLookUp(t)
@@ -686,7 +680,7 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 						stats := util.DeriveLimitStats(childProfile, float64(newCount))
 						pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 						pushedDownLimit.SetChildren(partialScan)
-						pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+						pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 						limitChildren = append(limitChildren, pushedDownLimit)
 					}
 					cop.idxMergePartPlans = limitChildren
@@ -730,7 +724,7 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 		stats := util.DeriveLimitStats(childProfile, float64(newCount))
 		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*MppTask)
-		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+		pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 		t = mpp.ConvertToRootTask(p.SCtx())
 	}
 	if sunk {
@@ -1511,7 +1505,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final base.PhysicalPlan) {
 	// Check if this aggregation can push down.
 	if !CheckAggCanPushCop(p.SCtx(), p.AggFuncs, p.GroupByItems, copTaskType) {
-		return nil, p.self
+		return nil, p.Self
 	}
 	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.SCtx(), &AggInfo{
 		AggFuncs:     p.AggFuncs,
@@ -1519,10 +1513,10 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 		Schema:       p.Schema().Clone(),
 	}, true, isMPPTask)
 	if partialPref == nil {
-		return nil, p.self
+		return nil, p.Self
 	}
 	if p.TP() == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
-		return nil, p.self
+		return nil, p.Self
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.SCtx(),
@@ -1533,14 +1527,14 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 		// so we need add `firstrow` aggregation function to output the group by value.
 		aggFuncs, err := genFirstRowAggForGroupBy(p.SCtx(), partialPref.GroupByItems)
 		if err != nil {
-			return nil, p.self
+			return nil, p.Self
 		}
 		partialPref.AggFuncs = append(partialPref.AggFuncs, aggFuncs...)
 	}
 	p.AggFuncs = partialPref.AggFuncs
 	p.GroupByItems = partialPref.GroupByItems
 	p.schema = partialPref.Schema
-	partialAgg := p.self
+	partialAgg := p.Self
 	// Create physical "final" aggregation.
 	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	if p.TP() == plancodec.TypeStreamAgg {
@@ -1819,7 +1813,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *MppTask) base.Task {
 	// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 	// only push down the original agg
 	proj := p.convertAvgForMPP()
-	attachPlan2Task(p.self, mpp)
+	attachPlan2Task(p.Self, mpp)
 	if proj != nil {
 		attachPlan2Task(proj, mpp)
 	}
@@ -2328,7 +2322,7 @@ func (p *PhysicalWindow) Attach2Task(tasks ...base.Task) base.Task {
 		return p.attach2TaskForMPP(mpp)
 	}
 	t := tasks[0].ConvertToRootTask(p.SCtx())
-	return attachPlan2Task(p.self, t)
+	return attachPlan2Task(p.Self, t)
 }
 
 // Attach2Task implements the PhysicalPlan interface.
