@@ -755,11 +755,9 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			return nil, nil, nil, nil, true
 		} else {
 			// All Intervals are single points
-			if f, ok := accesses[i].(*expression.ScalarFunction); !ok || (ok && f.FuncName.L != ast.IsNull) {
-				// isnull is not equal to a = NULL
-				accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
-				newConditions = append(newConditions, accesses[i])
-			}
+
+			accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
+			newConditions = append(newConditions, accesses[i])
 			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
 				// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
 				// Maybe we can improve it later.
