@@ -115,7 +115,7 @@ drop table if exists tlist;
 set tidb_enable_list_partition = 1;
 create table tlist (a int, b int) partition by list (a) (partition p0 values in (0));
 alter table tlist add primary key (b);
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
 alter table tlist add primary key (a);
 alter table tlist add unique key (b);
 Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
@@ -124,7 +124,7 @@ alter table tlist rename index b to bb;
 alter table tlist drop index bb;
 create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0));
 alter table tcollist add primary key (b);
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
 alter table tcollist add primary key (a);
 alter table tcollist add unique key (b);
 Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
@@ -480,7 +480,7 @@ partition p2 values in (10, 11, 12, 13, 14));
 alter table tlist add primary key(a);
 alter table tlist drop primary key;
 alter table tlist add primary key(b);
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
 create table tcollist (a int, b int) partition by list columns (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -488,7 +488,7 @@ partition p2 values in (10, 11, 12, 13, 14));
 alter table tcollist add primary key(a);
 alter table tcollist drop primary key;
 alter table tcollist add primary key(b);
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
 create database issue_27018;
 use issue_27018;
 set tidb_enable_list_partition = 1;
