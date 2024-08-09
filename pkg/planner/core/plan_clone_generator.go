@@ -132,7 +132,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("inlj, ok := op.%v.CloneForPlanCache(newCtx)", f.Name)
 			c.write("if !ok {return nil, false}")
 			c.write("cloned.%v = *inlj.(*PhysicalIndexJoin)", f.Name)
-			c.write("cloned.self = cloned")
+			c.write("cloned.Self = cloned")
 		case "base.PhysicalPlan":
 			c.write("if op.%v != nil {", f.Name)
 			c.write("%v, ok := op.%v.CloneForPlanCache(newCtx)", f.Name, f.Name)
