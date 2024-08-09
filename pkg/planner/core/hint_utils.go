@@ -207,7 +207,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			p.QueryBlockOffset(),
 			nodeType,
 			false,
-			pp.children...,
+			pp.Children()...,
 		)
 		if hint != nil {
 			res = append(res, hint)
@@ -221,7 +221,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				p.QueryBlockOffset(),
 				nodeType,
 				false,
-				pp.children...,
+				pp.Children()...,
 			)
 			if hint != nil {
 				res = append(res, hint)
@@ -230,11 +230,11 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		}
 		var buildSideChild, probeSideChild base.PhysicalPlan
 		if pp.RightIsBuildSide() {
-			buildSideChild = pp.children[1]
-			probeSideChild = pp.children[0]
+			buildSideChild = pp.Children()[1]
+			probeSideChild = pp.Children()[0]
 		} else {
-			buildSideChild = pp.children[0]
-			probeSideChild = pp.children[1]
+			buildSideChild = pp.Children()[0]
+			probeSideChild = pp.Children()[1]
 		}
 		hint := genJoinMethodHintForSinglePhysicalJoin(
 			p.SCtx(),
@@ -269,8 +269,8 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			p.QueryBlockOffset(),
 			nodeType,
 			true,
-			pp.children[pp.InnerChildIdx],
-			pp.children[1-pp.InnerChildIdx],
+			pp.Children()[pp.InnerChildIdx],
+			pp.Children()[1-pp.InnerChildIdx],
 		)
 		if hint != nil {
 			res = append(res, hint)
@@ -282,8 +282,8 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			p.QueryBlockOffset(),
 			nodeType,
 			true,
-			pp.children[pp.InnerChildIdx],
-			pp.children[1-pp.InnerChildIdx],
+			pp.Children()[pp.InnerChildIdx],
+			pp.Children()[1-pp.InnerChildIdx],
 		)
 		if hint != nil {
 			res = append(res, hint)
@@ -295,8 +295,8 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			p.QueryBlockOffset(),
 			nodeType,
 			true,
-			pp.children[pp.InnerChildIdx],
-			pp.children[1-pp.InnerChildIdx],
+			pp.Children()[pp.InnerChildIdx],
+			pp.Children()[1-pp.InnerChildIdx],
 		)
 		if hint != nil {
 			res = append(res, hint)

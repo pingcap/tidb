@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -385,13 +386,13 @@ func refineCETrace(sctx base.PlanContext) {
 func mergeContinuousSelections(p base.PhysicalPlan) {
 	if sel, ok := p.(*PhysicalSelection); ok {
 		for {
-			childSel := sel.children[0]
+			childSel := sel.Children()[0]
 			tmp, ok := childSel.(*PhysicalSelection)
 			if !ok {
 				break
 			}
 			sel.Conditions = append(sel.Conditions, tmp.Conditions...)
-			sel.SetChild(0, tmp.children[0])
+			sel.SetChild(0, tmp.Children()[0])
 		}
 	}
 	for _, child := range p.Children() {
@@ -510,7 +511,7 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 	default:
 		return
 	}
-	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.children) != 1 {
+	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.Children()) != 1 {
 		return
 	}
 	for _, aggFunc := range physicalAgg.AggFuncs {
@@ -600,7 +601,7 @@ func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan b
 func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
+			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*physicalop.BasePhysicalPlan, 1)}
 			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
 	} else {
@@ -621,7 +622,7 @@ const (
 
 type fineGrainedShuffleHelper struct {
 	shuffleTarget shuffleTarget
-	plans         []*basePhysicalPlan
+	plans         []*physicalop.BasePhysicalPlan
 	joinKeysCount int
 }
 
@@ -644,7 +645,7 @@ func (h *fineGrainedShuffleHelper) clear() {
 	h.joinKeysCount = 0
 }
 
-func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
+func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.BasePhysicalPlan) {
 	h.shuffleTarget = t
 	h.plans = append(h.plans, p)
 }
@@ -800,34 +801,34 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
-		helper.updateTarget(window, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.updateTarget(window, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
-			helper.plans = append(helper.plans, &x.basePhysicalPlan)
+			helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		} else {
 			// Global sort will break the data partition.
 			helper.clear()
 		}
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSelection:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalProjection:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeReceiver:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashAgg:
 		// Todo: allow hash aggregation's output still benefits from fine grained shuffle
-		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*basePhysicalPlan{}}
-		aggHelper.plans = append(aggHelper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
+		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*physicalop.BasePhysicalPlan{}}
+		aggHelper.plans = append(aggHelper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashJoin:
-		child0 := x.children[0]
-		child1 := x.children[1]
+		child0 := x.Children()[0]
+		child1 := x.Children()[1]
 		buildChild := child0
 		probChild := child1
 		joinKeys := x.LeftJoinKeys
@@ -838,12 +839,12 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			probChild = child0
 		}
 		if len(joinKeys) > 0 { // Not cross join
-			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
-			buildHelper.plans = append(buildHelper.plans, &x.basePhysicalPlan)
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
+			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
 			buildHelper.joinKeysCount = len(joinKeys)
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		} else {
-			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*physicalop.BasePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		}
 		// don't apply fine grained shuffle for probe side
@@ -884,10 +885,10 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		}
 		// exchange sender will break the data partition.
 		helper.clear()
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	default:
 		for _, child := range x.Children() {
-			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
+			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*physicalop.BasePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, child, &childHelper, streamCountInfo, tiflashServerCountInfo)
 		}
 	}

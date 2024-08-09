@@ -51,7 +51,7 @@ func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context,
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -74,7 +74,7 @@ func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -93,7 +93,7 @@ func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Co
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -124,7 +124,7 @@ func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -149,7 +149,7 @@ func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -888,7 +888,7 @@ func TestDropColumns(t *testing.T) {
 
 func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
 	require.NoError(t, dom.Reload())
-	tbl, exist := dom.InfoSchema().TableByID(tableID)
+	tbl, exist := dom.InfoSchema().TableByID(context.Background(), tableID)
 	require.True(t, exist)
 	return tbl
 }

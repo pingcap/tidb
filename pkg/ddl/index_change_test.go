@@ -63,7 +63,7 @@ func TestIndexChange(t *testing.T) {
 		ctx1 := testNewContext(store)
 		prevState = job.SchemaState
 		require.NoError(t, dom.Reload())
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
@@ -105,7 +105,7 @@ func TestIndexChange(t *testing.T) {
 		prevState = job.SchemaState
 		var err error
 		require.NoError(t, dom.Reload())
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		ctx1 := testNewContext(store)
 		switch job.SchemaState {
