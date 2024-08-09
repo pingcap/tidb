@@ -1274,7 +1274,7 @@ type PhysicalJoin interface {
 	base.PhysicalPlan
 	PhysicalJoinImplement()
 	getInnerChildIdx() int
-	GetJoinType() JoinType
+	GetJoinType() logicalop.JoinType
 }
 
 type basePhysicalJoin struct {
@@ -1302,7 +1302,7 @@ type basePhysicalJoin struct {
 	RightNAJoinKeys []*expression.Column
 }
 
-func (p *basePhysicalJoin) GetJoinType() JoinType {
+func (p *basePhysicalJoin) GetJoinType() logicalop.JoinType {
 	return p.JoinType
 }
 
