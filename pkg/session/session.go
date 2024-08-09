@@ -2378,6 +2378,10 @@ func (rs *execStmtResult) Close() error {
 }
 
 func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
+	// If `TryDetach` is called, the connection must have set `mysql.ServerStatusCursorExists`, or
+	// the `StatementContext` will be re-used and cause data race.
+	intest.Assert(rs.se.GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists))
+
 	if !rs.sql.IsReadOnly(rs.se.GetSessionVars()) {
 		return nil, false, nil
 	}
