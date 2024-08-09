@@ -312,7 +312,8 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 		}
 		rowCount += cnt
 	}
-	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
+	// Don't allow the final result to go below 1 row
+	rowCount = mathutil.Clamp(rowCount, 1, float64(realtimeRowCount))
 	return rowCount, nil
 }
 

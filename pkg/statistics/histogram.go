@@ -1057,7 +1057,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Use modifyCount as a final bound
-	return min(rowCount, float64(modifyCount))
+	if modifyCount > 0 && rowCount > float64(modifyCount) {
+		rowCount = float64(modifyCount)
+	}
+	return rowCount
 }
 
 // Copy deep copies the histogram.

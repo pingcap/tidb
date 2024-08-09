@@ -5,14 +5,14 @@
       {
         "SQL": "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t2.k2 = 1",
         "Plan": [
-          "TableReader_32 0.00 root  MppVersion: 2, data:ExchangeSender_31",
-          "└─ExchangeSender_31 0.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_24 0.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1)], runtime filter:0[IN] <- test.t1.k1",
+          "TableReader_32 1.00 root  MppVersion: 2, data:ExchangeSender_31",
+          "└─ExchangeSender_31 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_24 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1)], runtime filter:0[IN] <- test.t1.k1",
           "    ├─ExchangeReceiver_28(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_27 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_26 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
           "    │     └─TableFullScan_25 1.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
-          "    └─Selection_30(Probe) 0.00 mpp[tiflash]  eq(test.t2.k2, 1), not(isnull(test.t2.k1))",
+          "    └─Selection_30(Probe) 1.00 mpp[tiflash]  eq(test.t2.k2, 1), not(isnull(test.t2.k1))",
           "      └─TableFullScan_29 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, runtime filter:0[IN] -> test.t2.k1"
         ]
       },

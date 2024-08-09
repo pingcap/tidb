@@ -93,25 +93,25 @@
         "SQL": "explain format = 'verbose' select count(*) from t3 where b = 0",
         "Plan": [
           "StreamAgg_10 1.00 64.98 root  funcs:count(1)->Column#4",
-          "└─IndexReader_15 0.00 15.08 root  index:IndexRangeScan_14",
-          "  └─IndexRangeScan_14 0.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
+          "└─IndexReader_15 1.00 15.08 root  index:IndexRangeScan_14",
+          "  └─IndexRangeScan_14 1.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
         "Plan": [
           "StreamAgg_10 1.00 2001.63 root  funcs:count(test.t3.a)->Column#4",
-          "└─IndexLookUp_17 0.00 1951.73 root  ",
-          "  ├─IndexRangeScan_15(Build) 0.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
-          "  └─TableRowIDScan_16(Probe) 0.00 227.31 cop[tikv] table:t3 keep order:false"
+          "└─IndexLookUp_17 1.00 1951.73 root  ",
+          "  ├─IndexRangeScan_15(Build) 1.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
+          "  └─TableRowIDScan_16(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 where a = 0",
         "Plan": [
           "StreamAgg_12 1.00 109.57 root  funcs:count(1)->Column#4",
-          "└─TableReader_20 0.00 59.67 root  data:Selection_19",
-          "  └─Selection_19 0.00 831.62 cop[tikv]  eq(test.t2.a, 0)",
+          "└─TableReader_20 1.00 59.67 root  data:Selection_19",
+          "  └─Selection_19 1.00 831.62 cop[tikv]  eq(test.t2.a, 0)",
           "    └─TableFullScan_18 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
       },

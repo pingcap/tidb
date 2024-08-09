@@ -396,8 +396,8 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from tint where b=1;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 1)
+TableReader_7	1.84	root		data:Selection_6
+└─Selection_6	1.84	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 1)
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tint where b=4;
 id	estRows	task	access object	operator info
@@ -406,8 +406,8 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tint where b=8;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 8)
+TableReader_7	2.07	root		data:Selection_6
+└─Selection_6	2.07	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 8)
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tdouble where b=1;
 id	estRows	task	access object	operator info
@@ -471,8 +471,8 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from ct1 where pk>='1' and pk <='4';
 id	estRows	task	access object	operator info
-TableReader_6	5.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	5.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
+TableReader_6	7.40	root		data:TableRangeScan_5
+└─TableRangeScan_5	7.40	cop[tikv]	table:ct1	range:["1","4"], keep order:false
 explain select * from ct1 where pk>='4' and pk <='6';
 id	estRows	task	access object	operator info
 TableReader_6	3.75	root		data:TableRangeScan_5
@@ -1225,8 +1225,8 @@ insert into t values ('tw', 0);
 analyze table t all columns;
 explain select * from t where a = 'tw' and b < 0;
 id	estRows	task	access object	operator info
-IndexReader_6	0.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	0.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
+IndexReader_6	1.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
 drop table if exists t;
 create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid));
 insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4);
