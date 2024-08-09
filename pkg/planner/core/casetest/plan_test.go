@@ -462,3 +462,13 @@ WHERE res.state != 2
 ORDER BY res.branch_id;
 `, errno.ErrNotSupportedYet)
 }
+
+func TestSelectLockForPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int key);")
+	tk.MustQuery("explain select * from t where a = 1 for update;").Check(testkit.Rows(
+		"SelectLock_6 1.00 root  for update 0",
+		"└─Point_Get_7 1.00 root table:t handle:1"))
+}
