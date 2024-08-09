@@ -1329,7 +1329,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 
 	var rows [][]types.Datum
 	for i, table := range tables {
-		rows, err = e.setDataFromIndex(sctx, ex, schemas[i], table, rows)
+		rows, err = e.setDataFromIndex(sctx, schemas[i], table, rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1340,7 +1340,6 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 
 func (*memtableRetriever) setDataFromIndex(
 	sctx sessionctx.Context,
-	ex *plannercore.InfoSchemaIndexesExtractor,
 	schema model.CIStr,
 	tb *model.TableInfo,
 	rows [][]types.Datum) ([][]types.Datum, error) {
