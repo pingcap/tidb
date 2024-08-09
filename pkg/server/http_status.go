@@ -564,6 +564,7 @@ type Status struct {
 	Status      DetailStatus `json:"status"`
 }
 
+// DetailStatus is to show the detail status of TiDB. for example the init stats percentage.
 type DetailStatus struct {
 	InitStatsPercentage float64 `json:"init_stats_percentage"`
 }
