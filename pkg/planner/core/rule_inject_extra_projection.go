@@ -84,7 +84,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 	if !un.mpp {
 		return un
 	}
-	for i, ch := range un.children {
+	for i, ch := range un.Children() {
 		exprs := make([]expression.Expression, len(ch.Schema().Columns))
 		needChange := false
 		for i, dstCol := range un.schema.Columns {
@@ -105,7 +105,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 			}.Init(un.SCtx(), ch.StatsInfo(), 0)
 			proj.SetSchema(un.schema.Clone())
 			proj.SetChildren(ch)
-			un.children[i] = proj
+			un.Children()[i] = proj
 		}
 	}
 	return un
