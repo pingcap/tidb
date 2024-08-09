@@ -17,6 +17,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/structure",
         "//pkg/util/dbterror",
+        "//pkg/util/fastjson",
         "//pkg/util/hack",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
