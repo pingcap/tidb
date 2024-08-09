@@ -62,6 +62,7 @@ func TestShowBackupQuery(t *testing.T) {
 	restoreQuery := fmt.Sprintf("RESTORE TABLE `test`.`foo` FROM 'local://%s'", sqlTmp)
 	tk.MustQuery(restoreQuery)
 	res = tk.MustQuery("show br job query 2;")
+	tk.MustExec("drop table foo;")
 	res.CheckContain(restoreQuery)
 }
 
