@@ -339,7 +339,7 @@ func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (bas
 		return nil, false
 	}
 	cloned.PhysicalIndexJoin = *inlj.(*PhysicalIndexJoin)
-	cloned.self = cloned
+	cloned.Self = cloned
 	return cloned, true
 }
 
