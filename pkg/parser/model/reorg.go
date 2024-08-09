@@ -30,6 +30,8 @@ type DDLReorgMeta struct {
 	ReorgTp           ReorgType                        `json:"reorg_tp"`
 	IsFastReorg       bool                             `json:"is_fast_reorg"`
 	IsDistReorg       bool                             `json:"is_dist_reorg"`
+	Concurrency       int                              `json:"concurrency"`
+	BatchSize         int                              `json:"batch_size"`
 	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`

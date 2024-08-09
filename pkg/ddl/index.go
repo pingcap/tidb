@@ -1954,7 +1954,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName)
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1)
 				if err != nil {
 					return err
 				}
@@ -2029,7 +2029,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 		})
 	} else {
 		job := reorgInfo.Job
-		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
+		workerCntLimit := ingest.IngestConcurrency(job.ReorgMeta.Concurrency)
 		cpuCount, err := handle.GetCPUCountOfNode(ctx)
 		if err != nil {
 			return err

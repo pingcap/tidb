@@ -147,7 +147,14 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, hasUnique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	return ingest.LitBackCtxMgr.Register(
+		s.BaseTaskExecutor.Ctx(),
+		job.ID, hasUnique,
+		ddlObj.etcdCli,
+		discovery,
+		job.ReorgMeta.ResourceGroupName,
+		ingest.IngestConcurrency(job.ReorgMeta.Concurrency),
+	)
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {
