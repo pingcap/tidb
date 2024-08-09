@@ -131,7 +131,7 @@ func TestCancel(t *testing.T) {
 
 func TestExistedTables(t *testing.T) {
 	// Create a context with a 20-second timeout for the entire test.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	tk := initTestKit(t)
