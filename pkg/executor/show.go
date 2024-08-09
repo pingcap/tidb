@@ -1175,6 +1175,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
 			}
 		}
+		if idxInfo.Global {
+			buf.WriteString(" /*T![global_index] GLOBAL */")
+		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
