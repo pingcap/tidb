@@ -26,6 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
+// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
+// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
+const estimatedElemLen = 8
+
 // AppendDuration appends a duration value into this Column.
 // Fsp is ignored.
 func (c *Column) AppendDuration(dur types.Duration) {
@@ -114,22 +118,41 @@ func newColumn(ts, capacity int) *Column {
 func newFixedLenColumn(elemLen, capacity int) *Column {
 	return &Column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, capacity*elemLen),
-		nullBitmap: make([]byte, 0, (capacity+7)>>3),
+		data:       make([]byte, 0, getDataMemCap(capacity, elemLen)),
+		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
 	}
 }
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
 func newVarLenColumn(capacity int) *Column {
-	estimatedElemLen := 8
-	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
-	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
-
 	return &Column{
-		offsets:    make([]int64, 1, capacity+1),
-		data:       make([]byte, 0, capacity*estimatedElemLen),
-		nullBitmap: make([]byte, 0, (capacity+7)>>3),
+		offsets:    make([]int64, 1, getOffsetsCap(capacity)),
+		data:       make([]byte, 0, getDataMemCap(estimatedElemLen, capacity)),
+		nullBitmap: make([]byte, 0, getNullBitmapCap(capacity)),
 	}
+}
+
+func getDataMemCap(capacity int, elemLen int) int64 {
+	return int64(elemLen * capacity)
+}
+
+func getNullBitmapCap(capacity int) int64 {
+	return int64((capacity + 7) >> 3)
+}
+
+func getOffsetsCap(capacity int) int64 {
+	return int64(capacity + 1)
+}
+
+// This function returns the total memory usage that may be used in the future
+func (c *Column) getMemoryUsageCap(capacity int) (sum int64) {
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		sum += int64(elemLen) + getDataMemCap(capacity, elemLen) + getNullBitmapCap(capacity)
+	} else {
+		sum += getOffsetsCap(capacity) + getDataMemCap(estimatedElemLen, capacity) + getNullBitmapCap(capacity)
+	}
+	return sum
 }
 
 func (c *Column) typeSize() int {
