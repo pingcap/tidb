@@ -1326,7 +1326,7 @@ import (
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
 	StringLitOrUserVariable                "stringLit or user variable"
-    StringLitOrUserVariableList            "stringLit or user variable list"
+	StringLitOrUserVariableList            "stringLit or user variable list"
 	BindingStatusType                      "binding status type value"
 	StringList                             "string list"
 	SubPartDefinition                      "SubPartition definition"

@@ -17,7 +17,7 @@ package tests
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
+	"math/rand"
 	"strconv"
 	"strings"
 	"testing"
