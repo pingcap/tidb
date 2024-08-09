@@ -65,38 +65,39 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 
 func (e *SQLBindExec) dropSQLBind() error {
 	if len(e.details) != 1 {
-		return errors.New("SQLBindExec: setBindingStatusByDigest should only have one SQLBindOpDetail")
+		return errors.New("SQLBindExec: dropSQLBind should only have one SQLBindOpDetail")
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		err := handle.DropSessionBinding(e.details[0].SQLDigest)
+		err := handle.DropSessionBinding([]string{e.details[0].SQLDigest})
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(e.details[0].SQLDigest)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding([]string{e.details[0].SQLDigest})
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
 
 func (e *SQLBindExec) dropSQLBindByDigest() error {
-	if len(e.details) != 1 {
-		return errors.New("SQLBindExec: setBindingStatusByDigest should only have one SQLBindOpDetail")
-	}
-	if e.details[0].SQLDigest == "" {
-		return errors.New("sql digest is empty")
+	sqlDigests := make([]string, 0, len(e.details))
+	for _, detail := range e.details {
+		if detail.SQLDigest == "" {
+			return errors.New("SQLBindExec: dropSQLBindByDigest shouldn't contain empty SQLDigest")
+		}
+		sqlDigests = append(sqlDigests, detail.SQLDigest)
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		err := handle.DropSessionBinding(e.details[0].SQLDigest)
+		err := handle.DropSessionBinding(sqlDigests)
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(e.details[0].SQLDigest)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(sqlDigests)
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
 
 func (e *SQLBindExec) setBindingStatus() error {
 	if len(e.details) != 1 {
-		return errors.New("SQLBindExec: setBindingStatusByDigest should only have one SQLBindOpDetail")
+		return errors.New("SQLBindExec: setBindingStatus should only have one SQLBindOpDetail")
 	}
 	_, sqlDigest := parser.NormalizeDigestForBinding(e.details[0].NormdOrigSQL)
 	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.details[0].NewStatus, sqlDigest.String())

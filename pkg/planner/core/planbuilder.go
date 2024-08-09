@@ -747,12 +747,21 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, erro
 			)
 		}
 	} else {
+		processedSQLDigests, err := collectStrOrUserVarList(b.ctx, v.SQLDigests)
+		if err != nil {
+			return nil, err
+		}
+		if len(processedSQLDigests) == 0 {
+			return nil, errors.New("plan digest is empty")
+		}
+		details := make([]*SQLBindOpDetail, 0, len(processedSQLDigests))
+		for _, sqlDigest := range processedSQLDigests {
+			details = append(details, &SQLBindOpDetail{SQLDigest: sqlDigest})
+		}
 		p = &SQLBindPlan{
 			SQLBindOp: OpSQLBindDropByDigest,
 			IsGlobal:  v.GlobalScope,
-			Details: []*SQLBindOpDetail{{
-				SQLDigest: v.SQLDigest,
-			}},
+			Details:   details,
 		}
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
@@ -837,14 +846,14 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 	return rows, nil
 }
 
-func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (base.Plan, error) {
-	processedPlanDigests := make([]string, 0, len(v.PlanDigests))
-	for _, planDigestSource := range v.PlanDigests {
+func collectStrOrUserVarList(ctx base.PlanContext, list []*ast.StringOrUserVar) ([]string, error) {
+	result := make([]string, 0, len(list))
+	for _, single := range list {
 		var str string
-		if planDigestSource.UserVar != nil {
-			val, ok := b.ctx.GetSessionVars().GetUserVarVal(strings.ToLower(planDigestSource.UserVar.Name))
+		if single.UserVar != nil {
+			val, ok := ctx.GetSessionVars().GetUserVarVal(strings.ToLower(single.UserVar.Name))
 			if !ok {
-				return nil, errors.New("can't find specified user variable: " + planDigestSource.UserVar.Name)
+				return nil, errors.New("can't find specified user variable: " + single.UserVar.Name)
 			}
 			var err error
 			str, err = val.ToString()
@@ -852,15 +861,23 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 				return nil, err
 			}
 		} else {
-			str = planDigestSource.StringLit
+			str = single.StringLit
 		}
 		split := strings.Split(str, ",")
 		for _, single := range split {
 			trimmed := strings.TrimSpace(single)
 			if len(trimmed) > 0 {
-				processedPlanDigests = append(processedPlanDigests, trimmed)
+				result = append(result, trimmed)
 			}
 		}
+	}
+	return result, nil
+}
+
+func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (base.Plan, error) {
+	processedPlanDigests, err := collectStrOrUserVarList(b.ctx, v.PlanDigests)
+	if err != nil {
+		return nil, err
 	}
 	if len(processedPlanDigests) == 0 {
 		return nil, errors.New("plan digest is empty")
@@ -895,17 +912,19 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
 		db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
 		normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
-		opDetails = append(opDetails, &SQLBindOpDetail{
-			NormdOrigSQL: normdOrigSQL,
-			BindSQL:      bindSQL,
-			BindStmt:     hintNode,
-			Db:           db,
-			Charset:      bindableStmt.Charset,
-			Collation:    bindableStmt.Collation,
-			Source:       bindinfo.History,
-			SQLDigest:    sqlDigestWithDB.String(),
-			PlanDigest:   planDigest,
-		})
+		opDetails = append(
+			opDetails, &SQLBindOpDetail{
+				NormdOrigSQL: normdOrigSQL,
+				BindSQL:      bindSQL,
+				BindStmt:     hintNode,
+				Db:           db,
+				Charset:      bindableStmt.Charset,
+				Collation:    bindableStmt.Collation,
+				Source:       bindinfo.History,
+				SQLDigest:    sqlDigestWithDB.String(),
+				PlanDigest:   planDigest,
+			},
+		)
 	}
 
 	p := &SQLBindPlan{

@@ -2081,7 +2081,7 @@ type DropBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
-	SQLDigest   string
+	SQLDigests  []*StringOrUserVar
 }
 
 func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -2094,7 +2094,14 @@ func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("BINDING FOR ")
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("SQL DIGEST ")
-		ctx.WriteString(n.SQLDigest)
+		for i, v := range n.SQLDigests {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+			}
+		}
 	} else {
 		if err := n.OriginNode.Restore(ctx); err != nil {
 			return errors.Trace(err)
@@ -2128,6 +2135,14 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 				return n, false
 			}
 			n.HintedNode = hintedNode.(StmtNode)
+		}
+	} else {
+		for i, digest := range n.SQLDigests {
+			newDigest, ok := digest.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.SQLDigests[i] = newDigest.(*StringOrUserVar)
 		}
 	}
 	return v.Leave(n)

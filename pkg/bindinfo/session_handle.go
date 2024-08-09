@@ -38,7 +38,7 @@ type SessionBindingHandle interface {
 	CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
 
 	// DropSessionBinding drops a binding by the sql digest.
-	DropSessionBinding(sqlDigest string) error
+	DropSessionBinding(sqlDigests []string) error
 
 	// MatchSessionBinding returns the matched binding for this statement.
 	MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
@@ -96,11 +96,13 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bin
 }
 
 // DropSessionBinding drop Bindings in the cache.
-func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
-	if sqlDigest == "" {
-		return errors.New("sql digest is empty")
+func (h *sessionBindingHandle) DropSessionBinding(sqlDigests []string) error {
+	for _, sqlDigest := range sqlDigests {
+		if sqlDigest == "" {
+			return errors.New("sql digest is empty")
+		}
+		h.ch.RemoveBinding(sqlDigest)
 	}
-	h.ch.RemoveBinding(sqlDigest)
 	return nil
 }
 
