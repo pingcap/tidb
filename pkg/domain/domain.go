@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -2444,12 +2445,14 @@ func (do *Domain) initStats(ctx context.Context) {
 	}()
 	t := time.Now()
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	initstats.InitStatsPercentage.Store(0)
 	var err error
 	if liteInitStats {
 		err = statsHandle.InitStatsLite(ctx, do.InfoSchema())
 	} else {
 		err = statsHandle.InitStats(ctx, do.InfoSchema())
 	}
+	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
 		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
