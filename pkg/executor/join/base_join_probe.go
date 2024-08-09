@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -498,7 +498,7 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 }
 
 // NewJoinProbe create a join probe used for hash join v2
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -540,11 +540,11 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		base.rowIndexInfos = make([]*matchedRowInfo, 0, chunk.InitialCapacity)
 	}
 	switch joinType {
-	case core.InnerJoin:
+	case logicalop.InnerJoin:
 		return &innerJoinProbe{base}
-	case core.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
-	case core.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
 	default:
 		panic("unsupported join type")

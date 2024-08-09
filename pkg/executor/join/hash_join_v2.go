@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -335,10 +335,10 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 }
 
 func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
-	if fetcher.JoinType == plannercore.LeftOuterJoin && fetcher.RightAsBuildSide {
+	if fetcher.JoinType == logicalop.LeftOuterJoin && fetcher.RightAsBuildSide {
 		return true
 	}
-	if fetcher.JoinType == plannercore.RightOuterJoin && !fetcher.RightAsBuildSide {
+	if fetcher.JoinType == logicalop.RightOuterJoin && !fetcher.RightAsBuildSide {
 		return true
 	}
 	return false
@@ -374,13 +374,13 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 
 func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 	switch e.JoinType {
-	case plannercore.InnerJoin:
+	case logicalop.InnerJoin:
 		return true
-	case plannercore.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		return !e.RightAsBuildSide
-	case plannercore.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		return e.RightAsBuildSide
-	case plannercore.SemiJoin:
+	case logicalop.SemiJoin:
 		return e.RightAsBuildSide
 	default:
 		return false

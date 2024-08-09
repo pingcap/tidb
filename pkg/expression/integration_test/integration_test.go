@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -435,7 +436,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		require.NoError(t, err, "error %v, for resolve name, expr %s", err, tt.exprStr)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err, "error %v, for build plan, expr %s", err, tt.exprStr)
-		selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
 			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)

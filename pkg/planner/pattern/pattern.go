@@ -79,13 +79,13 @@ func GetOperand(p base.LogicalPlan) Operand {
 	switch p.(type) {
 	case *plannercore.LogicalApply:
 		return OperandApply
-	case *plannercore.LogicalJoin:
+	case *logicalop.LogicalJoin:
 		return OperandJoin
 	case *plannercore.LogicalAggregation:
 		return OperandAggregation
 	case *logicalop.LogicalProjection:
 		return OperandProjection
-	case *plannercore.LogicalSelection:
+	case *logicalop.LogicalSelection:
 		return OperandSelection
 	case *logicalop.LogicalMaxOneRow:
 		return OperandMaxOneRow

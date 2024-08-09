@@ -58,6 +58,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/testkit",

@@ -49,11 +49,11 @@ func (a *MaxMinEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *
 func (*MaxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, aggs []*LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (plan base.LogicalPlan) {
 	plan = aggs[0]
 	sctx := plan.SCtx()
-	joins := make([]*LogicalJoin, 0)
+	joins := make([]*logicalop.LogicalJoin, 0)
 	for i := 1; i < len(aggs); i++ {
-		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.QueryBlockOffset())
+		join := logicalop.LogicalJoin{JoinType: logicalop.InnerJoin}.Init(sctx, plan.QueryBlockOffset())
 		join.SetChildren(plan, aggs[i])
-		join.SetSchema(buildLogicalJoinSchema(InnerJoin, join))
+		join.SetSchema(logicalop.BuildLogicalJoinSchema(logicalop.InnerJoin, join))
 		join.CartesianJoin = true
 		plan = join
 		joins = append(joins, join)
@@ -67,7 +67,7 @@ func (*MaxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, a
 // 2. the path can keep order for `col` after pushing down the conditions.
 func (a *MaxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expression.Column, conditions []expression.Expression) bool {
 	switch p := plan.(type) {
-	case *LogicalSelection:
+	case *logicalop.LogicalSelection:
 		conditions = append(conditions, p.Conditions...)
 		return a.checkColCanUseIndex(p.Children()[0], col, conditions)
 	case *DataSource:
@@ -111,10 +111,10 @@ func (a *MaxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 // because we have restricted the subPlan in `checkColCanUseIndex`.
 func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan {
 	switch p := plan.(type) {
-	case *LogicalSelection:
+	case *logicalop.LogicalSelection:
 		newConditions := make([]expression.Expression, len(p.Conditions))
 		copy(newConditions, p.Conditions)
-		sel := LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.QueryBlockOffset())
+		sel := logicalop.LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.QueryBlockOffset())
 		sel.SetChildren(a.cloneSubPlans(p.Children()[0]))
 		return sel
 	case *DataSource:
@@ -179,13 +179,13 @@ func (*MaxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *opt
 	child := agg.Children()[0]
 	ctx := agg.SCtx()
 
-	var sel *LogicalSelection
+	var sel *logicalop.LogicalSelection
 	var sort *logicalop.LogicalSort
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag()) {
-			sel = LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
+			sel = logicalop.LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
 			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
@@ -266,7 +266,7 @@ func (*MaxMinEliminator) Name() string {
 	return "max_min_eliminate"
 }
 
-func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelection, sort *logicalop.LogicalSort, limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
+func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *logicalop.LogicalSelection, sort *logicalop.LogicalSort, limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString("")
 		if sel != nil {
@@ -291,7 +291,7 @@ func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelec
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*LogicalAggregation, joins []*LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
+func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*LogicalAggregation, joins []*logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v splited into [", originAgg.TP(), originAgg.ID()))
 		for i, agg := range aggs {

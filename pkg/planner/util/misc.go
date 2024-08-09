@@ -23,10 +23,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -303,4 +306,46 @@ func DeriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *pro
 		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
 	}
 	return stats
+}
+
+// ExtractTableAlias returns table alias of the base.LogicalPlan's columns.
+// It will return nil when there are multiple table alias, because the alias is only used to check if
+// the base.LogicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
+func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
+	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
+		firstName := p.OutputNames()[0]
+		for _, name := range p.OutputNames() {
+			if name.TblName.L != firstName.TblName.L ||
+				(name.DBName.L != "" && firstName.DBName.L != "" &&
+					name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
+				return nil
+			}
+		}
+		qbOffset := p.QueryBlockOffset()
+		var blockAsNames []ast.HintTable
+		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+			blockAsNames = *p
+		}
+		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+		if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
+			qbOffset = parentOffset
+		}
+		dbName := firstName.DBName
+		if dbName.L == "" {
+			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+		}
+		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
+	}
+	return nil
+}
+
+// GetPushDownCtx creates a PushDownContext from PlanContext
+func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
+	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
+}
+
+// GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
+func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
+	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(),
+		bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
 }

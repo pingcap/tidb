@@ -158,11 +158,11 @@ func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey express
 // link: issue#44795
 func CheckCanConvertAggToProj(agg *LogicalAggregation) bool {
 	var mayNullSchema *expression.Schema
-	if join, ok := agg.Children()[0].(*LogicalJoin); ok {
-		if join.JoinType == LeftOuterJoin {
+	if join, ok := agg.Children()[0].(*logicalop.LogicalJoin); ok {
+		if join.JoinType == logicalop.LeftOuterJoin {
 			mayNullSchema = join.Children()[1].Schema()
 		}
-		if join.JoinType == RightOuterJoin {
+		if join.JoinType == logicalop.RightOuterJoin {
 			mayNullSchema = join.Children()[0].Schema()
 		}
 		if mayNullSchema == nil {

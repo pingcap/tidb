@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -43,7 +43,7 @@ func defaultCtx() sessionctx.Context {
 }
 
 func TestRequiredRows(t *testing.T) {
-	joinTypes := []core.JoinType{core.InnerJoin, core.LeftOuterJoin, core.RightOuterJoin}
+	joinTypes := []logicalop.JoinType{logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin}
 	lTypes := [][]byte{
 		{mysql.TypeLong},
 		{mysql.TypeFloat},

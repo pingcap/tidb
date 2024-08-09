@@ -20,6 +20,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/property",
         "//pkg/planner/util/coretestsdk",
         "//pkg/testkit",

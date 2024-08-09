@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
@@ -97,7 +99,7 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 	aggExec := &tipb.Aggregation{
 		GroupBy: groupByExprs,
 	}
-	pushDownCtx := GetPushDownCtx(p.SCtx())
+	pushDownCtx := util2.GetPushDownCtx(p.SCtx())
 	for _, aggFunc := range p.AggFuncs {
 		agg, err := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
 		if err != nil {
@@ -139,7 +141,7 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 func (p *PhysicalStreamAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	pushDownCtx := GetPushDownCtxFromBuildPBContext(ctx)
+	pushDownCtx := util2.GetPushDownCtxFromBuildPBContext(ctx)
 	groupByExprs, err := expression.ExpressionsToPBList(evalCtx, p.GroupByItems, client)
 	if err != nil {
 		return nil, err
@@ -562,7 +564,7 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 	var otherEqConditionsFromIn expression.CNFExprs
 	/// For anti join, equal conditions from `in` clause requires additional processing,
 	/// for example, treat `null` as true.
-	if p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin {
+	if p.JoinType == logicalop.AntiSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin || p.JoinType == logicalop.LeftOuterSemiJoin {
 		for _, condition := range p.OtherConditions {
 			if expression.IsEQCondFromIn(condition) {
 				otherEqConditionsFromIn = append(otherEqConditionsFromIn, condition)
@@ -584,17 +586,17 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 
 	pbJoinType := tipb.JoinType_TypeInnerJoin
 	switch p.JoinType {
-	case LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
-	case RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
-	case SemiJoin:
+	case logicalop.SemiJoin:
 		pbJoinType = tipb.JoinType_TypeSemiJoin
-	case AntiSemiJoin:
+	case logicalop.AntiSemiJoin:
 		pbJoinType = tipb.JoinType_TypeAntiSemiJoin
-	case LeftOuterSemiJoin:
+	case logicalop.LeftOuterSemiJoin:
 		pbJoinType = tipb.JoinType_TypeLeftOuterSemiJoin
-	case AntiLeftOuterSemiJoin:
+	case logicalop.AntiLeftOuterSemiJoin:
 		pbJoinType = tipb.JoinType_TypeAntiLeftOuterSemiJoin
 	}
 

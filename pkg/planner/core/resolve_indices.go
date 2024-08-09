@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 )
@@ -134,7 +135,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 
 	colsNeedResolving := p.schema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.
@@ -227,7 +228,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 
 	colsNeedResolving := p.schema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.
@@ -323,7 +324,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 
 	colsNeedResolving := p.schema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.

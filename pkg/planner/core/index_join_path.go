@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -584,7 +585,7 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 // getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
 // index join path for each access path. It returns the best index join path result and the mapping.
 func getBestIndexJoinPathResult(
-	join *LogicalJoin,
+	join *logicalop.LogicalJoin,
 	innerChild *DataSource,
 	innerJoinKeys, outerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
