@@ -17,7 +17,9 @@ package tests
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -893,12 +895,42 @@ func removeAllBindings(tk *testkit.TestKit, global bool) {
 		scope = "global"
 	}
 	res := showBinding(tk, fmt.Sprintf("show %v bindings", scope))
+	digests := make([]string, 0, len(res))
 	for _, r := range res {
 		if r[4] == "builtin" {
 			continue
 		}
-		tk.MustExec(fmt.Sprintf("drop %v binding for sql digest '%v'", scope, r[5]))
+		digests = append(digests, r[5].(string))
 	}
+	if len(digests) == 0 {
+		return
+	}
+	// test DROP BINDING FOR SQL DIGEST can handle empty strings correctly
+	digests = append(digests, "", "", "")
+	// randomly split digests into 4 groups using random number
+	// shuffle the slice
+	rand.Shuffle(len(digests), func(i, j int) {
+		digests[i], digests[j] = digests[j], digests[i]
+	})
+	split := make([][]string, 4)
+	for i, d := range digests {
+		split[i%4] = append(split[i%4], d)
+	}
+	// group 0: wrap with ' then connect by ,
+	var g0 string
+	for _, d := range split[0] {
+		g0 += "'" + d + "',"
+	}
+	// group 1: connect by , and set into a user variable
+	tk.MustExec(fmt.Sprintf("set @a = '%v'", strings.Join(split[1], ",")))
+	g1 := "@a,"
+	var g2 string
+	for _, d := range split[2] {
+		g2 += "'" + d + "',"
+	}
+	// group 2: connect by , and put into a normal string
+	g3 := "'" + strings.Join(split[3], ",") + "'"
+	tk.MustExec(fmt.Sprintf("drop %v binding for sql digest %s %s %s %s", scope, g0, g1, g2, g3))
 	tk.MustQuery(fmt.Sprintf("show %v bindings", scope)).Check(testkit.Rows()) // empty
 }
 
@@ -1106,4 +1138,32 @@ func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestBatchDropBindings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	tk.MustExec(`create global binding for select * from t1 using select /*+ use_index(t1, a) */ * from t1`)
+	tk.MustExec(`create global binding for select * from t1 where b < 1 using select /*+ use_index(t1,b) */ * from t1 where b < 1`)
+	tk.MustExec(`create global binding for select * from t1 where c < 1 using select /*+ use_index(t1,c) */ * from t1 where c < 1`)
+	tk.MustExec(`create global binding for select * from t1 join t2 on t1.a = t2.a using select /*+ hash_join(t1) */ * from t1 join t2 on t1.a = t2.a`)
+	tk.MustExec(`create global binding for select * from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b where t1.a = 1 using select /*+ leading(t3,t2,t1) */ * from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b where t1.a = 1`)
+	tk.MustExec(`create global binding for select * from t1 where a in (select sum(b) from t2) using select /*+ agg_to_cop(@sel_2) */ * from t1 where a in (select sum(b) from t2)`)
+	tk.MustExec(`create global binding for select * from t2 where a = 1 and b = 2 and c = 3 using select * from t2 ignore index (b) where a = 1 and b = 2 and c = 3`)
+	tk.MustExec(`create global binding for select * from t2 where a = 1 and b = 2 and c = 3 using select * from t2 use index (b) where a = 1 and b = 2 and c = 3`)
+
+	tk.MustExec(`create session binding for select * from t1 using select /*+ use_index(t1, a) */ * from t1`)
+	tk.MustExec(`create session binding for select * from t1 where b < 1 using select /*+ use_index(t1, b) */ * from t1 where b < 1`)
+	tk.MustExec(`create session binding for select * from t1 where c < 1 using select /*+ use_index(t1, c) */ * from t1 where c < 1`)
+	tk.MustExec(`create session binding for select * from t1 join t2 on t1.a = t2.a using select /*+ hash_join( t1) */ * from t1 join t2 on t1.a = t2.a`)
+	tk.MustExec(`create session binding for select * from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b where t1. a = 1 using select /*+ leading(t3,t2,t1) */ * from t1 join t2 on t1.a = t2.a join t3 on t2.b = t3.b where t1.a = 1`)
+	tk.MustExec(`create session binding for select * from t1 where a in (select sum( b) from t2) using select /*+ agg_to_cop(@sel_2) */ * from t1 where a in (select sum(b) from t2)`)
+	tk.MustExec(`create session binding for select * from t2 where a = 1 and b = 2 and c = 3 using select * from t2 ignore index (b) where a = 1 and b = 2 and c = 3`)
+	tk.MustExec(`create session binding for select * from t2 where a = 1 and b = 2 and c = 3 using select * from t2 use index (b) where a = 1 and b = 2 and c = 3`)
+	removeAllBindings(tk, true)
+	removeAllBindings(tk, false)
 }

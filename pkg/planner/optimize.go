@@ -583,7 +583,7 @@ func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node ast.Node,
 
 func handleInvalidBinding(ctx context.Context, sctx pctx.PlanContext, level string, binding bindinfo.Binding) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	err := sessionHandle.DropSessionBinding(binding.SQLDigest)
+	err := sessionHandle.DropSessionBinding([]string{binding.SQLDigest})
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
