@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
+<<<<<<< HEAD:domain/domain.go
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -73,6 +74,66 @@ import (
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+=======
+	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
+	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/expensivequery"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/globalconn"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/memoryusagealarm"
+	"github.com/pingcap/tidb/pkg/util/replayer"
+	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
+>>>>>>> b066365ef36 (*: kill auto analyze out of the auto analyze time windows (#55062)):pkg/domain/domain.go
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -669,6 +730,24 @@ func (do *Domain) topologySyncerKeeper() {
 			}
 		case <-do.exit:
 			return
+		}
+	}
+}
+
+// CheckAutoAnalyzeWindows checks the auto analyze windows and kill the auto analyze process if it is not in the window.
+func (do *Domain) CheckAutoAnalyzeWindows() {
+	se, err := do.sysSessionPool.Get()
+
+	if err != nil {
+		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+		return
+	}
+	// Make sure the session is new.
+	sctx := se.(sessionctx.Context)
+	defer do.sysSessionPool.Put(se)
+	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
+		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			do.SysProcTracker().KillSysProcess(id)
 		}
 	}
 }
@@ -2097,6 +2176,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
 			}
+			do.CheckAutoAnalyzeWindows()
 		case <-dumpColStatsUsageTicker.C:
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
