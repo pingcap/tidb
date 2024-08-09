@@ -334,7 +334,7 @@ count(*)
 1
 select count(*) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='_Idx$_i';
 count(*)
-0
+1
 drop table if exists t;
 create table t (a int, _Col$_a double, index _Idx$_i(a, _Col$_a), index i(a, _Col$_a));
 alter table t modify column a tinyint;

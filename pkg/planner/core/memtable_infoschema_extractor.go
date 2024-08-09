@@ -74,7 +74,6 @@ var extractableColumns = map[string][]string{
 	infoschema.TableTiDBIndexes: {
 		_tableSchema,
 		_tableName,
-		"key_name",
 	},
 	// See infoschema.tableViewsCols for full columns.
 	// Used by InfoSchemaViewsExtractor and setDataFromViews.
@@ -92,8 +91,8 @@ var extractableColumns = map[string][]string{
 	// Used by InfoSchemaTableConstraintsExtractor and setDataFromTableConstraints.
 	infoschema.TableConstraints: {
 		_tableSchema,
-		_tableName,
 		_constraintSchema,
+		_tableName,
 		_constraintName,
 	},
 }

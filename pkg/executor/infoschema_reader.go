@@ -1350,31 +1350,29 @@ func (*memtableRetriever) setDataFromIndex(
 	}
 
 	if tb.PKIsHandle {
-		if ex == nil || !ex.Filter("key_name", "PRIMARY") {
-			var pkCol *model.ColumnInfo
-			for _, col := range tb.Cols() {
-				if mysql.HasPriKeyFlag(col.GetFlag()) {
-					pkCol = col
-					break
-				}
+		var pkCol *model.ColumnInfo
+		for _, col := range tb.Cols() {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				pkCol = col
+				break
 			}
-			record := types.MakeDatums(
-				schema.O,     // TABLE_SCHEMA
-				tb.Name.O,    // TABLE_NAME
-				0,            // NON_UNIQUE
-				"PRIMARY",    // KEY_NAME
-				1,            // SEQ_IN_INDEX
-				pkCol.Name.O, // COLUMN_NAME
-				nil,          // SUB_PART
-				"",           // INDEX_COMMENT
-				nil,          // Expression
-				0,            // INDEX_ID
-				"YES",        // IS_VISIBLE
-				"YES",        // CLUSTERED
-				0,            // IS_GLOBAL
-			)
-			rows = append(rows, record)
 		}
+		record := types.MakeDatums(
+			schema.O,     // TABLE_SCHEMA
+			tb.Name.O,    // TABLE_NAME
+			0,            // NON_UNIQUE
+			"PRIMARY",    // KEY_NAME
+			1,            // SEQ_IN_INDEX
+			pkCol.Name.O, // COLUMN_NAME
+			nil,          // SUB_PART
+			"",           // INDEX_COMMENT
+			nil,          // Expression
+			0,            // INDEX_ID
+			"YES",        // IS_VISIBLE
+			"YES",        // CLUSTERED
+			0,            // IS_GLOBAL
+		)
+		rows = append(rows, record)
 	}
 	for _, idxInfo := range tb.Indices {
 		if idxInfo.State != model.StatePublic {
@@ -1383,9 +1381,6 @@ func (*memtableRetriever) setDataFromIndex(
 		isClustered := "NO"
 		if tb.IsCommonHandle && idxInfo.Primary {
 			isClustered = "YES"
-		}
-		if ex.Filter("key_name", idxInfo.Name.O) {
-			continue
 		}
 		for i, col := range idxInfo.Columns {
 			nonUniq := 1
