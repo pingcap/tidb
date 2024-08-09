@@ -121,10 +121,6 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 
 func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreType, canEnumPush bool) bool {
 	pc := ctx.PbConverter()
-	if expr.GetType(ctx.EvalCtx()).GetType() == mysql.TypeTiDBVectorFloat32 {
-		// For both TiKV and TiFlash, currently Vector cannot be pushed.
-		return false
-	}
 	if storeType == kv.TiFlash {
 		switch expr.GetType(ctx.EvalCtx()).GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
@@ -201,6 +197,9 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
 		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
+
+		// vector functions.
+		ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
@@ -403,6 +402,8 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 	case ast.GetFormat:
 		return true
 	case ast.IsIPv4, ast.IsIPv6:
+		return true
+	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true

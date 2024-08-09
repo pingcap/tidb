@@ -181,8 +181,19 @@ func TestVector(t *testing.T) {
 		"[1.4,4.5,8.5,7.7,6.2]",
 	))
 
-	// Arithmatic: Currently not implemented.
-	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1,2]') + VEC_FROM_TEXT('[2,3]')`)
+	// Golang produce different results in different Arch for float points.
+	// Adding a ROUND to make this test stable.
+	// See https://go.dev/ref/spec#Arithmetic_operators
+	tk.MustQuery(`SELECT val,
+		ROUND(VEC_Cosine_Distance(val, '[1,2,3,4,5]'), 5) AS d
+		FROM t ORDER BY d DESC;
+	`).Check(testkit.Rows(
+		"[8.7,5.7,7.7,9.8,1.5] 0.25641",
+		"[3.6,9.7,2.4,6.6,4.9] 0.18577",
+		"[7.7,6.7,8.3,7.8,5.7] 0.12677",
+		"[4.7,4.9,2.6,5.2,7.4] 0.06925",
+		"[1.4,4.5,8.5,7.7,6.2] 0.04973",
+	))
 }
 
 func TestVectorOperators(t *testing.T) {
@@ -204,9 +215,9 @@ func TestVectorOperators(t *testing.T) {
 	tk.MustQuery(`SELECT VEC_FROM_TEXT('[]') IS NOT NULL`).Check(testkit.Rows("1"))
 	tk.MustQuery(`SELECT VEC_FROM_TEXT('[]') IS NULL`).Check(testkit.Rows("0"))
 	tk.MustQuery(`SELECT * FROM t WHERE embedding = VEC_FROM_TEXT('[1,2,3]');`).Check(testkit.Rows("[1,2,3]"))
-	tk.MustQuery(`SELECT * FROM t WHERE embedding BETWEEN '[1,2,3]' AND '[4,5,6]'`).Check(testkit.Rows("[1,2,3]", "[4,5,6]"))
-	tk.MustExecToErr(`SELECT * FROM t WHERE embedding IN ('[1, 2, 3]', '[4, 5, 6]')`)
-	tk.MustExecToErr(`SELECT * FROM t WHERE embedding NOT IN ('[1, 2, 3]', '[4, 5, 6]')`)
+	tk.MustQuery(`SELECT * FROM t WHERE embedding BETWEEN '[1, 2, 3]' AND '[4, 5, 6]'`).Check(testkit.Rows("[1,2,3]", "[4,5,6]"))
+	tk.MustQuery(`SELECT * FROM t WHERE embedding IN ('[1, 2, 3]', '[4, 5, 6]')`).Check(testkit.Rows("[1,2,3]", "[4,5,6]"))
+	tk.MustQuery(`SELECT * FROM t WHERE embedding NOT IN ('[1, 2, 3]', '[4, 5, 6]')`).Check(testkit.Rows("[7,8,9]"))
 }
 
 func TestVectorCompare(t *testing.T) {
@@ -234,6 +245,15 @@ func TestVectorCompare(t *testing.T) {
 	tk.MustQuery("SELECT VEC_FROM_TEXT('[1, 2, 3]') >= '[1]';").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT VEC_FROM_TEXT('[1, 2, 3]') < '[1]';").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT VEC_FROM_TEXT('[1, 2, 3]') <= '[1]';").Check(testkit.Rows("0"))
+
+	tk.MustQuery(`SELECT GREATEST(VEC_FROM_TEXT('[1, 2, 3]'), VEC_FROM_TEXT('[4, 5, 6]'), VEC_FROM_TEXT('[7, 8, 9]')) AS result;`).Check(testkit.Rows("[7,8,9]"))
+	tk.MustQuery(`SELECT LEAST(VEC_FROM_TEXT('[1, 2, 3]'), VEC_FROM_TEXT('[4, 5, 6]'), VEC_FROM_TEXT('[7, 8, 9]')) AS result;`).Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery(`SELECT COALESCE(VEC_FROM_TEXT('[1, 2, 3]'), VEC_FROM_TEXT('[4, 5, 6]')) AS result;`).Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery(`SELECT COALESCE(NULL, VEC_FROM_TEXT('[1, 2, 3]')) AS result;`).Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery(`SELECT COALESCE(VEC_FROM_TEXT('[1, 2, 3]'), 1) AS result;`).Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery(`SELECT COALESCE(VEC_FROM_TEXT('[1, 2, 3]'), '1') AS result;`).Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery(`SELECT COALESCE(1, VEC_FROM_TEXT('[1, 2, 3]'), 1) AS result;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT COALESCE('1', VEC_FROM_TEXT('[1, 2, 3]'), '1') AS result;`).Check(testkit.Rows("1"))
 }
 
 func TestVectorConversion(t *testing.T) {
@@ -298,6 +318,58 @@ func TestVectorConversion(t *testing.T) {
 	tk.MustQuery("SELECT CONVERT(VEC_FROM_TEXT('[1,2,3]'), VECTOR<FLOAT>(3));").Check(testkit.Rows("[1,2,3]"))
 	err = tk.QueryToErr("SELECT CONVERT(VEC_FROM_TEXT('[1,2,3]'), VECTOR<FLOAT>(2));")
 	require.EqualError(t, err, "vector has 3 dimensions, does not fit VECTOR(2)")
+}
+
+func TestVectorAssignVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec(`SET @a = VEC_FROM_TEXT('[1,2,3]');`)
+	tk.MustQuery(`SELECT @a;`).Check(testkit.Rows("[1,2,3]"))
+}
+
+func TestVectorControlFlow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+
+	// IF
+	tk.MustQuery("SELECT IF(VEC_FROM_TEXT('[1, 2, 3]'), 1, 0);").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT IF(TRUE, VEC_FROM_TEXT('[1, 2, 3]'), VEC_FROM_TEXT('[4, 5, 6]'));").Check(testkit.Rows("[1,2,3]"))
+
+	// IFNULL
+	tk.MustQuery("SELECT IFNULL(VEC_FROM_TEXT('[1, 2, 3]'), 1);").Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery("SELECT IFNULL(NULL, VEC_FROM_TEXT('[1, 2, 3]'));").Check(testkit.Rows("[1,2,3]"))
+
+	// NULLIF
+	tk.MustQuery("SELECT NULLIF(VEC_FROM_TEXT('[1, 2, 3]'), VEC_FROM_TEXT('[1, 2, 3]'));").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT NULLIF(VEC_FROM_TEXT('[1, 2, 3]'), VEC_FROM_TEXT('[4, 5, 6]'));").Check(testkit.Rows("[1,2,3]"))
+
+	// CASE WHEN
+	tk.MustQuery("SELECT CASE WHEN TRUE THEN VEC_FROM_TEXT('[1, 2, 3]') ELSE VEC_FROM_TEXT('[4, 5, 6]') END;").Check(testkit.Rows("[1,2,3]"))
+}
+
+func TestVectorStringCompare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (val vector);")
+	tk.MustExec("INSERT INTO t1 VALUES ('[1,2,3]'), ('[4,5,6]');")
+
+	// LIKE
+	tk.MustQuery("SELECT * FROM t1 WHERE val LIKE '%2%';").Check(testkit.Rows("[1,2,3]"))
+
+	// ILIKE
+	tk.MustQuery("SELECT * FROM t1 WHERE val ILIKE '%2%';").Check(testkit.Rows("[1,2,3]"))
+
+	// STRCMP
+	tk.MustQuery("SELECT STRCMP('[1,2,3]', VEC_FROM_TEXT('[1,2,3]'));").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT STRCMP('[4,5,6]', VEC_FROM_TEXT('[1,2,3]'));").Check(testkit.Rows("1"))
 }
 
 func TestVectorAggregations(t *testing.T) {
@@ -427,6 +499,70 @@ func TestVectorSetOperation(t *testing.T) {
 	tk.MustQuery(`SELECT embedding FROM t1 EXCEPT SELECT embedding FROM t2;`).Check(testkit.Rows(
 		"[1,2,3]",
 	))
+}
+
+func TestVectorArithmatic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec(`CREATE TABLE t(embedding VECTOR);`)
+	tk.MustExec(`INSERT INTO t VALUES
+		('[1, 2, 3]'),
+		('[4, 5, 6]'),
+		('[7, 8, 9]');
+	`)
+	tk.MustQuery(`SELECT embedding + '[1, 2, 3]' FROM t;`).Check(testkit.Rows("[2,4,6]", "[5,7,9]", "[8,10,12]"))
+	tk.MustQuery(`SELECT embedding + embedding FROM t;`).Check(testkit.Rows("[2,4,6]", "[8,10,12]", "[14,16,18]"))
+	tk.MustQueryToErr(`SELECT embedding + 1 FROM t;`)
+	tk.MustQueryToErr(`SELECT embedding + '[]' FROM t;`)
+	tk.MustQuery(`SELECT embedding - '[1, 2, 3]' FROM t;`).Check(testkit.Rows("[0,0,0]", "[3,3,3]", "[6,6,6]"))
+	tk.MustQuery(`SELECT embedding - embedding FROM t;`).Check(testkit.Rows("[0,0,0]", "[0,0,0]", "[0,0,0]"))
+	tk.MustQueryToErr(`SELECT embedding - '[1]' FROM t;`)
+
+	tk.MustQuery(`SELECT VEC_FROM_TEXT('[1,2]') + VEC_FROM_TEXT('[2,3]');`).Check(testkit.Rows("[3,5]"))
+	tk.MustQuery(`SELECT VEC_FROM_TEXT('[1,2]') + '[2,3]';`).Check(testkit.Rows("[3,5]"))
+	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1,2]') + '[2,3,4]';`)
+	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + 2;`)
+	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + '2';`)
+
+	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[3e38]') + '[3e38]';`)
+	tk.MustQuery(`SELECT VEC_FROM_TEXT('[1,2,3]') * '[4,5,6]';`).Check(testkit.Rows("[4,10,18]"))
+	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1e37]') * '[1e37]';`)
+}
+
+func TestVectorFunctions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+
+	tk.MustQuery(`SELECT VEC_L1_DISTANCE('[0,0]', '[3,4]');`).Check(testkit.Rows("7"))
+	tk.MustQuery(`SELECT VEC_L1_DISTANCE('[0,0]', '[0,1]');`).Check(testkit.Rows("1"))
+	tk.MustQueryToErr("SELECT VEC_L1_DISTANCE('[1,2]', '[3]');")
+	tk.MustQuery(`SELECT VEC_L1_DISTANCE('[3e38]', '[-3e38]');`).Check(testkit.Rows("+Inf"))
+
+	tk.MustQuery(`SELECT VEC_L2_DISTANCE('[0,0]', '[3,4]');`).Check(testkit.Rows("5"))
+	tk.MustQuery(`SELECT VEC_L2_DISTANCE('[0,0]', '[0,1]');`).Check(testkit.Rows("1"))
+	tk.MustQueryToErr(`SELECT VEC_L2_DISTANCE('[1,2]', '[3]');`)
+	tk.MustQuery(`SELECT VEC_L2_DISTANCE('[3e38]', '[-3e38]');`).Check(testkit.Rows("+Inf"))
+
+	tk.MustQuery(`SELECT VEC_NEGATIVE_INNER_PRODUCT('[1,2]', '[3,4]');`).Check(testkit.Rows("-11"))
+	tk.MustQueryToErr(`SELECT VEC_NEGATIVE_INNER_PRODUCT('[1,2]', '[3]');`)
+	tk.MustQuery(`SELECT VEC_NEGATIVE_INNER_PRODUCT('[3e38]', '[3e38]');`).Check(testkit.Rows("-Inf"))
+
+	tk.MustQuery(`SELECT VEC_COSINE_DISTANCE('[1,2]', '[2,4]');`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT VEC_COSINE_DISTANCE('[1,2]', '[0,0]');`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`SELECT VEC_COSINE_DISTANCE('[1,1]', '[1,1]');`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT VEC_COSINE_DISTANCE('[1,0]', '[0,2]');`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT VEC_COSINE_DISTANCE('[1,1]', '[-1,-1]');`).Check(testkit.Rows("2"))
+	tk.MustQueryToErr(`SELECT VEC_COSINE_DISTANCE('[1,2]', '[3]');`)
+	tk.MustQuery(`SELECT VEC_COSINE_DISTANCE('[1,1]', '[1.1,1.1]');`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT VEC_COSINE_DISTANCE('[1,1]', '[-1.1,-1.1]');`).Check(testkit.Rows("2"))
+	tk.MustQuery(`SELECT VEC_COSINE_DISTANCE('[3e38]', '[3e38]');`).Check(testkit.Rows("<nil>"))
+
+	tk.MustQuery(`SELECT VEC_L2_NORM('[3,4]');`).Check(testkit.Rows("5"))
+	tk.MustQuery(`SELECT VEC_L2_NORM('[0,1]');`).Check(testkit.Rows("1"))
 }
 
 func TestGetLock(t *testing.T) {

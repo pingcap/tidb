@@ -929,9 +929,14 @@ var funcs = map[string]functionClass{
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 
 	// vector functions (TiDB extension)
-	ast.VecDims:     &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},
-	ast.VecFromText: &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
-	ast.VecAsText:   &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
+	ast.VecDims:                 &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},
+	ast.VecL1Distance:           &vecL1DistanceFunctionClass{baseFunctionClass{ast.VecL1Distance, 2, 2}},
+	ast.VecL2Distance:           &vecL2DistanceFunctionClass{baseFunctionClass{ast.VecL2Distance, 2, 2}},
+	ast.VecNegativeInnerProduct: &vecNegativeInnerProductFunctionClass{baseFunctionClass{ast.VecNegativeInnerProduct, 2, 2}},
+	ast.VecCosineDistance:       &vecCosineDistanceFunctionClass{baseFunctionClass{ast.VecCosineDistance, 2, 2}},
+	ast.VecL2Norm:               &vecL2NormFunctionClass{baseFunctionClass{ast.VecL2Norm, 1, 1}},
+	ast.VecFromText:             &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
+	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
 
 	// TiDB internal function.
 	ast.TiDBDecodeKey: &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
