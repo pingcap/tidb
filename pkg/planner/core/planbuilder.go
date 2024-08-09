@@ -747,15 +747,15 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, erro
 			)
 		}
 	} else {
-		processedSQLDigests, err := collectStrOrUserVarList(b.ctx, v.SQLDigests)
+		sqlDigests, err := collectStrOrUserVarList(b.ctx, v.SQLDigests)
 		if err != nil {
 			return nil, err
 		}
-		if len(processedSQLDigests) == 0 {
+		if len(sqlDigests) == 0 {
 			return nil, errors.New("sql digest is empty")
 		}
-		details := make([]*SQLBindOpDetail, 0, len(processedSQLDigests))
-		for _, sqlDigest := range processedSQLDigests {
+		details := make([]*SQLBindOpDetail, 0, len(sqlDigests))
+		for _, sqlDigest := range sqlDigests {
 			details = append(details, &SQLBindOpDetail{SQLDigest: sqlDigest})
 		}
 		p = &SQLBindPlan{
@@ -874,57 +874,63 @@ func collectStrOrUserVarList(ctx base.PlanContext, list []*ast.StringOrUserVar) 
 	return result, nil
 }
 
-func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (base.Plan, error) {
-	processedPlanDigests, err := collectStrOrUserVarList(b.ctx, v.PlanDigests)
+func constructSQLBindOPFromPlanDigest(ctx base.PlanContext, planDigest string) (*SQLBindOpDetail, error) {
+	rows, err := fetchRecordFromClusterStmtSummary(ctx, planDigest)
 	if err != nil {
 		return nil, err
 	}
-	if len(processedPlanDigests) == 0 {
+	bindableStmt := stmtsummary.GetBindableStmtFromCluster(rows)
+	if bindableStmt == nil {
+		return nil, errors.New("can't find any plans for '" + planDigest + "'")
+	}
+	parser4binding := parser.New()
+	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		return nil, errors.Errorf("binding failed: %v", err)
+	}
+	if complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint); !complete {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(reason))
+	}
+	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
+	var hintNode ast.StmtNode
+	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
+	if err != nil {
+		return nil, errors.Errorf("binding failed: %v", err)
+	}
+	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
+	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
+	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
+
+	op := &SQLBindOpDetail{
+		NormdOrigSQL: normdOrigSQL,
+		BindSQL:      bindSQL,
+		BindStmt:     hintNode,
+		Db:           db,
+		Charset:      bindableStmt.Charset,
+		Collation:    bindableStmt.Collation,
+		Source:       bindinfo.History,
+		SQLDigest:    sqlDigestWithDB.String(),
+		PlanDigest:   planDigest,
+	}
+	return op, nil
+}
+
+func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (base.Plan, error) {
+	planDigests, err := collectStrOrUserVarList(b.ctx, v.PlanDigests)
+	if err != nil {
+		return nil, err
+	}
+	if len(planDigests) == 0 {
 		return nil, errors.New("plan digest is empty")
 	}
-	opDetails := make([]*SQLBindOpDetail, 0, len(processedPlanDigests))
-	for _, planDigest := range processedPlanDigests {
-		rows, err := fetchRecordFromClusterStmtSummary(b.ctx, planDigest)
-		if err != nil {
-			return nil, err
+	opDetails := make([]*SQLBindOpDetail, 0, len(planDigests))
+	for _, planDigest := range planDigests {
+		op, err2 := constructSQLBindOPFromPlanDigest(b.ctx, planDigest)
+		if err2 != nil {
+			return nil, err2
 		}
-		bindableStmt := stmtsummary.GetBindableStmtFromCluster(rows)
-		if bindableStmt == nil {
-			return nil, errors.New("can't find any plans for '" + planDigest + "'")
-		}
-
-		parser4binding := parser.New()
-		originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
-		if err != nil {
-			return nil, errors.Errorf("binding failed: %v", err)
-		}
-		if complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint); !complete {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(reason))
-		}
-		bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
-		var hintNode ast.StmtNode
-		hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
-		if err != nil {
-			return nil, errors.Errorf("binding failed: %v", err)
-		}
-
-		restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
-		bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
-		db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
-		normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
-		opDetails = append(
-			opDetails, &SQLBindOpDetail{
-				NormdOrigSQL: normdOrigSQL,
-				BindSQL:      bindSQL,
-				BindStmt:     hintNode,
-				Db:           db,
-				Charset:      bindableStmt.Charset,
-				Collation:    bindableStmt.Collation,
-				Source:       bindinfo.History,
-				SQLDigest:    sqlDigestWithDB.String(),
-				PlanDigest:   planDigest,
-			},
-		)
+		opDetails = append(opDetails, op)
 	}
 
 	p := &SQLBindPlan{

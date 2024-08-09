@@ -261,6 +261,8 @@ const (
 )
 
 // SQLBindPlan represents a plan for SQL bind.
+// One SQLBindPlan can be either global or session, and can only contain one type of operation, but can contain multiple
+// operations of that type.
 type SQLBindPlan struct {
 	baseSchemaProducer
 
@@ -269,7 +271,8 @@ type SQLBindPlan struct {
 	Details   []*SQLBindOpDetail
 }
 
-// SQLBindOpDetail TODO
+// SQLBindOpDetail represents the detail of an operation on a single binding.
+// Different SQLBindOpType use different fields in this struct.
 type SQLBindOpDetail struct {
 	NormdOrigSQL string
 	BindSQL      string
