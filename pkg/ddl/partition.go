@@ -666,6 +666,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				if !ctx.GetSessionVars().EnableGlobalIndex {
 					if index.Primary {
 						indexTp = "PRIMARY KEY"
+						if tbInfo.IsCommonHandle {
+							indexTp = "CLUSTERED INDEX"
+						}
 					} else {
 						indexTp = "UNIQUE INDEX"
 					}
@@ -693,9 +696,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			return err
 		}
 		if !ck {
-			if !ctx.GetSessionVars().EnableGlobalIndex {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-			}
 			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 		}
 	}

@@ -3676,21 +3676,21 @@ func TestPrimaryNoGlobalIndex(t *testing.T) {
 	// get the full row with a single primary key lookup.
 	// Since a global index would first need to be checked to get the partition to
 	// do a second index lookup for getting the full row.
-	tk.MustContainErrMsg(`create table t (a int primary key clustered, b varchar(255)) partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`create table t (a int primary key clustered, b varchar(255)) partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	// Clustered table where PKIsHandle, but the primary key is not listed in tableInfo.Indices
 	tk.MustExec(`create table t (a int primary key clustered, b varchar(255))`)
 	checkGlobalAndPK(t, tk, "t", 0, true, false, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	tk.MustExec(`drop table t`)
 	// Clustered table where PKIsHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) clustered)`)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// Clustered table where IsCommonHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), c int, primary key (a,c) clustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// It can be clustered if the PK contains all the partitioning columns.

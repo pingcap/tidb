@@ -2167,12 +2167,11 @@ create table pt14 (id int not null, lname varchar(30), fname varchar(100) genera
 create table nt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);
 alter table pt14 exchange partition p0 with table nt14;
 
-# TODO: support EXCHANGE TABLE with GLOBAL INDEX
-#--echo ## unique index
-#create table pt15 (id int not null, unique index uk_id (id) global) partition by hash(id) partitions 1;
-#create table nt15 (id int not null, index uk_id (id));
-#-- error 1736
-#alter table pt15 exchange partition p0 with table nt15;
+--echo ## unique index
+create table pt15 (id int not null, unique index uk_id (id) global) partition by hash(id) partitions 1;
+create table nt15 (id int not null, index uk_id (id));
+-- error 1731
+alter table pt15 exchange partition p0 with table nt15;
 
 --echo ## auto_increment
 create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;
@@ -2271,12 +2270,11 @@ create temporary table nt34 (id int);
 -- error 1733
 alter table pt34 exchange partition p0 with table nt34;
 
-# TODO: support EXCHANGE PARTITION with GLOBAL INDEX
-#--echo ## global index
-#create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;
-#create table nt35 (a int, b int, unique index(b));
-#-- error 1731
-#alter table pt35 exchange partition p0 with table nt35;
+--echo ## global index
+create table pt35 (a int, b int, unique index(b) global) partition by hash(a) partitions 1;
+create table nt35 (a int, b int, unique index(b));
+-- error 1731
+alter table pt35 exchange partition p0 with table nt35;
 
 drop database partition_exchange;
 use ddl__db_partition;
