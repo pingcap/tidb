@@ -77,7 +77,7 @@ func TestV2Basic(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, dbInfo, getDBInfo)
 
-	getTableInfo, ok = is.TableByID(tblInfo.ID)
+	getTableInfo, ok = is.TableByID(context.Background(), tblInfo.ID)
 	require.True(t, ok)
 	require.NotNil(t, getTableInfo)
 
@@ -86,7 +86,7 @@ func TestV2Basic(t *testing.T) {
 	require.Same(t, gotTblInfo, getTableInfo.Meta())
 
 	// negative id should always be seen as not exists
-	getTableInfo, ok = is.TableByID(-1)
+	getTableInfo, ok = is.TableByID(context.Background(), -1)
 	require.False(t, ok)
 	require.Nil(t, getTableInfo)
 	gotTblInfo, ok = is.TableInfoByID(-1)

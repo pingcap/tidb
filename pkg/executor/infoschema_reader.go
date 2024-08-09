@@ -256,7 +256,7 @@ func getAutoIncrementID(
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 ) int64 {
-	tbl, ok := is.TableByID(tblInfo.ID)
+	tbl, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		return 0
 	}
@@ -1970,7 +1970,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 }
 
 func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {
-	tbl, _ := is.TableByID(tableID)
+	tbl, _ := is.TableByID(ctx, tableID)
 	if tbl == nil {
 		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
 	}

@@ -551,7 +551,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	if ts.Table.GetPartitionInfo() != nil {
 		tiFlashStaticPrune = !e.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()
 
-		tmp, _ := e.is.TableByID(ts.Table.ID)
+		tmp, _ := e.is.TableByID(ctx, ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
 		if !tiFlashStaticPrune {
 			var partitions []table.PhysicalTable
