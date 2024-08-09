@@ -618,6 +618,11 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// we will fill the column type information later, so clone a new table here.
+	tb, err = table.TableFromMeta(tb.Allocators(e.Ctx().GetTableCtx()), tb.Meta().Clone())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	var (
 		fieldPatternsLike collate.WildcardPattern
 		fieldFilter       string
