@@ -34,6 +34,7 @@ const (
 	MaxExecTimeExceeded
 	QueryMemoryExceeded
 	ServerMemoryExceeded
+	RunawayQueryExceeded
 	// When you add a new signal, you should also modify store/driver/error/ToTidbErr,
 	// so that errors in client can be correctly converted to tidb errors.
 )
@@ -77,6 +78,9 @@ func (killer *SQLKiller) getKillError(status killSignal) error {
 		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID)
 	case ServerMemoryExceeded:
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID)
+	case RunawayQueryExceeded:
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.GenWithStackByArgs()
+	default:
 	}
 	return nil
 }

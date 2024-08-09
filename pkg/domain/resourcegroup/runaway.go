@@ -16,6 +16,7 @@ package resourcegroup
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -523,6 +524,34 @@ func (r *RunawayChecker) BeforeExecutor() error {
 		}
 	}
 	return nil
+}
+
+// CheckKillAction checks whether the query should be killed.
+func (r *RunawayChecker) CheckKillAction() bool {
+	if r.setting == nil && !r.markedByWatch {
+		return false
+	}
+	// mark by rule
+	marked := r.markedByRule.Load()
+	if !marked {
+		now := time.Now()
+		until := r.deadline.Sub(now)
+		if until > 0 {
+			return false
+		}
+		if r.markedByRule.CompareAndSwap(false, true) {
+			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
+			if !r.markedByWatch {
+				r.markQuarantine(&now)
+			}
+		}
+	}
+	return r.setting.Action == rmpb.RunawayAction_Kill
+}
+
+// Rule returns the rule of the runaway checker.
+func (r *RunawayChecker) Rule() string {
+	return fmt.Sprintf("execElapsedTimeMs:%s", time.Duration(r.setting.Rule.ExecElapsedTimeMs)*time.Millisecond)
 }
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.

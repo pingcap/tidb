@@ -2592,7 +2592,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
 		if x.FnName.L == ast.ConnectionID {
 			sm := e.Ctx().GetSessionManager()
-			sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false)
+			sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false, false)
 			return nil
 		}
 		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
@@ -2604,7 +2604,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			if sm == nil {
 				return nil
 			}
-			sm.Kill(s.ConnectionID, s.Query, false)
+			sm.Kill(s.ConnectionID, s.Query, false, false)
 		} else {
 			err := errors.NewNoStackError("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
@@ -2619,7 +2619,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if e.IsFromRemote {
 		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.Ctx().GetSessionVars().SourceAddr.IP.String()))
-		sm.Kill(s.ConnectionID, s.Query, false)
+		sm.Kill(s.ConnectionID, s.Query, false, false)
 		return nil
 	}
 
@@ -2645,7 +2645,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
-		sm.Kill(s.ConnectionID, s.Query, false)
+		sm.Kill(s.ConnectionID, s.Query, false, false)
 	}
 
 	return nil
