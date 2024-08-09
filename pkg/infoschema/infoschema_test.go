@@ -157,7 +157,7 @@ func TestBasic(t *testing.T) {
 	require.False(t, infoschema.TableIsView(is, dbName, tbName))
 	require.False(t, infoschema.TableIsSequence(is, dbName, tbName))
 
-	tb, ok := is.TableByID(tbID)
+	tb, ok := is.TableByID(context.Background(), tbID)
 	require.True(t, ok)
 	require.NotNil(t, tb)
 
@@ -165,7 +165,7 @@ func TestBasic(t *testing.T) {
 	require.True(t, ok)
 	require.Same(t, tb.Meta(), gotTblInfo)
 
-	tb, ok = is.TableByID(dbID)
+	tb, ok = is.TableByID(context.Background(), dbID)
 	require.False(t, ok)
 	require.Nil(t, tb)
 
@@ -173,7 +173,7 @@ func TestBasic(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, gotTblInfo)
 
-	tb, ok = is.TableByID(-12345)
+	tb, ok = is.TableByID(context.Background(), -12345)
 	require.False(t, ok)
 	require.Nil(t, tb)
 
@@ -197,7 +197,7 @@ func TestBasic(t *testing.T) {
 	require.Nil(t, gotTblInfo)
 
 	// negative id should always be seen as not exists
-	tb, ok = is.TableByID(-1)
+	tb, ok = is.TableByID(context.Background(), -1)
 	require.False(t, ok)
 	require.Nil(t, tb)
 	schema, ok = is.SchemaByID(-1)
@@ -210,7 +210,7 @@ func TestBasic(t *testing.T) {
 	tblInfos, err := is.SchemaTableInfos(context.Background(), dbName)
 	require.NoError(t, err)
 	require.Len(t, tblInfos, 1)
-	tbl, ok := is.TableByID(tblInfos[0].ID)
+	tbl, ok := is.TableByID(context.Background(), tblInfos[0].ID)
 	require.True(t, ok)
 	require.Same(t, tbl.Meta(), tblInfos[0])
 
@@ -253,7 +253,7 @@ func TestMockInfoSchema(t *testing.T) {
 	}
 	tableInfo.Columns = []*model.ColumnInfo{colInfo}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
-	tbl, ok := is.TableByID(tblID)
+	tbl, ok := is.TableByID(context.Background(), tblID)
 	require.True(t, ok)
 	require.Equal(t, tblName, tbl.Meta().Name)
 	require.Equal(t, colInfo, tbl.Cols()[0].ColumnInfo)
@@ -831,35 +831,35 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.Same(t, tbl.Meta(), gotTblInfo)
 
 	// test TableByID
-	tbl, ok := is.TableByID(normalTbTestA.Meta().ID)
+	tbl, ok := is.TableByID(context.Background(), normalTbTestA.Meta().ID)
 	require.True(t, ok)
 	require.Equal(t, normalTbTestA.Meta(), tbl.Meta())
 	gotTblInfo, ok = is.TableInfoByID(normalTbTestA.Meta().ID)
 	require.True(t, ok)
 	require.Same(t, tbl.Meta(), gotTblInfo)
 
-	tbl, ok = is.TableByID(normalTbTestB.Meta().ID)
+	tbl, ok = is.TableByID(context.Background(), normalTbTestB.Meta().ID)
 	require.True(t, ok)
 	require.Equal(t, normalTbTestB.Meta(), tbl.Meta())
 	gotTblInfo, ok = is.TableInfoByID(normalTbTestB.Meta().ID)
 	require.True(t, ok)
 	require.Same(t, tbl.Meta(), gotTblInfo)
 
-	tbl, ok = is.TableByID(tmpTbTestA.Meta().ID)
+	tbl, ok = is.TableByID(context.Background(), tmpTbTestA.Meta().ID)
 	require.True(t, ok)
 	require.Equal(t, tmpTbTestA, tbl)
 	gotTblInfo, ok = is.TableInfoByID(tmpTbTestA.Meta().ID)
 	require.True(t, ok)
 	require.Same(t, tbl.Meta(), gotTblInfo)
 
-	tbl, ok = is.TableByID(tb12.Meta().ID)
+	tbl, ok = is.TableByID(context.Background(), tb12.Meta().ID)
 	require.True(t, ok)
 	require.Equal(t, tb12, tbl)
 	gotTblInfo, ok = is.TableInfoByID(tb12.Meta().ID)
 	require.True(t, ok)
 	require.Same(t, tbl.Meta(), gotTblInfo)
 
-	tbl, ok = is.TableByID(1234567)
+	tbl, ok = is.TableByID(context.Background(), 1234567)
 	require.False(t, ok)
 	require.Nil(t, tbl)
 	gotTblInfo, ok = is.TableInfoByID(1234567)
@@ -891,7 +891,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.Nil(t, info)
 
 	// negative id should always be seen as not exists
-	tbl, ok = is.TableByID(-1)
+	tbl, ok = is.TableByID(context.Background(), -1)
 	require.False(t, ok)
 	require.Nil(t, tbl)
 	info, ok = is.SchemaByID(-1)
@@ -1052,7 +1052,7 @@ func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 	internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo, tblInfo)
 
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblInfo.ID}, func(tc *infoschemaTestContext) {
-		tbl, ok := tc.is.TableByID(tblInfo.ID)
+		tbl, ok := tc.is.TableByID(context.Background(), tblInfo.ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, tbl.Meta().Name.O, tblName)
 	})
@@ -1076,7 +1076,7 @@ func (tc *infoschemaTestContext) runCreateTables(tblNames []string) {
 
 	tc.applyDiffAndCheck(&diff, func(tc *infoschemaTestContext) {
 		for i, opt := range diff.AffectedOpts {
-			tbl, ok := tc.is.TableByID(opt.TableID)
+			tbl, ok := tc.is.TableByID(context.Background(), opt.TableID)
 			require.True(tc.t, ok)
 			require.Equal(tc.t, tbl.Meta().Name.O, tblNames[i])
 		}
@@ -1090,7 +1090,7 @@ func (tc *infoschemaTestContext) runDropTable(tblName string) {
 	// dropTable
 	internal.DropTable(tc.t, tc.re.Store(), tc.dbInfo, tblID, tblName)
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, func(tc *infoschemaTestContext) {
-		tbl, ok := tc.is.TableByID(tblID)
+		tbl, ok := tc.is.TableByID(context.Background(), tblID)
 		require.False(tc.t, ok)
 		require.Nil(tc.t, tbl)
 	})
@@ -1113,7 +1113,7 @@ func (tc *infoschemaTestContext) runAddColumn(tblName string) {
 
 	tc.addColumn(tbl.Meta())
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, func(tc *infoschemaTestContext) {
-		tbl, ok := tc.is.TableByID(tbl.Meta().ID)
+		tbl, ok := tc.is.TableByID(context.Background(), tbl.Meta().ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, 2, len(tbl.Cols()))
 	})
@@ -1146,7 +1146,7 @@ func (tc *infoschemaTestContext) runModifyColumn(tblName string) {
 
 	tc.modifyColumn(tbl.Meta())
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifyColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, func(tc *infoschemaTestContext) {
-		tbl, ok := tc.is.TableByID(tbl.Meta().ID)
+		tbl, ok := tc.is.TableByID(context.Background(), tbl.Meta().ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, "test", tbl.Cols()[0].Comment)
 	})

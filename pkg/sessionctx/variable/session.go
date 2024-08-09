@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -66,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
@@ -1265,9 +1265,6 @@ type SessionVars struct {
 	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
 	EnableGlobalIndex bool
 
-	// PresumeKeyNotExists indicates lazy existence checking is enabled.
-	PresumeKeyNotExists bool
-
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
 
@@ -1655,8 +1652,15 @@ type SessionVars struct {
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
 
+	// TiFlashPreAggMode indicates the policy of pre aggregation.
+	TiFlashPreAggMode string
+
 	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
 	EnableLazyCursorFetch bool
+
+	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
+	// `select for update` statements which do acquire pessimsitic locks.
+	SharedLockPromotion bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2756,11 +2760,6 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 // GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
 func (s *SessionVars) GetDivPrecisionIncrement() int {
 	return s.DivPrecisionIncrement
-}
-
-// LazyCheckKeyNotExists returns if we can lazy check key not exists.
-func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) == errctx.LevelError)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.
@@ -3911,6 +3910,34 @@ func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
 }
 
+// ForcePreAggStr means 1st hashagg will be pre aggregated.
+// AutoStr means TiFlash will decide which policy for 1st hashagg.
+// ForceStreamingStr means 1st hashagg will for pass through all blocks.
+const (
+	ForcePreAggStr    = "force_preagg"
+	AutoStr           = "auto"
+	ForceStreamingStr = "force_streaming"
+)
+
+// ValidTiFlashPreAggMode returns all valid modes.
+func ValidTiFlashPreAggMode() string {
+	return ForcePreAggStr + ", " + AutoStr + ", " + ForceStreamingStr
+}
+
+// ToTiPBTiFlashPreAggMode return the corresponding tipb value of preaggregation mode.
+func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
+	switch mode {
+	case ForcePreAggStr:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, true
+	case ForceStreamingStr:
+		return tipb.TiFlashPreAggMode_ForceStreaming, true
+	case AutoStr:
+		return tipb.TiFlashPreAggMode_Auto, true
+	default:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, false
+	}
+}
+
 // UseLowResolutionTSO indicates whether low resolution tso could be used for execution.
 func (s *SessionVars) UseLowResolutionTSO() bool {
 	return !s.InRestrictedSQL && s.lowResolutionTSO
@@ -3920,6 +3947,9 @@ func (s *SessionVars) UseLowResolutionTSO() bool {
 // statement execution. There are cases the `for update` clause should not take effect, like autocommit
 // statements with “pessimistic-auto-commit disabled.
 func (s *SessionVars) PessimisticLockEligible() bool {
+	if s.StmtCtx.ForShareLockEnabledByNoop {
+		return false
+	}
 	if !s.IsAutocommit() || s.InTxn() || (config.GetGlobalConfig().
 		PessimisticTxn.PessimisticAutoCommit.Load() && !s.BulkDMLEnabled) {
 		return true

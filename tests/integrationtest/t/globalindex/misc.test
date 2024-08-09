@@ -129,6 +129,8 @@ explain format = 'brief' select a from t partition (p1) order by a;
 drop table if exists t;
 --error 8264
 create table t (a int, b int, unique key idx_b (b)) partition by hash (a) partitions 3;
+--error 8264
+create table t (a int, b int, unique key idx_b (b) local) partition by hash (a) partitions 3;
 create table t (a int, b int, unique key idx_b (b) global) partition by hash (a) partitions 3;
 show create table t;
 drop table t;
@@ -139,10 +141,14 @@ CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 3;
 show create table t;
-#--error 8264
-#alter table t partition by key (a) partitions 3;
+--error 8200
+alter table t partition by key (b) partitions 3;
+--error 8264
+alter table t partition by hash (a) partitions 3 update indexes (idx_b LOCAL);
 alter table t partition by hash (a) partitions 3 update indexes (idx_b GLOBAL);
 show create table t;
+--error 8200
+alter table t partition by hash (b) partitions 3 update indexes(idx_b global);
 alter table t partition by hash (b) partitions 3 update indexes(idx_b local);
 show create table t;
 alter table t partition by key (b) partitions 3;

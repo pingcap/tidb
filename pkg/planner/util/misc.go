@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -101,6 +102,18 @@ func CloneAssignments(assignments []*expression.Assignment) []*expression.Assign
 	cloned := make([]*expression.Assignment, 0, len(assignments))
 	for _, a := range assignments {
 		cloned = append(cloned, a.Clone())
+	}
+	return cloned
+}
+
+// CloneHandleCols uses HandleCols.Clone to clone a slice of HandleCols.
+func CloneHandleCols(newCtx *stmtctx.StatementContext, handles []HandleCols) []HandleCols {
+	if handles == nil {
+		return nil
+	}
+	cloned := make([]HandleCols, 0, len(handles))
+	for _, h := range handles {
+		cloned = append(cloned, h.Clone(newCtx))
 	}
 	return cloned
 }

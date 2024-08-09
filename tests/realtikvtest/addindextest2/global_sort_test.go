@@ -297,7 +297,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	var idxInfo *model.IndexInfo
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if idxInfo == nil {
-			tbl, _ := dom.InfoSchema().TableByID(job.TableID)
+			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 			tblInfo = tbl.Meta()
 			if len(tblInfo.Indices) == 0 {
 				return

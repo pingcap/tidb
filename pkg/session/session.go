@@ -619,7 +619,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
 		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
 		tableOrPartitionID := tablecodec.DecodeTableID(key)
-		tbl, ok := infoSchema.TableByID(tableOrPartitionID)
+		tbl, ok := infoSchema.TableByID(ctx, tableOrPartitionID)
 		if !ok {
 			tbl, _, _ = infoSchema.FindTableByPartitionID(tableOrPartitionID)
 		}
@@ -885,7 +885,7 @@ func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enh
 		return "", false
 	}
 	var tableName string
-	tbl, ok := is.TableByID(tableID)
+	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		tableName = "unknown"
 	} else {
@@ -2378,6 +2378,10 @@ func (rs *execStmtResult) Close() error {
 }
 
 func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
+	// If `TryDetach` is called, the connection must have set `mysql.ServerStatusCursorExists`, or
+	// the `StatementContext` will be re-used and cause data race.
+	intest.Assert(rs.se.GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists))
+
 	if !rs.sql.IsReadOnly(rs.se.GetSessionVars()) {
 		return nil, false, nil
 	}
@@ -4152,7 +4156,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				tableName = tblInfo.Meta().Name.String()
 				partitionName = partInfo.Name.String()
 			} else {
-				tblInfo, _ := is.TableByID(physicalTableID)
+				tblInfo, _ := is.TableByID(s.currentCtx, physicalTableID)
 				tableName = tblInfo.Meta().Name.String()
 			}
 			bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)

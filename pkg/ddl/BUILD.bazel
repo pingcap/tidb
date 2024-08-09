@@ -281,6 +281,7 @@ go_test(
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
+        "//pkg/disttask/operator",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errctx",

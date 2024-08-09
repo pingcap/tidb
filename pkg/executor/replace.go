@@ -63,7 +63,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 }
 
 // replaceRow removes all duplicate rows for one row, then inserts it.
-func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
+func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCheck table.DupKeyCheckMode) error {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -106,7 +106,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	err = e.addRecord(ctx, r.row, table.DupKeyCheckDefault)
+	err = e.addRecord(ctx, r.row, dupKeyCheck)
 	if err != nil {
 		return err
 	}
@@ -180,9 +180,12 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if e.stats != nil {
 		e.stats.Prefetch = time.Since(prefetchStart)
 	}
-	e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
+	sessionVars := e.Ctx().GetSessionVars()
+	sessionVars.StmtCtx.AddRecordRows(uint64(len(newRows)))
+	// TODO: seems we can optimize it to `DupKeyCheckSkip` because all conflict rows are deleted in previous steps.
+	dupKeyCheck := optimizeDupKeyCheckForNormalInsert(sessionVars, txn)
 	for _, r := range toBeCheckedRows {
-		err = e.replaceRow(ctx, r)
+		err = e.replaceRow(ctx, r, dupKeyCheck)
 		if err != nil {
 			return err
 		}
