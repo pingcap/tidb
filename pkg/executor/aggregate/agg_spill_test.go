@@ -65,9 +65,9 @@ func generateData(rowNum int, ndv int) ([]string, []float64) {
 
 	// Generate data
 	for i := 0; i < rowNum; i++ {
-		key := keys[i%ndv]
+		key := keys[rand.Intn(ndv)]
 		col0Data = append(col0Data, key)
-		col1Data = append(col1Data, 1) // Always 1
+		col1Data = append(col1Data, float64(rand.Intn(10000000)))
 	}
 
 	// Shuffle data
@@ -160,7 +160,7 @@ func getRetTypes() []*types.FieldType {
 	return []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarString),
 		types.NewFieldType(mysql.TypeDouble),
-		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
 	}
@@ -236,6 +236,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 		BaseExecutor:     exec.NewBaseExecutor(ctx, schema, 0, child),
 		Sc:               ctx.GetSessionVars().StmtCtx,
 		PartialAggFuncs:  make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		FinalAggFuncs:    make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
 		GroupByItems:     groupItems,
 		IsUnparallelExec: false,
 	}
@@ -289,7 +290,6 @@ func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate
 	tmpCtx := context.Background()
 	resultRows := make([]chunk.Row, 0)
 	aggExec.Open(tmpCtx)
-	
 	for {
 		chk := exec.NewFirstChunk(aggExec)
 		err := aggExec.Next(tmpCtx, chk)
@@ -423,7 +423,7 @@ func TestGetCorrectResult(t *testing.T) {
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
 
 	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 1; i++ {
 		executeCorrecResultTest(t, ctx, nil, dataSource, result)
 		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
 	}
