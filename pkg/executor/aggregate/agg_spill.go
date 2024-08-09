@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -77,7 +78,11 @@ func newSpillHelper(
 	aggFuncsForRestoring []aggfuncs.AggFunc,
 	finalWorkerAggFuncs []aggfuncs.AggFunc,
 	getNewSpillChunkFunc func() *chunk.Chunk,
-	spillChunkFieldTypes []*types.FieldType) *parallelHashAggSpillHelper {
+	spillChunkFieldTypes []*types.FieldType) (*parallelHashAggSpillHelper, error) {
+	if len(aggFuncsForRestoring) != len(finalWorkerAggFuncs) {
+		return nil, errors.NewNoStackError("len(aggFuncsForRestoring) != len(finalWorkerAggFuncs)")
+	}
+
 	mu := new(sync.Mutex)
 	helper := &parallelHashAggSpillHelper{
 		lock: struct {
@@ -105,7 +110,7 @@ func newSpillHelper(
 		spillChunkFieldTypes: spillChunkFieldTypes,
 	}
 
-	return helper
+	return helper, nil
 }
 
 func (p *parallelHashAggSpillHelper) close() {
@@ -243,7 +248,7 @@ type processRowContext struct {
 	chunk                  *chunk.Chunk
 	rowPos                 int
 	keyColPos              int
-	aggRestoreFuncNum             int
+	aggRestoreFuncNum      int
 	restoreadData          *aggfuncs.AggPartialResultMapper
 	partialResultsRestored [][]aggfuncs.PartialResult
 	bInMap                 *int
@@ -257,7 +262,7 @@ func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Cont
 		chunk:                  nil, // Will be set in the loop
 		rowPos:                 0,   // Will be set in the loop
 		keyColPos:              aggRestoreFuncNum,
-		aggRestoreFuncNum:             aggRestoreFuncNum,
+		aggRestoreFuncNum:      aggRestoreFuncNum,
 		restoreadData:          restoreadData,
 		partialResultsRestored: make([][]aggfuncs.PartialResult, aggRestoreFuncNum),
 		bInMap:                 bInMap,
