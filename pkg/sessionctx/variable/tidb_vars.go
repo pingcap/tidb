@@ -1342,7 +1342,7 @@ const (
 	DefTiDBStatsLoadSyncWait                       = 100
 	DefTiDBStatsLoadPseudoTimeout                  = true
 	DefSysdateIsNow                                = false
-	DefTiDBEnableParallelHashaggSpill              = true
+	DefTiDBEnableParallelHashaggSpill              = false
 	DefTiDBEnableMutationChecker                   = false
 	DefTiDBTxnAssertionLevel                       = AssertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt            = false

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -66,6 +67,8 @@ type parallelHashAggSpillHelper struct {
 	// They only be used for restoring data that are spilled to disk in partial stage.
 	aggFuncsForRestoring []aggfuncs.AggFunc
 
+	finalWorkerAggFuncs []aggfuncs.AggFunc
+
 	getNewSpillChunkFunc func() *chunk.Chunk
 	spillChunkFieldTypes []*types.FieldType
 }
@@ -73,8 +76,13 @@ type parallelHashAggSpillHelper struct {
 func newSpillHelper(
 	tracker *memory.Tracker,
 	aggFuncsForRestoring []aggfuncs.AggFunc,
+	finalWorkerAggFuncs []aggfuncs.AggFunc,
 	getNewSpillChunkFunc func() *chunk.Chunk,
-	spillChunkFieldTypes []*types.FieldType) *parallelHashAggSpillHelper {
+	spillChunkFieldTypes []*types.FieldType) (*parallelHashAggSpillHelper, error) {
+	if len(aggFuncsForRestoring) != len(finalWorkerAggFuncs) {
+		return nil, errors.NewNoStackError("len(aggFuncsForRestoring) != len(finalWorkerAggFuncs)")
+	}
+
 	mu := new(sync.Mutex)
 	helper := &parallelHashAggSpillHelper{
 		lock: struct {
@@ -97,11 +105,12 @@ func newSpillHelper(
 		memTracker:           tracker,
 		hasError:             atomic.Bool{},
 		aggFuncsForRestoring: aggFuncsForRestoring,
+		finalWorkerAggFuncs:  finalWorkerAggFuncs,
 		getNewSpillChunkFunc: getNewSpillChunkFunc,
 		spillChunkFieldTypes: spillChunkFieldTypes,
 	}
 
-	return helper
+	return helper, nil
 }
 
 func (p *parallelHashAggSpillHelper) close() {
@@ -294,7 +303,7 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 		exprCtx := context.ctx.GetExprCtx()
 		// The key has appeared before, merge results.
 		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
-			memDelta, err := p.aggFuncsForRestoring[aggPos].MergePartialResult(exprCtx.GetEvalCtx(), context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
+			memDelta, err := p.finalWorkerAggFuncs[aggPos].MergePartialResult(exprCtx.GetEvalCtx(), context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
 			if err != nil {
 				return totalMemDelta, 0, err
 			}

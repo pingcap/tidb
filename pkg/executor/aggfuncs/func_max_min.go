@@ -1287,6 +1287,26 @@ func (e *maxMin4Time) MergePartialResult(_ AggFuncUpdateContext, src, dst Partia
 	return 0, nil
 }
 
+func (e *maxMin4Time) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinTime)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinTime(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Time) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Time) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinTime)(pr)
+	success := helper.deserializePartialResult4MaxMinTime(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4TimeSliding struct {
 	maxMin4Time
 	windowInfo
