@@ -30,6 +30,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -171,7 +172,36 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 			tk.alloc.Reset()
 		}
 	}()
-	return tk.MustQueryWithContext(context.Background(), sql, args...)
+	rs1 := tk.MustQueryWithContext(context.Background(), sql, args...)
+	if !strings.Contains(sql, "information_schema") || strings.Contains(sql, "statements_summary") {
+		return rs1
+	}
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor", "return(true)")
+	if err != nil {
+		panic(err)
+	}
+	rs2 := tk.MustQueryWithContext(context.Background(), sql, args...)
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor")
+	if err != nil {
+		panic(err)
+	}
+	rs1Row := make([][]string, 0, len(rs1.rows))
+	for _, row := range rs1.rows {
+		rs1SubRow := make([]string, 0, len(row))
+		for _, col := range row {
+			rs1SubRow = append(rs1SubRow, strings.Clone(col))
+		}
+		rs1Row = append(rs1Row, rs1SubRow)
+	}
+	slices.SortFunc(rs1.rows, func(a, b []string) int {
+		return slices.Compare(a, b)
+	})
+	slices.SortFunc(rs2.rows, func(a, b []string) int {
+		return slices.Compare(a, b)
+	})
+	rs2.Check(rs1.Rows())
+	rs1.rows = rs1Row
+	return rs1
 }
 
 // EventuallyMustQueryAndCheck query the statements and assert that
