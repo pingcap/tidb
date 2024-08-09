@@ -73,6 +73,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		// impact.
 		require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	}
+	require.False(t, intest.InIntegrationTest, "you should not add --tags=integrationtest when just to do unit test or benchmark, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
 		require: require.New(t),

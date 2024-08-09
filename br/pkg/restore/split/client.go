@@ -338,7 +338,7 @@ func sendSplitRegionRequest(
 	splitErrors *error,
 	retry int,
 ) (bool, *kvrpcpb.SplitRegionResponse, error) {
-	if intest.InTest {
+	if intest.InTest && !intest.InIntegrationTest {
 		mockCli, ok := c.client.(*MockPDClientForSplit)
 		if ok {
 			return mockCli.SplitRegion(regionInfo, keys, c.isRawKv)

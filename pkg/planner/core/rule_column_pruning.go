@@ -41,7 +41,7 @@ func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 	if err != nil {
 		return nil, planChanged, err
 	}
-	intest.AssertNoError(noZeroColumnLayOut(lp), "After column pruning, some operator got zero row output. Please fix it.")
+	intest.AssertNoError(noZeroColumnLayOut(lp), "After column pruning, some operator got zero column output. Please fix it.")
 	return lp, planChanged, nil
 }
 
