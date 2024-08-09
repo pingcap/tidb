@@ -23,7 +23,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/domain/resourcegroup",
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
@@ -34,6 +33,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/resourcegroup",
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/tiflash",

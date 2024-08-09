@@ -9,7 +9,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/meta",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/domain/resourcegroup",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/metrics",
@@ -18,6 +17,7 @@ go_library(
         "//pkg/structure",
         "//pkg/util/dbterror",
         "//pkg/util/hack",
+        "//pkg/util/resourcegroup",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/resource_manager",

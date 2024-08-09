@@ -20,7 +20,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/domain/resourcegroup",
         "//pkg/errno",
         "//pkg/keyspace",
         "//pkg/kv",
@@ -55,6 +54,7 @@ go_library(
         "//pkg/util/paging",
         "//pkg/util/redact",
         "//pkg/util/replayer",
+        "//pkg/util/resourcegroup",
         "//pkg/util/rowcodec",
         "//pkg/util/servicescope",
         "//pkg/util/size",
