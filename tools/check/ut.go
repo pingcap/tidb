@@ -904,7 +904,6 @@ func generateBuildCache() error {
 	cmd.Args = append(cmd.Args, goCompileWithoutLink)
 	cmd.Dir = path.Join(workDir, "cmd/tidb-server")
 	if err := cmd.Run(); err != nil {
-		log.Println("aaaaaaaaaaaaaaaaaaaaaaaaaa", err.Error())
 		return withTrace(err)
 	}
 	return nil
