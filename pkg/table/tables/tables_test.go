@@ -695,13 +695,13 @@ func TestViewColumns(t *testing.T) {
 	tk.MustQuery("select column_name, table_name from information_schema.columns where table_name='v1'").Check(
 		testkit.RowsWithSep("|", "col|v1"))
 	tk.MustExec("drop table if exists t")
-	for _, testCase := range testCases {
-		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
-		tk.MustQuery("show warnings").Sort().Check(testkit.RowsWithSep("|",
-			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
-			"Warning|1356|View 'test.v1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
-			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
-	}
+
+	require.Len(t, tk.MustQuery(testCases[0].query).Rows(), 0)
+	tk.MustQuery("show warnings").Sort().Check(testkit.RowsWithSep("|",
+		"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
+	require.Len(t, tk.MustQuery(testCases[1].query).Rows(), 0)
+	tk.MustQuery("show warnings").Sort().Check(testkit.RowsWithSep("|",
+		"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 
 	// For issue 43264
 	tk.MustExec(`CREATE TABLE User (
