@@ -788,7 +788,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Exec
 	// filter out temporary tables because they do not store any record in tikv and should not write any lock
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
 	for tblID := range e.tblID2Handle {
-		tblInfo, ok := is.TableByID(tblID)
+		tblInfo, ok := is.TableByID(context.Background(), tblID)
 		if !ok {
 			b.err = errors.Errorf("Can not get table %d", tblID)
 		}
@@ -1007,7 +1007,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Executor {
 	// see planBuilder.buildImportInto for detail why we use the latest schema here.
 	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := latestIS.TableByID(v.Table.TableInfo.ID)
+	tbl, ok := latestIS.TableByID(context.Background(), v.Table.TableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
@@ -1040,7 +1040,7 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 }
 
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
-	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
+	tbl, ok := b.is.TableByID(context.Background(), v.Table.TableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
@@ -2381,7 +2381,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			}
 		}
 	}
-	tb, _ := b.is.TableByID(v.Table.ID)
+	tb, _ := b.is.TableByID(context.Background(), v.Table.ID)
 	return &TableScanExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		t:            tb,
@@ -2605,7 +2605,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
-		tbl, _ := b.is.TableByID(info.TblID)
+		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {
 			multiUpdateOnSameTable[info.TblID] = true
 		}
@@ -2686,7 +2686,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
-		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
+		tblID2table[info.TblID], _ = b.is.TableByID(context.Background(), info.TblID)
 	}
 
 	if b.err = b.updateForUpdateTS(); b.err != nil {
@@ -3467,7 +3467,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 
-	tbl, _ := b.is.TableByID(ts.Table.ID)
+	tbl, _ := b.is.TableByID(context.Background(), ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)
@@ -3576,7 +3576,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) exe
 	if hasVirtualCol {
 		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}
-	tbl, _ := b.is.TableByID(ts.Table.ID)
+	tbl, _ := b.is.TableByID(context.Background(), ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
 		// Only for static pruning partition table.
@@ -3651,7 +3651,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 		return ret
 	}
 
-	tmp, _ := b.is.TableByID(ts.Table.ID)
+	tmp, _ := b.is.TableByID(context.Background(), ts.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
 	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
@@ -3803,7 +3803,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, err
 	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	tbl, _ := b.is.TableByID(is.Table.ID)
+	tbl, _ := b.is.TableByID(context.Background(), is.Table.ID)
 	isPartition, physicalTableID := is.IsPartition()
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)
@@ -3893,7 +3893,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 		return ret
 	}
 
-	tmp, _ := b.is.TableByID(is.Table.ID)
+	tmp, _ := b.is.TableByID(context.Background(), is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
 	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
@@ -3913,7 +3913,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 	ts := plans[0].(*plannercore.PhysicalTableScan)
-	tbl, _ := b.is.TableByID(ts.Table.ID)
+	tbl, _ := b.is.TableByID(context.Background(), ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)
@@ -4084,7 +4084,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return ret
 	}
 
-	tmp, _ := b.is.TableByID(is.Table.ID)
+	tmp, _ := b.is.TableByID(context.Background(), is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
 	partitions, err := partitionPruning(b.ctx, tbl, v.PlanPartInfo)
 	if err != nil {
@@ -4240,7 +4240,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 		return ret
 	}
 
-	tmp, _ := b.is.TableByID(ts.Table.ID)
+	tmp, _ := b.is.TableByID(context.Background(), ts.Table.ID)
 	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), v.PlanPartInfo)
 	if err != nil {
 		b.err = err
@@ -4386,7 +4386,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		handles, _ := dedupHandles(lookUpContents)
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
-	tbl, _ := builder.is.TableByID(tbInfo.ID)
+	tbl, _ := builder.is.TableByID(ctx, tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
 	usedPartitionList, err := builder.partitionPruning(pt, v.PlanPartInfo)
 	if err != nil {
@@ -4658,7 +4658,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, nil
 	}
 
-	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
+	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
 	if err != nil {
 		return nil, err
@@ -4721,7 +4721,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return e, err
 	}
 
-	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
+	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
 	if err != nil {
 		return nil, err
@@ -5598,7 +5598,7 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 }
 
 func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
-	tbl, ok := b.is.TableByID(tblInfo.ID)
+	tbl, ok := b.is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
 		return nil

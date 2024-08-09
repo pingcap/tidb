@@ -3887,7 +3887,7 @@ func (e *executor) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Id
 // UpdateTableReplicaInfo updates the table flash replica infos.
 func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	is := e.infoCache.GetLatest()
-	tb, ok := is.TableByID(physicalID)
+	tb, ok := is.TableByID(e.ctx, physicalID)
 	if !ok {
 		tb, _, _ = is.FindTableByPartitionID(physicalID)
 		if tb == nil {
@@ -4303,7 +4303,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		return nil
 	}
 
-	if tbl, ok := is.TableByID(tableID); ok {
+	if tbl, ok := is.TableByID(e.ctx, tableID); ok {
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
@@ -4351,7 +4351,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			return err
 		}
 
-		if t, ok := is.TableByID(tableID); ok {
+		if t, ok := is.TableByID(e.ctx, tableID); ok {
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
 			}
@@ -5291,7 +5291,7 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 		if !ok {
 			continue
 		}
-		tbl, ok := is.TableByID(t.TableID)
+		tbl, ok := is.TableByID(e.ctx, t.TableID)
 		if !ok {
 			continue
 		}

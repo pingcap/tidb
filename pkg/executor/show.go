@@ -1959,7 +1959,7 @@ func (e *ShowExec) getTable() (table.Table, error) {
 	if e.Table == nil {
 		return nil, errors.New("table not found")
 	}
-	tb, ok := e.is.TableByID(e.Table.TableInfo.ID)
+	tb, ok := e.is.TableByID(context.Background(), e.Table.TableInfo.ID)
 	if !ok {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}

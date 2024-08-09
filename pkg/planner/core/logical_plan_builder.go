@@ -5436,7 +5436,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
-		tblID2table[id], _ = b.is.TableByID(id)
+		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
 	if err != nil {
@@ -5581,7 +5581,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		}
 
 		tableInfo := tn.TableInfo
-		tableVal, found := b.is.TableByID(tableInfo.ID)
+		tableVal, found := b.is.TableByID(ctx, tableInfo.ID)
 		if !found {
 			return nil, nil, false, infoschema.ErrTableNotExists.FastGenByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 		}
@@ -5896,7 +5896,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	}
 	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
-		tblID2table[id], _ = b.is.TableByID(id)
+		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
 	if err != nil {

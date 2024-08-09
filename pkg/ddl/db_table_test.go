@@ -748,7 +748,7 @@ func TestAddColumn2(t *testing.T) {
 	var writeOnlyTable table.Table
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
-			writeOnlyTable, _ = dom.InfoSchema().TableByID(job.TableID)
+			writeOnlyTable, _ = dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		}
 	})
 	done := make(chan error, 1)
