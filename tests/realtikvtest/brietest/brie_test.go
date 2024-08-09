@@ -130,6 +130,10 @@ func TestCancel(t *testing.T) {
 }
 
 func TestExistedTables(t *testing.T) {
+	// Create a context with a 20-second timeout for the entire test.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	tk := initTestKit(t)
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
@@ -139,11 +143,40 @@ func TestExistedTables(t *testing.T) {
 	tk.MustExec("create table baa(pk int primary key auto_increment, v varchar(255));")
 	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
 	tk.MustExec("insert into baa(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
-	backupQuery := fmt.Sprintf("BACKUP DATABASE `test` TO 'local://%s'", sqlTmp)
-	tk.MustQuery(backupQuery)
-	restoreQuery := fmt.Sprintf("RESTORE DATABASE `test` FROM 'local://%s'", sqlTmp)
-	res, err := tk.Exec(restoreQuery)
-	require.NoError(t, err)
-	_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
-	require.ErrorContains(t, err, "table already exists")
+
+	// Record time for the backup operation
+	backupStartTime := time.Now()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		backupQuery := fmt.Sprintf("BACKUP DATABASE `test` TO 'local://%s'", sqlTmp)
+		_ = tk.MustQuery(backupQuery)
+	}()
+	select {
+	case <-done:
+		backupDuration := time.Since(backupStartTime)
+		t.Logf("Backup operation took: %s", backupDuration)
+	case <-ctx.Done():
+		t.Fatal("Backup operation exceeded")
+	}
+
+	// Record time for the restore operation
+	restoreStartTime := time.Now()
+	done = make(chan struct{})
+	go func() {
+		defer close(done)
+		restoreQuery := fmt.Sprintf("RESTORE DATABASE `test` FROM 'local://%s'", sqlTmp)
+		res, err := tk.Exec(restoreQuery)
+		require.NoError(t, err)
+
+		_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
+		require.ErrorContains(t, err, "table already exists")
+	}()
+	select {
+	case <-done:
+		restoreDuration := time.Since(restoreStartTime)
+		t.Logf("Restore operation took: %s", restoreDuration)
+	case <-ctx.Done():
+		t.Fatal("Restore operation exceeded")
+	}
 }
