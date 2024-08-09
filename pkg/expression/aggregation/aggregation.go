@@ -256,7 +256,7 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	return ret
 }
 
-// checkVectorAggPushDown returns error if this aggregate function is not supported to push down.
+// checkVectorAggPushDown returns false if this aggregate function is not supported to push down.
 // - The aggregate function is not calculated over a Vector column (returns nil)
 // - The aggregate function is calculated over a Vector column and the function is supported (returns nil)
 // - The aggregate function is calculated over a Vector column and the function is not supported (returns error)
