@@ -1046,6 +1046,14 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 			))
 		}
 
+		// table is not public
+		if tblInfo.State != model.StatePublic {
+			return nil, errors.Trace(ErrTableNotExists.FastGenByArgs(
+				fmt.Sprintf("(Schema ID %d)", dbID),
+				fmt.Sprintf("(Table ID %d)", tblID),
+			))
+		}
+
 		ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 		ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 		allocs := autoid.NewAllocatorsFromTblInfo(is.r, dbID, tblInfo)
