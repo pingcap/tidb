@@ -388,3 +388,25 @@ func (ctx *StaticEvalContext) GetParamValue(idx int) (types.Datum, error) {
 	}
 	return ctx.paramList[idx], nil
 }
+
+var _ exprctx.StaticalizableEvalContext = &StaticEvalContext{}
+
+// AllParamValues implements context.StaticalizableEvalContext.
+func (ctx *StaticEvalContext) AllParamValues() []types.Datum {
+	return ctx.paramList
+}
+
+// GetDynamicPrivCheckFn implements context.StaticalizableEvalContext.
+func (ctx *StaticEvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
+	return ctx.requestDynamicVerificationFn
+}
+
+// GetRequestVerificationFn implements context.StaticalizableEvalContext.
+func (ctx *StaticEvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
+	return ctx.requestVerificationFn
+}
+
+// GetWarnHandler implements context.StaticalizableEvalContext.
+func (ctx *StaticEvalContext) GetWarnHandler() contextutil.WarnHandler {
+	return ctx.warnHandler
+}
