@@ -70,7 +70,6 @@ go_test(
     shard_count = 27,
     deps = [
         "//pkg/distsql/context",
-        "//pkg/domain/resourcegroup",
         "//pkg/errctx",
         "//pkg/kv",
         "//pkg/parser/charset",
@@ -94,6 +93,7 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/paging",
         "//pkg/util/ranger",
+        "//pkg/util/resourcegroup",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//kv",

@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/resourcegroup"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -598,7 +598,7 @@ type Request struct {
 	// TiKVClientReadTimeout is the timeout of kv read request
 	TiKVClientReadTimeout uint64
 
-	RunawayChecker *resourcegroup.RunawayChecker
+	RunawayChecker resourcegroup.RunawayChecker
 
 	// ConnID stores the session connection id.
 	ConnID uint64

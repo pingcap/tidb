@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/distsql/context",
-        "//pkg/domain/resourcegroup",
         "//pkg/errctx",
         "//pkg/parser",
         "//pkg/parser/model",
@@ -25,6 +24,7 @@ go_library(
         "//pkg/util/linter/constructor",
         "//pkg/util/memory",
         "//pkg/util/nocopy",
+        "//pkg/util/resourcegroup",
         "//pkg/util/resourcegrouptag",
         "//pkg/util/topsql/stmtstats",
         "//pkg/util/tracing",

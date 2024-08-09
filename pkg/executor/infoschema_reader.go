@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
@@ -73,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/keydecoder"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
@@ -3607,11 +3607,11 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 
 func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) error {
 	do := domain.GetDomain(sctx)
-	err := do.TryToUpdateRunawayWatch()
+	err := do.RunawayManager().UpdateNewAndDoneWatch()
 	if err != nil {
 		logutil.BgLogger().Warn("read runaway watch list", zap.Error(err))
 	}
-	watches := do.GetRunawayWatchList()
+	watches := do.RunawayManager().GetWatchList()
 	rows := make([][]types.Datum, 0, len(watches))
 	for _, watch := range watches {
 		action := watch.Action
@@ -3625,7 +3625,7 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 			watch.Source,
 			rmpb.RunawayAction_name[int32(action)],
 		)
-		if watch.EndTime.Equal(resourcegroup.NullTime) {
+		if watch.EndTime.Equal(runaway.NullTime) {
 			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
 		}
 		rows = append(rows, row)
