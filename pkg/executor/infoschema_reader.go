@@ -1739,6 +1739,9 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
+		if ex.Filter("constraint_schema", schema.O) {
+			continue
+		}
 		rs := keyColumnUsageInTable(schema, table, ex)
 		rows = append(rows, rs...)
 	}
@@ -1812,6 +1815,10 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
+			if extractor != nil && extractor.Filter("constraint_name", infoschema.PrimaryConstraint) {
+				continue
+			}
+
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				record := types.MakeDatums(
 					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
