@@ -5122,7 +5122,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 
 	e := &SQLBindExec{
 		BaseExecutor: base,
-		isGlobal: v.IsGlobal,
+		isGlobal:     v.IsGlobal,
 		sqlBindOp:    v.SQLBindOp,
 		details:      v.Details,
 	}
