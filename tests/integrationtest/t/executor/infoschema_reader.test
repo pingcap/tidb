@@ -264,3 +264,46 @@ insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e');
 analyze table t;
 select sleep(1);
 select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
+
+
+# Cover reading from tables: Indexes, Views, KeyColumnUsage, TableConstraints
+drop table if exists test.t;
+select * from information_schema.tidb_indexes where table_name = 't';
+--sorted_result
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader';
+--sorted_result
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and table_name = 't';
+--sorted_result
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' or table_name = 't';
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and column_name = 'c';
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
+
+select * from information_schema.views where table_name = 'v1';
+select * from information_schema.views where table_name = 'non_exist';
+--sorted_result
+select * from information_schema.views where table_schema = 'executor__infoschema_reader';
+select * from information_schema.views where table_schema = 'non_exist';
+select * from information_schema.views where table_schema = 'executor__infoschema_reader' and table_name = 'v1';
+--sorted_result
+select * from information_schema.views where table_schema = 'executor__infoschema_reader' or table_name = 'v1';
+
+select * from information_schema.key_column_usage where table_name = 't';
+--sorted_result
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader';
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and table_name = 't';
+--sorted_result
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' or table_name = 't';
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'c';
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'non_exist';
+
+CREATE TABLE tc(a INT CHECK(a > 10) NOT ENFORCED, b INT, c INT, CONSTRAINT c1 CHECK (b > c));
+--sorted_result
+select * from information_schema.table_constraints where table_name = 'tc';
+--sorted_result
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader';
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'tc';
+--sorted_result
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' or table_name = 'tc';
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
+--sorted_result
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
