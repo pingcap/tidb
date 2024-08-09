@@ -16,23 +16,19 @@ package snapclient
 
 import (
 	"context"
-	"sort"
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	tidallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -388,112 +384,6 @@ func concurrentHandleTablesCh(
 			})
 		}
 	}
-}
-
-// GoCreateTables create tables, and generate their information.
-// this function will use workers as the same number of sessionPool,
-// leave sessionPool nil to send DDLs sequential.
-func (rc *SnapClient) GoCreateTables(
-	ctx context.Context,
-	tables []*metautil.Table,
-	newTS uint64,
-	errCh chan<- error,
-) <-chan CreatedTable {
-	// Could we have a smaller size of tables?
-	log.Info("start create tables")
-
-	rc.generateRebasedTables(tables)
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	outCh := make(chan CreatedTable, len(tables))
-	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-
-	var err error
-
-	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
-		err = rc.createTablesInWorkerPool(ctx, tables, newTS, outCh)
-		if err == nil {
-			defer log.Debug("all tables are created")
-			close(outCh)
-			return outCh
-		} else if !utils.FallBack2CreateTable(err) {
-			errCh <- err
-			close(outCh)
-			return outCh
-		}
-		// fall back to old create table (sequential create table)
-		log.Info("fall back to the sequential create table")
-	}
-
-	createOneTable := func(c context.Context, db *tidallocdb.DB, t *metautil.Table) error {
-		select {
-		case <-c.Done():
-			return c.Err()
-		default:
-		}
-		rt, err := rc.createTable(c, db, t, newTS)
-		if err != nil {
-			log.Error("create table failed",
-				zap.Error(err),
-				zap.Stringer("db", t.DB.Name),
-				zap.Stringer("table", t.Info.Name))
-			return errors.Trace(err)
-		}
-		log.Debug("table created and send to next",
-			zap.Int("output chan size", len(outCh)),
-			zap.Stringer("table", t.Info.Name),
-			zap.Stringer("database", t.DB.Name))
-		outCh <- rt
-		rater.Inc()
-		rater.L().Info("table created",
-			zap.Stringer("table", t.Info.Name),
-			zap.Stringer("database", t.DB.Name))
-		return nil
-	}
-	go func() {
-		defer close(outCh)
-		defer log.Debug("all tables are created")
-		var err error
-		if len(rc.dbPool) > 0 {
-			err = rc.createTablesWithDBPool(ctx, createOneTable, tables)
-		} else {
-			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
-		}
-		if err != nil {
-			errCh <- err
-		}
-	}()
-
-	return outCh
-}
-
-func (rc *SnapClient) GoBlockCreateTablesPipeline(ctx context.Context, sz int, inCh <-chan CreatedTable) <-chan CreatedTable {
-	outCh := make(chan CreatedTable, sz)
-
-	go func() {
-		defer close(outCh)
-		cachedTables := make([]CreatedTable, 0, sz)
-		for tbl := range inCh {
-			cachedTables = append(cachedTables, tbl)
-		}
-
-		sort.Slice(cachedTables, func(a, b int) bool {
-			return cachedTables[a].Table.ID < cachedTables[b].Table.ID
-		})
-
-		for _, tbl := range cachedTables {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				outCh <- tbl
-			}
-		}
-	}()
-	return outCh
 }
 
 // GoValidateFileRanges validate files by a stream of tables and yields

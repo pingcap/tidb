@@ -672,12 +672,43 @@ func (rc *SnapClient) getRebasedTables() map[restore.UniqueTableName]bool {
 	return rc.rebasedTablesMap
 }
 
+// CreateTables create tables, and generate their information.
+// this function will use workers as the same number of sessionPool,
+// leave sessionPool nil to send DDLs sequential.
+func (rc *SnapClient) CreateTables(
+	ctx context.Context,
+	tables []*metautil.Table,
+	newTS uint64,
+) ([]*CreatedTable, error) {
+	log.Info("start create tables", zap.Int("total count", len(tables)))
+	rc.generateRebasedTables(tables)
+
+	// try to restore tables in batch
+	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
+		tables, err := rc.createTablesBatch(ctx, tables, newTS)
+		if err == nil {
+			return tables, nil
+		} else if !utils.FallBack2CreateTable(err) {
+			return nil, errors.Trace(err)
+		}
+		// fall back to old create table (sequential create table)
+		log.Info("fall back to the sequential create table")
+	}
+
+	// restore tables in db pool
+	if len(rc.dbPool) > 0 {
+		return rc.createTablesSingle(ctx, rc.dbPool, tables, newTS)
+	}
+	// restore tables in one db
+	return rc.createTablesSingle(ctx, []*tidallocdb.DB{rc.db}, tables, newTS)
+}
+
 func (rc *SnapClient) createTables(
 	ctx context.Context,
 	db *tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]CreatedTable, error) {
+) ([]*CreatedTable, error) {
 	log.Info("client to create tables")
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
@@ -687,7 +718,7 @@ func (rc *SnapClient) createTables(
 			return nil, errors.Trace(err)
 		}
 	}
-	cts := make([]CreatedTable, 0, len(tables))
+	cts := make([]*CreatedTable, 0, len(tables))
 	for _, table := range tables {
 		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 		if err != nil {
@@ -701,7 +732,7 @@ func (rc *SnapClient) createTables(
 				newTableInfo.IsCommonHandle)
 		}
 		rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-		ct := CreatedTable{
+		ct := &CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
 			OldTable:    table,
@@ -712,11 +743,17 @@ func (rc *SnapClient) createTables(
 	return cts, nil
 }
 
-func (rc *SnapClient) createTablesInWorkerPool(ctx context.Context, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
+	createdTables := struct {
+		sync.Mutex
+		tables []*CreatedTable
+	}{
+		tables: make([]*CreatedTable, 0, len(tables)),
+	}
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
 		end := min(lastSent+int(rc.batchDdlSize), len(tables))
@@ -735,21 +772,19 @@ func (rc *SnapClient) createTablesInWorkerPool(ctx context.Context, tables []*me
 				log.Error("create tables fail", zap.Error(err))
 				return err
 			}
-			for _, ct := range cts {
-				log.Debug("table created and send to next",
-					zap.Int("output chan size", len(outCh)),
-					zap.Stringer("table", ct.OldTable.Info.Name),
-					zap.Stringer("database", ct.OldTable.DB.Name))
-				outCh <- ct
-				rater.Inc()
-				rater.L().Info("table created",
-					zap.Stringer("table", ct.OldTable.Info.Name),
-					zap.Stringer("database", ct.OldTable.DB.Name))
-			}
+			rater.Add(float64(len(cts)))
+			rater.L().Info("tables created", zap.Int("num", len(cts)))
+			createdTables.Lock()
+			createdTables.tables = append(createdTables.tables, cts...)
+			createdTables.Unlock()
 			return err
 		})
 	}
-	return eg.Wait()
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return createdTables.tables, nil
 }
 
 func (rc *SnapClient) createTable(
@@ -757,28 +792,28 @@ func (rc *SnapClient) createTable(
 	db *tidallocdb.DB,
 	table *metautil.Table,
 	newTS uint64,
-) (CreatedTable, error) {
+) (*CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
 		err := db.CreateTable(ctx, table, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
 		if err != nil {
-			return CreatedTable{}, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
 	newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 	if err != nil {
-		return CreatedTable{}, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
-		return CreatedTable{}, errors.Annotatef(berrors.ErrRestoreModeMismatch,
+		return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
 			"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
 			restore.TransferBoolToValue(table.Info.IsCommonHandle),
 			table.Info.IsCommonHandle,
 			newTableInfo.IsCommonHandle)
 	}
 	rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-	et := CreatedTable{
+	et := &CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
 		OldTable:    table,
@@ -786,30 +821,49 @@ func (rc *SnapClient) createTable(
 	return et, nil
 }
 
-func (rc *SnapClient) createTablesWithSoleDB(ctx context.Context,
-	createOneTable func(ctx context.Context, db *tidallocdb.DB, t *metautil.Table) error,
-	tables []*metautil.Table) error {
-	for _, t := range tables {
-		if err := createOneTable(ctx, rc.db, t); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func (rc *SnapClient) createTablesWithDBPool(ctx context.Context,
-	createOneTable func(ctx context.Context, db *tidallocdb.DB, t *metautil.Table) error,
-	tables []*metautil.Table) error {
+func (rc *SnapClient) createTablesSingle(
+	ctx context.Context,
+	dbPool []*tidallocdb.DB,
+	tables []*metautil.Table,
+	newTS uint64,
+) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
-	for _, t := range tables {
-		table := t
+	workers := tidbutil.NewWorkerPool(uint(len(dbPool)), "DDL workers")
+	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	createdTables := struct {
+		sync.Mutex
+		tables []*CreatedTable
+	}{
+		tables: make([]*CreatedTable, 0, len(tables)),
+	}
+	for _, tbl := range tables {
+		table := tbl
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return createOneTable(ectx, db, table)
+			db := dbPool[id%uint64(len(dbPool))]
+			rt, err := rc.createTable(ectx, db, table, newTS)
+			if err != nil {
+				log.Error("create table failed",
+					zap.Error(err),
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name))
+				return errors.Trace(err)
+			}
+			rater.Inc()
+			rater.L().Info("table created",
+				zap.Stringer("table", table.Info.Name),
+				zap.Stringer("database", table.DB.Name))
+
+			createdTables.Lock()
+			createdTables.tables = append(createdTables.tables, rt)
+			createdTables.Unlock()
+			return nil
 		})
 	}
-	return eg.Wait()
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return createdTables.tables, nil
 }
 
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
