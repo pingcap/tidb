@@ -99,8 +99,9 @@ type tidbEncoder struct {
 	// the there are enough columns.
 	columnCnt int
 	// data file path
-	path   string
-	logger log.Logger
+	path                  string
+	logger                log.Logger
+	logicalImportPrepStmt bool
 }
 
 type encodingBuilder struct{}
@@ -120,11 +121,12 @@ func (*encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingC
 	}
 
 	return &tidbEncoder{
-		mode:   config.SQLMode,
-		tbl:    config.Table,
-		se:     se,
-		path:   config.Path,
-		logger: config.Logger,
+		mode:                  config.SQLMode,
+		tbl:                   config.Table,
+		se:                    se,
+		path:                  config.Path,
+		logger:                config.Logger,
+		logicalImportPrepStmt: config.LogicalImportPrepStmt,
 	}, nil
 }
 
@@ -602,8 +604,10 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 	var values []any
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
-	preparedInsertStmt.Grow(2 * len(row))
-	preparedInsertStmt.WriteByte('(')
+	if enc.logicalImportPrepStmt {
+		preparedInsertStmt.Grow(2 * len(row))
+		preparedInsertStmt.WriteByte('(')
+	}
 	cnt := 0
 	for i, field := range row {
 		if enc.columnIdx[i] < 0 {
@@ -611,7 +615,9 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		}
 		if cnt > 0 {
 			encoded.WriteByte(',')
-			preparedInsertStmt.WriteByte(',')
+			if enc.logicalImportPrepStmt {
+				preparedInsertStmt.WriteByte(',')
+			}
 		}
 		datum := field
 		if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
@@ -622,12 +628,16 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 			)
 			return nil, err
 		}
-		preparedInsertStmt.WriteByte('?')
-		values = append(values, datum.GetValue())
+		if enc.logicalImportPrepStmt {
+			preparedInsertStmt.WriteByte('?')
+			values = append(values, datum.GetValue())
+		}
 		cnt++
 	}
 	encoded.WriteByte(')')
-	preparedInsertStmt.WriteByte(')')
+	if enc.logicalImportPrepStmt {
+		preparedInsertStmt.WriteByte(')')
+	}
 
 	return tidbRow{
 		insertStmt:         encoded.String(),
