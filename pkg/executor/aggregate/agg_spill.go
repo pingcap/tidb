@@ -66,6 +66,8 @@ type parallelHashAggSpillHelper struct {
 	// They only be used for restoring data that are spilled to disk in partial stage.
 	aggFuncsForRestoring []aggfuncs.AggFunc
 
+	finalWorkerAggFuncs []aggfuncs.AggFunc
+
 	getNewSpillChunkFunc func() *chunk.Chunk
 	spillChunkFieldTypes []*types.FieldType
 }
@@ -73,6 +75,7 @@ type parallelHashAggSpillHelper struct {
 func newSpillHelper(
 	tracker *memory.Tracker,
 	aggFuncsForRestoring []aggfuncs.AggFunc,
+	finalWorkerAggFuncs []aggfuncs.AggFunc,
 	getNewSpillChunkFunc func() *chunk.Chunk,
 	spillChunkFieldTypes []*types.FieldType) *parallelHashAggSpillHelper {
 	mu := new(sync.Mutex)
@@ -97,6 +100,7 @@ func newSpillHelper(
 		memTracker:           tracker,
 		hasError:             atomic.Bool{},
 		aggFuncsForRestoring: aggFuncsForRestoring,
+		finalWorkerAggFuncs:  finalWorkerAggFuncs,
 		getNewSpillChunkFunc: getNewSpillChunkFunc,
 		spillChunkFieldTypes: spillChunkFieldTypes,
 	}
@@ -239,7 +243,7 @@ type processRowContext struct {
 	chunk                  *chunk.Chunk
 	rowPos                 int
 	keyColPos              int
-	aggFuncNum             int
+	aggRestoreFuncNum             int
 	restoreadData          *aggfuncs.AggPartialResultMapper
 	partialResultsRestored [][]aggfuncs.PartialResult
 	bInMap                 *int
@@ -247,15 +251,15 @@ type processRowContext struct {
 
 func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (totalMemDelta int64, totalExpandMem int64, err error) {
 	chunkNum := diskIO.NumChunks()
-	aggFuncNum := len(p.aggFuncsForRestoring)
+	aggRestoreFuncNum := len(p.aggFuncsForRestoring)
 	processRowContext := &processRowContext{
 		ctx:                    ctx,
 		chunk:                  nil, // Will be set in the loop
 		rowPos:                 0,   // Will be set in the loop
-		keyColPos:              aggFuncNum,
-		aggFuncNum:             aggFuncNum,
+		keyColPos:              aggRestoreFuncNum,
+		aggRestoreFuncNum:             aggRestoreFuncNum,
 		restoreadData:          restoreadData,
-		partialResultsRestored: make([][]aggfuncs.PartialResult, aggFuncNum),
+		partialResultsRestored: make([][]aggfuncs.PartialResult, aggRestoreFuncNum),
 		bInMap:                 bInMap,
 	}
 	for i := 0; i < chunkNum; i++ {
@@ -293,8 +297,8 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 	if ok {
 		exprCtx := context.ctx.GetExprCtx()
 		// The key has appeared before, merge results.
-		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
-			memDelta, err := p.aggFuncsForRestoring[aggPos].MergePartialResult(exprCtx.GetEvalCtx(), context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
+		for aggPos := 0; aggPos < len(p.finalWorkerAggFuncs); aggPos++ {
+			memDelta, err := p.finalWorkerAggFuncs[aggPos].MergePartialResult(exprCtx.GetEvalCtx(), context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
 			if err != nil {
 				return totalMemDelta, 0, err
 			}
@@ -309,10 +313,10 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 			(*context.bInMap)++
 		}
 
-		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
+		results := make([]aggfuncs.PartialResult, context.aggRestoreFuncNum)
 		(*context.restoreadData)[key] = results
 
-		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
+		for aggPos := 0; aggPos < context.aggRestoreFuncNum; aggPos++ {
 			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
 		}
 	}
