@@ -129,7 +129,7 @@ func (b *builtinVecL1DistanceSig) evalReal(ctx EvalContext, row chunk.Row) (res 
 		return res, false, err
 	}
 
-	if math.IsNaN(d) || math.IsInf(d, 0) {
+	if math.IsNaN(d) {
 		return 0, true, nil
 	}
 	return d, false, nil
@@ -181,7 +181,7 @@ func (b *builtinVecL2DistanceSig) evalReal(ctx EvalContext, row chunk.Row) (res 
 		return res, false, err
 	}
 
-	if math.IsNaN(d) || math.IsInf(d, 0) {
+	if math.IsNaN(d) {
 		return 0, true, nil
 	}
 	return d, false, nil
@@ -233,7 +233,7 @@ func (b *builtinVecNegativeInnerProductSig) evalReal(ctx EvalContext, row chunk.
 		return res, false, err
 	}
 
-	if math.IsNaN(d) || math.IsInf(d, 0) {
+	if math.IsNaN(d) {
 		return 0, true, nil
 	}
 	return d, false, nil
@@ -285,7 +285,7 @@ func (b *builtinVecCosineDistanceSig) evalReal(ctx EvalContext, row chunk.Row) (
 		return res, false, err
 	}
 
-	if math.IsNaN(d) || math.IsInf(d, 0) {
+	if math.IsNaN(d) {
 		return 0, true, nil
 	}
 	return d, false, nil
@@ -329,7 +329,7 @@ func (b *builtinVecL2NormSig) evalReal(ctx EvalContext, row chunk.Row) (res floa
 	}
 
 	d := v.L2Norm()
-	if math.IsNaN(d) || math.IsInf(d, 0) {
+	if math.IsNaN(d) {
 		return 0, true, nil
 	}
 	return d, false, nil

@@ -86,7 +86,7 @@ func (b *builtinVecL1DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 		if err != nil {
 			return err
 		}
-		if math.IsNaN(d) || math.IsInf(d, 0) {
+		if math.IsNaN(d) {
 			result.SetNull(i, true)
 			continue
 		}
@@ -131,7 +131,7 @@ func (b *builtinVecL2DistanceSig) vecEvalReal(ctx EvalContext, input *chunk.Chun
 		if err != nil {
 			return err
 		}
-		if math.IsNaN(d) || math.IsInf(d, 0) {
+		if math.IsNaN(d) {
 			result.SetNull(i, true)
 			continue
 		}
@@ -176,7 +176,7 @@ func (b *builtinVecNegativeInnerProductSig) vecEvalReal(ctx EvalContext, input *
 		if err != nil {
 			return err
 		}
-		if math.IsNaN(d) || math.IsInf(d, 0) {
+		if math.IsNaN(d) {
 			result.SetNull(i, true)
 			continue
 		}
@@ -221,7 +221,7 @@ func (b *builtinVecCosineDistanceSig) vecEvalReal(ctx EvalContext, input *chunk.
 		if err != nil {
 			return err
 		}
-		if math.IsNaN(d) || math.IsInf(d, 0) {
+		if math.IsNaN(d) {
 			result.SetNull(i, true)
 			continue
 		}
@@ -253,7 +253,7 @@ func (b *builtinVecL2NormSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, r
 		}
 		v := col1.GetVectorFloat32(i)
 		d := v.L2Norm()
-		if math.IsNaN(d) || math.IsInf(d, 0) {
+		if math.IsNaN(d) {
 			result.SetNull(i, true)
 			continue
 		}

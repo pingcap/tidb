@@ -79,15 +79,6 @@ var vecBuiltinVecCases = map[string][]vecExprBenchCase{
 				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
 			},
 		},
-		// +-Inf vector test, need 'Null' result.
-		{
-			retEvalType:   types.ETReal,
-			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
-			constants: []*Constant{
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{1.0})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-			},
-		},
 	},
 	ast.VecL2Distance: {
 		{
@@ -122,15 +113,6 @@ var vecBuiltinVecCases = map[string][]vecExprBenchCase{
 			constants: []*Constant{
 				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
 				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-			},
-		},
-		// +-Inf vector test, need 'Null' result.
-		{
-			retEvalType:   types.ETReal,
-			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
-			constants: []*Constant{
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{1.0})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
 			},
 		},
 	},
@@ -169,15 +151,6 @@ var vecBuiltinVecCases = map[string][]vecExprBenchCase{
 				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(1.1)})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
 			},
 		},
-		// +-Inf vector test, need 'Null' result.
-		{
-			retEvalType:   types.ETReal,
-			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
-			constants: []*Constant{
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{1.0})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-			},
-		},
 	},
 	ast.VecNegativeInnerProduct: {
 		{
@@ -214,15 +187,6 @@ var vecBuiltinVecCases = map[string][]vecExprBenchCase{
 				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(1.1)})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
 			},
 		},
-		// +-Inf vector test, need 'Null' result.
-		{
-			retEvalType:   types.ETReal,
-			childrenTypes: []types.EvalType{types.ETVectorFloat32, types.ETVectorFloat32},
-			constants: []*Constant{
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{1.0})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-			},
-		},
 	},
 	ast.VecL2Norm: {
 		{
@@ -242,14 +206,6 @@ var vecBuiltinVecCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETVectorFloat32},
 			constants: []*Constant{
 				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.NaN())})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
-			},
-		},
-		// +-Inf vector test, need 'Null' result.
-		{
-			retEvalType:   types.ETReal,
-			childrenTypes: []types.EvalType{types.ETVectorFloat32},
-			constants: []*Constant{
-				{Value: types.NewVectorFloat32Datum(createVectorTestSample([]float32{float32(math.Inf(1))})), RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)},
 			},
 		},
 	},
