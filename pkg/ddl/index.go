@@ -320,7 +320,6 @@ func BuildIndexInfo(
 	indexName model.CIStr,
 	isPrimary bool,
 	isUnique bool,
-	isGlobal bool,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	state model.SchemaState,
@@ -341,7 +340,6 @@ func BuildIndexInfo(
 		State:   state,
 		Primary: isPrimary,
 		Unique:  isUnique,
-		Global:  isGlobal,
 		MVIndex: mvIndex,
 	}
 
@@ -356,6 +354,7 @@ func BuildIndexInfo(
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
+		idxInfo.Global = indexOption.Global
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = model.IndexTypeBtree
@@ -568,7 +567,6 @@ func decodeAddIndexArgs(job *model.Job) (
 	indexPartSpecifications [][]*ast.IndexPartSpecification,
 	indexOptions []*ast.IndexOption,
 	hiddenCols [][]*model.ColumnInfo,
-	globals []bool,
 	err error,
 ) {
 	var (
@@ -577,20 +575,18 @@ func decodeAddIndexArgs(job *model.Job) (
 		indexPartSpecification []*ast.IndexPartSpecification
 		indexOption            *ast.IndexOption
 		hiddenCol              []*model.ColumnInfo
-		global                 bool
 	)
-	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecification, &indexOption, &hiddenCol, &global)
+	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecification, &indexOption, &hiddenCol)
 	if err == nil {
 		return []bool{unique},
 			[]model.CIStr{indexName},
 			[][]*ast.IndexPartSpecification{indexPartSpecification},
 			[]*ast.IndexOption{indexOption},
 			[][]*model.ColumnInfo{hiddenCol},
-			[]bool{global},
 			nil
 	}
 
-	err = job.DecodeArgs(&uniques, &indexNames, &indexPartSpecifications, &indexOptions, &hiddenCols, &globals)
+	err = job.DecodeArgs(&uniques, &indexNames, &indexPartSpecifications, &indexOptions, &hiddenCols)
 	return
 }
 
@@ -615,7 +611,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	}
 
 	uniques := make([]bool, 1)
-	global := make([]bool, 1)
 	indexNames := make([]model.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
 	indexOption := make([]*ast.IndexOption, 1)
@@ -625,9 +620,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 	if isPK {
 		// Notice: sqlMode and warnings is used to support non-strict mode.
-		err = job.DecodeArgs(&uniques[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+		err = job.DecodeArgs(&uniques[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings)
 	} else {
-		uniques, indexNames, indexPartSpecifications, indexOption, hiddenCols, global, err = decodeAddIndexArgs(job)
+		uniques, indexNames, indexPartSpecifications, indexOption, hiddenCols, err = decodeAddIndexArgs(job)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -672,7 +667,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				indexName,
 				isPK,
 				uniques[i],
-				global[i],
 				indexPartSpecifications[i],
 				indexOption[i],
 				model.StateNone,

@@ -6,7 +6,7 @@ CREATE TABLE `tpk2` (
   `c` int(11) NOT NULL,
   `d` int(11) NOT NULL AUTO_INCREMENT,
   KEY `idx_bc` (`b`,`c`),
-  UNIQUE KEY `uidx_a` (`a`),
+  UNIQUE KEY `uidx_a` (`a`) GLOBAL,
   UNIQUE KEY `uidx_ac` (`a`, `c`),
   KEY `idx_c` (`c`)
 ) PARTITION BY HASH (`c`) PARTITIONS 5;
@@ -54,8 +54,8 @@ CREATE TABLE `tpk2` (
   `c` int(11) NOT NULL,
   `d` int(11) NOT NULL,
   KEY `idx_bc` (`b`,`c`),
-  UNIQUE KEY `uidx_a` (`a`),
-  UNIQUE KEY `uidx_ac` (`a`, `c`),
+  UNIQUE KEY `uidx_a` (`a`) GLOBAL,
+  UNIQUE KEY `uidx_ac` (`a`, `c`) GLOBAL,
   KEY `idx_c` (`c`),
   PRIMARY KEY(`d`, `c`) clustered
 ) PARTITION BY HASH (`d`) PARTITIONS 5;
@@ -115,7 +115,7 @@ CREATE TABLE `tpk2` (
   `c` int(11) NOT NULL,
   `d` int(11) NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`b`),
-  UNIQUE KEY `uidx_a` (`a`)
+  UNIQUE KEY `uidx_a` (`a`) GLOBAL
 ) PARTITION BY HASH (`b`) PARTITIONS 5;
 
 insert into tpk2 values (1, 2, 1, 1), (3, 6, 3, 3);

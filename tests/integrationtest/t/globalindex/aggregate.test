@@ -1,7 +1,7 @@
 set tidb_enable_global_index=true;
 
 drop table if exists p;
-create table p (id int, c int, unique index idx(id)) partition by range (c) (
+create table p (id int, c int, unique index idx(id) global) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10));

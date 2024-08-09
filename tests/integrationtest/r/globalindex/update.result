@@ -5,7 +5,7 @@ CREATE TABLE `t` (
 `b` int(11) DEFAULT NULL,
 `c` int(11) DEFAULT NULL,
 PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
-UNIQUE KEY `idx1` (`b`)
+UNIQUE KEY `idx1` (`b`) GLOBAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
 begin;
@@ -14,7 +14,7 @@ insert into t values (2, 2, 3);
 Error 1062 (23000): Duplicate entry '2' for key 't.idx1'
 rollback;
 drop table if exists t;
-create table t ( a int, b int, c int, unique key idx(b))
+create table t ( a int, b int, c int, unique key idx(b) global)
 partition by range( a ) (
 partition p1 values less than (10),
 partition p2 values less than (20),
@@ -41,7 +41,7 @@ a	b	c
 8	8	8
 13	12	12
 drop table t;
-create table t(a varchar(70), b mediumint(9), unique index idx_a(a), unique index idx_b(b)) partition by key(b) partitions 5;
+create table t(a varchar(70), b mediumint(9), unique index idx_a(a) global, unique index idx_b(b)) partition by key(b) partitions 5;
 insert into t values ('',826534 );
 replace into t values ('',826536 );
 select * from t;
