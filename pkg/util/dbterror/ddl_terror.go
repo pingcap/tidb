@@ -180,7 +180,7 @@ var (
 	// ErrFkDupName returns for duplicated FK name.
 	ErrFkDupName = ClassDDL.NewStd(mysql.ErrFkDupName)
 	// ErrInvalidDDLState returns for invalid ddl model object state.
-	ErrInvalidDDLState = ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
+	ErrInvalidDDLState = ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw, nil))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
 	// It's exported for testing.
 	ErrUnsupportedModifyPrimaryKey = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s primary key"), nil))
