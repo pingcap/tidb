@@ -1047,17 +1047,22 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return min(rowCount, upperBound)
 	}
 
-	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
-	// Assume at least 1/NDV is returned
-	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
-		rowCount = upperBound
-	} else if rowCount < upperBound {
-		// Adjust by increaseFactor if our estimate is low
-		rowCount *= increaseFactor
+	if modifyCount > 0 {
+		modifyBound := float64(modifyCount) / float64(histNDV)
+		if modifyBound < upperBound {
+			upperBound += modifyBound
+		} else {
+			upperBound = modifyBound
+		}
 	}
-
-	// Use modifyCount as a final bound
-	if modifyCount > 0 && rowCount > float64(modifyCount) {
+	if rowCount < upperBound {
+		rowCount *= increaseFactor
+		if float64(modifyCount) > 0 && rowCount == 0 {
+			rowCount = math.Min(upperBound, float64(modifyCount))
+		} else {
+			rowCount = math.Min(rowCount, upperBound)
+		}
+	} else if modifyCount > 0 && rowCount > float64(modifyCount) {
 		rowCount = float64(modifyCount)
 	}
 	return rowCount
