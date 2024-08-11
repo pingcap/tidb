@@ -1349,6 +1349,73 @@ func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding"))
 }
 
+func TestBatchCreateBindingFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t1(a INT, b INT, c INT, INDEX ia(a));")
+	tk.MustExec("CREATE TABLE t2(a INT, b INT, c INT, INDEX ia(a));")
+	tk.MustExec("INSERT INTO t1 SELECT * FROM t2 WHERE a = 1;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("0"))
+	tk.MustExec("UPDATE /*+ INL_JOIN(t2) */ t1, t2 SET t1.a = 1 WHERE t1.b = t2.a;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("0"))
+	tk.MustExec("DELETE /*+ HASH_JOIN(t1) */ t1 FROM t1 JOIN t2 WHERE t1.b = t2.a;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT * FROM t1 WHERE t1.a IN (SELECT a FROM t2);")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("0"))
+
+	tk.MustQuery(
+		"SELECT @digests:=GROUP_CONCAT(plan_digest) FROM information_schema.statements_summary " +
+			"WHERE table_names LIKE '%test.t1%' AND stmt_type != 'CreateTable';",
+	)
+	tk.MustExec("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @digests;")
+
+	tk.MustExec("INSERT INTO t1 SELECT * FROM t2 WHERE a = 1;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("1"))
+	tk.MustExec("UPDATE t1, t2 SET t1.a = 1 WHERE t1.b = t2.a;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("1"))
+	tk.MustExec("DELETE t1 FROM t1 JOIN t2 WHERE t1.b = t2.a;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT * FROM t1 WHERE t1.a IN (SELECT a FROM t2);")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("1"))
+}
+
+func TestRepeatedBatchCreateBindingFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("CREATE TABLE t1(a INT, b INT, c INT, INDEX ia(a));")
+	tk.MustExec("CREATE TABLE t2(a INT, b INT, c INT, INDEX ia(a));")
+	tk.MustQuery("SELECT /*+ hash_join(t1) */ * FROM t1 WHERE t1.a IN (SELECT a FROM t2);")
+	tk.MustQuery("SELECT /*+ hash_agg() */ * FROM t1 WHERE t1.a IN (SELECT a FROM t2);")
+	tk.MustQuery("SELECT /*+ inl_join(t1) */ * FROM t1 WHERE t1.a IN (SELECT a FROM t2);")
+
+	digests := tk.MustQuery("SELECT group_concat(plan_digest order by plan_digest) " +
+		"FROM information_schema.statements_summary_history " +
+		"WHERE table_names LIKE '%test.t1%' AND stmt_type != 'CreateTable';").String()
+	tk.MustExec("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '" + digests + "';")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 auto-generated hint for queries with sub queries might not be complete, the plan might change even after creating this binding. Plan Digest: 00310bc28fe308e27b6ca484a2d44fe837fc7cb6dd8fe264c30dd7af4e7f3b40",
+		"Warning 1105 63b026d064ca367c6ee92421d5beb4d88bfbf36829d6cb63b0bc173656d2ee3f is ignored because it corresponds to the same SQL digest as another Plan Digest",
+		"Warning 1105 73b2dec866595688ea416675f88ccb3456eb8e7443a79cd816695b688e07ac6b is ignored because it corresponds to the same SQL digest as another Plan Digest"))
+}
+
 // withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
 func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
 	return mockstore.WithMultipleOptions(

@@ -874,11 +874,27 @@ func collectStrOrUserVarList(ctx base.PlanContext, list []*ast.StringOrUserVar) 
 	return result, nil
 }
 
-func constructSQLBindOPFromPlanDigest(ctx base.PlanContext, planDigest string) (*SQLBindOpDetail, error) {
+// constructSQLBindOPFromPlanDigest tries to construct a SQLBindOpDetail from plan digest by fetching the corresponding
+// record from cluster_statements_summary or cluster_statements_summary_history.
+// If it fails to construct the SQLBindOpDetail for any reason, it will return (nil, error).
+// If the plan digest corresponds to the same SQL digest as another one in handledSQLDigests, it will append a warning
+// then return (nil, nil).
+func constructSQLBindOPFromPlanDigest(
+	ctx base.PlanContext,
+	planDigest string,
+	handledSQLDigests map[string]struct{},
+) (
+	*SQLBindOpDetail,
+	error,
+) {
+	// The warnings will be broken in fetchRecordFromClusterStmtSummary(), so we need to save and restore it to make the
+	// warnings for repeated SQL Digest work.
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	rows, err := fetchRecordFromClusterStmtSummary(ctx, planDigest)
 	if err != nil {
 		return nil, err
 	}
+	ctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
 	bindableStmt := stmtsummary.GetBindableStmtFromCluster(rows)
 	if bindableStmt == nil {
 		return nil, errors.New("can't find any plans for '" + planDigest + "'")
@@ -886,22 +902,32 @@ func constructSQLBindOPFromPlanDigest(ctx base.PlanContext, planDigest string) (
 	parser4binding := parser.New()
 	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		return nil, errors.Errorf("binding failed: %v", err)
+		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
-	if complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint); !complete {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(reason))
-	}
+	complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint)
 	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		return nil, errors.Errorf("binding failed: %v", err)
+		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
 	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
 	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
 	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
-
+	sqlDigestWithDBStr := sqlDigestWithDB.String()
+	if _, ok := handledSQLDigests[sqlDigestWithDBStr]; ok {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			planDigest + " is ignored because it corresponds to the same SQL digest as another Plan Digest",
+		))
+		return nil, nil
+	}
+	handledSQLDigests[sqlDigestWithDBStr] = struct{}{}
+	if !complete {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(
+			errors.NewNoStackErrorf("%v. Plan Digest: %v", reason, planDigest),
+		)
+	}
 	op := &SQLBindOpDetail{
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
@@ -910,7 +936,7 @@ func constructSQLBindOPFromPlanDigest(ctx base.PlanContext, planDigest string) (
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
 		Source:       bindinfo.History,
-		SQLDigest:    sqlDigestWithDB.String(),
+		SQLDigest:    sqlDigestWithDBStr,
 		PlanDigest:   planDigest,
 	}
 	return op, nil
@@ -924,11 +950,15 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if len(planDigests) == 0 {
 		return nil, errors.New("plan digest is empty")
 	}
+	handledSQLDigests := make(map[string]struct{}, len(planDigests))
 	opDetails := make([]*SQLBindOpDetail, 0, len(planDigests))
 	for _, planDigest := range planDigests {
-		op, err2 := constructSQLBindOPFromPlanDigest(b.ctx, planDigest)
+		op, err2 := constructSQLBindOPFromPlanDigest(b.ctx, planDigest, handledSQLDigests)
 		if err2 != nil {
 			return nil, err2
+		}
+		if op == nil {
+			continue
 		}
 		opDetails = append(opDetails, op)
 	}
