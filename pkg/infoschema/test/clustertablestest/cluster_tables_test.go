@@ -1340,13 +1340,13 @@ func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
 	tk.MustExec(sql)
 	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries with sub queries might not be complete, the plan might change even after creating this binding"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries with sub queries might not be complete, the plan might change even after creating this binding. Plan Digest: e4ed34869732a7a62b2cebc931b5ae704fc54cb4f7c65bdd9cce5ea5a2b485b3"))
 
 	sql = "select * from t1, t2, t3 where t1.id = t2.id and t2.id = t3.id"
 	tk.MustExec(sql)
 	planDigest = tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding. Plan Digest: d31f2bc39bf1a4a1b4195422b83b3dcc7145b95a8931ae486d84beae576a52a3"))
 }
 
 func TestBatchCreateBindingFromHistory(t *testing.T) {
@@ -1460,7 +1460,7 @@ func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 	tk.MustExec(sql)
 	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.cluster_statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries accessing TiFlash might not be complete, the plan might change even after creating this binding"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 auto-generated hint for queries accessing TiFlash might not be complete, the plan might change even after creating this binding. Plan Digest: 3c17ee5cef0c7bccb2ecb8579dcb8760af57063bc25b8d51c3e9aeecc58cd7d5"))
 }
 
 func TestSetBindingStatusBySQLDigest(t *testing.T) {
