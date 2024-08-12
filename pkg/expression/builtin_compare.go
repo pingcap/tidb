@@ -66,7 +66,6 @@ var (
 	_ builtinFunc = &builtinLeastVectorFloat32Sig{}
 	_ builtinFunc = &builtinIntervalIntSig{}
 	_ builtinFunc = &builtinIntervalRealSig{}
-	_ builtinFunc = &builtinLeastVectorFloat32Sig{}
 
 	_ builtinFunc = &builtinLTIntSig{}
 	_ builtinFunc = &builtinLTRealSig{}
