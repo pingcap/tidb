@@ -1786,7 +1786,7 @@ func TestAdminCleanUpGlobalIndex(t *testing.T) {
 	tk.MustExec("drop table if exists admin_test")
 
 	tk.MustExec("set tidb_enable_global_index = true")
-	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
+	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global) partition by hash(c) partitions 5")
 	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
 	tk.MustExec("analyze table admin_test")
 
@@ -1831,7 +1831,7 @@ func TestAdminRecoverGlobalIndex(t *testing.T) {
 	tk.MustExec("drop table if exists admin_test")
 
 	tk.MustExec("set tidb_enable_global_index = true")
-	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
+	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global) partition by hash(c) partitions 5")
 	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
 	tk.MustExec("analyze table admin_test")
 
@@ -1882,7 +1882,7 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		tk.MustExec("set tidb_enable_global_index = true")
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 
-		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
+		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global) partition by hash(c) partitions 5")
 		tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
 
 		// Make some corrupted index. Build the index information.
@@ -1979,7 +1979,7 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		tk.MustExec("set tidb_enable_global_index = true")
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 
-		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a), primary key(c)) partition by hash(c) partitions 5")
+		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global, primary key(c)) partition by hash(c) partitions 5")
 		tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
 
 		// Make some corrupted index. Build the index information.
@@ -2083,7 +2083,7 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 		tk.MustExec("set tidb_enable_global_index = true")
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 
-		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a), primary key(c)) partition by hash(c) partitions 5")
+		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global, primary key(c)) partition by hash(c) partitions 5")
 		tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
 		for i := 1; i <= batchSize*2; i++ {
 			tk.MustExec(fmt.Sprintf("insert admin_test values (%d, %d, %d)", i*5+1, i, i*5+1))

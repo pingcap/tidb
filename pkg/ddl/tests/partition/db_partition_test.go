@@ -1280,8 +1280,8 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	pid := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4)`)
-	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
-	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) GLOBAL")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c) global")
 
 	tk.MustExec("alter table test_global drop partition p2;")
 	result := tk.MustQuery("select * from test_global;")
@@ -1317,8 +1317,8 @@ func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
 	tt := external.GetTableByName(t, tk, "test", "test_global")
 	pid := tt.Meta().Partition.Definitions[1].ID
 
-	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
-	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) global")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c) global")
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (21, 21, 21), (29, 29, 29)`)
 
 	tk.MustExec("alter table test_global drop partition p1, p2;")
@@ -1352,7 +1352,7 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
@@ -1387,7 +1387,7 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
@@ -1424,8 +1424,8 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tt := external.GetTableByName(t, tk, "test", "test_global")
 	pid := tt.Meta().Partition.Definitions[1].ID
 
-	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
-	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) global")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c) global")
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)`)
 
 	tk2 := testkit.NewTestKit(t, store)
@@ -1508,7 +1508,7 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
@@ -1539,7 +1539,7 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
 	partition by hash(a) partitions 4;`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
@@ -1572,7 +1572,7 @@ func TestGlobalIndexReaderAndIndexLookUpInTruncatePartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
@@ -1609,7 +1609,7 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
@@ -1642,7 +1642,7 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	var indexScanResult *testkit.Result
@@ -1676,7 +1676,7 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30)
 	);`)
-	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	var indexLookupResult *testkit.Result
@@ -1716,7 +1716,7 @@ partition p2 values less than (10))`)
 	rs = tk.MustQuery("show table p index uidx regions").Rows()
 	require.Equal(t, len(rs), 3)
 
-	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("alter table p add unique idx(id) global")
 	rs = tk.MustQuery("show table p regions").Rows()
 	require.Equal(t, len(rs), 4)
 	rs = tk.MustQuery("show table p index idx regions").Rows()
@@ -1768,6 +1768,9 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 	tk.MustExec("ALTER TABLE e3 EXCHANGE PARTITION p1 WITH TABLE e2;")
 	tk.MustQuery("select * from e3 partition(p0)").Check(testkit.Rows())
+	tk.MustQuery("select * from e3 partition(p1)").Check(testkit.Rows())
+	tk.MustQuery("select * from e3 partition(p2)").Check(testkit.Rows())
+	tk.MustQuery("select * from e3 partition(p3)").Check(testkit.Rows())
 	tk.MustQuery("select * from e2").Check(testkit.Rows("1", "5"))
 
 	// validation test for hash partition
@@ -3458,10 +3461,10 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	require.Equal(t, 0, len(tt.Meta().Indices))
 	pid1 := tt.Meta().Partition.Definitions[1].ID
 
-	tk.MustExec("Alter Table t Add Unique Index idx_b (b)")
+	tk.MustExec("Alter Table t Add Unique Index idx_b (b) global")
 	tk.MustExec(`INSERT INTO t VALUES (4, 5, 6), (6, 4, 5), (11, 6, 4), (12, 7, 7)`)
 	tk.MustExec(`INSERT INTO t VALUES (8, 8, 9), (9, 9, 8), (18, 18, 17), (19, 17, 18)`)
-	tk.MustExec("Alter Table t Add Unique Index idx_c (c)")
+	tk.MustExec("Alter Table t Add Unique Index idx_c (c) global")
 
 	tk.MustExec("alter table t reorganize partition p2 into (partition p2 values less than (15), partition p3 values less than (20), partition pMax values less than (maxvalue))")
 	result := tk.MustQuery("select * from t")
@@ -3496,7 +3499,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	require.False(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)
 	// This should replace the unique index with a global index
-	tk.MustExec(`alter table t partition by range (a) (partition p1 values less than (10), partition p2 values less than (20))`)
+	tk.MustExec(`alter table t partition by range (a) (partition p1 values less than (10), partition p2 values less than (20)) update indexes (idx_b global, idx_c global)`)
 	tt = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo = tt.Meta().FindIndexByName("idx_b")
@@ -3505,7 +3508,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	idxInfo = tt.Meta().FindIndexByName("idx_c")
 	require.True(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)
-	tk.MustExec(`alter table t partition by hash (b) partitions 3`)
+	tk.MustExec(`alter table t partition by hash (b) partitions 3 update indexes (idx_b local)`)
 	tt = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo = tt.Meta().FindIndexByName("idx_b")
@@ -3515,7 +3518,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	require.True(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)
 	tk.MustExec(`alter table t remove partitioning`)
-	tk.MustExec(`alter table t partition by range columns (c) (partition p0 values less than (10), partition pMax values less than (maxvalue))`)
+	tk.MustExec(`alter table t partition by range columns (c) (partition p0 values less than (10), partition pMax values less than (maxvalue)) update indexes (idx_b global, idx_c local)`)
 	tt = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo = tt.Meta().FindIndexByName("idx_b")
@@ -3534,7 +3537,7 @@ func TestRemovePartitioningGlobalIndex(t *testing.T) {
 	defer func() {
 		tk.MustExec("set tidb_enable_global_index=default")
 	}()
-	tk.MustExec(`create table t (a int unsigned not null, b varchar(255), unique key idx_b(b), unique key idx_a(a)) partition by key(b) partitions 3`)
+	tk.MustExec(`create table t (a int unsigned not null, b varchar(255), unique key idx_b(b), unique key idx_a(a) global) partition by key(b) partitions 3`)
 	tk.MustExec(`create table t2 (a int unsigned not null, b varchar(255), unique key idx_b(b), unique key idx_a(a))`)
 	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,"Hello, World!")`)
 	tk.MustExec(`INSERT INTO t2 select * from t`)
@@ -3566,7 +3569,7 @@ func TestRemovePartitioningGlobalIndex(t *testing.T) {
 	tk.MustQuery(`select a from t order by a`).Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery(`select b from t order by b`).Check(testkit.Rows("1", "2", "Hello, World!"))
 
-	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	tk.MustExec(`alter table t partition by key(b) partitions 3 update indexes (idx_a global)`)
 	tt = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo = tt.Meta().FindIndexByName("idx_a")
@@ -3605,13 +3608,13 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	// Clustered table where PKIsHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) clustered)`)
 	tk.MustContainErrMsg(`alter table t drop primary key`, "Unsupported drop primary key when the table is using clustered index")
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// Clustered table where IsCommonHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), c int, primary key (a,c) clustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// It can be clustered if the PK contains all the partitioning columns.
@@ -3623,20 +3626,20 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	tk.MustExec(`drop table t`)
 
 	// NONCLUSTERED tables can have PK as global index.
-	tk.MustExec(`create table t (a int primary key nonclustered, b varchar(255)) partition by key(b) partitions 3`)
+	tk.MustExec(`create table t (a int primary key nonclustered global, b varchar(255)) partition by key(b) partitions 3`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`alter table t drop primary key`)
-	tk.MustExec(`alter table t add primary key (a)`)
+	tk.MustExec(`alter table t add primary key (a) global`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int primary key nonclustered, b varchar(255))`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
-	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	tk.MustExec("alter table t partition by key(b) partitions 3 update indexes (`primary` global)")
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`alter table t drop primary key`)
-	tk.MustExec(`alter table t add primary key (a)`)
+	tk.MustExec(`alter table t add primary key (a) global`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
-	tk.MustExec(`alter table t partition by hash(a) partitions 3`)
+	tk.MustExec("alter table t partition by hash(a) partitions 3 update indexes (`primary` local)")
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 	tk.MustExec(`alter table t drop primary key`)
 	tk.MustExec(`alter table t add primary key (a)`)
@@ -3644,10 +3647,10 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) nonclustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
-	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	tk.MustExec("alter table t partition by key(b) partitions 3 update indexes (`primary` global)")
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`alter table t drop primary key`)
-	tk.MustExec(`alter table t add primary key (a)`)
+	tk.MustExec(`alter table t add primary key (a) global`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, true)
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a, b) nonclustered)`)
@@ -3656,7 +3659,7 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	tk.MustExec(`alter table t partition by key(b) partitions 3`)
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 	tk.MustExec(`alter table t drop primary key`)
-	tk.MustExec(`alter table t add primary key (a)`)
+	tk.MustExec(`alter table t add primary key (a) global`)
 }
 
 func TestPrimaryNoGlobalIndex(t *testing.T) {
@@ -3677,17 +3680,17 @@ func TestPrimaryNoGlobalIndex(t *testing.T) {
 	// Clustered table where PKIsHandle, but the primary key is not listed in tableInfo.Indices
 	tk.MustExec(`create table t (a int primary key clustered, b varchar(255))`)
 	checkGlobalAndPK(t, tk, "t", 0, true, false, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	tk.MustExec(`drop table t`)
 	// Clustered table where PKIsHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) clustered)`)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// Clustered table where IsCommonHandle and listed in tableInfo.Indices
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), c int, primary key (a,c) clustered)`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
-	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
 	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
 	tk.MustExec(`drop table t`)
 	// It can be clustered if the PK contains all the partitioning columns.
@@ -3729,4 +3732,40 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.Equal(t, global, idxInfo.Global)
 		require.True(t, idxInfo.Primary)
 	}
+}
+func TestGlobalIndexExplicitOption(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=OFF")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+	tk.MustContainErrMsg(`create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+
+	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:1503]A PRIMARY KEY must include all columns in the table's partitioning function")
+	tk.MustExec(`create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3 update indexes (a global)`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec("set tidb_enable_global_index=ON")
+	tk.MustExec(`create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3`)
+	tk.MustExec(`drop table t`)
+	tk.MustContainErrMsg(`create table t (a int key global, b int) partition by hash(b) partitions 3`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`create table t (a int unique, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
+	tk.MustContainErrMsg(`create table t (a int unique key, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
+	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
+	createTable := "CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`b`) PARTITIONS 3"
+	tk.MustExec(createTable)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("t " + createTable))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
+	tk.MustExec(`alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL)`)
 }
