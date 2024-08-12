@@ -26,7 +26,7 @@ lease = "45s"
 split-table = true
 
 # The limit of concurrent executed sessions.
-token-limit = 1000
+token-limit = 0
 
 # The temporary directory to store the intermediate compute results.
 temp-dir = "/tmp/tidb"

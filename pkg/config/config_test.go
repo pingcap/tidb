@@ -804,7 +804,7 @@ max_connections = 200
 	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
 	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
 	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
-	require.Equal(t, uint(1000), conf.TokenLimit)
+	require.Equal(t, uint(65535), conf.TokenLimit)
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
@@ -1185,6 +1185,10 @@ func TestTokenLimit(t *testing.T) {
 	}{
 		{
 			0,
+			65535,
+		},
+		{
+			1000,
 			1000,
 		},
 		{
