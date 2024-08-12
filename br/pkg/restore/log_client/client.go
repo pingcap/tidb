@@ -207,6 +207,10 @@ func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*
 			restoreFiles = nil
 		}
 	}
+	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+		// restore rest files
+		return rc.restorer.RestoreFiles(eCtx, restoreFiles, nil)
+	})
 	return eg.Wait()
 }
 

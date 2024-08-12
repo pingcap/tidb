@@ -1428,7 +1428,7 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		// TODO consider checkpoint
 
