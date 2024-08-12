@@ -148,16 +148,6 @@ func PeekBytesAsVectorFloat32(b []byte) (n int, err error) {
 	return int(totalDataSize), nil
 }
 
-// ZeroCopyDeserializeVectorFloat32 deserializes the byte slice into a vector, without memory copy.
-// Note: b must not be mutated, because this function does zero copy.
-func ZeroCopyDeserializeVectorFloat32(b []byte) (VectorFloat32, []byte, error) {
-	len, err := PeekBytesAsVectorFloat32(b)
-	if err != nil {
-		return ZeroVectorFloat32, b, err
-	}
-	return VectorFloat32{data: b[:len]}, b[len:], nil
-}
-
 // ParseVectorFloat32 parses a string into a vector.
 func ParseVectorFloat32(s string) (VectorFloat32, error) {
 	var values []float32
