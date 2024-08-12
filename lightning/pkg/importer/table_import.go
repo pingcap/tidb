@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -67,10 +68,10 @@ var memLimiter *membuf.Limiter
 func init() {
 	memTotal, err := memory.MemTotal()
 	if err != nil {
-		// Set limit to i
-		memTotal = 10000000000
+		// Set limit to int max, which means no limiter
+		memTotal = math.MaxInt32
 	}
-	memLimiter = membuf.NewLimiter(int(memTotal * 4 / 5))
+	memLimiter = membuf.NewLimiter(int(memTotal / 5 * 4))
 }
 
 // TableImporter is a helper struct to import a table.
