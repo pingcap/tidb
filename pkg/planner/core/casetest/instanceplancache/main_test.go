@@ -2,11 +2,12 @@ package instanceplancache
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"math/rand"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 var (
@@ -214,6 +215,7 @@ func prepareStmts(q string, nTables, n int) *testCase {
 
 func genRandomValues(numVals int) (vals []string) {
 	for i := 0; i < numVals; i++ {
+		// TODO: support more types
 		vals = append(vals, randomIntVal())
 	}
 	return
