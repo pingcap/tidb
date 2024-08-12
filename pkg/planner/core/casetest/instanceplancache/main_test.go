@@ -185,7 +185,7 @@ type testCase struct {
 
 func prepareStmts(q string, nTables, n int) *testCase {
 	// random tables
-	for strings.Index(q, "{T}") != -1 {
+	for strings.Contains(q, "{T}") {
 		table := fmt.Sprintf("t%d", rand.Intn(nTables))
 		q = strings.Replace(q, "{T}", table, 1)
 	}
