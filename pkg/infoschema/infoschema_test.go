@@ -212,7 +212,7 @@ func TestBasic(t *testing.T) {
 	require.Len(t, tblInfos, 1)
 	tbl, ok := is.TableByID(context.Background(), tblInfos[0].ID)
 	require.True(t, ok)
-	require.Same(t, tbl.Meta(), tblInfos[0])
+	require.Equal(t, tbl.Meta(), tblInfos[0]) // Equal but not Same
 
 	tblInfos, err = is.SchemaTableInfos(context.Background(), noexist)
 	require.NoError(t, err)
@@ -226,14 +226,22 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	txn, err = re.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{
+		Type:        model.ActionRenameTable,
+		SchemaID:    dbID,
+		TableID:     tbID,
+		OldSchemaID: dbID,
+		Version:     is.SchemaMetaVersion() + 1,
+	})
 	require.NoError(t, err)
 	err = txn.Rollback()
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	schema, ok = is.SchemaByID(dbID)
 	require.True(t, ok)
-	require.Equal(t, 1, len(schema.Deprecated.Tables))
+	tbls, err := is.SchemaTableInfos(context.Background(), schema.Name)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tbls))
 }
 
 func TestMockInfoSchema(t *testing.T) {

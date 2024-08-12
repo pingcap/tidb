@@ -11,7 +11,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl",
-        "//pkg/ddl/syncer",
+        "//pkg/ddl/schemaver",
+        "//pkg/ddl/serverstate",
         "//pkg/ddl/systable",
         "//pkg/infoschema",
         "//pkg/kv",

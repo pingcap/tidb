@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncer
+package schemaver
 
 import (
 	"context"
@@ -95,7 +95,7 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	etcdCli := mockCluster.RandClient()
 	_, err := etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/1/aa", "123")
 	require.NoError(t, err)
-	s := NewSchemaSyncer(etcdCli, "1111").(*schemaVersionSyncer)
+	s := NewEtcdSyncer(etcdCli, "1111").(*etcdSyncer)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -150,9 +150,9 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	// job 3 is matched after restart from a compaction error
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncer/mockCompaction", `1*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockCompaction", `1*return(true)`))
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/syncer/mockCompaction"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockCompaction"))
 	})
 	notifyCh = make(chan struct{}, 1)
 	item = s.jobSchemaVerMatchOrSet(3, func(m map[string]int64) bool {

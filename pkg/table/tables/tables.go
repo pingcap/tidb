@@ -518,7 +518,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldDat
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 		checkRowBuffer.AddColVal(value)
-		if shouldWriteBinlog && !t.canSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog && !t.canSkipUpdateBinlog(col) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -624,7 +624,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			if err != nil {
 				return err
 			}
-			if err = t.removeRowIndex(ctx, h, oldVs, idx, txn); err != nil {
+			if err = idx.Delete(ctx, txn, oldVs, h); err != nil {
 				return err
 			}
 			break
@@ -1413,11 +1413,6 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, h kv.Handle, rec
 	return nil
 }
 
-// removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *TableCommon) removeRowIndex(ctx table.MutateContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(ctx, txn, vals, h)
-}
-
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
 	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
@@ -1666,7 +1661,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 }
 
 // canSkipUpdateBinlog checks whether the column can be skipped or not.
-func (t *TableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
+func (t *TableCommon) canSkipUpdateBinlog(col *table.Column) bool {
 	return col.IsVirtualGenerated()
 }
 
