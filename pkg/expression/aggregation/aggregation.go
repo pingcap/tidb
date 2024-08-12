@@ -239,11 +239,7 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	if aggFunc.Name == ast.AggFuncApproxPercentile {
 		return false
 	}
-<<<<<<< HEAD
 	if !checkVectorAggPushDown(ctx, aggFunc) {
-=======
-	if checkVectorAggPushDown(ctx, aggFunc) != nil {
->>>>>>> a85553ca9c (Add vector function)
 		return false
 	}
 	ret := true
