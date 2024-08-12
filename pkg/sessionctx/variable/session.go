@@ -3941,8 +3941,17 @@ func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
 }
 
 // UseLowResolutionTSO indicates whether low resolution tso could be used for execution.
+// After `tidb_low_resolution_tso` supports the global scope, this variable is expected to only affect
+// user sessions and not impact internal background sessions and tasks.
+// Currently, one of the problems is that the determination of whether a session is an internal task
+// session within TiDB is quite inconsistent and chaotic, posing risks. Some internal sessions rely on
+// upper-level users correctly using `ExecuteInternal` or `ExecuteRestrictedSQL` for assurance.
+// Additionally, the BR code also contains some session-related encapsulation and usage.
+//
+// TODO: There needs to be a more comprehensive and unified entry point to ensure that all internal
+// sessions and global user sessions/variables are isolated and do not affect each other.
 func (s *SessionVars) UseLowResolutionTSO() bool {
-	return !s.InRestrictedSQL && s.lowResolutionTSO
+	return !s.InRestrictedSQL && s.lowResolutionTSO && s.ConnectionID > 0
 }
 
 // PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current
