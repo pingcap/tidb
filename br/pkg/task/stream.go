@@ -1532,6 +1532,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetConcurrencyPerStore(uint(cfg.ConcurrencyPerStore.Value))
 	client.InitClients(ctx, u)
 
 	err = client.SetRawKVBatchClient(ctx, cfg.PD, cfg.TLS.ToKVSecurity())

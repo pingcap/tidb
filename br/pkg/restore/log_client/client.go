@@ -79,14 +79,15 @@ const maxSplitKeysOnce = 10240
 const rawKVBatchCount = 64
 
 type LogClient struct {
-	restorer      sstfiles.FileRestorer
-	cipher        *backuppb.CipherInfo
-	pdClient      pd.Client
-	pdHTTPClient  pdhttp.Client
-	clusterID     uint64
-	dom           *domain.Domain
-	tlsConf       *tls.Config
-	keepaliveConf keepalive.ClientParameters
+	restorer            sstfiles.FileRestorer
+	cipher              *backuppb.CipherInfo
+	pdClient            pd.Client
+	pdHTTPClient        pdhttp.Client
+	clusterID           uint64
+	dom                 *domain.Domain
+	tlsConf             *tls.Config
+	keepaliveConf       keepalive.ClientParameters
+	concurrencyPerStore uint
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
@@ -232,6 +233,14 @@ func (rc *LogClient) SetConcurrency(c uint) {
 	rc.workerPool = tidbutil.NewWorkerPool(c, "file")
 }
 
+func (rc *LogClient) SetConcurrencyPerStore(c uint) {
+	if c == 0 {
+		c = 128
+	}
+	log.Info("download worker pool per store", zap.Uint("size", c))
+	rc.concurrencyPerStore = c
+}
+
 func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
 	var err error
 	rc.storage, err = storage.New(ctx, backend, opts)
@@ -308,10 +317,9 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	log.Info("Initializing client.", zap.Stringer("api", rc.dom.Store().GetCodec().GetAPIVersion()))
-	// TODO set concurrencyPerStore correctly
 	snapFileImporter, err := sstfiles.NewSnapFileImporter(
 		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
-		importCli, backend, false, false, stores, sstfiles.RewriteModeKeyspace, 128, createCallBacks, closeCallBacks)
+		importCli, backend, false, false, stores, sstfiles.RewriteModeKeyspace, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
