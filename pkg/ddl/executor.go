@@ -3010,12 +3010,16 @@ func (e *executor) createTableWithInfoPost(
 	schemaID int64,
 ) error {
 	var (
-		err           error
-		partitions    []model.PartitionDefinition
-		scatterRegion bool
+		err                         error
+		partitions                  []model.PartitionDefinition
+		scatterRegion               bool
+		scatterRegionByClusterLevel bool
 	)
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
+		scatterRegionByClusterLevel = false
+	} else {
+		scatterRegionByClusterLevel = true
 	}
 	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
 	if err != nil {
@@ -3023,7 +3027,7 @@ func (e *executor) createTableWithInfoPost(
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterRegion, true)
+	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterRegion, scatterRegionByClusterLevel)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -3318,7 +3322,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	}
 	var preSplit func()
 	if len(parts) > 0 {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion, scatterRegionByClusterLevel) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion, false) }
 	} else {
 		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion, scatterRegionByClusterLevel) }
 	}

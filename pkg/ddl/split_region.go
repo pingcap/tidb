@@ -118,6 +118,8 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 }
 
 // SplitRecordRegion is to split region in store by table prefix.
+// `scatterRegionByClusterLevel` is control scatter region balance level. Default is false, which means scatter on table/group level.
+// Scatter on group level is not effective for tables that are created with only one region split. For such tables, scatter region use cluster level.
 func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTableID, tableID int64, scatter, scatterRegionByClusterLevel bool) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(physicalTableID)
 	tmpTableID := &tableID
