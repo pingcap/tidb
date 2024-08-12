@@ -139,36 +139,28 @@ func (i *topLevelJSONTokenIter) next(discard bool) ([]json.Token, error) {
 
 // ExtractTopLevelMembers extracts tokens of given top level members from a JSON
 // text. It will stop parsing when all keys are found.
-func ExtractTopLevelMembers(content []byte, keys []string) (map[string][]json.Token, error) {
-	remainKeys := make(map[string]struct{}, len(keys))
-	for _, k := range keys {
-		remainKeys[k] = struct{}{}
+func ExtractTopLevelMembers(content []byte, names []string) (map[string][]json.Token, error) {
+	remainNames := make(map[string]struct{}, len(names))
+	for _, k := range names {
+		remainNames[k] = struct{}{}
 	}
-	ret := make(map[string][]json.Token, len(keys))
+	ret := make(map[string][]json.Token, len(names))
 	iter := newTopLevelJSONTokenIter(content)
-	for len(remainKeys) > 0 {
-		key, err := iter.next(false)
+	for len(remainNames) > 0 {
+		name, err := iter.readName()
 		if err != nil {
 			return nil, err
 		}
-		if len(key) != 1 {
-			return nil, fmt.Errorf("unexpected JSON key, %v", key)
-		}
-
-		keyStr, ok := key[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("unexpected JSON key, %T %v", key, key)
-		}
-		_, ok = remainKeys[keyStr]
+		_, ok := remainNames[name]
 		if ok {
-			val, err2 := iter.next(false)
+			val, err2 := iter.readOrDiscardValue(false)
 			if err2 != nil {
 				return nil, err2
 			}
-			ret[keyStr] = val
-			delete(remainKeys, keyStr)
+			ret[name] = val
+			delete(remainNames, name)
 		} else {
-			_, err2 := iter.next(true)
+			_, err2 := iter.readOrDiscardValue(true)
 			if err2 != nil {
 				return nil, err2
 			}
