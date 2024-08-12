@@ -413,6 +413,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	plan = avoidColumnEvaluatorForProjBelowUnion(plan)
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
@@ -1084,6 +1085,22 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
+}
+
+// avoidColumnEvaluatorForProjBelowUnion sets AvoidColumnEvaluator to false for the projection operator which is a child of Union operator.
+func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPlan {
+	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
+		x, ok := p.(*PhysicalUnionAll)
+		if ok {
+			for _, child := range x.Children() {
+				if proj, ok := child.(*PhysicalProjection); ok {
+					proj.AvoidColumnEvaluator = true
+				}
+			}
+		}
+		return true
+	})
+	return p
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
