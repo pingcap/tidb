@@ -207,8 +207,124 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
+<<<<<<< HEAD:planner/core/logical_plan_builder.go
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
 	correlatedAggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[int]int, error) {
+=======
+func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expression) (base.LogicalPlan, []expression.Expression, error) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+	b.optFlag |= flagResolveExpand
+
+	// Rollup syntax require expand OP to do the data expansion, different data replica supply the different grouping layout.
+	distinctGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(gbyItems)
+	// build another projection below.
+	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, p.Schema().Len()+len(distinctGbyExprs))}.Init(b.ctx, b.getSelectOffset())
+	// project: child's output and distinct GbyExprs in advance. (make every group-by item to be a column)
+	projSchema := p.Schema().Clone()
+	names := p.OutputNames()
+	for _, col := range projSchema.Columns {
+		proj.Exprs = append(proj.Exprs, col)
+	}
+	distinctGbyColNames := make(types.NameSlice, 0, len(distinctGbyExprs))
+	distinctGbyCols := make([]*expression.Column, 0, len(distinctGbyExprs))
+	for _, expr := range distinctGbyExprs {
+		// distinct group expr has been resolved in resolveGby.
+		proj.Exprs = append(proj.Exprs, expr)
+
+		// add the newly appended names.
+		var name *types.FieldName
+		if c, ok := expr.(*expression.Column); ok {
+			name = buildExpandFieldName(ectx, c, names[p.Schema().ColumnIndex(c)], "")
+		} else {
+			name = buildExpandFieldName(ectx, expr, nil, "")
+		}
+		names = append(names, name)
+		distinctGbyColNames = append(distinctGbyColNames, name)
+
+		// since we will change the nullability of source col, proj it with a new col id.
+		col := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			// clone it rather than using it directly,
+			RetType: expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+
+		projSchema.Append(col)
+		distinctGbyCols = append(distinctGbyCols, col)
+	}
+	proj.SetSchema(projSchema)
+	proj.SetChildren(p)
+	proj.Proj4Expand = true
+	newGbyItems := expression.RestoreGbyExpression(distinctGbyCols, gbyExprsRefPos)
+
+	// build expand.
+	rollupGroupingSets := expression.RollupGroupingSets(newGbyItems)
+	// eg: <a,b,c> with rollup => {},{a},{a,b},{a,b,c}
+	// for every grouping set above, we should individually set those not-needed grouping-set col as null value.
+	// eg: let's say base schema is <a,b,c,d>, d is unrelated col, keep it real in every grouping set projection.
+	// 		for grouping set {a,b,c}, project it as: [a,    b,    c,    d,   gid]
+	//      for grouping set {a,b},   project it as: [a,    b,    null, d,   gid]
+	//      for grouping set {a},     project it as: [a,    null, null, d,   gid]
+	// 		for grouping set {},      project it as: [null, null, null, d,   gid]
+	expandSchema := proj.Schema().Clone()
+	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
+	expand := LogicalExpand{
+		RollupGroupingSets:  rollupGroupingSets,
+		DistinctGroupByCol:  distinctGbyCols,
+		DistinctGbyColNames: distinctGbyColNames,
+		// for resolving grouping function args.
+		DistinctGbyExprs: distinctGbyExprs,
+
+		// fill the gen col names when building level projections.
+	}.Init(b.ctx, b.getSelectOffset())
+
+	// if we want to use bitAnd for the quick computation of grouping function, then the maximum capacity of num of grouping is about 64.
+	expand.GroupingMode = tipb.GroupingMode_ModeBitAnd
+	if len(expand.RollupGroupingSets) > 64 {
+		expand.GroupingMode = tipb.GroupingMode_ModeNumericSet
+	}
+
+	expand.DistinctSize, expand.RollupGroupingIDs, expand.RollupID2GIDS = expand.RollupGroupingSets.DistinctSize()
+	hasDuplicateGroupingSet := len(expand.RollupGroupingSets) != expand.DistinctSize
+	// append the generated column for logical Expand.
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+	gid := &expression.Column{
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  tp,
+		OrigName: "gid",
+	}
+	expand.GID = gid
+	expandSchema.Append(gid)
+	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
+	names = append(names, buildExpandFieldName(ectx, gid, nil, "gid_"))
+	expand.GIDName = names[len(names)-1]
+	if hasDuplicateGroupingSet {
+		// the last two col of the schema should be gid & gpos
+		gpos := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  tp.Clone(),
+			OrigName: "gpos",
+		}
+		expand.GPos = gpos
+		expandSchema.Append(gpos)
+		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
+		names = append(names, buildExpandFieldName(ectx, gpos, nil, "gpos_"))
+		expand.GPosName = names[len(names)-1]
+	}
+	expand.SetChildren(proj)
+	expand.SetSchema(expandSchema)
+	expand.SetOutputNames(names)
+
+	// register current rollup Expand operator in current select block.
+	b.currentBlockExpand = expand
+
+	// defer generating level-projection as last logical optimization rule.
+	return expand, newGbyItems, nil
+}
+
+func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
+	correlatedAggMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[int]int, error) {
+>>>>>>> 004b442fb9a (pkg/planner: set proj.AvoidColumnEvaluator in postOptimize (#55333)):pkg/planner/core/logical_plan_builder.go
 	b.optFlag |= flagBuildKeyInfo
 	b.optFlag |= flagPushDownAgg
 	// We may apply aggregation eliminate optimization.
@@ -1829,8 +1945,13 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 			}
 		}
 		b.optFlag |= flagEliminateProjection
+<<<<<<< HEAD:planner/core/logical_plan_builder.go
 		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
 		proj.SetSchema(u.schema.Clone())
+=======
+		proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
+		proj.SetSchema(u.Schema().Clone())
+>>>>>>> 004b442fb9a (pkg/planner: set proj.AvoidColumnEvaluator in postOptimize (#55333)):pkg/planner/core/logical_plan_builder.go
 		// reset the schema type to make the "not null" flag right.
 		for i, expr := range exprs {
 			proj.schema.Columns[i].RetType = expr.GetType()
@@ -7637,7 +7758,11 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed LogicalPl
 		}
 	}
 	b.optFlag |= flagEliminateProjection
+<<<<<<< HEAD:planner/core/logical_plan_builder.go
 	proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+=======
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
+>>>>>>> 004b442fb9a (pkg/planner: set proj.AvoidColumnEvaluator in postOptimize (#55333)):pkg/planner/core/logical_plan_builder.go
 	proj.SetSchema(resSchema)
 	proj.SetChildren(recur)
 	return proj, nil
