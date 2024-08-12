@@ -150,9 +150,9 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	// job 3 is matched after restart from a compaction error
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncer/mockCompaction", `1*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockCompaction", `1*return(true)`))
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/syncer/mockCompaction"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockCompaction"))
 	})
 	notifyCh = make(chan struct{}, 1)
 	item = s.jobSchemaVerMatchOrSet(3, func(m map[string]int64) bool {
