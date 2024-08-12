@@ -33,8 +33,8 @@ import (
 )
 
 func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)"))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats"))
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
