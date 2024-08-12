@@ -765,7 +765,7 @@ childLoop:
 		case *DataSource:
 			wrapper.ds = child
 			break childLoop
-		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *LogicalAggregation:
+		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
 			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 				return nil
 			}
@@ -1036,14 +1036,14 @@ func constructInnerByZippedChildren(prop *property.PhysicalProperty, zippedChild
 			child = constructInnerProj(prop, x, child)
 		case *logicalop.LogicalSelection:
 			child = constructInnerSel(prop, x, child)
-		case *LogicalAggregation:
+		case *logicalop.LogicalAggregation:
 			child = constructInnerAgg(prop, x, child)
 		}
 	}
 	return child
 }
 
-func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
 	if logicalAgg == nil {
 		return child
 	}
@@ -1337,10 +1337,10 @@ func constructInnerIndexScanTask(
 //
 // Step2: build other inner plan node to task
 func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
-	var la *LogicalAggregation
+	var la *logicalop.LogicalAggregation
 	var canPushAggToCop bool
 	if len(wrapper.zippedChildren) > 0 {
-		la, canPushAggToCop = wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*LogicalAggregation)
+		la, canPushAggToCop = wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*logicalop.LogicalAggregation)
 		if la != nil && la.HasDistinct() {
 			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
@@ -2277,7 +2277,7 @@ func disableAggPushDownToCop(p base.LogicalPlan) {
 	for _, child := range p.Children() {
 		disableAggPushDownToCop(child)
 	}
-	if agg, ok := p.(*LogicalAggregation); ok {
+	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
 		agg.NoCopPushDown = true
 	}
 }
@@ -2466,7 +2466,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
 		case *logicalop.LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
-		case *LogicalAggregation, *logicalop.LogicalSelection, *logicalop.LogicalJoin, *logicalop.LogicalWindow:
+		case *logicalop.LogicalAggregation, *logicalop.LogicalSelection, *logicalop.LogicalJoin, *logicalop.LogicalWindow:
 			if storeTp != kv.TiFlash {
 				return false
 			}
@@ -2493,7 +2493,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 	return ret
 }
 
-func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if prop.IsFlashProp() {
 		return nil
 	}
@@ -2538,21 +2538,8 @@ func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProper
 	return enforcedAggs
 }
 
-func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
-	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.HasDistinct {
-			for _, distinctArg := range aggFunc.Args {
-				if !expression.Contains(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems, distinctArg) {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
-
 func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	la := lp.(*LogicalAggregation)
+	la := lp.(*logicalop.LogicalAggregation)
 	// TODO: support CopTiFlash task type in stream agg
 	if prop.IsFlashProp() {
 		return nil
@@ -2630,7 +2617,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 }
 
 // TODO: support more operators and distinct later
-func checkCanPushDownToMPP(la *LogicalAggregation) bool {
+func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 	hasUnsupportedDistinct := false
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
@@ -2656,7 +2643,7 @@ func checkCanPushDownToMPP(la *LogicalAggregation) bool {
 	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
-func tryToGetMppHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
+func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -2804,7 +2791,7 @@ func tryToGetMppHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty
 //
 // That is to say, the non-complete positive judgement of canPushDownToMPP/canPushDownToTiFlash/canPushDownToTiKV is not that for sure here.
 func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	la := lp.(*LogicalAggregation)
+	la := lp.(*logicalop.LogicalAggregation)
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -2862,6 +2849,32 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 		}
 	}
 	return hashAggs
+}
+
+func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalAggregation)
+	if la.PreferAggToCop {
+		if !la.CanPushToCop(kv.TiKV) {
+			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+				"Optimizer Hint AGG_TO_COP is inapplicable")
+			la.PreferAggToCop = false
+		}
+	}
+	preferHash, preferStream := la.ResetHintIfConflicted()
+	hashAggs := getHashAggs(la, prop)
+	if hashAggs != nil && preferHash {
+		return hashAggs, true, nil
+	}
+	streamAggs := getStreamAggs(la, prop)
+	if streamAggs != nil && preferStream {
+		return streamAggs, true, nil
+	}
+	aggs := append(hashAggs, streamAggs...)
+
+	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
+		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
+	}
+	return aggs, !(preferStream || preferHash), nil
 }
 
 func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

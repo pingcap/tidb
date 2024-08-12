@@ -204,7 +204,7 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 				tryToSubstituteExpr(&x.ByItems[i].Expr, lp, candidateExpr, tp, x.Schema(), column, opt)
 			}
 		}
-	case *LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		for _, aggFunc := range x.AggFuncs {
 			for i := 0; i < len(aggFunc.Args); i++ {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()

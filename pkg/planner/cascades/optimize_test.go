@@ -16,6 +16,7 @@ package cascades
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 	"testing"
 
@@ -154,7 +155,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.NotNil(t, columnF)
 	require.NotNil(t, columnA)
 
-	agg, ok := logic.Children()[0].(*plannercore.LogicalAggregation)
+	agg, ok := logic.Children()[0].(*logicalop.LogicalAggregation)
 	require.True(t, ok)
 
 	group := memo.Convert2Group(agg)

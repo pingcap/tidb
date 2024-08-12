@@ -174,7 +174,7 @@ func GetDupAgnosticAggCols(
 	p base.LogicalPlan,
 	oldAggCols []*expression.Column, // Reuse the original buffer.
 ) (isAgg bool, newAggCols []*expression.Column) {
-	agg, ok := p.(*LogicalAggregation)
+	agg, ok := p.(*logicalop.LogicalAggregation)
 	if !ok {
 		return false, nil
 	}
@@ -219,7 +219,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 		for _, expr := range x.Exprs {
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
 		}
-	case *LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		parentCols = parentCols[:0]
 		for _, groupByItem := range x.GroupByItems {
 			parentCols = append(parentCols, expression.ExtractColumns(groupByItem)...)
