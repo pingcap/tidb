@@ -73,7 +73,7 @@ require (
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
 	github.com/kyoh86/exportloopref v0.1.11
 	github.com/lestrrat-go/jwx/v2 v2.0.21
-	github.com/mgechev/revive v1.3.9
+	github.com/mgechev/revive v1.3.10-0.20240809190117-a638ed6e2499
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/nishanths/predeclared v0.2.2
@@ -157,14 +157,11 @@ require (
 	github.com/google/flatbuffers v2.0.8+incompatible // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
-	github.com/mgechev/dots v0.0.0-20210922191527-e955255bf517 // indirect
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
-	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
-	github.com/spf13/afero v1.11.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 )
 
