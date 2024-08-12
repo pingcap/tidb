@@ -2207,15 +2207,6 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 			)
 			rows = append(rows, record)
 		}
-		record := types.MakeDatums(
-			infoschema.CatalogVal,     // CONSTRAINT_CATALOG
-			schema.O,                  // CONSTRAINT_SCHEMA
-			mysql.PrimaryKeyName,                 // CONSTRAINT_NAME
-			schema.O,                  // TABLE_SCHEMA
-			tbl.Name.O,                // TABLE_NAME
-			infoschema.PrimaryKeyType, // CONSTRAINT_TYPE
-		)
-		rows = append(rows, record)
 	}
 	e.rows = rows
 	return nil
