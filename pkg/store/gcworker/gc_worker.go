@@ -896,8 +896,8 @@ func (w *GCWorker) deleteRanges(
 		}
 	}
 	var wg util2.WaitGroupWrapper
-	for _, r := range ranges {
-		r := r
+	for i := range ranges {
+		r := ranges[i]
 		concurrencyLimiter <- struct{}{}
 		wg.Run(func() { f(r) })
 	}
@@ -990,8 +990,8 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64,
 		}
 	}
 	var wg util2.WaitGroupWrapper
-	for _, r := range ranges {
-		r := r
+	for i := range ranges {
+		r := ranges[i]
 		concurrencyLimiter <- struct{}{}
 		wg.Run(func() { f(r) })
 	}
