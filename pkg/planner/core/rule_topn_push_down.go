@@ -19,16 +19,10 @@ import (
 	"context"
 	"fmt"
 
-<<<<<<< HEAD
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-=======
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 )
 
 // pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
