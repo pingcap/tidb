@@ -151,6 +151,7 @@ type Domain struct {
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
+	schemaLease     time.Duration
 	sysSessionPool  util.SessionPool
 	exit            chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
@@ -776,7 +777,7 @@ func (do *Domain) Reload() error {
 
 	// lease renew, so it must be executed despite it is cache or not
 	do.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
-	lease := do.DDL().GetLease()
+	lease := do.GetSchemaLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
@@ -1055,11 +1056,11 @@ func (do *Domain) mdlCheckLoop() {
 	}
 }
 
-func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
+func (do *Domain) loadSchemaInLoop(ctx context.Context) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
-	ticker := time.NewTicker(lease / 2)
+	ticker := time.NewTicker(do.schemaLease / 2)
 	defer func() {
 		ticker.Stop()
 		logutil.BgLogger().Info("loadSchemaInLoop exited.")
@@ -1240,7 +1241,8 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store: store,
@@ -1259,6 +1261,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			},
 		),
 		statsLease:        statsLease,
+		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 		mdlCheckTableInfo: &mdlCheckTableInfo{
@@ -1272,7 +1275,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
-	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
+	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
@@ -1312,16 +1315,9 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 // Init initializes a domain. after return, session can be used to do DMLs but not
 // DDLs which can be used after domain Start.
 func (do *Domain) Init(
-	ddlLease time.Duration,
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
 	ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker,
 ) error {
-	// TODO there are many place set ddlLease to 0, remove them completely, we want
-	//  UT and even local uni-store to run similar code path as normal.
-	if ddlLease == 0 {
-		ddlLease = time.Second
-	}
-
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
@@ -1363,7 +1359,7 @@ func (do *Domain) Init(
 		ddl.WithStore(do.store),
 		ddl.WithAutoIDClient(do.autoidClient),
 		ddl.WithInfoCache(do.infoCache),
-		ddl.WithLease(ddlLease),
+		ddl.WithLease(do.schemaLease),
 		ddl.WithSchemaLoader(do),
 	)
 
@@ -1435,7 +1431,7 @@ func (do *Domain) Init(
 	sub := time.Since(startReloadTime)
 	// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
 	// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
-	if sub > (ddlLease / 2) {
+	if sub > (do.schemaLease / 2) {
 		logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
 		err = do.Reload()
 		if err != nil {
@@ -1474,7 +1470,7 @@ func (do *Domain) Start() error {
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
-		do.loadSchemaInLoop(do.ctx, do.ddl.GetLease())
+		do.loadSchemaInLoop(do.ctx)
 	}, "loadSchemaInLoop")
 	do.wg.Run(do.mdlCheckLoop, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
@@ -1499,6 +1495,11 @@ func (do *Domain) Start() error {
 	}
 
 	return nil
+}
+
+// GetSchemaLease return the schema lease.
+func (do *Domain) GetSchemaLease() time.Duration {
+	return do.schemaLease
 }
 
 // InitInfo4Test init infosync for distributed execution test.
@@ -2594,7 +2595,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 			if !owner.IsOwner() {
 				continue
 			}
-			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
 			if err != nil {
 				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
 			}

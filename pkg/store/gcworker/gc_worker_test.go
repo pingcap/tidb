@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -141,10 +142,10 @@ type mockGCWorkerSuite struct {
 }
 
 func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite) {
-	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore)
+	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, config.DefSchemaLease)
 }
 
-func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite) {
+func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType, schemaLease time.Duration) (s *mockGCWorkerSuite) {
 	s = new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
@@ -169,7 +170,7 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 	require.NoError(t, err)
 	store.GetOracle().Close()
 	store.(tikv.Storage).SetOracle(s.oracle)
-	dom := bootstrap(t, store, 0)
+	dom := bootstrap(t, store, schemaLease)
 	s.store, s.dom = store, dom
 
 	s.tikvStore = s.store.(tikv.Storage)
@@ -338,7 +339,10 @@ func TestMinStartTS(t *testing.T) {
 }
 
 func TestPrepareGC(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error. as we keep adding offset to time oracle,
+	// so we need set a very large lease.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 220*time.Minute)
 
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
@@ -935,7 +939,9 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, time.Hour)
 
 	gcSafePointCacheInterval = 0
 
@@ -1126,7 +1132,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging"))
 	}()
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV, config.DefSchemaLease)
 
 	var (
 		firstAccess    = true
@@ -1451,7 +1457,7 @@ func TestGCLabelRules(t *testing.T) {
 }
 
 func TestGCWithPendingTxn(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 30*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1502,7 +1508,9 @@ func TestGCWithPendingTxn(t *testing.T) {
 }
 
 func TestGCWithPendingTxn2(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1572,7 +1580,9 @@ func TestGCWithPendingTxn2(t *testing.T) {
 }
 
 func TestSkipGCAndOnlyResolveLock(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
