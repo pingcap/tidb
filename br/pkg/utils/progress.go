@@ -78,7 +78,7 @@ func (pp *ProgressPrinter) Close() {
 
 // getTerminalOutput try to use os.Stderr as terminal output
 func getTerminalOutput() io.Writer {
-	output := os.Stderr
+	output := os.Stdout
 	if term.IsTerminal(int(output.Fd())) {
 		return output
 	}
