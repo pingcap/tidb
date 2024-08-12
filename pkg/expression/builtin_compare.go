@@ -63,6 +63,7 @@ var (
 	_ builtinFunc = &builtinLeastTimeSig{}
 	_ builtinFunc = &builtinLeastDurationSig{}
 	_ builtinFunc = &builtinLeastCmpStringAsTimeSig{}
+	_ builtinFunc = &builtinLeastVectorFloat32Sig{}
 	_ builtinFunc = &builtinIntervalIntSig{}
 	_ builtinFunc = &builtinIntervalRealSig{}
 	_ builtinFunc = &builtinLeastVectorFloat32Sig{}

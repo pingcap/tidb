@@ -239,7 +239,7 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	if aggFunc.Name == ast.AggFuncApproxPercentile {
 		return false
 	}
-	if checkVectorAggPushDown(ctx, aggFunc) != nil {
+	if !checkVectorAggPushDown(ctx, aggFunc) {
 		return false
 	}
 	ret := true
@@ -256,20 +256,20 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	return ret
 }
 
-// checkVectorAggPushDown returns error if this aggregate function is not supported to push down.
-// - The aggregate function is not calculated over a Vector column (returns nil)
-// - The aggregate function is calculated over a Vector column and the function is supported (returns nil)
-// - The aggregate function is calculated over a Vector column and the function is not supported (returns error)
-func checkVectorAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc) error {
+// checkVectorAggPushDown returns false if this aggregate function is not supported to push down.
+// - The aggregate function is not calculated over a Vector column (returns true)
+// - The aggregate function is calculated over a Vector column and the function is supported (returns true)
+// - The aggregate function is calculated over a Vector column and the function is not supported (returns false)
+func checkVectorAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {
 	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow:
-		return nil
+		return true
 	default:
 		if aggFunc.Args[0].GetType(ctx).GetType() == mysql.TypeTiDBVectorFloat32 {
-			return errors.Errorf("Aggregate function %s is not supported for VectorFloat32", aggFunc.Name)
+			return false
 		}
 	}
-	return nil
+	return true
 }
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
