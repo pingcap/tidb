@@ -1206,6 +1206,8 @@ func peek(b []byte) (length int, err error) {
 		l, err = peekUvarint(b)
 	case jsonFlag:
 		l, err = types.PeekBytesAsJSON(b)
+	case vectorFloat32Flag:
+		l, err = types.PeekBytesAsVectorFloat32(b)
 	default:
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
