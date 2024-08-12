@@ -178,10 +178,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 	}
 
 	exprCtx := sessCtx.GetExprCtx()
-	batchCnt := rInfo.ReorgMeta.BatchSize
-	if batchCnt == 0 {
-		batchCnt = int(variable.GetDDLReorgBatchSize())
-	}
+	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.d,
@@ -419,10 +416,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		})
 
 		// Change the batch size dynamically.
-		newBatchCnt := job.ReorgMeta.BatchSize
-		if newBatchCnt == 0 {
-			newBatchCnt = int(variable.GetDDLReorgBatchSize())
-		}
+		newBatchCnt := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 		w.GetCtx().batchCnt = newBatchCnt
 		result := w.handleBackfillTask(d, task, bf)
 		w.sendResult(result)
@@ -683,7 +677,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	importConc := ingest.ResolveConcurrency(job.ReorgMeta.Concurrency)
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
 		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, importConc)
 	if err != nil {
@@ -732,8 +726,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
-
-	concurrency := ingest.ResolveConcurrency(job.ReorgMeta.Concurrency)
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
 		dc.store,
@@ -747,7 +739,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		reorgInfo.EndKey,
 		job.ReorgMeta,
 		avgRowSize,
-		concurrency,
+		importConc,
 		cpMgr,
 		rowCntListener,
 	)

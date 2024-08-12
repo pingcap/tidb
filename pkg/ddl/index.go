@@ -2029,7 +2029,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 		})
 	} else {
 		job := reorgInfo.Job
-		workerCntLimit := ingest.ResolveConcurrency(job.ReorgMeta.Concurrency)
+		workerCntLimit := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 		cpuCount, err := handle.GetCPUCountOfNode(ctx)
 		if err != nil {
 			return err

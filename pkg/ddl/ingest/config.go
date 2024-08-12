@@ -91,14 +91,6 @@ func genConfig(
 	return c, nil
 }
 
-// ResolveConcurrency gets the concurrency used for ingest mode of adding index.
-func ResolveConcurrency(hintConc int) int {
-	if hintConc > 0 {
-		return hintConc
-	}
-	return int(variable.GetDDLReorgWorkerCounter())
-}
-
 // CopReadBatchSize is the batch size of coprocessor read.
 // It multiplies the tidb_ddl_reorg_batch_size by 10 to avoid
 // sending too many cop requests for the same handle range.
@@ -113,7 +105,10 @@ func CopReadBatchSize(hintSize int) int {
 // represents the max concurrent ongoing coprocessor requests.
 // It multiplies the tidb_ddl_reorg_worker_cnt by 10.
 func CopReadChunkPoolSize(hintConc int) int {
-	return ResolveConcurrency(hintConc) * 10
+	if hintConc > 0 {
+		return 10 * hintConc
+	}
+	return 10 * int(variable.GetDDLReorgWorkerCounter())
 }
 
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.

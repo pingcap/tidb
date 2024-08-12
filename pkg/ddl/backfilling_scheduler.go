@@ -85,10 +85,7 @@ func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *ses
 	if err != nil {
 		return nil, err
 	}
-	workerCnt := info.ReorgMeta.Concurrency
-	if workerCnt == 0 {
-		workerCnt = int(variable.GetDDLReorgWorkerCounter())
-	}
+	workerCnt := info.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	return &txnBackfillScheduler{
 		ctx:          ctx,
 		reorgInfo:    info,
@@ -235,10 +232,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 }
 
 func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
-	workerCnt := b.reorgInfo.ReorgMeta.Concurrency
-	if workerCnt == 0 {
-		workerCnt = int(variable.GetDDLReorgWorkerCounter())
-	}
+	workerCnt := b.reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	return min(workerCnt, maxBackfillWorkerSize)
 }
 
