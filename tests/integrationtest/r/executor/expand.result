@@ -258,3 +258,260 @@ Computer:2	2	1350.0000
 Phone:3	2	10.0000
 TV:1	2	133.3333
 TV:2	2	100.0000
+SET @saved_sql_mode = @@session.sql_mode;
+SET SESSION sql_mode= '';
+
+SELECT UPPER(product) AS prod,
+SUM(profit)/COUNT(*)
+FROM t1 GROUP BY prod WITH ROLLUP HAVING prod='COMPUTER' ;
+prod	SUM(profit)/COUNT(*)
+COMPUTER	1380.0000
+SET SESSION sql_mode= @saved_sql_mode;
+
+# Joins
+SELECT product, country , year, SUM(profit) FROM t1,t2 WHERE
+t1.country_id=t2.country_id GROUP BY product, country, year WITH ROLLUP;
+product	country	year	SUM(profit)
+NULL	NULL	NULL	7785
+Calculator	NULL	NULL	275
+Calculator	India	NULL	150
+Calculator	India	2000	150
+Calculator	USA	NULL	125
+Calculator	USA	1999	50
+Calculator	USA	2000	75
+Computer	NULL	NULL	6900
+Computer	India	NULL	2700
+Computer	India	2000	2700
+Computer	USA	NULL	4200
+Computer	USA	1999	2700
+Computer	USA	2000	1500
+Phone	NULL	NULL	10
+Phone	Finland	NULL	10
+Phone	Finland	2003	10
+TV	NULL	NULL	600
+TV	India	NULL	200
+TV	India	2000	200
+TV	USA	NULL	400
+TV	USA	1999	250
+TV	USA	2000	150
+
+SELECT product, `SUM` FROM (SELECT product, SUM(profit) AS 'sum' FROM t1
+GROUP BY product WITH ROLLUP) AS tmp
+WHERE product is null;
+product	SUM
+NULL	7785
+
+SELECT product FROM t1 WHERE EXISTS
+(SELECT product, country_id , SUM(profit) FROM t1 AS t2
+WHERE t1.product=t2.product GROUP BY product, country_id WITH ROLLUP
+HAVING SUM(profit) > 6000);
+product
+Computer
+Computer
+Computer
+Computer
+Computer
+
+SELECT product, country_id , year, SUM(profit) FROM t1
+GROUP BY product, country_id, year HAVING country_id is NULL;
+product	country_id	year	SUM(profit)
+
+SELECT CONCAT(':',product,':'), SUM(profit), AVG(profit) FROM t1
+GROUP BY product WITH ROLLUP;
+CONCAT(':',product,':')	SUM(profit)	AVG(profit)
+NULL	7785	519.0000
+:Calculator:	275	68.7500
+:Computer:	6900	1380.0000
+:Phone:	10	10.0000
+:TV:	600	120.0000
+
+drop table t1,t2;
+CREATE TABLE t1 (i int);
+INSERT INTO t1 VALUES(100);
+CREATE TABLE t2 (i int);
+INSERT INTO t2 VALUES (100),(200);
+
+SELECT i, COUNT(*) FROM t1 GROUP BY i WITH ROLLUP;
+i	COUNT(*)
+NULL	1
+100	1
+
+SELECT t1.i, t2.i, COUNT(*) FROM t1,t2 GROUP BY t1.i,t2.i WITH ROLLUP;
+i	i	COUNT(*)
+NULL	NULL	2
+100	NULL	2
+100	100	1
+100	200	1
+
+DROP TABLE t1,t2;
+CREATE TABLE user_day(
+user_id INT NOT NULL,
+date DATE NOT NULL,
+UNIQUE INDEX user_date (user_id, date)
+);
+INSERT INTO user_day VALUES
+(1, '2004-06-06' ),
+(1, '2004-06-07' ),
+(2, '2004-06-06' );
+
+SELECT
+d.date AS day,
+COUNT(d.user_id) as sample,
+COUNT(next_day.user_id) AS not_cancelled
+FROM user_day d
+LEFT JOIN user_day next_day
+ON next_day.user_id=d.user_id AND
+next_day.date= DATE_ADD( d.date, interval 1 day )
+GROUP BY day;
+day	sample	not_cancelled
+2004-06-06	2	1
+2004-06-07	1	0
+
+SELECT
+d.date AS day,
+COUNT(d.user_id) as sample,
+COUNT(next_day.user_id) AS not_cancelled
+FROM user_day d
+LEFT JOIN user_day next_day
+ON next_day.user_id=d.user_id AND
+next_day.date= DATE_ADD( d.date, interval 1 day )
+GROUP BY day
+WITH ROLLUP;
+day	sample	not_cancelled
+NULL	3	1
+2004-06-06	2	1
+2004-06-07	1	0
+
+DROP TABLE user_day;
+CREATE TABLE t1 (a int, b int);
+INSERT INTO t1 VALUES
+(1,4),
+(2,2), (2,2),
+(4,1), (4,1), (4,1), (4,1),
+(2,1), (2,1);
+
+SELECT SUM(b) FROM t1 GROUP BY a WITH ROLLUP;
+SUM(b)
+14
+4
+4
+6
+
+SELECT DISTINCT SUM(b) FROM t1 GROUP BY a WITH ROLLUP;
+SUM(b)
+14
+4
+6
+
+SELECT SUM(b), COUNT(DISTINCT b) FROM t1 GROUP BY a WITH ROLLUP;
+SUM(b)	COUNT(DISTINCT b)
+14	3
+4	1
+4	1
+6	2
+
+SELECT DISTINCT SUM(b), COUNT(DISTINCT b) FROM t1 GROUP BY a WITH ROLLUP;
+SUM(b)	COUNT(DISTINCT b)
+14	3
+4	1
+6	2
+
+SELECT SUM(b), COUNT(*) FROM t1 GROUP BY a WITH ROLLUP;
+SUM(b)	COUNT(*)
+14	9
+4	1
+4	4
+6	4
+
+SELECT DISTINCT SUM(b), COUNT(*) FROM t1 GROUP BY a WITH ROLLUP;
+SUM(b)	COUNT(*)
+14	9
+4	1
+4	4
+6	4
+
+SELECT SUM(b), COUNT(DISTINCT b), COUNT(*) FROM t1 GROUP BY a WITH ROLLUP;
+SUM(b)	COUNT(DISTINCT b)	COUNT(*)
+14	3	9
+4	1	1
+4	1	4
+6	2	4
+
+SELECT DISTINCT SUM(b), COUNT(DISTINCT b), COUNT(*) FROM t1
+GROUP BY a WITH ROLLUP;
+SUM(b)	COUNT(DISTINCT b)	COUNT(*)
+14	3	9
+4	1	1
+4	1	4
+6	2	4
+
+SELECT a, SUM(b) FROM t1 GROUP BY a,b WITH ROLLUP;
+a	SUM(b)
+NULL	14
+1	4
+1	4
+2	2
+2	4
+2	6
+4	4
+4	4
+
+SELECT DISTINCT a, SUM(b) FROM t1 GROUP BY a,b WITH ROLLUP;
+a	SUM(b)
+NULL	14
+1	4
+2	2
+2	4
+2	6
+4	4
+
+SELECT b, a, SUM(b) FROM t1 GROUP BY a,b WITH ROLLUP;
+b	a	SUM(b)
+NULL	NULL	14
+NULL	1	4
+NULL	2	6
+NULL	4	4
+1	2	2
+1	4	4
+2	2	4
+4	1	4
+
+SELECT DISTINCT b,a, SUM(b) FROM t1 GROUP BY a,b WITH ROLLUP;
+b	a	SUM(b)
+NULL	NULL	14
+NULL	1	4
+NULL	2	6
+NULL	4	4
+1	2	2
+1	4	4
+2	2	4
+4	1	4
+
+ALTER TABLE t1 ADD COLUMN c INT;
+
+SELECT a,b,SUM(c) FROM t1 GROUP BY a,b,c WITH ROLLUP;
+a	b	SUM(c)
+NULL	NULL	NULL
+1	NULL	NULL
+1	4	NULL
+1	4	NULL
+2	NULL	NULL
+2	1	NULL
+2	1	NULL
+2	2	NULL
+2	2	NULL
+4	NULL	NULL
+4	1	NULL
+4	1	NULL
+
+SELECT distinct a,b,SUM(c) FROM t1 GROUP BY a,b,c WITH ROLLUP;
+a	b	SUM(c)
+NULL	NULL	NULL
+1	NULL	NULL
+1	4	NULL
+2	NULL	NULL
+2	1	NULL
+2	2	NULL
+4	NULL	NULL
+4	1	NULL
+DROP TABLE t1;

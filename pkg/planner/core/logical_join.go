@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -177,16 +178,16 @@ func (p *LogicalJoin) ExplainInfo() string {
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, equalExpr := range p.EqualConditions {
-		ResolveExprAndReplace(equalExpr, replace)
+		ruleutil.ResolveExprAndReplace(equalExpr, replace)
 	}
 	for _, leftExpr := range p.LeftConditions {
-		ResolveExprAndReplace(leftExpr, replace)
+		ruleutil.ResolveExprAndReplace(leftExpr, replace)
 	}
 	for _, rightExpr := range p.RightConditions {
-		ResolveExprAndReplace(rightExpr, replace)
+		ruleutil.ResolveExprAndReplace(rightExpr, replace)
 	}
 	for _, otherExpr := range p.OtherConditions {
-		ResolveExprAndReplace(otherExpr, replace)
+		ruleutil.ResolveExprAndReplace(otherExpr, replace)
 	}
 }
 
@@ -287,7 +288,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	utilfuncp.AddSelection(p, lCh, leftRet, 0, opt)
 	utilfuncp.AddSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
-	buildKeyInfo(p)
+	ruleutil.BuildKeyInfoPortal(p)
 	return ret, p.Self()
 }
 
@@ -300,13 +301,11 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	if err != nil {
 		return nil, err
 	}
-	addConstOneForEmptyProjection(p.Children()[0])
 
 	p.Children()[1], err = p.Children()[1].PruneColumns(rightCols, opt)
 	if err != nil {
 		return nil, err
 	}
-	addConstOneForEmptyProjection(p.Children()[1])
 
 	p.mergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -367,9 +366,9 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
+	var topN *logicalop.LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
+		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
 	}
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
@@ -1151,7 +1150,7 @@ func (p *LogicalJoin) mergeSchema() {
 }
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
-func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalJoin) pushDownTopNToChild(topN *logicalop.LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	if topN == nil {
 		return p.Children()[idx].PushDownTopN(nil, opt)
 	}
@@ -1165,7 +1164,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 		}
 	}
 
-	newTopN := LogicalTopN{
+	newTopN := logicalop.LogicalTopN{
 		Count:            topN.Count + topN.Offset,
 		ByItems:          make([]*util.ByItems, len(topN.ByItems)),
 		PreferLimitToCop: topN.PreferLimitToCop,
@@ -1575,7 +1574,7 @@ func (p *LogicalJoin) updateEQCond() {
 				needRProj = needRProj || !rOk
 			}
 
-			var lProj, rProj *LogicalProjection
+			var lProj, rProj *logicalop.LogicalProjection
 			if needLProj {
 				lProj = p.getProj(0)
 			}
@@ -1585,10 +1584,10 @@ func (p *LogicalJoin) updateEQCond() {
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
 				if lProj != nil {
-					lKey = lProj.appendExpr(lKey)
+					lKey = lProj.AppendExpr(lKey)
 				}
 				if rProj != nil {
-					rKey = rProj.appendExpr(rKey)
+					rKey = rProj.AppendExpr(rKey)
 				}
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 				if isNA {
@@ -1631,13 +1630,13 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
+func (p *LogicalJoin) getProj(idx int) *logicalop.LogicalProjection {
 	child := p.Children()[idx]
-	proj, ok := child.(*LogicalProjection)
+	proj, ok := child.(*logicalop.LogicalProjection)
 	if ok {
 		return proj
 	}
-	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.QueryBlockOffset())
+	proj = logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.QueryBlockOffset())
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}

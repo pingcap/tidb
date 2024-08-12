@@ -2237,6 +2237,20 @@ func TestIssue54213(t *testing.T) {
 			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }
 
+func TestIssue54870(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id int,
+deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
+is_deleted tinyint(1) GENERATED ALWAYS AS ((deleted_at > _utf8mb4'1970-01-01 01:00:01.000')) VIRTUAL NOT NULL,
+key k(id, is_deleted))`)
+	tk.MustExec(`begin`)
+	tk.MustExec(`insert into t (id, deleted_at) values (1, now())`)
+	tk.MustHavePlan(`select 1 from t where id=1 and is_deleted=true`, "IndexRangeScan")
+}
+
 func TestIssue52472(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2261,4 +2275,29 @@ func TestIssue52472(t *testing.T) {
 	require.Len(t, rs.Fields(), 1)
 	require.Equal(t, mysql.TypeNewDecimal, rs.Fields()[0].Column.FieldType.GetType())
 	require.NoError(t, rs.Close())
+}
+
+func TestTiFlashHashAggPreAggMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tiflash_hashagg_preaggregation_mode = default;")
+	tk.MustQuery("select @@tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("force_preagg"))
+
+	tk.MustExec("set @@tiflash_hashagg_preaggregation_mode = 'auto';")
+	tk.MustQuery("select @@tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("auto"))
+	tk.MustExec("set @@tiflash_hashagg_preaggregation_mode = 'force_streaming';")
+	tk.MustQuery("select @@tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("force_streaming"))
+	tk.MustExec("set @@tiflash_hashagg_preaggregation_mode = 'force_preagg';")
+	tk.MustQuery("select @@tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("force_preagg"))
+
+	tk.MustExec("set global tiflash_hashagg_preaggregation_mode = 'auto';")
+	tk.MustQuery("select @@global.tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("auto"))
+	tk.MustExec("set global tiflash_hashagg_preaggregation_mode = 'force_streaming';")
+	tk.MustQuery("select @@global.tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("force_streaming"))
+	tk.MustExec("set global tiflash_hashagg_preaggregation_mode = 'force_preagg';")
+	tk.MustQuery("select @@global.tiflash_hashagg_preaggregation_mode;").Check(testkit.Rows("force_preagg"))
+
+	err := tk.ExecToErr("set @@tiflash_hashagg_preaggregation_mode = 'test';")
+	require.ErrorContains(t, err, "incorrect value: `test`. tiflash_hashagg_preaggregation_mode options: force_preagg, auto, force_streaming")
 }

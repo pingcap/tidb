@@ -408,7 +408,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 	// Check the table ID was not exists.
-	tbl, ok := dom.InfoSchema().TableByID(tblInfo.ID)
+	tbl, ok := dom.InfoSchema().TableByID(context.Background(), tblInfo.ID)
 	if ok {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
@@ -463,7 +463,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 		return nil, nil, err
 	}
 	// Get table meta from snapshot infoSchema.
-	table, ok := snapInfo.TableByID(job.TableID)
+	table, ok := snapInfo.TableByID(ctx, job.TableID)
 	if !ok {
 		return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", job.SchemaID),
@@ -563,7 +563,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
-	tbl, ok := is.TableByID(tblInfo.ID)
+	tbl, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if ok {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}

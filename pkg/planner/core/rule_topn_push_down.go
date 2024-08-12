@@ -25,11 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
-// pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
-type pushDownTopNOptimizer struct {
+// PushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
+type PushDownTopNOptimizer struct {
 }
 
-func (*pushDownTopNOptimizer) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (*PushDownTopNOptimizer) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.PushDownTopN(nil, opt), planChanged, nil
 }
@@ -38,9 +39,9 @@ func (*pushDownTopNOptimizer) optimize(_ context.Context, p base.LogicalPlan, op
 func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.LogicalPlan,
 	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	s := lp.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
-	var topN *LogicalTopN
+	var topN *logicalop.LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
+		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
 	}
 	p := s.Self()
 	for i, child := range p.Children() {
@@ -52,21 +53,12 @@ func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.Lo
 	return p
 }
 
-func (*pushDownTopNOptimizer) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (*PushDownTopNOptimizer) Name() string {
 	return "topn_push_down"
 }
 
-func appendTopNPushDownTraceStep(parent base.LogicalPlan, child base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		return fmt.Sprintf("%v_%v is added as %v_%v's parent", parent.TP(), parent.ID(), child.TP(), child.ID())
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v is pushed down", parent.TP())
-	}
-	opt.AppendStepToCurrent(parent.ID(), parent.TP(), reason, action)
-}
-
-func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) {
+func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *logicalop.LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is added and pushed into %v_%v's ",
@@ -99,41 +91,12 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
-func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *optimizetrace.LogicalOptimizeOp) {
-	ectx := sort.SCtx().GetExprCtx().GetEvalCtx()
-	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v passes ByItems[", sort.TP(), sort.ID()))
-		for i, item := range sort.ByItems {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
-		return buffer.String()
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v_%v is Limit originally", topN.TP(), topN.ID())
-	}
-	opt.AppendStepToCurrent(sort.ID(), sort.TP(), reason, action)
-}
-
-func appendNewTopNTraceStep(topN *LogicalTopN, union *LogicalUnionAll, opt *optimizetrace.LogicalOptimizeOp) {
+func appendNewTopNTraceStep(topN *logicalop.LogicalTopN, union *LogicalUnionAll, opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string {
 		return ""
 	}
 	action := func() string {
 		return fmt.Sprintf("%v_%v is added and pushed down across %v_%v", topN.TP(), topN.ID(), union.TP(), union.ID())
-	}
-	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
-}
-
-func appendConvertTopNTraceStep(p base.LogicalPlan, topN *LogicalTopN, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		return fmt.Sprintf("%v_%v is converted into %v_%v", p.TP(), p.ID(), topN.TP(), topN.ID())
 	}
 	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
 }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,11 +36,10 @@ func TestPlanCacheClone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk1.Session().GetSessionVars().EnableInstancePlanCache = true
-	tk2.Session().GetSessionVars().EnableInstancePlanCache = true
 	tk1.MustExec(`use test`)
 	tk2.MustExec(`use test`)
 	tk1.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), unique key(d))`)
+	tk1.MustExec(`create table t1 (a int, b int, c int, d int)`)
 
 	for i := -20; i < 20; i++ {
 		tk1.MustExec(fmt.Sprintf("insert into t values (%v,%v,%v,%v)", i, rand.Intn(20), rand.Intn(20), -i))
@@ -70,31 +69,175 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where a<? and b+?=10'`,
 		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 
-	// TODO: PointGet doesn't support Clone
+	// IndexLookUp
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b>?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b>?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// IndexMerge
+	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a=? or b=1'",
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a=? or b=1 or d=1'",
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a>? or b>1'",
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, "prepare st from 'select /*+ use_index_merge(t, primary, b, d) */ * from t where a>? or b>1 or d=1'",
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// HashAgg
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_agg() */ sum(a) from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_agg() */ sum(a) from t where a<? group by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_agg() */ sum(a), count(1) from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_agg() */ sum(a), count(1) from t where a<? group by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// StreamAgg
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ stream_agg() */ sum(a) from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ stream_agg() */ sum(a) from t where a<? group by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ stream_agg() */ sum(a), count(1) from t where a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ stream_agg() */ sum(a), count(1) from t where a<? group by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// HashJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a<t2.a and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ hash_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b<t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// MergeJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a<t2.a and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b<t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// IndexJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// IndexHashJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// Limit
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? limit 1'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select b from t use index(b) where b<=? limit 10'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=? limit 100'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// Sort
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? order by a'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a>=? order by b'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(primary) where a<? and b<? order by a+b'`,
+		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=? order by a+4'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// TopN
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? order by a limit 5'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a>=? order by b limit 5'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(primary) where a<? and b<? order by a+b limit 5'`,
+		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t use index(b) where b<=? order by a+4 limit 5'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
 	// PointPlan
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d=?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a in (?,?)'`,
-	//	`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d in (?,?)'`,
-	//	`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d=?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// BatchPointPlan
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a in (?,?)'`,
+		`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d in (?,?)'`,
+		`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+
+	// Insert
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 values (?, ?, ?, ?)'`,
+		`set @a=1, @b=2`, `execute st using @a, @a, @a, @a`, `execute st using @b, @b, @b, @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 select * from t where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 select * from t where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Delete
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'delete from t1 where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'delete from t1 where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Update
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'update t1 set a=a+1 where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'update t1 set a=a+1 where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Lock
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? for update'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=? for update'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 }
 
 func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exec1, exec2 string) {
-	tk1.MustExec(prep)
-	tk1.MustExec(set)
-	tk1.MustQuery(exec1) // generate the first cached plan
+	isDML := false
+	if strings.Contains(prep, "insert") || strings.Contains(prep, "update") || strings.Contains(prep, "delete") {
+		isDML = true
+	}
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
+	tk1.MustExecWithContext(ctx, prep)
+	tk1.MustExecWithContext(ctx, set)
+	if isDML {
+		tk1.MustExecWithContext(ctx, exec1)
+	} else {
+		tk1.MustQueryWithContext(ctx, exec1) // generate the first cached plan
+	}
 
-	tk2.MustExec(prep)
-	tk2.MustExec(set)
+	tk2.MustExecWithContext(ctx, prep)
+	tk2.MustExecWithContext(ctx, set)
 	checked := false
-	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
+	ctx = context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
-		// TODO: check cloned is deeply cloned from plan.
+		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned,
+			".ctx",
+			"*collate"))
 	})
-	tk2.MustQueryWithContext(ctx, exec2)
+	if isDML {
+		tk2.MustExecWithContext(ctx, exec2)
+	} else {
+		tk2.MustQueryWithContext(ctx, exec2)
+	}
 	require.True(t, checked)
 }
 
@@ -115,18 +258,6 @@ func TestCheckPlanClone(t *testing.T) {
 	ts1.AccessCondition[0] = expr
 	ts2.AccessCondition[0] = expr
 	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
-
-	// same slice[0].pointer.pointer
-	ts2.AccessCondition[0] = new(expression.Column)
-	ts1.AccessCondition[0].(*expression.Column).RetType = new(types.FieldType)
-	ts2.AccessCondition[0].(*expression.Column).RetType = ts1.AccessCondition[0].(*expression.Column).RetType
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column).RetType")
-
-	// same interface
-	child := &core.PhysicalTableScan{}
-	ts1.SetProbeParents([]base.PhysicalPlan{child})
-	ts2.SetProbeParents([]base.PhysicalPlan{child})
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.physicalSchemaProducer.basePhysicalPlan.probeParents[0](*core.PhysicalTableScan)")
 
 	// same map
 	l1 := &core.PhysicalLock{}
@@ -149,7 +280,7 @@ func TestCheckPlanClone(t *testing.T) {
 	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *core.PhysicalLock.basePhysicalPlan.Plan.ctx(*mock.Context)")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *core.PhysicalLock.BasePhysicalPlan.Plan.ctx(*mock.Context)")
 
 	// test tag
 	type S struct {
@@ -169,11 +300,16 @@ func TestCheckPlanClone(t *testing.T) {
 
 // checkUnclearPlanCacheClone checks whether this cloned plan is safe for instance plan cache.
 // All fields in the plan should be deeply cloned except the fields with tag "plan-cache-shallow-clone:'true'".
-func checkUnclearPlanCacheClone(plan, cloned any) error {
-	return planCacheUnclearCloneCheck(reflect.ValueOf(plan), reflect.ValueOf(cloned), reflect.TypeOf(plan).String(), nil)
+func checkUnclearPlanCacheClone(plan, cloned any, whiteLists ...string) error {
+	return planCacheUnclearCloneCheck(reflect.ValueOf(plan), reflect.ValueOf(cloned), reflect.TypeOf(plan).String(), nil, whiteLists...)
 }
 
-func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[visit]bool) error {
+func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[visit]bool, whiteLists ...string) error {
+	for _, l := range whiteLists {
+		if strings.Contains(path, l) {
+			return nil
+		}
+	}
 	if !v1.IsValid() || !v2.IsValid() {
 		if v1.IsValid() != v2.IsValid() {
 			return errors.Errorf("invalid")
@@ -212,7 +348,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 	switch v1.Kind() {
 	case reflect.Array:
 		for i := 0; i < v1.Len(); i++ {
-			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited); err != nil {
+			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited, whiteLists...); err != nil {
 				return err
 			}
 		}
@@ -233,7 +369,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 			return errors.Errorf("same slice pointers, path %v", path)
 		}
 		for i := 0; i < v1.Len(); i++ {
-			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited); err != nil {
+			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited, whiteLists...); err != nil {
 				return err
 			}
 		}
@@ -244,7 +380,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 		if v1.IsNil() != v2.IsNil() {
 			return errors.Errorf("invalid interfaces, path %v", path)
 		}
-		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), fmt.Sprintf("%v(%v)", path, v1.Elem().Type().String()), visited)
+		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), fmt.Sprintf("%v(%v)", path, v1.Elem().Type().String()), visited, whiteLists...)
 	case reflect.Ptr:
 		if v1.IsNil() && v2.IsNil() {
 			return nil
@@ -252,7 +388,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 		if v1.Pointer() == v2.Pointer() {
 			return errors.Errorf("same pointer, path %v", path)
 		}
-		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), path, visited)
+		return planCacheUnclearCloneCheck(v1.Elem(), v2.Elem(), path, visited, whiteLists...)
 	case reflect.Struct:
 		for i, n := 0, v1.NumField(); i < n; i++ {
 			tag := v1.Type().Field(i).Tag.Get("plan-cache-clone")
@@ -260,7 +396,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 				continue
 			}
 			fieldName := v1.Type().Field(i).Name
-			if err := planCacheUnclearCloneCheck(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, fieldName), visited); err != nil {
+			if err := planCacheUnclearCloneCheck(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, fieldName), visited, whiteLists...); err != nil {
 				return err
 			}
 		}
@@ -283,7 +419,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 			if !val1.IsValid() || !val2.IsValid() {
 				return errors.Errorf("invalid map value at %v", fmt.Sprintf("%v[%v]", path, k.Type().Name()))
 			}
-			if err := planCacheUnclearCloneCheck(val1, val2, fmt.Sprintf("%v[%v]", path, k.Type().Name()), visited); err != nil {
+			if err := planCacheUnclearCloneCheck(val1, val2, fmt.Sprintf("%v[%v]", path, k.Type().Name()), visited, whiteLists...); err != nil {
 				return err
 			}
 		}

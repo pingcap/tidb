@@ -125,3 +125,27 @@ select a from t partition (p1) order by a;
 --replace_regex /in\(_tidb_tid, [0-9]+\)/in(_tidb_tid, tid1)/
 explain format = 'brief' select a from t partition (p1) order by a;
 
+## Test syntax
+drop table if exists t;
+# TODO: --error
+create table t (a int, b int, unique key idx_b (b)) partition by hash (a) partitions 3;
+drop table if exists t;
+create table t (a int, b int, unique key idx_b (b) global) partition by hash (a) partitions 3;
+show create table t;
+drop table t;
+CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+  UNIQUE KEY `idx_b` (`b`) /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 3;
+show create table t;
+# TODO: --error
+alter table t partition by key (a) partitions 3;
+alter table t partition by hash (a) partitions 3 update indexes (idx_b GLOBAL);
+show create table t;
+alter table t partition by hash (b) partitions 3 update indexes(idx_b local);
+show create table t;
+alter table t partition by key (b) partitions 3;
+show create table t;
+drop table t;

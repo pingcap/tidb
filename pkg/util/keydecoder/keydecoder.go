@@ -15,6 +15,7 @@
 package keydecoder
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -81,7 +82,7 @@ func DecodeKey(key []byte, is infoschema.InfoSchema) (DecodedKey, error) {
 	}
 	result.TableID = tableOrPartitionID
 
-	table, tableFound := is.TableByID(tableOrPartitionID)
+	table, tableFound := is.TableByID(context.Background(), tableOrPartitionID)
 
 	// The schema may have changed since when the key is get.
 	// Then we just omit the table name and show the table ID only.

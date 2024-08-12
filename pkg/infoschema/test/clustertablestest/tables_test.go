@@ -613,7 +613,7 @@ func TestReloadDropDatabase(t *testing.T) {
 	is = domain.GetDomain(tk.Session()).InfoSchema()
 	_, err = is.TableByName(context.Background(), model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
 	require.True(t, terror.ErrorEqual(infoschema.ErrTableNotExists, err))
-	_, ok := is.TableByID(t2.Meta().ID)
+	_, ok := is.TableByID(context.Background(), t2.Meta().ID)
 	require.False(t, ok)
 }
 

@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -78,6 +80,12 @@ var (
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
 	_ base.PhysicalPlan = &PhysicalTableSample{}
+
+	_ PhysicalJoin = &PhysicalHashJoin{}
+	_ PhysicalJoin = &PhysicalMergeJoin{}
+	_ PhysicalJoin = &PhysicalIndexJoin{}
+	_ PhysicalJoin = &PhysicalIndexHashJoin{}
+	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
 type tableScanAndPartitionInfo struct {
@@ -128,8 +136,8 @@ type PhysicalTableReader struct {
 	physicalSchemaProducer
 
 	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans []base.PhysicalPlan
 	tablePlan  base.PhysicalPlan
+	TablePlans []base.PhysicalPlan
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
@@ -143,7 +151,7 @@ type PhysicalTableReader struct {
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
-	TableScanAndPartitionInfos []tableScanAndPartitionInfo
+	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
 
 // PhysPlanPartInfo indicates partition helper info in physical plan.
@@ -158,6 +166,9 @@ const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
 
 // Clone clones the PhysPlanPartInfo.
 func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
+	if pi == nil {
+		return nil
+	}
 	cloned := new(PhysPlanPartInfo)
 	cloned.PruningConds = util.CloneExprs(pi.PruningConds)
 	cloned.PartitionNames = util.CloneCIStrs(pi.PartitionNames)
@@ -247,6 +258,30 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 	}
 }
 
+// GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
+func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
+	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
+	reader.SetStats(stats)
+	reader.SetSchema(schema)
+	reader.SetChildrenReqProps(props)
+	return reader
+}
+
+// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
+func GetPhysicalTableReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
+	reader.PlanPartInfo = &PhysPlanPartInfo{
+		PruningConds:   sg.Source.AllConds,
+		PartitionNames: sg.Source.PartitionNames,
+		Columns:        sg.Source.TblCols,
+		ColumnNames:    sg.Source.OutputNames(),
+	}
+	reader.SetStats(stats)
+	reader.SetSchema(schema)
+	reader.SetChildrenReqProps(props)
+	return reader
+}
+
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalTableReader)
@@ -283,7 +318,7 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 
 // BuildPlanTrace implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.basePhysicalPlan.BuildPlanTrace()
+	rp := p.BasePhysicalPlan.BuildPlanTrace()
 	if p.tablePlan != nil {
 		rp.Children = append(rp.Children, p.tablePlan.BuildPlanTrace())
 	}
@@ -292,7 +327,7 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 
 // AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.basePhysicalPlan.AppendChildCandidate(op)
+	p.BasePhysicalPlan.AppendChildCandidate(op)
 	appendChildCandidate(p, p.tablePlan, op)
 }
 
@@ -301,8 +336,8 @@ type PhysicalIndexReader struct {
 	physicalSchemaProducer
 
 	// IndexPlans flats the indexPlan to construct executor pb.
-	IndexPlans []base.PhysicalPlan
 	indexPlan  base.PhysicalPlan
+	IndexPlans []base.PhysicalPlan
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
@@ -361,7 +396,7 @@ func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 
 // BuildPlanTrace implements op.PhysicalPlan interface.
 func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.basePhysicalPlan.BuildPlanTrace()
+	rp := p.BasePhysicalPlan.BuildPlanTrace()
 	if p.indexPlan != nil {
 		rp.Children = append(rp.Children, p.indexPlan.BuildPlanTrace())
 	}
@@ -370,7 +405,7 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 
 // AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.basePhysicalPlan.AppendChildCandidate(op)
+	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
 	}
@@ -410,6 +445,9 @@ type PushedDownLimit struct {
 
 // Clone clones this pushed-down list.
 func (p *PushedDownLimit) Clone() *PushedDownLimit {
+	if p == nil {
+		return nil
+	}
 	cloned := new(PushedDownLimit)
 	*cloned = *p
 	return cloned
@@ -430,12 +468,12 @@ func (p *PushedDownLimit) MemoryUsage() (sum int64) {
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
 
+	indexPlan base.PhysicalPlan
+	tablePlan base.PhysicalPlan
 	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []base.PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []base.PhysicalPlan
-	indexPlan  base.PhysicalPlan
-	tablePlan  base.PhysicalPlan
 	Paging     bool
 
 	ExtraHandleCol *expression.Column
@@ -511,7 +549,7 @@ func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
 
 // BuildPlanTrace implements op.PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.basePhysicalPlan.BuildPlanTrace()
+	rp := p.BasePhysicalPlan.BuildPlanTrace()
 	if p.indexPlan != nil {
 		rp.Children = append(rp.Children, p.indexPlan.BuildPlanTrace())
 	}
@@ -523,7 +561,7 @@ func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
 
 // AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.basePhysicalPlan.AppendChildCandidate(op)
+	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
 	}
@@ -581,14 +619,14 @@ type PhysicalIndexMergeReader struct {
 	// ByItems is used to support sorting the handles returned by partialPlans.
 	ByItems []*util.ByItems
 
-	// PartialPlans flats the partialPlans to construct executor pb.
-	PartialPlans [][]base.PhysicalPlan
-	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans []base.PhysicalPlan
 	// partialPlans are the partial plans that have not been flatted. The type of each element is permitted PhysicalIndexScan or PhysicalTableScan.
 	partialPlans []base.PhysicalPlan
 	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
 	tablePlan base.PhysicalPlan
+	// PartialPlans flats the partialPlans to construct executor pb.
+	PartialPlans [][]base.PhysicalPlan
+	// TablePlans flats the tablePlan to construct executor pb.
+	TablePlans []base.PhysicalPlan
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
@@ -621,7 +659,7 @@ func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expressio
 
 // BuildPlanTrace implements op.PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.basePhysicalPlan.BuildPlanTrace()
+	rp := p.BasePhysicalPlan.BuildPlanTrace()
 	if p.tablePlan != nil {
 		rp.Children = append(rp.Children, p.tablePlan.BuildPlanTrace())
 	}
@@ -633,7 +671,7 @@ func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 
 // AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.basePhysicalPlan.AppendChildCandidate(op)
+	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.tablePlan != nil {
 		appendChildCandidate(p, p.tablePlan, op)
 	}
@@ -1106,7 +1144,7 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfBool*2
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfBool*2
 	for _, expr := range p.Exprs {
 		sum += expr.MemoryUsage()
 	}
@@ -1115,7 +1153,7 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
 	ByItems     []*util.ByItems
 	PartitionBy []property.SortItem
@@ -1133,11 +1171,11 @@ func (lt *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned := new(PhysicalTopN)
 	*cloned = *lt
 	cloned.SetSCtx(newCtx)
-	base, err := lt.basePhysicalPlan.cloneWithSelf(newCtx, cloned)
+	base, err := lt.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.BasePhysicalPlan = *base
 	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
@@ -1164,7 +1202,7 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = lt.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -1182,6 +1220,11 @@ type PhysicalApply struct {
 	Concurrency int
 	OuterSchema []*expression.CorrelatedColumn
 }
+
+// PhysicalJoinImplement has an extra bool return value compared with PhysicalJoin interface.
+// This will override basePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
+// base.PhysicalJoin interface.
+func (*PhysicalApply) PhysicalJoinImplement() bool { return false }
 
 // Clone implements op.PhysicalPlan interface.
 func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
@@ -1205,7 +1248,7 @@ func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
-		if la.children[0].Schema().Contains(&corCols[i].Column) {
+		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}
@@ -1224,6 +1267,15 @@ func (la *PhysicalApply) MemoryUsage() (sum int64) {
 		sum += corrCol.MemoryUsage()
 	}
 	return
+}
+
+// PhysicalJoin provides some common methods for join operators.
+// Note that PhysicalApply is deliberately excluded from this interface.
+type PhysicalJoin interface {
+	base.PhysicalPlan
+	PhysicalJoinImplement()
+	getInnerChildIdx() int
+	GetJoinType() JoinType
 }
 
 type basePhysicalJoin struct {
@@ -1251,14 +1303,21 @@ type basePhysicalJoin struct {
 	RightNAJoinKeys []*expression.Column
 }
 
+func (p *basePhysicalJoin) GetJoinType() JoinType {
+	return p.JoinType
+}
+
+// PhysicalJoinImplement implements base.PhysicalJoin interface.
+func (*basePhysicalJoin) PhysicalJoinImplement() {}
+
 func (p *basePhysicalJoin) getInnerChildIdx() int {
 	return p.InnerChildIdx
 }
 
 func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, bool) {
 	cloned := new(basePhysicalJoin)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
-	if err != nil {
+	base, ok := p.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *base
@@ -1513,7 +1572,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
-	innerTask base.Task
+	innerPlan base.PhysicalPlan
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges ranger.MutableRanges
@@ -1543,8 +1602,8 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 
 	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
 		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
-	if p.innerTask != nil {
-		sum += p.innerTask.MemoryUsage()
+	if p.innerPlan != nil {
+		sum += p.innerPlan.MemoryUsage()
 	}
 	if p.CompareFilters != nil {
 		sum += p.CompareFilters.MemoryUsage()
@@ -1625,7 +1684,7 @@ func (p *PhysicalMergeJoin) MemoryUsage() (sum int64) {
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.
 type PhysicalExchangeReceiver struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
 	Tasks []*kv.MPPTask
 	frags []*Fragment
@@ -1637,11 +1696,11 @@ type PhysicalExchangeReceiver struct {
 func (p *PhysicalExchangeReceiver) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	np := new(PhysicalExchangeReceiver)
 	np.SetSCtx(newCtx)
-	base, err := p.basePhysicalPlan.cloneWithSelf(newCtx, np)
+	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	np.basePhysicalPlan = *base
+	np.BasePhysicalPlan = *base
 
 	np.IsCTEReader = p.IsCTEReader
 	return np, nil
@@ -1649,7 +1708,7 @@ func (p *PhysicalExchangeReceiver) Clone(newCtx base.PlanContext) (base.Physical
 
 // GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
 func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
-	return p.children[0].(*PhysicalExchangeSender)
+	return p.Children()[0].(*PhysicalExchangeSender)
 }
 
 // MemoryUsage return the memory usage of PhysicalExchangeReceiver
@@ -1658,7 +1717,7 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(p.Tasks)+cap(p.frags))*size.SizeOfPointer
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(p.Tasks)+cap(p.frags))*size.SizeOfPointer
 	for _, frag := range p.frags {
 		sum += frag.MemoryUsage()
 	}
@@ -1686,8 +1745,8 @@ type PhysicalExpand struct {
 
 // Init only assigns type and context.
 func (p PhysicalExpand) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
-	p.childrenReqProps = props
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
 	return &p
 }
@@ -1751,7 +1810,7 @@ func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing.
 type PhysicalExchangeSender struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
 	TargetTasks          []*kv.MPPTask
 	TargetCTEReaderTasks [][]*kv.MPPTask
@@ -1766,11 +1825,11 @@ type PhysicalExchangeSender struct {
 func (p *PhysicalExchangeSender) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	np := new(PhysicalExchangeSender)
 	np.SetSCtx(newCtx)
-	base, err := p.basePhysicalPlan.cloneWithSelf(newCtx, np)
+	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	np.basePhysicalPlan = *base
+	np.BasePhysicalPlan = *base
 	np.ExchangeType = p.ExchangeType
 	np.HashCols = p.HashCols
 	np.CompressionMode = p.CompressionMode
@@ -1783,7 +1842,7 @@ func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 +
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 +
 		int64(cap(p.TargetTasks)+cap(p.HashCols)+cap(p.Tasks))*size.SizeOfPointer
 	for _, hCol := range p.HashCols {
 		sum += hCol.MemoryUsage()
@@ -1807,9 +1866,9 @@ func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
 type PhysicalLock struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
-	Lock *ast.SelectLockInfo
+	Lock *ast.SelectLockInfo `plan-cache-clone:"shallow"`
 
 	TblID2Handle       map[int64][]util.HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
@@ -1821,7 +1880,7 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = pl.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer + size.SizeOfMap*2
+	sum = pl.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer + size.SizeOfMap*2
 	if pl.Lock != nil {
 		sum += int64(unsafe.Sizeof(ast.SelectLockInfo{}))
 	}
@@ -1943,8 +2002,8 @@ func (p *basePhysicalAgg) IsFinalAgg() bool {
 
 func (p *basePhysicalAgg) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, bool) {
 	cloned := new(basePhysicalAgg)
-	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, newSelf)
-	if err != nil {
+	base, ok := p.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *base
@@ -2042,6 +2101,7 @@ func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
+	tiflashPreAggMode string
 }
 
 func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
@@ -2057,6 +2117,7 @@ func (p *PhysicalHashAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, err
 		return nil, err
 	}
 	cloned.basePhysicalAgg = *base
+	cloned.tiflashPreAggMode = p.tiflashPreAggMode
 	return cloned, nil
 }
 
@@ -2120,7 +2181,7 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
 type PhysicalSort struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
 	ByItems []*util.ByItems
 	// whether this operator only need to sort the data of one partition.
@@ -2133,11 +2194,11 @@ func (ls *PhysicalSort) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned := new(PhysicalSort)
 	cloned.SetSCtx(newCtx)
 	cloned.IsPartialSort = ls.IsPartialSort
-	base, err := ls.basePhysicalPlan.cloneWithSelf(newCtx, cloned)
+	base, err := ls.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.BasePhysicalPlan = *base
 	for _, it := range ls.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
 	}
@@ -2159,7 +2220,7 @@ func (ls *PhysicalSort) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = ls.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ls.ByItems))*size.SizeOfPointer +
+	sum = ls.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ls.ByItems))*size.SizeOfPointer +
 		size.SizeOfBool
 	for _, byItem := range ls.ByItems {
 		sum += byItem.MemoryUsage()
@@ -2170,7 +2231,7 @@ func (ls *PhysicalSort) MemoryUsage() (sum int64) {
 // NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
 	// These two fields are used to switch ScalarFunctions to Constants. For these
 	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
@@ -2185,7 +2246,7 @@ func (ns *NominalSort) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = ns.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ns.ByItems))*size.SizeOfPointer +
+	sum = ns.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ns.ByItems))*size.SizeOfPointer +
 		size.SizeOfBool
 	for _, byItem := range ns.ByItems {
 		sum += byItem.MemoryUsage()
@@ -2195,7 +2256,7 @@ func (ns *NominalSort) MemoryUsage() (sum int64) {
 
 // PhysicalUnionScan represents a union scan operator.
 type PhysicalUnionScan struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
 	Conditions []expression.Expression
 
@@ -2217,7 +2278,7 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice
 	if p.HandleCols != nil {
 		sum += p.HandleCols.MemoryUsage()
 	}
@@ -2242,7 +2303,7 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 
 // PhysicalSelection represents a filter.
 type PhysicalSelection struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
 	Conditions []expression.Expression
 
@@ -2263,11 +2324,11 @@ type PhysicalSelection struct {
 func (p *PhysicalSelection) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalSelection)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalPlan.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.BasePhysicalPlan = *base
 	cloned.Conditions = util.CloneExprs(p.Conditions)
 	return cloned, nil
 }
@@ -2287,7 +2348,7 @@ func (p *PhysicalSelection) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfBool
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfBool
 	for _, expr := range p.Conditions {
 		sum += expr.MemoryUsage()
 	}
@@ -2296,18 +2357,18 @@ func (p *PhysicalSelection) MemoryUsage() (sum int64) {
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 }
 
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalMaxOneRow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalMaxOneRow)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalPlan.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.BasePhysicalPlan = *base
 	return cloned, nil
 }
 
@@ -2317,7 +2378,7 @@ func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
 		return
 	}
 
-	return p.basePhysicalPlan.MemoryUsage()
+	return p.BasePhysicalPlan.MemoryUsage()
 }
 
 // PhysicalTableDual is the physical operator of dual.
@@ -2361,7 +2422,7 @@ type PhysicalWindow struct {
 	WindowFuncDescs []*aggregation.WindowFuncDesc
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
-	Frame           *WindowFrame
+	Frame           *logicalop.WindowFrame
 
 	// on which store the window function executes.
 	storeTp kv.StoreType
@@ -2452,7 +2513,7 @@ func (p *PhysicalWindow) MemoryUsage() (sum int64) {
 //	  ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
 //	  ==> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 
 	Concurrency int
 	Tails       []base.PhysicalPlan
@@ -2468,7 +2529,7 @@ func (p *PhysicalShuffle) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + size.SizeOfInt*2 + size.SizeOfSlice*(3+int64(cap(p.ByItemArrays))) +
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfInt*2 + size.SizeOfSlice*(3+int64(cap(p.ByItemArrays))) +
 		int64(cap(p.Tails)+cap(p.DataSources))*size.SizeOfInterface
 
 	for _, plan := range p.Tails {
@@ -2547,7 +2608,7 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 type PhysicalShow struct {
 	physicalSchemaProducer
 
-	ShowContents
+	logicalop.ShowContents
 
 	Extractor base.ShowPredicateExtractor
 }

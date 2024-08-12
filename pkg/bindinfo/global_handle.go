@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
@@ -109,7 +110,7 @@ type GlobalBindingHandle interface {
 
 // globalBindingHandle is used to handle all global sql bind operations.
 type globalBindingHandle struct {
-	sPool SessionPool
+	sPool util.SessionPool
 
 	fuzzyBindingCache atomic.Value
 
@@ -149,7 +150,7 @@ const (
 )
 
 // NewGlobalBindingHandle creates a new GlobalBindingHandle.
-func NewGlobalBindingHandle(sPool SessionPool) GlobalBindingHandle {
+func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
 	handle := &globalBindingHandle{sPool: sPool}
 	handle.Reset()
 	return handle

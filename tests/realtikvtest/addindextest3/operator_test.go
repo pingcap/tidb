@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sync/errgroup"
 )
 
 func init() {
@@ -61,7 +61,7 @@ func TestBackfillOperators(t *testing.T) {
 		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey, nil)
-		sink := newTestSink[ddl.TableScanTask]()
+		sink := testutil.NewOperatorTestSink[ddl.TableScanTask]()
 
 		operator.Compose[ddl.TableScanTask](src, sink)
 
@@ -71,7 +71,7 @@ func TestBackfillOperators(t *testing.T) {
 		err = pipeline.Close()
 		require.NoError(t, err)
 
-		tasks := sink.collect()
+		tasks := sink.Collect()
 		require.Len(t, tasks, 10)
 		require.Equal(t, 1, tasks[0].ID)
 		require.Equal(t, startKey, tasks[0].Start)
@@ -94,9 +94,9 @@ func TestBackfillOperators(t *testing.T) {
 
 		ctx := context.Background()
 		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-		src := newTestSource(opTasks...)
+		src := testutil.NewOperatorTestSource(opTasks...)
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil)
-		sink := newTestSink[ddl.IndexRecordChunk]()
+		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
 		operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
@@ -107,7 +107,7 @@ func TestBackfillOperators(t *testing.T) {
 		err = pipeline.Close()
 		require.NoError(t, err)
 
-		results := sink.collect()
+		results := sink.Collect()
 		cnt := 0
 		for _, rs := range results {
 			require.NoError(t, rs.Err)
@@ -140,12 +140,12 @@ func TestBackfillOperators(t *testing.T) {
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		mockEngine.SetHook(onWrite)
 
-		src := newTestSource(chunkResults...)
+		src := testutil.NewOperatorTestSource(chunkResults...)
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
 			opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
 			srcChkPool, 3, reorgMeta, nil, &ddl.EmptyRowCntListener{})
-		sink := newTestSink[ddl.IndexWriteResult]()
+		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
 		operator.Compose[ddl.IndexWriteResult](ingestOp, sink)
@@ -156,7 +156,7 @@ func TestBackfillOperators(t *testing.T) {
 		err = pipeline.Close()
 		require.NoError(t, err)
 
-		results := sink.collect()
+		results := sink.Collect()
 		cnt := 0
 		for _, rs := range results {
 			cnt += rs.Added
@@ -367,78 +367,4 @@ func (p *sessPoolForTest) Get() (sessionctx.Context, error) {
 
 func (p *sessPoolForTest) Put(sctx sessionctx.Context) {
 	p.pool.Put(sctx.(pools.Resource))
-}
-
-type testSink[T any] struct {
-	errGroup  errgroup.Group
-	ch        chan T
-	collected []T
-}
-
-func newTestSink[T any]() *testSink[T] {
-	return &testSink[T]{
-		ch: make(chan T),
-	}
-}
-
-func (s *testSink[T]) Open() error {
-	s.errGroup.Go(func() error {
-		for data := range s.ch {
-			s.collected = append(s.collected, data)
-		}
-		return nil
-	})
-	return nil
-}
-
-func (s *testSink[T]) Close() error {
-	return s.errGroup.Wait()
-}
-
-func (s *testSink[T]) SetSource(dataCh operator.DataChannel[T]) {
-	s.ch = dataCh.Channel()
-}
-
-func (s *testSink[T]) String() string {
-	return "testSink"
-}
-
-func (s *testSink[T]) collect() []T {
-	return s.collected
-}
-
-type testSource[T any] struct {
-	errGroup errgroup.Group
-	ch       chan T
-	toBeSent []T
-}
-
-func newTestSource[T any](toBeSent ...T) *testSource[T] {
-	return &testSource[T]{
-		ch:       make(chan T),
-		toBeSent: toBeSent,
-	}
-}
-
-func (s *testSource[T]) SetSink(sink operator.DataChannel[T]) {
-	s.ch = sink.Channel()
-}
-
-func (s *testSource[T]) Open() error {
-	s.errGroup.Go(func() error {
-		for _, data := range s.toBeSent {
-			s.ch <- data
-		}
-		close(s.ch)
-		return nil
-	})
-	return nil
-}
-
-func (s *testSource[T]) Close() error {
-	return s.errGroup.Wait()
-}
-
-func (s *testSource[T]) String() string {
-	return "testSource"
 }

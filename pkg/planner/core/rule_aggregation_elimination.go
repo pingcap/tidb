@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-type aggregationEliminator struct {
+// AggregationEliminator is used to eliminate aggregation grouped by unique key.
+type AggregationEliminator struct {
 	aggregationEliminateChecker
 }
 
@@ -49,7 +51,7 @@ type aggregationEliminateChecker struct {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *LogicalProjection {
+func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *logicalop.LogicalProjection {
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
 		// arguments it accepts are promised to be NOT-NULL.
@@ -130,7 +132,7 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregati
 	}
 }
 
-func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *LogicalProjection, uniqueKey expression.KeyInfo, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *logicalop.LogicalProjection, uniqueKey expression.KeyInfo, opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
 	}
@@ -181,8 +183,8 @@ func CheckCanConvertAggToProj(agg *LogicalAggregation) bool {
 }
 
 // ConvertAggToProj convert aggregation to projection.
-func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool, *LogicalProjection) {
-	proj := LogicalProjection{
+func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool, *logicalop.LogicalProjection) {
+	proj := logicalop.LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, fun := range agg.AggFuncs {
@@ -255,11 +257,12 @@ func wrapCastFunction(ctx expression.BuildContext, arg expression.Expression, ta
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
-func (a *aggregationEliminator) optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, planChanged, err := a.optimize(ctx, child, opt)
+		newChild, planChanged, err := a.Optimize(ctx, child, opt)
 		if err != nil {
 			return nil, planChanged, err
 		}
@@ -277,6 +280,7 @@ func (a *aggregationEliminator) optimize(ctx context.Context, p base.LogicalPlan
 	return p, planChanged, nil
 }
 
-func (*aggregationEliminator) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (*AggregationEliminator) Name() string {
 	return "aggregation_eliminate"
 }

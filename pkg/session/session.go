@@ -619,7 +619,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
 		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
 		tableOrPartitionID := tablecodec.DecodeTableID(key)
-		tbl, ok := infoSchema.TableByID(tableOrPartitionID)
+		tbl, ok := infoSchema.TableByID(ctx, tableOrPartitionID)
 		if !ok {
 			tbl, _, _ = infoSchema.FindTableByPartitionID(tableOrPartitionID)
 		}
@@ -885,7 +885,7 @@ func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enh
 		return "", false
 	}
 	var tableName string
-	tbl, ok := is.TableByID(tableID)
+	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		tableName = "unknown"
 	} else {
@@ -1163,12 +1163,7 @@ func sqlForLog(sql string) string {
 	return executor.QueryReplacer.Replace(sql)
 }
 
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
-func (s *session) sysSessionPool() sessionPool {
+func (s *session) sysSessionPool() util.SessionPool {
 	return domain.GetDomain(s).SysSessionPool()
 }
 
@@ -2383,6 +2378,10 @@ func (rs *execStmtResult) Close() error {
 }
 
 func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
+	// If `TryDetach` is called, the connection must have set `mysql.ServerStatusCursorExists`, or
+	// the `StatementContext` will be re-used and cause data race.
+	intest.Assert(rs.se.GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists))
+
 	if !rs.sql.IsReadOnly(rs.se.GetSessionVars()) {
 		return nil, false, nil
 	}
@@ -3221,12 +3220,7 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 		targetTables = BackfillTables
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		var t *meta.Meta
-		if variable.EnableFastCreateTable.Load() {
-			t = meta.NewMeta(txn, meta.WithUpdateTableName())
-		} else {
-			t = meta.NewMeta(txn)
-		}
+		t := meta.NewMeta(txn)
 		tableVer, err := t.CheckDDLTableVersion()
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
@@ -3261,7 +3255,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = tbl.id
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, "", tblInfo)
+		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3272,12 +3266,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		var t *meta.Meta
-		if variable.EnableFastCreateTable.Load() {
-			t = meta.NewMeta(txn, meta.WithUpdateTableName())
-		} else {
-			t = meta.NewMeta(txn)
-		}
+		t := meta.NewMeta(txn)
 		ver, err := t.CheckDDLTableVersion()
 		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
@@ -3299,7 +3288,7 @@ func InitMDLTable(store kv.Storage) error {
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = ddl.MDLTableID
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, "", tblInfo)
+		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3404,6 +3393,18 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(store, createSessions4DistExecution)
 }
 
+// bootstrapSessionImpl bootstraps session and domain.
+// the process works as follows:
+// - if we haven't bootstrapped to the target version
+//   - create/init/start domain
+//   - bootstrap or upgrade, some variables will be initialized and stored to system
+//     table in the process, such as system time-zone
+//   - close domain
+//
+// - create/init another domain
+// - initialization global variables from system table that's required to use sessionCtx,
+// such as system time zone
+// - start domain and other routines.
 func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
@@ -3487,10 +3488,16 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		return nil, err
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
+
+	// only start the domain after we have initialized some global variables.
+	dom := domain.GetDomain(ses[0])
+	err = dom.Start()
+	if err != nil {
+		return nil, err
+	}
+
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ses[0])
-
-	dom := domain.GetDomain(ses[0])
 
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
@@ -3602,8 +3609,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	}
 
 	// init the instance plan cache
-	// TODO: introduce 2 new variable to control these 2 mem limits.
-	dom.InitInstancePlanCache(1000000, 1000000)
+	dom.InitInstancePlanCache()
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
@@ -3667,6 +3673,13 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	dom := domain.GetDomain(s)
+	err = dom.Start()
+	if err != nil {
+		// Bootstrap fail will cause program exit.
+		logutil.BgLogger().Fatal("start domain error", zap.Error(err))
+	}
+
 	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
@@ -3675,7 +3688,6 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
 
-	dom := domain.GetDomain(s)
 	dom.Close()
 	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
@@ -4144,7 +4156,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				tableName = tblInfo.Meta().Name.String()
 				partitionName = partInfo.Name.String()
 			} else {
-				tblInfo, _ := is.TableByID(physicalTableID)
+				tblInfo, _ := is.TableByID(s.currentCtx, physicalTableID)
 				tableName = tblInfo.Meta().Name.String()
 			}
 			bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)

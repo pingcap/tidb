@@ -76,12 +76,9 @@ go_test(
     shard_count = 20,
     deps = [
         "//pkg/config",
-        "//pkg/ddl",
         "//pkg/ddl/ingest/testutil",
         "//pkg/ddl/session",
         "//pkg/ddl/testutil",
-        "//pkg/ddl/util/callback",
-        "//pkg/domain",
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/testkit",

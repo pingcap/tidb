@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -36,7 +37,9 @@ type MutableRanges interface {
 	// Range returns the underlying range values.
 	Range() Ranges
 	// Rebuild rebuilds the underlying ranges again.
-	Rebuild() error
+	Rebuild(sctx context.PlanContext) error
+	// CloneForPlanCache clones the MutableRanges for plan cache.
+	CloneForPlanCache() MutableRanges
 }
 
 // Ranges implements the MutableRanges interface for range array.
@@ -48,8 +51,20 @@ func (rs Ranges) Range() Ranges {
 }
 
 // Rebuild rebuilds this range.
-func (Ranges) Rebuild() error {
+func (Ranges) Rebuild(context.PlanContext) error {
 	return nil
+}
+
+// CloneForPlanCache clones the MutableRanges for plan cache.
+func (rs Ranges) CloneForPlanCache() MutableRanges {
+	if rs == nil {
+		return nil
+	}
+	cloned := make([]*Range, 0, len(rs))
+	for _, r := range rs {
+		cloned = append(cloned, r.Clone())
+	}
+	return Ranges(cloned)
 }
 
 // MemUsage gets the memory usage of ranges.
