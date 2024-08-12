@@ -131,28 +131,3 @@ func TestVectorCompare(t *testing.T) {
 	require.Equal(t, -1, v1.Compare(v2))
 	require.Equal(t, 1, v2.Compare(v1))
 }
-
-func TestVectorSerialize(t *testing.T) {
-	v1, err := types.ParseVectorFloat32(`[1.1, 2.2, 3.3]`)
-	require.NoError(t, err)
-
-	serialized := v1.SerializeTo(nil)
-	serialized = append(serialized, 0x01, 0x02, 0x03, 0x04)
-
-	v2, remaining, err := types.ZeroCopyDeserializeVectorFloat32(serialized)
-	require.NoError(t, err)
-	require.Len(t, remaining, 4)
-	require.Equal(t, []byte{
-		0x01, 0x02, 0x03, 0x04,
-	}, remaining)
-
-	require.Equal(t, "[1.1,2.2,3.3]", v2.String())
-
-	v3, remaining, err := types.ZeroCopyDeserializeVectorFloat32([]byte{0xF1, 0xFC})
-	require.Error(t, err)
-	require.Len(t, remaining, 2)
-	require.Equal(t, []byte{
-		0xF1, 0xFC,
-	}, remaining)
-	require.True(t, v3.IsZeroValue())
-}

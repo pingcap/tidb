@@ -591,11 +591,11 @@ type firstRow4VectorFloat32 struct {
 	baseAggFunc
 }
 
-func (e *firstRow4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowVectorFloat32)), DefPartialResult4FirstRowVectorFloat32Size
 }
 
-func (e *firstRow4VectorFloat32) ResetPartialResult(pr PartialResult) {
+func (*firstRow4VectorFloat32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowVectorFloat32)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }

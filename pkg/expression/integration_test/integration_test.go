@@ -60,48 +60,50 @@ import (
 func TestVectorColumnInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test;")
+	tk.MustExec("use test;")
 
 	// Create vector type column without specified dimension.
 	tk.MustExec("create table t(embedding VECTOR)")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(embedding VECTOR<FLOAT>)")
 
 	// SHOW CREATE TABLE
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
-			"  `embedding` vector DEFAULT NULL\n" +
+			"  `embedding` vector<float> DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// SHOW COLUMNS
 	tk.MustQuery("show columns from t").Check(testkit.Rows(
-		"embedding vector YES  <nil> ",
+		"embedding vector<float> YES  <nil> ",
 	))
 
 	// Create vector type column with specified dimension.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(embedding VECTOR(3))")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(embedding VECTOR(3))")
+	tk.MustExec("create table t(embedding VECTOR<float>(3))")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(embedding VECTOR(0))")
+	tk.MustExec("create table t(embedding VECTOR<float>(0))")
 
 	// SHOW CREATE TABLE
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(embedding VECTOR(3))")
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
-			"  `embedding` vector(3) DEFAULT NULL\n" +
+			"  `embedding` vector<float>(3) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// SHOW COLUMNS
 	tk.MustQuery("show columns from t").Check(testkit.Rows(
-		"embedding vector(3) YES  <nil> ",
+		"embedding vector<float>(3) YES  <nil> ",
 	))
 
 	// INFORMATION_SCHEMA.COLUMNS
 	tk.MustQuery("SELECT data_type, column_type FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
-		"vector vector(3)",
+		"vector<float> vector<float>(3)",
 	))
 
 	// Vector dimension MUST be equal or less than 16383.
@@ -276,15 +278,15 @@ func TestVectorConversion(t *testing.T) {
 
 	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR);").Check(testkit.Rows("[1,2,3]"))
 	tk.MustQuery("SELECT CAST('[]' AS VECTOR);").Check(testkit.Rows("[]"))
-	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR);").Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>);").Check(testkit.Rows("[1,2,3]"))
 	tk.MustContainErrMsg("SELECT CAST('[1,2,3]' AS VECTOR<DOUBLE>);", "Only VECTOR is supported for now")
 
-	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR(3));").Check(testkit.Rows("[1,2,3]"))
-	err := tk.QueryToErr("SELECT CAST('[1,2,3]' AS VECTOR(2));")
+	tk.MustQuery("SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>(3));").Check(testkit.Rows("[1,2,3]"))
+	err := tk.QueryToErr("SELECT CAST('[1,2,3]' AS VECTOR<FLOAT>(2));")
 	require.EqualError(t, err, "vector has 3 dimensions, does not fit VECTOR(2)")
 
-	tk.MustQuery("SELECT CAST(VEC_FROM_TEXT('[1,2,3]') AS VECTOR(3));").Check(testkit.Rows("[1,2,3]"))
-	err = tk.QueryToErr("SELECT CAST(VEC_FROM_TEXT('[1,2,3]') AS VECTOR(2));")
+	tk.MustQuery("SELECT CAST(VEC_FROM_TEXT('[1,2,3]') AS VECTOR<FLOAT>(3));").Check(testkit.Rows("[1,2,3]"))
+	err = tk.QueryToErr("SELECT CAST(VEC_FROM_TEXT('[1,2,3]') AS VECTOR<FLOAT>(2));")
 	require.EqualError(t, err, "vector has 3 dimensions, does not fit VECTOR(2)")
 
 	// CONVERT
@@ -304,15 +306,15 @@ func TestVectorConversion(t *testing.T) {
 
 	tk.MustQuery("SELECT CONVERT('[1,2,3]', VECTOR);").Check(testkit.Rows("[1,2,3]"))
 	tk.MustQuery("SELECT CONVERT('[]', VECTOR);").Check(testkit.Rows("[]"))
-	tk.MustQuery("SELECT CONVERT('[1,2,3]', VECTOR);").Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery("SELECT CONVERT('[1,2,3]', VECTOR<FLOAT>);").Check(testkit.Rows("[1,2,3]"))
 	tk.MustContainErrMsg("SELECT CONVERT('[1,2,3]', VECTOR<DOUBLE>);", "Only VECTOR is supported for now")
 
-	tk.MustQuery("SELECT CONVERT('[1,2,3]', VECTOR(3));").Check(testkit.Rows("[1,2,3]"))
-	err = tk.QueryToErr("SELECT CONVERT('[1,2,3]', VECTOR(2));")
+	tk.MustQuery("SELECT CONVERT('[1,2,3]', VECTOR<FLOAT>(3));").Check(testkit.Rows("[1,2,3]"))
+	err = tk.QueryToErr("SELECT CONVERT('[1,2,3]', VECTOR<FLOAT>(2));")
 	require.EqualError(t, err, "vector has 3 dimensions, does not fit VECTOR(2)")
 
-	tk.MustQuery("SELECT CONVERT(VEC_FROM_TEXT('[1,2,3]'), VECTOR(3));").Check(testkit.Rows("[1,2,3]"))
-	err = tk.QueryToErr("SELECT CONVERT(VEC_FROM_TEXT('[1,2,3]'), VECTOR(2));")
+	tk.MustQuery("SELECT CONVERT(VEC_FROM_TEXT('[1,2,3]'), VECTOR<FLOAT>(3));").Check(testkit.Rows("[1,2,3]"))
+	err = tk.QueryToErr("SELECT CONVERT(VEC_FROM_TEXT('[1,2,3]'), VECTOR<FLOAT>(2));")
 	require.EqualError(t, err, "vector has 3 dimensions, does not fit VECTOR(2)")
 }
 
