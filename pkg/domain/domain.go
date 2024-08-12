@@ -3191,8 +3191,12 @@ func (do *Domain) planCacheEvictTrigger() {
 		select {
 		case <-ticker.C:
 			// trigger the eviction
+			begin := time.Now()
 			numEvicted := do.instancePlanCache.Evict()
 			metrics2.GetPlanCacheInstanceEvict().Set(float64(numEvicted))
+			logutil.BgLogger().Info("instance plan eviction",
+				zap.Int64("num_evicted", int64(numEvicted)),
+				zap.Duration("time_spent", time.Since(begin)))
 		case <-do.exit:
 			return
 		}
