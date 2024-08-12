@@ -180,6 +180,7 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 		strings.Contains(sql, "slow_query") ||
 		strings.Contains(sql, "cluster_config") ||
 		strings.Contains(sql, "CLUSTER_LOAD") ||
+		strings.Contains(sql, "STATEMENTS_SUMMARY_EVICTED") ||
 		strings.Contains(sql, "TIDB_TRX") {
 		return rs1
 	}
