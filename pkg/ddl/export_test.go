@@ -12,59 +12,59 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
 	"context"
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-type resultChanForTest struct {
-	ch chan IndexRecordChunk
-}
-
-func (r *resultChanForTest) AddTask(rs IndexRecordChunk) {
-	r.ch <- rs
-}
-
 func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
-	batchSize int) *chunk.Chunk {
-	variable.SetDDLReorgBatchSize(int32(batchSize))
-	task := &reorgBackfillTask{
-		id:            1,
-		startKey:      startKey,
-		endKey:        endKey,
-		physicalTable: tbl,
-	}
-	taskCh := make(chan *reorgBackfillTask, 5)
-	resultCh := make(chan IndexRecordChunk, 5)
+	batchSize int) (*chunk.Chunk, error) {
 	resPool := pools.NewResourcePool(func() (pools.Resource, error) {
 		ctx := mock.NewContext()
 		ctx.Store = store
 		return ctx, nil
 	}, 8, 8, 0)
 	sessPool := session.NewSessionPool(resPool)
-	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, sessPool, nil)
-	pool.chunkSender = &resultChanForTest{ch: resultCh}
-	pool.adjustSize(1)
-	pool.tasksCh <- task
-	rs := <-resultCh
-	close(taskCh)
-	pool.close(false)
-	sessPool.Close()
-	return rs.Chunk
+	srcChkPool := make(chan *chunk.Chunk, 10)
+	for i := 0; i < 10; i++ {
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+	}
+	opCtx := ddl.NewLocalOperatorCtx(context.Background(), 1)
+	src := testutil.NewOperatorTestSource(ddl.TableScanTask{1, startKey, endKey})
+	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil)
+	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
+
+	operator.Compose[ddl.TableScanTask](src, scanOp)
+	operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
+
+	pipeline := operator.NewAsyncPipeline(src, scanOp, sink)
+	err := pipeline.Execute()
+	if err != nil {
+		return nil, err
+	}
+	err = pipeline.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	results := sink.Collect()
+	return results[0].Chunk, nil
 }
 
 func ConvertRowToHandleAndIndexDatum(
@@ -72,14 +72,8 @@ func ConvertRowToHandleAndIndexDatum(
 	handleDataBuf, idxDataBuf []types.Datum,
 	row chunk.Row, copCtx copr.CopContext, idxID int64) (kv.Handle, []types.Datum, error) {
 	c := copCtx.GetBase()
-	idxData := extractDatumByOffsets(ctx, row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
-	handleData := extractDatumByOffsets(ctx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
-	handle, err := buildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, time.Local, errctx.StrictNoWarningContext)
+	idxData := ddl.ExtractDatumByOffsets(ctx, row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
+	handleData := ddl.ExtractDatumByOffsets(ctx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+	handle, err := ddl.BuildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, time.Local, errctx.StrictNoWarningContext)
 	return handle, idxData, err
 }
-
-// ExtractDatumByOffsetsForTest is used for test.
-var ExtractDatumByOffsetsForTest = extractDatumByOffsets
-
-// CalculateRegionBatchForTest is used for test.
-var CalculateRegionBatchForTest = calculateRegionBatch

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -307,7 +308,7 @@ func (s *Simple) MemoryUsage() (sum int64) {
 //
 //	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 	Inner Simple
 }
 
@@ -317,7 +318,7 @@ func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
 	return
 }
 

@@ -174,7 +174,9 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 		}
 	}()
 	rs1 := tk.MustQueryWithContext(context.Background(), sql, args...)
-	if !strings.Contains(sql, "information_schema") || strings.Contains(sql, "statements_summary") ||
+	if !strings.Contains(sql, "information_schema") ||
+		strings.Contains(sql, "trace") ||
+		strings.Contains(sql, "statements_summary") ||
 		strings.Contains(sql, "slow_query") ||
 		strings.Contains(sql, "cluster_config") ||
 		strings.Contains(sql, "TIDB_TRX") {

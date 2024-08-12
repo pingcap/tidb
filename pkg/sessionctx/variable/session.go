@@ -2765,6 +2765,8 @@ func (s *SessionVars) GetDivPrecisionIncrement() int {
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
 	if tblInfo.TempTableType != model.TempTableNone {
+		s.TxnCtxMu.Lock()
+		defer s.TxnCtxMu.Unlock()
 		if s.TxnCtx.TemporaryTables == nil {
 			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}

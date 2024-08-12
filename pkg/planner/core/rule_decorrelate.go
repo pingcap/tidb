@@ -137,7 +137,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 			appendApplySimplifiedTraceStep(apply, join, opt)
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
-		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
+		} else if sel, ok := innerPlan.(*logicalop.LogicalSelection); ok {
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
@@ -166,7 +166,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 					break
 				}
 			}
-			if allConst && apply.JoinType == LeftOuterJoin {
+			if allConst && apply.JoinType == logicalop.LeftOuterJoin {
 				// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
 				//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
 				//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
@@ -198,7 +198,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 
 			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
-			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
+			if apply.JoinType != logicalop.SemiJoin && apply.JoinType != logicalop.LeftOuterSemiJoin && apply.JoinType != logicalop.AntiSemiJoin && apply.JoinType != logicalop.AntiLeftOuterSemiJoin {
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
@@ -216,7 +216,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
 			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
 			// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
-			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
+			if apply.JoinType != logicalop.SemiJoin && apply.JoinType != logicalop.LeftOuterSemiJoin && apply.JoinType != logicalop.AntiSemiJoin && apply.JoinType != logicalop.AntiLeftOuterSemiJoin {
 				goto NoOptimize
 			}
 			// If subquery has some filter condition, we will not optimize limit.
@@ -233,7 +233,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.CanPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.Children()[0]
-				apply.JoinType = LeftOuterJoin
+				apply.JoinType = logicalop.LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
@@ -290,7 +290,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
 			// the equal conditions contain the correlated column of this apply.
-			if sel, ok := agg.Children()[0].(*LogicalSelection); ok && apply.JoinType == LeftOuterJoin {
+			if sel, ok := agg.Children()[0].(*logicalop.LogicalSelection); ok && apply.JoinType == logicalop.LeftOuterJoin {
 				var (
 					eqCondWithCorCol []*expression.ScalarFunction
 					remainedExpr     []expression.Expression
@@ -393,7 +393,7 @@ func (*DecorrelateSolver) Name() string {
 	return "decorrelate"
 }
 
-func appendApplySimplifiedTraceStep(p *LogicalApply, j *LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
+func appendApplySimplifiedTraceStep(p *LogicalApply, j *logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v simplified into %v_%v", plancodec.TypeApply, p.ID(), plancodec.TypeJoin, j.ID())
 	}
@@ -403,7 +403,7 @@ func appendApplySimplifiedTraceStep(p *LogicalApply, j *LogicalJoin, opt *optimi
 	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
-func appendRemoveSelectionTraceStep(p base.LogicalPlan, s *LogicalSelection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveSelectionTraceStep(p base.LogicalPlan, s *logicalop.LogicalSelection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", s.TP(), s.ID())
 	}
@@ -470,7 +470,7 @@ func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *Logical
 	}
 	reason := func() string {
 		return fmt.Sprintf("%v_%v's functions haven't any group by items and %v_%v's join type isn't %v or %v, and hasn't any conditions",
-			agg.TP(), agg.ID(), p.TP(), p.ID(), InnerJoin.String(), LeftOuterJoin.String())
+			agg.TP(), agg.ID(), p.TP(), p.ID(), logicalop.InnerJoin.String(), logicalop.LeftOuterJoin.String())
 	}
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
@@ -485,7 +485,7 @@ func appendAddProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, 
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *LogicalAggregation, sel *LogicalSelection,
+func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *LogicalAggregation, sel *logicalop.LogicalSelection,
 	appendedGroupByCols *expression.Schema, appendedAggFuncs []*aggregation.AggFuncDesc,
 	eqCondWithCorCol []*expression.ScalarFunction, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := outerPlan.SCtx().GetExprCtx().GetEvalCtx()

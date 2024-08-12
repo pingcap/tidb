@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -488,11 +487,6 @@ func (*Checker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.Pol
 // Start implements the DDL interface.
 func (d *Checker) Start(ctxPool *pools.ResourcePool) error {
 	return d.realDDL.Start(ctxPool)
-}
-
-// GetLease implements the DDL interface.
-func (d *Checker) GetLease() time.Duration {
-	return d.realDDL.GetLease()
 }
 
 // Stats implements the DDL interface.

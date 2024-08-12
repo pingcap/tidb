@@ -1173,6 +1173,13 @@ type ExchangePartitionInfo struct {
 	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }
 
+// UpdateIndexInfo is to carry the entries in the list of indexes in UPDATE INDEXES
+// during ALTER TABLE t PARTITION BY ... UPDATE INDEXES (idx_a GLOBAL, idx_b LOCAL...)
+type UpdateIndexInfo struct {
+	IndexName string `json:"index_name"`
+	Global    bool   `json:"global"`
+}
+
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
 	Type    PartitionType `json:"type"`
@@ -1210,6 +1217,8 @@ type PartitionInfo struct {
 	DDLType    PartitionType `json:"ddl_type"`
 	DDLExpr    string        `json:"ddl_expr"`
 	DDLColumns []CIStr       `json:"ddl_columns"`
+	// For ActionAlterTablePartitioning, UPDATE INDEXES
+	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
 }
 
 // Clone clones itself.

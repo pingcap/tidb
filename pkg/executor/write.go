@@ -332,7 +332,7 @@ func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
 func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, tbl *model.TableInfo) error {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
+	pt, tableFound := is.TableByID(context.Background(), tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {
 		return errors.Errorf("exchange partition process table by id failed")
 	}

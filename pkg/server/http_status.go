@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/handler/ttlhandler"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
@@ -557,9 +558,15 @@ func (s *Server) SetCNChecker(tlsConfig *tls.Config) *tls.Config {
 
 // Status of TiDB.
 type Status struct {
-	Connections int    `json:"connections"`
-	Version     string `json:"version"`
-	GitHash     string `json:"git_hash"`
+	Connections int          `json:"connections"`
+	Version     string       `json:"version"`
+	GitHash     string       `json:"git_hash"`
+	Status      DetailStatus `json:"status"`
+}
+
+// DetailStatus is to show the detail status of TiDB. for example the init stats percentage.
+type DetailStatus struct {
+	InitStatsPercentage float64 `json:"init_stats_percentage"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -571,10 +578,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	initStatsPercentage := min(100, initstats.InitStatsPercentage.Load())
 	st := Status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
 		GitHash:     versioninfo.TiDBGitHash,
+		Status: DetailStatus{
+			InitStatsPercentage: initStatsPercentage,
+		},
 	}
 	js, err := json.Marshal(st)
 	if err != nil {

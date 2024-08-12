@@ -893,8 +893,9 @@ func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]stri
 }
 
 // Kill implements the SessionManager interface.
-func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
-	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))
+func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool) {
+	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID),
+		zap.Bool("query", query), zap.Bool("maxExecutionTime", maxExecutionTime), zap.Bool("runawayExceed", runaway))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
 	s.rwlock.RLock()
@@ -917,7 +918,7 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 			}
 		}
 	}
-	killQuery(conn, maxExecutionTime)
+	killQuery(conn, maxExecutionTime, runaway)
 }
 
 // UpdateTLSConfig implements the SessionManager interface.
@@ -930,9 +931,11 @@ func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
-func killQuery(conn *clientConn, maxExecutionTime bool) {
+func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	sessVars := conn.ctx.GetSessionVars()
-	if maxExecutionTime {
+	if runaway {
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.RunawayQueryExceeded)
+	} else if maxExecutionTime {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	} else {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
@@ -975,7 +978,7 @@ func (s *Server) KillAllConnections() {
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}
-		killQuery(conn, false)
+		killQuery(conn, false, false)
 	}
 
 	s.KillSysProcesses()
@@ -1129,6 +1132,6 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	}
 	s.rwlock.RUnlock()
 	for _, id := range connIDs {
-		s.Kill(id, false, false)
+		s.Kill(id, false, false, false)
 	}
 }

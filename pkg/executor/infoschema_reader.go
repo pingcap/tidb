@@ -86,6 +86,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var lowerPrimaryKeyName = strings.ToLower(mysql.PrimaryKeyName)
+
 type memtableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo
@@ -252,7 +254,7 @@ func getAutoIncrementID(
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 ) int64 {
-	tbl, ok := is.TableByID(tblInfo.ID)
+	tbl, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		return 0
 	}
@@ -1166,9 +1168,6 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			} else {
 				// needs to update needed partitions for partition table.
 				for _, pi := range table.GetPartitionInfo().Definitions {
-					if ex.Filter("partition_name", pi.Name.L) {
-						continue
-					}
 					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
 					if err != nil {
 						return err
@@ -1182,6 +1181,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			avgRowLength := uint64(0)
 			if rowCount != 0 {
 				avgRowLength = dataLength / rowCount
+			}
+			// If there are any condition on the `PARTITION_NAME` in the extractor, this record should be ignored
+			if len(ex.ColPredicates["partition_name"]) > 0 {
+				continue
 			}
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // TABLE_CATALOG
@@ -1814,28 +1817,26 @@ func (e *memtableRetriever) setDataForMetricTables() {
 func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
-		for _, col := range table.Columns {
-			if extractor != nil && extractor.Filter("constraint_name", infoschema.PrimaryConstraint) {
-				continue
-			}
-
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				record := types.MakeDatums(
-					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
-					schema.O,                     // CONSTRAINT_SCHEMA
-					infoschema.PrimaryConstraint, // CONSTRAINT_NAME
-					infoschema.CatalogVal,        // TABLE_CATALOG
-					schema.O,                     // TABLE_SCHEMA
-					table.Name.O,                 // TABLE_NAME
-					col.Name.O,                   // COLUMN_NAME
-					1,                            // ORDINAL_POSITION
-					1,                            // POSITION_IN_UNIQUE_CONSTRAINT
-					nil,                          // REFERENCED_TABLE_SCHEMA
-					nil,                          // REFERENCED_TABLE_NAME
-					nil,                          // REFERENCED_COLUMN_NAME
-				)
-				rows = append(rows, record)
-				break
+		if extractor == nil || !extractor.Filter("constraint_name", lowerPrimaryKeyName) {
+			for _, col := range table.Columns {
+				if mysql.HasPriKeyFlag(col.GetFlag()) {
+					record := types.MakeDatums(
+						infoschema.CatalogVal,        // CONSTRAINT_CATALOG
+						schema.O,                     // CONSTRAINT_SCHEMA
+						infoschema.PrimaryConstraint, // CONSTRAINT_NAME
+						infoschema.CatalogVal,        // TABLE_CATALOG
+						schema.O,                     // TABLE_SCHEMA
+						table.Name.O,                 // TABLE_NAME
+						col.Name.O,                   // COLUMN_NAME
+						1,                            // ORDINAL_POSITION
+						1,                            // POSITION_IN_UNIQUE_CONSTRAINT
+						nil,                          // REFERENCED_TABLE_SCHEMA
+						nil,                          // REFERENCED_TABLE_NAME
+						nil,                          // REFERENCED_COLUMN_NAME
+					)
+					rows = append(rows, record)
+					break
+				}
 			}
 		}
 	}
@@ -1845,16 +1846,19 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor
 	}
 	for _, index := range table.Indices {
 		var idxName string
+		var filterIdxName string
 		if index.Primary {
-			idxName = infoschema.PrimaryConstraint
+			idxName = mysql.PrimaryKeyName
+			filterIdxName = lowerPrimaryKeyName
 		} else if index.Unique {
 			idxName = index.Name.O
+			filterIdxName = index.Name.L
 		} else {
 			// Only handle unique/primary key
 			continue
 		}
 
-		if extractor != nil && extractor.Filter("constraint_name", idxName) {
+		if extractor != nil && extractor.Filter("constraint_name", filterIdxName) {
 			continue
 		}
 
@@ -1881,6 +1885,10 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor
 		}
 	}
 	for _, fk := range table.ForeignKeys {
+		if extractor != nil && extractor.Filter("constraint_name", fk.Name.L) {
+			continue
+		}
+
 		for i, key := range fk.Cols {
 			fkRefCol := ""
 			if len(fk.RefCols) > i {
@@ -1970,7 +1978,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 }
 
 func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {
-	tbl, _ := is.TableByID(tableID)
+	tbl, _ := is.TableByID(ctx, tableID)
 	if tbl == nil {
 		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
 	}
@@ -2125,7 +2133,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 	if !ok {
 		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexesExtractor", e.extractor)
 	}
-	if ok && ex.SkipRequest {
+	if ex.SkipRequest {
 		return nil
 	}
 	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
@@ -2135,7 +2143,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 	rows := make([][]types.Datum, 0, len(tables))
 	for i, tbl := range tables {
 		schema := schemas[i]
-		if ok && ex.Filter("constraint_schema", schema.L) {
+		if ex.Filter("constraint_schema", schema.L) {
 			continue
 		}
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
@@ -2143,30 +2151,35 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 		}
 
 		if tbl.PKIsHandle {
-			record := types.MakeDatums(
-				infoschema.CatalogVal,     // CONSTRAINT_CATALOG
-				schema.O,                  // CONSTRAINT_SCHEMA
-				mysql.PrimaryKeyName,      // CONSTRAINT_NAME
-				schema.O,                  // TABLE_SCHEMA
-				tbl.Name.O,                // TABLE_NAME
-				infoschema.PrimaryKeyType, // CONSTRAINT_TYPE
-			)
-			rows = append(rows, record)
+			if !ex.Filter("constraint_name", lowerPrimaryKeyName) {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+					schema.O,                  // CONSTRAINT_SCHEMA
+					mysql.PrimaryKeyName,      // CONSTRAINT_NAME
+					schema.O,                  // TABLE_SCHEMA
+					tbl.Name.O,                // TABLE_NAME
+					infoschema.PrimaryKeyType, // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
 		}
 
 		for _, idx := range tbl.Indices {
 			var cname, ctype string
+			var filterName string
 			if idx.Primary {
 				cname = mysql.PrimaryKeyName
+				filterName = lowerPrimaryKeyName
 				ctype = infoschema.PrimaryKeyType
 			} else if idx.Unique {
 				cname = idx.Name.O
+				filterName = idx.Name.L
 				ctype = infoschema.UniqueKeyType
 			} else {
 				// The index has no constriant.
 				continue
 			}
-			if ok && ex.Filter("constraint_name", cname) {
+			if ex.Filter("constraint_name", filterName) {
 				continue
 			}
 			record := types.MakeDatums(
@@ -2181,7 +2194,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 		}
 		//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
 		for _, fk := range tbl.ForeignKeys {
-			if ok && ex.Filter("constraint_name", fk.Name.O) {
+			if ex.Filter("constraint_name", fk.Name.L) {
 				continue
 			}
 			record := types.MakeDatums(
@@ -2194,6 +2207,15 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 			)
 			rows = append(rows, record)
 		}
+		record := types.MakeDatums(
+			infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+			schema.O,                  // CONSTRAINT_SCHEMA
+			mysql.PrimaryKeyName,                 // CONSTRAINT_NAME
+			schema.O,                  // TABLE_SCHEMA
+			tbl.Name.O,                // TABLE_NAME
+			infoschema.PrimaryKeyType, // CONSTRAINT_TYPE
+		)
+		rows = append(rows, record)
 	}
 	e.rows = rows
 	return nil
