@@ -318,6 +318,9 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
+
+	// EnableGCFastStart is used to control whether to ignore wait time judgment at first tick in GC worker.
+	EnableGCFastStart bool `toml:"enable-gc-fast-start" json:"enable-gc-fast-start"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -62,16 +63,17 @@ import (
 
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
-	uuid               string
-	desc               string
-	store              kv.Storage
-	tikvStore          tikv.Storage
-	pdClient           pd.Client
-	gcIsRunning        bool
-	lastFinish         time.Time
-	cancel             context.CancelFunc
-	done               chan error
-	regionLockResolver tikv.RegionLockResolver
+	uuid                string
+	desc                string
+	store               kv.Storage
+	tikvStore           tikv.Storage
+	pdClient            pd.Client
+	gcIsRunning         bool
+	lastFinish          time.Time
+	cancel              context.CancelFunc
+	done                chan error
+	regionLockResolver  tikv.RegionLockResolver
+	isFirstTickFinished bool
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -216,6 +218,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 		case err := <-w.done:
 			w.gcIsRunning = false
 			w.lastFinish = time.Now()
+			w.isFirstTickFinished = true
 			if err != nil {
 				logutil.Logger(ctx).Error("runGCJob", zap.String("category", "gc worker"), zap.Error(err))
 			}
@@ -374,7 +377,6 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 			zap.String("leaderTick on", w.uuid))
 		return nil
 	}
-
 	concurrency, err := w.getGCConcurrency(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Info("failed to get gc concurrency.", zap.String("category", "gc worker"),
@@ -405,7 +407,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	}
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
+	if w.isNeedToWait() {
 		logutil.Logger(ctx).Info("another gc job has just finished, skipped.", zap.String("category", "gc worker"),
 			zap.String("leaderTick on ", w.uuid))
 		return nil
@@ -422,10 +424,17 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	return nil
 }
 
+func (w *GCWorker) isNeedToWait() bool {
+	if config.GetGlobalConfig().EnableGCFastStart {
+		return time.Since(w.lastFinish) < gcWaitTime && w.isFirstTickFinished
+	}
+	return time.Since(w.lastFinish) < gcWaitTime
+}
+
 func (w *GCWorker) runKeyspaceGCJob(ctx context.Context, concurrency int) error {
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
+	if w.isNeedToWait() {
 		logutil.Logger(ctx).Info("another keyspace gc job has just finished, skipped.", zap.String("category", "gc worker"),
 			zap.String("leaderTick on ", w.uuid))
 		return nil
