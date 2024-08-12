@@ -1170,16 +1170,9 @@ func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPl
 		return child
 	}
 	physicalProj := PhysicalProjection{
-<<<<<<< HEAD
-		Exprs:                proj.Exprs,
-		CalculateNoDelay:     proj.CalculateNoDelay,
-		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
-	}.Init(proj.SCtx(), proj.StatsInfo(), proj.SelectBlockOffset(), nil)
-=======
 		Exprs:            proj.Exprs,
 		CalculateNoDelay: proj.CalculateNoDelay,
-	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), prop)
->>>>>>> 004b442fb9a (pkg/planner: set proj.AvoidColumnEvaluator in postOptimize (#55333))
+	}.Init(proj.SCtx(), proj.StatsInfo(), proj.SelectBlockOffset(), nil)
 	physicalProj.SetChildren(child)
 	return physicalProj
 }
@@ -2669,18 +2662,10 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	ret := make([]PhysicalPlan, 0, len(newProps))
 	for _, newProp := range newProps {
 		proj := PhysicalProjection{
-<<<<<<< HEAD
-			Exprs:                p.Exprs,
-			CalculateNoDelay:     p.CalculateNoDelay,
-			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), newProp)
-		proj.SetSchema(p.schema)
-=======
 			Exprs:            p.Exprs,
 			CalculateNoDelay: p.CalculateNoDelay,
-		}.Init(ctx, p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
-		proj.SetSchema(p.Schema())
->>>>>>> 004b442fb9a (pkg/planner: set proj.AvoidColumnEvaluator in postOptimize (#55333))
+		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), newProp)
+		proj.SetSchema(p.schema)
 		ret = append(ret, proj)
 	}
 	return ret, true, nil

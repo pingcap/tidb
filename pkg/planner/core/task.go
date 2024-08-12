@@ -1684,16 +1684,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 		exprs = append(exprs, p.schema.Columns[i])
 	}
 	proj := PhysicalProjection{
-<<<<<<< HEAD
-		Exprs:                exprs,
-		CalculateNoDelay:     false,
-		AvoidColumnEvaluator: false,
-	}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
-=======
 		Exprs:            exprs,
 		CalculateNoDelay: false,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
->>>>>>> 004b442fb9a (pkg/planner: set proj.AvoidColumnEvaluator in postOptimize (#55333))
+	}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
 	proj.SetSchema(p.schema)
 
 	p.AggFuncs = newAggFuncs
