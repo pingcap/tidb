@@ -12,22 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
 	"fmt"
 	"math"
+	"math/bits"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -94,7 +93,7 @@ func (tp JoinType) String() string {
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	JoinType      JoinType
 	Reordered     bool
@@ -147,7 +146,7 @@ type LogicalJoin struct {
 
 // Init initializes LogicalJoin.
 func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)
 	return &p
 }
 
@@ -206,7 +205,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		predicates = p.outerJoinPropConst(predicates)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			appendTableDualTraceStep(p, dual, predicates, opt)
+			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual
 		}
 		// Handle where conditions
@@ -225,7 +224,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		predicates = p.outerJoinPropConst(predicates)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			appendTableDualTraceStep(p, dual, predicates, opt)
+			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual
 		}
 		// Handle where conditions
@@ -252,7 +251,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
-			appendTableDualTraceStep(p, dual, tempCond, opt)
+			AppendTableDualTraceStep(p, dual, tempCond, opt)
 			return ret, dual
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
@@ -267,7 +266,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			appendTableDualTraceStep(p, dual, predicates, opt)
+			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual
 		}
 		// `predicates` should only contain left conditions or constant filters.
@@ -294,7 +293,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
 func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
+	leftCols, rightCols := p.ExtractUsedCols(parentUsedCols)
 
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols, opt)
@@ -307,7 +306,7 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		return nil, err
 	}
 
-	p.mergeSchema()
+	p.MergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		joinCol := p.Schema().Columns[len(p.Schema().Columns)-1]
 		parentUsedCols = append(parentUsedCols, joinCol)
@@ -366,9 +365,9 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *logicalop.LogicalTopN
+	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
+		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
@@ -600,96 +599,7 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			indexJoins, _ := tryToGetIndexJoin(p, prop)
-			failpoint.Return(indexJoins, true, nil)
-		}
-	})
-
-	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
-		if hasMPPJoinHints(p.PreferJoinType) {
-			// If there are MPP hints but has some conflicts join method hints, all the join hints are invalid.
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now")
-			p.PreferJoinType = 0
-		} else {
-			// If there are no MPP hints but has some conflicts join method hints, the MPP mode will be blocked.
-			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
-			if prop.IsFlashProp() {
-				return nil, false, nil
-			}
-		}
-	}
-	if prop.MPPPartitionTp == property.BroadcastType {
-		return nil, false, nil
-	}
-	joins := make([]base.PhysicalPlan, 0, 8)
-	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		if (p.PreferJoinType & utilhint.PreferShuffleJoin) > 0 {
-			if shuffleJoins := tryToGetMppHashJoin(p, prop, false); len(shuffleJoins) > 0 {
-				return shuffleJoins, true, nil
-			}
-		}
-		if (p.PreferJoinType & utilhint.PreferBCJoin) > 0 {
-			if bcastJoins := tryToGetMppHashJoin(p, prop, true); len(bcastJoins) > 0 {
-				return bcastJoins, true, nil
-			}
-		}
-		if preferMppBCJ(p) {
-			mppJoins := tryToGetMppHashJoin(p, prop, true)
-			joins = append(joins, mppJoins...)
-		} else {
-			mppJoins := tryToGetMppHashJoin(p, prop, false)
-			joins = append(joins, mppJoins...)
-		}
-	} else {
-		hasMppHints := false
-		var errMsg string
-		if (p.PreferJoinType & utilhint.PreferShuffleJoin) > 0 {
-			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
-			hasMppHints = true
-		}
-		if (p.PreferJoinType & utilhint.PreferBCJoin) > 0 {
-			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
-			hasMppHints = true
-		}
-		if hasMppHints {
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
-		}
-	}
-	if prop.IsFlashProp() {
-		return joins, true, nil
-	}
-
-	if !p.IsNAAJ() {
-		// naaj refuse merge join and index join.
-		mergeJoins := GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
-		if (p.PreferJoinType&utilhint.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
-			return mergeJoins, true, nil
-		}
-		joins = append(joins, mergeJoins...)
-
-		indexJoins, forced := tryToGetIndexJoin(p, prop)
-		if forced {
-			return indexJoins, true, nil
-		}
-		joins = append(joins, indexJoins...)
-	}
-
-	hashJoins, forced := getHashJoins(p, prop)
-	if forced && len(hashJoins) > 0 {
-		return hashJoins, true, nil
-	}
-	joins = append(joins, hashJoins...)
-
-	if p.PreferJoinType > 0 {
-		// If we reach here, it means we have a hint that doesn't work.
-		// It might be affected by the required property, so we enforce
-		// this property and try the hint again.
-		return joins, false, nil
-	}
-	return joins, true, nil
+	return utilfuncp.ExhaustPhysicalPlans4LogicalJoin(p, prop)
 }
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
@@ -726,11 +636,11 @@ func (p *LogicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 	switch p.JoinType {
 	case InnerJoin:
-		return p.extractFDForInnerJoin(nil)
+		return p.ExtractFDForInnerJoin(nil)
 	case LeftOuterJoin, RightOuterJoin:
-		return p.extractFDForOuterJoin(nil)
+		return p.ExtractFDForOuterJoin(nil)
 	case SemiJoin:
-		return p.extractFDForSemiJoin(nil)
+		return p.ExtractFDForSemiJoin(nil)
 	default:
 		return &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	}
@@ -805,7 +715,8 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 	return join.Init(p.SCtx(), p.QueryBlockOffset())
 }
 
-func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+// ExtractFDForSemiJoin extracts FD for semi join.
+func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
 	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
 	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
 	outerFD, _ := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
@@ -814,9 +725,9 @@ func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Express
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
 	allConds := append(eqCondSlice, p.OtherConditions...)
 	allConds = append(allConds, filtersFromApply...)
-	notNullColsFromFilters := ExtractNotNullFromConds(allConds, p)
+	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
-	constUniqueIDs := ExtractConstantCols(p.LeftConditions, p.SCtx(), fds)
+	constUniqueIDs := util.ExtractConstantCols(p.LeftConditions, p.SCtx(), fds)
 
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
@@ -824,7 +735,8 @@ func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Express
 	return fds
 }
 
-func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+// ExtractFDForInnerJoin extracts FD for inner join.
+func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
 	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
@@ -833,11 +745,11 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 	// some join eq conditions are stored in the OtherConditions.
 	allConds := append(eqCondSlice, p.OtherConditions...)
 	allConds = append(allConds, filtersFromApply...)
-	notNullColsFromFilters := ExtractNotNullFromConds(allConds, p)
+	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
-	constUniqueIDs := ExtractConstantCols(allConds, p.SCtx(), fds)
+	constUniqueIDs := util.ExtractConstantCols(allConds, p.SCtx(), fds)
 
-	equivUniqueIDs := ExtractEquivalenceCols(allConds, p.SCtx(), fds)
+	equivUniqueIDs := util.ExtractEquivalenceCols(allConds, p.SCtx(), fds)
 
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
@@ -865,7 +777,8 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 	return fds
 }
 
-func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+// ExtractFDForOuterJoin extracts FD for outer join.
+func (p *LogicalJoin) ExtractFDForOuterJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
 	outerFD, innerFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	innerCondition := p.RightConditions
 	outerCondition := p.LeftConditions
@@ -888,13 +801,13 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 	allConds = append(allConds, innerCondition...)
 	allConds = append(allConds, outerCondition...)
 	allConds = append(allConds, filtersFromApply...)
-	notNullColsFromFilters := ExtractNotNullFromConds(allConds, p)
+	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
 	filterFD := &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
 
-	constUniqueIDs := ExtractConstantCols(allConds, p.SCtx(), filterFD)
+	constUniqueIDs := util.ExtractConstantCols(allConds, p.SCtx(), filterFD)
 
-	equivUniqueIDs := ExtractEquivalenceCols(allConds, p.SCtx(), filterFD)
+	equivUniqueIDs := util.ExtractEquivalenceCols(allConds, p.SCtx(), filterFD)
 
 	filterFD.AddConstants(constUniqueIDs)
 	equivOuterUniqueIDs := intset.NewFastIntSet()
@@ -1115,8 +1028,8 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	return expression.NewSchema(joinKeys...)
 }
 
-// extractUsedCols extracts all the needed columns.
-func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
+// ExtractUsedCols extracts all the needed columns.
+func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
 	}
@@ -1145,12 +1058,12 @@ func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (left
 }
 
 // MergeSchema merge the schema of left and right child of join.
-func (p *LogicalJoin) mergeSchema() {
-	p.SetSchema(buildLogicalJoinSchema(p.JoinType, p))
+func (p *LogicalJoin) MergeSchema() {
+	p.SetSchema(BuildLogicalJoinSchema(p.JoinType, p))
 }
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
-func (p *LogicalJoin) pushDownTopNToChild(topN *logicalop.LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	if topN == nil {
 		return p.Children()[idx].PushDownTopN(nil, opt)
 	}
@@ -1164,7 +1077,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *logicalop.LogicalTopN, idx int, 
 		}
 	}
 
-	newTopN := logicalop.LogicalTopN{
+	newTopN := LogicalTopN{
 		Count:            topN.Count + topN.Offset,
 		ByItems:          make([]*util.ByItems, len(topN.ByItems)),
 		PreferLimitToCop: topN.PreferLimitToCop,
@@ -1205,7 +1118,7 @@ func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, pa
 		parentPlan.SetChild(currentChildIdx, selection)
 	}
 	selection.SetChildren(currentPlan)
-	appendAddSelectionTraceStep(parentPlan, currentPlan, selection, opt)
+	AppendAddSelectionTraceStep(parentPlan, currentPlan, selection, opt)
 	if parentPlan == nil {
 		return newRoot
 	}
@@ -1377,8 +1290,8 @@ func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(hintInfo *utilhint.PlanHints)
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.Children()[0], p.QueryBlockOffset())
-	rhsAlias := extractTableAlias(p.Children()[1], p.QueryBlockOffset())
+	lhsAlias := util.ExtractTableAlias(p.Children()[0], p.QueryBlockOffset())
+	rhsAlias := util.ExtractTableAlias(p.Children()[1], p.QueryBlockOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
 		p.PreferJoinType |= utilhint.PreferMergeJoin
 		p.LeftPreferJoinType |= utilhint.PreferMergeJoin
@@ -1574,7 +1487,7 @@ func (p *LogicalJoin) updateEQCond() {
 				needRProj = needRProj || !rOk
 			}
 
-			var lProj, rProj *logicalop.LogicalProjection
+			var lProj, rProj *LogicalProjection
 			if needLProj {
 				lProj = p.getProj(0)
 			}
@@ -1630,13 +1543,13 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *LogicalJoin) getProj(idx int) *logicalop.LogicalProjection {
+func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	child := p.Children()[idx]
-	proj, ok := child.(*logicalop.LogicalProjection)
+	proj, ok := child.(*LogicalProjection)
 	if ok {
 		return proj
 	}
-	proj = logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.QueryBlockOffset())
+	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.SCtx(), child.QueryBlockOffset())
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
@@ -1669,4 +1582,258 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
+}
+
+func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
+	combinedCond := make([]expression.Expression, 0,
+		len(p.LeftConditions)+len(p.RightConditions)+
+			len(p.EqualConditions)+len(p.OtherConditions)+
+			len(predicates))
+	combinedCond = append(combinedCond, p.LeftConditions...)
+	combinedCond = append(combinedCond, p.RightConditions...)
+	combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+	combinedCond = append(combinedCond, p.OtherConditions...)
+	combinedCond = append(combinedCond, predicates...)
+	return combinedCond
+}
+
+func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+	action := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is added and pushed into %v_%v's ",
+			topN.TP(), topN.ID(), p.TP(), p.ID()))
+		if idx == 0 {
+			buffer.WriteString("left ")
+		} else {
+			buffer.WriteString("right ")
+		}
+		buffer.WriteString("table")
+		return buffer.String()
+	}
+	reason := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's joinType is %v, and all ByItems[", p.TP(), p.ID(), p.JoinType.String()))
+		for i, item := range topN.ByItems {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		buffer.WriteString("] contained in ")
+		if idx == 0 {
+			buffer.WriteString("left ")
+		} else {
+			buffer.WriteString("right ")
+		}
+		buffer.WriteString("table")
+		return buffer.String()
+	}
+	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
+}
+
+// AppendAddSelectionTraceStep appends a trace step for adding a selection operator.
+func AppendAddSelectionTraceStep(p base.LogicalPlan, child base.LogicalPlan, sel *LogicalSelection, opt *optimizetrace.LogicalOptimizeOp) {
+	reason := func() string {
+		return ""
+	}
+	action := func() string {
+		return fmt.Sprintf("add %v_%v to connect %v_%v and %v_%v", sel.TP(), sel.ID(), p.TP(), p.ID(), child.TP(), child.ID())
+	}
+	opt.AppendStepToCurrent(sel.ID(), sel.TP(), reason, action)
+}
+
+// containDifferentJoinTypes checks whether `PreferJoinType` contains different
+// join types.
+func containDifferentJoinTypes(preferJoinType uint) bool {
+	preferJoinType &= ^utilhint.PreferNoHashJoin
+	preferJoinType &= ^utilhint.PreferNoMergeJoin
+	preferJoinType &= ^utilhint.PreferNoIndexJoin
+	preferJoinType &= ^utilhint.PreferNoIndexHashJoin
+	preferJoinType &= ^utilhint.PreferNoIndexMergeJoin
+
+	inlMask := utilhint.PreferRightAsINLJInner ^ utilhint.PreferLeftAsINLJInner
+	inlhjMask := utilhint.PreferRightAsINLHJInner ^ utilhint.PreferLeftAsINLHJInner
+	inlmjMask := utilhint.PreferRightAsINLMJInner ^ utilhint.PreferLeftAsINLMJInner
+	hjRightBuildMask := utilhint.PreferRightAsHJBuild ^ utilhint.PreferLeftAsHJProbe
+	hjLeftBuildMask := utilhint.PreferLeftAsHJBuild ^ utilhint.PreferRightAsHJProbe
+
+	mppMask := utilhint.PreferShuffleJoin ^ utilhint.PreferBCJoin
+	mask := inlMask ^ inlhjMask ^ inlmjMask ^ hjRightBuildMask ^ hjLeftBuildMask
+	onesCount := bits.OnesCount(preferJoinType & ^mask & ^mppMask)
+	if onesCount > 1 || onesCount == 1 && preferJoinType&mask > 0 {
+		return true
+	}
+
+	cnt := 0
+	if preferJoinType&inlMask > 0 {
+		cnt++
+	}
+	if preferJoinType&inlhjMask > 0 {
+		cnt++
+	}
+	if preferJoinType&inlmjMask > 0 {
+		cnt++
+	}
+	if preferJoinType&hjLeftBuildMask > 0 {
+		cnt++
+	}
+	if preferJoinType&hjRightBuildMask > 0 {
+		cnt++
+	}
+	return cnt > 1
+}
+
+func setPreferredJoinTypeFromOneSide(preferJoinType uint, isLeft bool) (resJoinType uint) {
+	if preferJoinType == 0 {
+		return
+	}
+	if preferJoinType&utilhint.PreferINLJ > 0 {
+		preferJoinType &= ^utilhint.PreferINLJ
+		if isLeft {
+			resJoinType |= utilhint.PreferLeftAsINLJInner
+		} else {
+			resJoinType |= utilhint.PreferRightAsINLJInner
+		}
+	}
+	if preferJoinType&utilhint.PreferINLHJ > 0 {
+		preferJoinType &= ^utilhint.PreferINLHJ
+		if isLeft {
+			resJoinType |= utilhint.PreferLeftAsINLHJInner
+		} else {
+			resJoinType |= utilhint.PreferRightAsINLHJInner
+		}
+	}
+	if preferJoinType&utilhint.PreferINLMJ > 0 {
+		preferJoinType &= ^utilhint.PreferINLMJ
+		if isLeft {
+			resJoinType |= utilhint.PreferLeftAsINLMJInner
+		} else {
+			resJoinType |= utilhint.PreferRightAsINLMJInner
+		}
+	}
+	if preferJoinType&utilhint.PreferHJBuild > 0 {
+		preferJoinType &= ^utilhint.PreferHJBuild
+		if isLeft {
+			resJoinType |= utilhint.PreferLeftAsHJBuild
+		} else {
+			resJoinType |= utilhint.PreferRightAsHJBuild
+		}
+	}
+	if preferJoinType&utilhint.PreferHJProbe > 0 {
+		preferJoinType &= ^utilhint.PreferHJProbe
+		if isLeft {
+			resJoinType |= utilhint.PreferLeftAsHJProbe
+		} else {
+			resJoinType |= utilhint.PreferRightAsHJProbe
+		}
+	}
+	resJoinType |= preferJoinType
+	return
+}
+
+// DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
+// conditions for left/right child pushdown.
+func DeriveOtherConditions(
+	p *LogicalJoin, leftSchema *expression.Schema, rightSchema *expression.Schema,
+	deriveLeft bool, deriveRight bool) (
+	leftCond []expression.Expression, rightCond []expression.Expression) {
+	isOuterSemi := (p.JoinType == LeftOuterSemiJoin) || (p.JoinType == AntiLeftOuterSemiJoin)
+	ctx := p.SCtx()
+	exprCtx := ctx.GetExprCtx()
+	for _, expr := range p.OtherConditions {
+		if deriveLeft {
+			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(exprCtx, expr, leftSchema)
+			if leftRelaxedCond != nil {
+				leftCond = append(leftCond, leftRelaxedCond)
+			}
+			notNullExpr := deriveNotNullExpr(ctx, expr, leftSchema)
+			if notNullExpr != nil {
+				leftCond = append(leftCond, notNullExpr)
+			}
+		}
+		if deriveRight {
+			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(exprCtx, expr, rightSchema)
+			if rightRelaxedCond != nil {
+				rightCond = append(rightCond, rightRelaxedCond)
+			}
+			// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we can actually generate
+			// `col is not null` according to expressions in `OtherConditions` now, but we
+			// are putting column equal condition converted from `in (subq)` into
+			// `OtherConditions`(@sa https://github.com/pingcap/tidb/pull/9051), then it would
+			// cause wrong results, so we disable this optimization for outer semi joins now.
+			// TODO enable this optimization for outer semi joins later by checking whether
+			// condition in `OtherConditions` is converted from `in (subq)`.
+			if isOuterSemi {
+				continue
+			}
+			notNullExpr := deriveNotNullExpr(ctx, expr, rightSchema)
+			if notNullExpr != nil {
+				rightCond = append(rightCond, notNullExpr)
+			}
+		}
+	}
+	return
+}
+
+// deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
+// in which `col` is in specified schema. Caller guarantees that only one of `col1` or
+// `col2` is in schema.
+func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema *expression.Schema) expression.Expression {
+	binop, ok := expr.(*expression.ScalarFunction)
+	if !ok || len(binop.GetArgs()) != 2 {
+		return nil
+	}
+	arg0, lOK := binop.GetArgs()[0].(*expression.Column)
+	arg1, rOK := binop.GetArgs()[1].(*expression.Column)
+	if !lOK || !rOK {
+		return nil
+	}
+	childCol := schema.RetrieveColumn(arg0)
+	if childCol == nil {
+		childCol = schema.RetrieveColumn(arg1)
+	}
+	if util.IsNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
+		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
+	}
+	return nil
+}
+
+// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
+func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
+	if len(conds) != 1 {
+		return nil
+	}
+	con, ok := conds[0].(*expression.Constant)
+	if !ok {
+		return nil
+	}
+	sc := p.SCtx().GetSessionVars().StmtCtx
+	if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
+		return nil
+	}
+	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
+		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
+		dual.SetSchema(p.Schema())
+		return dual
+	}
+	return nil
+}
+
+// BuildLogicalJoinSchema builds the schema for join operator.
+func BuildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expression.Schema {
+	leftSchema := join.Children()[0].Schema()
+	switch joinType {
+	case SemiJoin, AntiSemiJoin:
+		return leftSchema.Clone()
+	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		newSchema := leftSchema.Clone()
+		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
+		return newSchema
+	}
+	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
+	if joinType == LeftOuterJoin {
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+	} else if joinType == RightOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
+	}
+	return newSchema
 }

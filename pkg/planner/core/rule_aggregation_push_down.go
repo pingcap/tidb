@@ -104,7 +104,7 @@ func (*AggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFun
 // collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
 // arguments are all from left child or right child separately. If some aggregate functions have the arguments that have
 // columns both from left and right children, the whole aggregation is forbidden to push down.
-func (a *AggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, join *LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
+func (a *AggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, join *logicalop.LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
 	valid = true
 	leftChild := join.Children()[0]
 	rightChild := join.Children()[1]
@@ -115,21 +115,21 @@ func (a *AggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, joi
 		index := a.getAggFuncChildIdx(aggFunc, leftChild.Schema(), rightChild.Schema())
 		switch index {
 		case 0:
-			if join.JoinType == RightOuterJoin && !a.checkAllArgsColumn(aggFunc) {
+			if join.JoinType == logicalop.RightOuterJoin && !a.checkAllArgsColumn(aggFunc) {
 				return false, nil, nil
 			}
 			leftAggFuncs = append(leftAggFuncs, aggFunc)
 		case 1:
-			if join.JoinType == LeftOuterJoin && !a.checkAllArgsColumn(aggFunc) {
+			if join.JoinType == logicalop.LeftOuterJoin && !a.checkAllArgsColumn(aggFunc) {
 				return false, nil, nil
 			}
 			rightAggFuncs = append(rightAggFuncs, aggFunc)
 		case 2:
 			// arguments are constant
 			switch join.JoinType {
-			case LeftOuterJoin:
+			case logicalop.LeftOuterJoin:
 				leftAggFuncs = append(leftAggFuncs, aggFunc)
-			case RightOuterJoin:
+			case logicalop.RightOuterJoin:
 				rightAggFuncs = append(rightAggFuncs, aggFunc)
 			default:
 				// either left or right is fine, ideally we'd better put this to the hash build side
@@ -147,7 +147,7 @@ func (a *AggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, joi
 // query should be "SELECT SUM(B.agg) FROM A, (SELECT SUM(id) as agg, c1, c2, c3 FROM B GROUP BY id, c1, c2, c3) as B
 // WHERE A.c1 = B.c1 AND A.c2 != B.c2 GROUP BY B.c3". As you see, all the columns appearing in join-conditions should be
 // treated as group by columns in join subquery.
-func (a *AggregationPushDownSolver) collectGbyCols(agg *LogicalAggregation, join *LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
+func (a *AggregationPushDownSolver) collectGbyCols(agg *LogicalAggregation, join *logicalop.LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.Children()[0]
 	ctx := agg.SCtx()
 	for _, gbyExpr := range agg.GroupByItems {
@@ -186,7 +186,7 @@ func (a *AggregationPushDownSolver) collectGbyCols(agg *LogicalAggregation, join
 	return
 }
 
-func (a *AggregationPushDownSolver) splitAggFuncsAndGbyCols(agg *LogicalAggregation, join *LogicalJoin) (valid bool,
+func (a *AggregationPushDownSolver) splitAggFuncsAndGbyCols(agg *LogicalAggregation, join *logicalop.LogicalJoin) (valid bool,
 	leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc,
 	leftGbyCols, rightGbyCols []*expression.Column) {
 	valid, leftAggFuncs, rightAggFuncs = a.collectAggFuncs(agg, join)
@@ -215,8 +215,8 @@ func (*AggregationPushDownSolver) addGbyCol(ctx base.PlanContext, gbyCols []*exp
 }
 
 // checkValidJoin checks if this join should be pushed across.
-func (*AggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
-	return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
+func (*AggregationPushDownSolver) checkValidJoin(join *logicalop.LogicalJoin) bool {
+	return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
 }
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
@@ -254,13 +254,13 @@ func (*AggregationPushDownSolver) decompose(ctx base.PlanContext, aggFunc *aggre
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column,
-	join *LogicalJoin, childIdx int, blockOffset int, opt *optimizetrace.LogicalOptimizeOp) (_ base.LogicalPlan, err error) {
+	join *logicalop.LogicalJoin, childIdx int, blockOffset int, opt *optimizetrace.LogicalOptimizeOp) (_ base.LogicalPlan, err error) {
 	child := join.Children()[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child, nil
 	}
 	// If the join is multiway-join, we forbid pushing down.
-	if _, ok := join.Children()[childIdx].(*LogicalJoin); ok {
+	if _, ok := join.Children()[childIdx].(*logicalop.LogicalJoin); ok {
 		return child, nil
 	}
 	tmpSchema := expression.NewSchema(gbyCols...)
@@ -269,8 +269,8 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 			return child, nil
 		}
 	}
-	nullGenerating := (join.JoinType == LeftOuterJoin && childIdx == 1) ||
-		(join.JoinType == RightOuterJoin && childIdx == 0)
+	nullGenerating := (join.JoinType == logicalop.LeftOuterJoin && childIdx == 1) ||
+		(join.JoinType == logicalop.RightOuterJoin && childIdx == 0)
 	agg, err := a.makeNewAgg(join.SCtx(), aggFuncs, gbyCols, oldAgg.PreferAggType, oldAgg.PreferAggToCop, blockOffset, nullGenerating)
 	if err != nil {
 		return nil, err
@@ -283,7 +283,7 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 			Value:   types.NewDatum(0),
 			RetType: types.NewFieldType(mysql.TypeLong)}}
 	}
-	if (childIdx == 0 && join.JoinType == RightOuterJoin) || (childIdx == 1 && join.JoinType == LeftOuterJoin) {
+	if (childIdx == 0 && join.JoinType == logicalop.RightOuterJoin) || (childIdx == 1 && join.JoinType == logicalop.LeftOuterJoin) {
 		var existsDefaultValues bool
 		join.DefaultValues, existsDefaultValues = a.getDefaultValues(agg)
 		if !existsDefaultValues {
@@ -491,7 +491,7 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 			// For example, we can optimize 'select sum(a.id) from t as a,t as b where a.id = b.id;' as
 			// 'select sum(agg) from (select sum(id) as agg,id from t group by id) as a, t as b where a.id = b.id;'
 			// by pushing down sum aggregation functions.
-			if join, ok1 := child.(*LogicalJoin); ok1 && a.checkValidJoin(join) && p.SCtx().GetSessionVars().AllowAggPushDown {
+			if join, ok1 := child.(*logicalop.LogicalJoin); ok1 && a.checkValidJoin(join) && p.SCtx().GetSessionVars().AllowAggPushDown {
 				if valid, leftAggFuncs, rightAggFuncs, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
 					var lChild, rChild base.LogicalPlan
 					// If there exist count or sum functions in left join path, we can't push any
@@ -516,9 +516,9 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 					}
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-					if join.JoinType == LeftOuterJoin {
+					if join.JoinType == logicalop.LeftOuterJoin {
 						util.ResetNotNullFlag(join.Schema(), lChild.Schema().Len(), join.Schema().Len())
-					} else if join.JoinType == RightOuterJoin {
+					} else if join.JoinType == logicalop.RightOuterJoin {
 						util.ResetNotNullFlag(join.Schema(), 0, lChild.Schema().Len())
 					}
 					ruleutil.BuildKeyInfoPortal(join)
@@ -691,7 +691,7 @@ func (*AggregationPushDownSolver) Name() string {
 	return "aggregation_push_down"
 }
 
-func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *LogicalJoin,
+func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *logicalop.LogicalJoin,
 	childIdx int, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := oldAgg.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {

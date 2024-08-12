@@ -1110,8 +1110,12 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 type PhysicalProjection struct {
 	physicalSchemaProducer
 
-	Exprs                []expression.Expression
-	CalculateNoDelay     bool
+	Exprs            []expression.Expression
+	CalculateNoDelay bool
+
+	// AvoidColumnEvaluator is ONLY used to avoid building columnEvaluator
+	// for the expressions of Projection which is child of Union operator.
+	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
 }
 
@@ -1275,13 +1279,13 @@ type PhysicalJoin interface {
 	base.PhysicalPlan
 	PhysicalJoinImplement()
 	getInnerChildIdx() int
-	GetJoinType() JoinType
+	GetJoinType() logicalop.JoinType
 }
 
 type basePhysicalJoin struct {
 	physicalSchemaProducer
 
-	JoinType JoinType
+	JoinType logicalop.JoinType
 
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
@@ -1303,7 +1307,7 @@ type basePhysicalJoin struct {
 	RightNAJoinKeys []*expression.Column
 }
 
-func (p *basePhysicalJoin) GetJoinType() JoinType {
+func (p *basePhysicalJoin) GetJoinType() logicalop.JoinType {
 	return p.JoinType
 }
 
@@ -1449,7 +1453,7 @@ type PhysicalHashJoin struct {
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 	switch p.JoinType {
-	case LeftOuterJoin, RightOuterJoin, InnerJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
 		// null aware join is not supported yet
 		if len(p.LeftNAJoinKeys) > 0 {
 			return false
@@ -1541,7 +1545,7 @@ func (p *PhysicalHashJoin) RightIsBuildSide() bool {
 }
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
-func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
+func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
 	leftJoinKeys, rightJoinKeys, isNullEQ, _ := p.GetJoinKeys()
 	leftNAJoinKeys, rightNAJoinKeys := p.GetNAJoinKeys()
 	baseJoin := basePhysicalJoin{
@@ -2639,7 +2643,7 @@ func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
-func BuildMergeJoinPlan(ctx base.PlanContext, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
+func BuildMergeJoinPlan(ctx base.PlanContext, joinType logicalop.JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
 	baseJoin := basePhysicalJoin{
 		JoinType:      joinType,
 		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},
