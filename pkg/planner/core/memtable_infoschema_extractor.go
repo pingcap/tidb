@@ -630,7 +630,10 @@ func (e *InfoSchemaBaseExtractor) getSchemaObjectNames(colName string) []model.C
 	return nil
 }
 
-// InfoSchemaTableNameExtractor is a base struct used to list schema and tables by predicates.
+// InfoSchemaTableNameExtractor is a base struct.
+// It is used to list matching schemas and tables in predicates.
+// Subclass **must** reimplement `Filter` method to use like operators for filtering.
+// Currently, table_id is not taken into consideration.
 type InfoSchemaTableNameExtractor struct {
 	InfoSchemaSchemataExtractor
 
@@ -642,14 +645,17 @@ type InfoSchemaTableNameExtractor struct {
 
 	tableNames []model.CIStr
 
-	predColsLower map[string]set.StringSet
+	// all predicates in lower case
+	colsPredLower map[string]set.StringSet
 
+	// all built regexp in predicates
+	colsRegexp map[string][]collate.WildcardPattern
+
+	// used for EXPLAIN only
 	LikePatterns map[string][]string
-
-	colRegexp map[string][]collate.WildcardPattern
 }
 
-// Extract all object names and like operator in predicates
+// Extract all names and like operators in predicates
 func (e *InfoSchemaTableNameExtractor) Extract(
 	ctx base.PlanContext,
 	schema *expression.Schema,
@@ -662,8 +668,8 @@ func (e *InfoSchemaTableNameExtractor) Extract(
 	}
 
 	e.LikePatterns = make(map[string][]string, len(e.colNames))
-	e.colRegexp = make(map[string][]collate.WildcardPattern, len(e.colNames))
-	e.predColsLower = make(map[string]set.StringSet, len(e.colNames))
+	e.colsRegexp = make(map[string][]collate.WildcardPattern, len(e.colNames))
+	e.colsPredLower = make(map[string]set.StringSet, len(e.colNames))
 	var likePatterns []string
 	for _, colName := range e.colNames {
 		remained, likePatterns = e.extractLikePatternCol(ctx, schema, names, remained, colName, true, false)
@@ -678,33 +684,74 @@ func (e *InfoSchemaTableNameExtractor) Extract(
 				predColLower.Insert(strings.ToLower(n))
 			})
 		}
-		e.predColsLower[colName] = predColLower
+		e.colsPredLower[colName] = predColLower
 		e.LikePatterns[colName] = likePatterns
-		e.colRegexp[colName] = regexp
+		e.colsRegexp[colName] = regexp
 	}
 
 	return remained
 }
 
-// ListSchemas lists related schemas from predicate.
-// If no schema found in predicate, it return all schemas.
+// getPredicates gets all names and regexps related to given column names.
+func (e *InfoSchemaTableNameExtractor) getPredicates(colNames ...string) (
+	set.StringSet, []collate.WildcardPattern, bool) {
+	filters := set.StringSet{}
+	regexp := []collate.WildcardPattern{}
+	hasPredicates := false
+
+	// Extract all filters and like patterns
+	for _, col := range colNames {
+		if rs, ok := e.colsRegexp[col]; ok && len(rs) > 0 {
+			regexp = append(regexp, rs...)
+		}
+		if f, ok := e.colsPredLower[col]; ok && len(f) > 0 {
+			if !hasPredicates {
+				filters = f
+				hasPredicates = true
+			} else {
+				filters = filters.Intersection(f)
+			}
+		}
+	}
+
+	return filters, regexp, hasPredicates
+}
+
+// ListSchemas lists related schemas from predicates.
+// Returned schemas is examined by like operators, so there is no need to call Filter again.
 func (e *InfoSchemaTableNameExtractor) ListSchemas(
 	is infoschema.InfoSchema,
 ) []model.CIStr {
-	allSchemas := e.InfoSchemaSchemataExtractor.listSchemas(is, _tableSchema)
+	// All predicates related to schema extraction
+	schemaFilters, schemaRegexp, hasPredicates := e.getPredicates(_tableSchema, _schemaName)
 
-	if regexp, ok := e.colRegexp[_tableSchema]; ok {
-		schemas := make([]model.CIStr, 0, len(allSchemas))
-	ForLoop:
-		for _, schema := range allSchemas {
-			for _, re := range regexp {
-				if !re.DoMatch(schema.L) {
-					continue ForLoop
-				}
+	// Get all schema names
+	var schemas []model.CIStr
+	if hasPredicates {
+		schemas = make([]model.CIStr, 0, len(schemaFilters))
+		schemaFilters.IterateWith(func(n string) {
+			s := model.CIStr{O: n, L: n}
+			if n, ok := is.SchemaByName(s); ok {
+				schemas = append(schemas, n.Name)
 			}
-			schemas = append(schemas, schema)
+		})
+	} else {
+		schemas = is.AllSchemaNames()
+	}
+	slices.SortFunc(schemas, func(a, b model.CIStr) int {
+		return strings.Compare(a.L, b.L)
+	})
+
+	// Filter with regexp
+	filteredSchemas := make([]model.CIStr, 0, len(schemas))
+ForLoop:
+	for _, schema := range schemas {
+		for _, re := range schemaRegexp {
+			if !re.DoMatch(schema.L) {
+				continue ForLoop
+			}
 		}
-		allSchemas = schemas
+		filteredSchemas = append(filteredSchemas, schema)
 	}
 
 	// TODO: add table_id here
@@ -716,7 +763,7 @@ func (e *InfoSchemaTableNameExtractor) ListSchemas(
 		e.listTableFunc = listSchemaTables
 	}
 
-	return allSchemas
+	return filteredSchemas
 }
 
 // ListTables lists related tables for given schema from predicate.
@@ -731,7 +778,7 @@ func (e *InfoSchemaTableNameExtractor) ListTables(
 		return nil, errors.Trace(err)
 	}
 
-	if regexp, ok := e.colRegexp[_tableName]; ok {
+	if regexp, ok := e.colsRegexp[_tableName]; ok {
 		tbls := make([]*model.TableInfo, 0, len(allTbls))
 	ForLoop:
 		for _, tbl := range allTbls {
@@ -776,15 +823,6 @@ func listSchemaTables(
 	return is.SchemaTableInfos(ctx, s)
 }
 
-// getPredicates gets the object names and like pattern specified in predicate of given column name.
-func (e *InfoSchemaTableNameExtractor) getPredicates(colName string) (
-	set.StringSet, []collate.WildcardPattern) {
-	if predCol, ok := e.predColsLower[colName]; ok {
-		return predCol, e.colRegexp[colName]
-	}
-	return nil, nil
-}
-
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *InfoSchemaTableNameExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
@@ -823,17 +861,17 @@ type ColumnsTableExtractor struct {
 func (e *InfoSchemaTableNameExtractor) ListColumns(
 	tbl *model.TableInfo,
 ) ([]*model.ColumnInfo, []int) {
-	predCol, regexp := e.getPredicates(_columnName)
+	predCol, regexp, _ := e.getPredicates(_columnName)
 
 	columns := make([]*model.ColumnInfo, 0, len(predCol))
 	ordinalPos := make([]int, 0, len(predCol))
-	i := 0
+	ord := 0
 ForLoop:
 	for _, column := range tbl.Columns {
 		if column.Hidden {
 			continue
 		}
-		i++
+		ord++
 		if len(predCol) > 0 && !predCol.Exist(column.Name.L) {
 			continue
 		}
@@ -843,7 +881,7 @@ ForLoop:
 			}
 		}
 		columns = append(columns, column)
-		ordinalPos = append(ordinalPos, i)
+		ordinalPos = append(ordinalPos, ord)
 	}
 
 	return columns, ordinalPos
@@ -859,7 +897,7 @@ type InfoSchemaIndexesExtractor struct {
 func (e *InfoSchemaIndexesExtractor) ListIndexes(
 	tbl *model.TableInfo,
 ) []*model.IndexInfo {
-	predCol, regexp := e.getPredicates(_indexName)
+	predCol, regexp, _ := e.getPredicates(_indexName)
 	if len(predCol) == 0 && len(regexp) == 0 {
 		return tbl.Indices
 	}
