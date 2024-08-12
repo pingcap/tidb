@@ -345,7 +345,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 				tp = tp.Children()[0]
 			} else {
 				join := tp.(*PhysicalHashJoin)
-				tp = join.children[1-join.InnerChildIdx]
+				tp = join.Children()[1-join.InnerChildIdx]
 			}
 		}
 		ts := tp.(*PhysicalTableScan)
@@ -394,7 +394,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 				tp = tp.Children()[0]
 			} else {
 				join := tp.(*PhysicalHashJoin)
-				tp = join.children[1-join.InnerChildIdx]
+				tp = join.Children()[1-join.InnerChildIdx]
 			}
 		}
 		ts := tp.(*PhysicalTableScan)

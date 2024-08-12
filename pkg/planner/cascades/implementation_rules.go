@@ -155,9 +155,8 @@ func (*ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physi
 		return nil, nil
 	}
 	proj := plannercore.PhysicalProjection{
-		Exprs:                logicProj.Exprs,
-		CalculateNoDelay:     logicProj.CalculateNoDelay,
-		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,
+		Exprs:            logicProj.Exprs,
+		CalculateNoDelay: logicProj.CalculateNoDelay,
 	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.QueryBlockOffset(), childProp)
 	proj.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewProjectionImpl(proj)}, nil
@@ -269,7 +268,7 @@ func (*ImplSelection) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (ma
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	logicalSel := expr.ExprNode.(*plannercore.LogicalSelection)
+	logicalSel := expr.ExprNode.(*logicalop.LogicalSelection)
 	physicalSel := plannercore.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.QueryBlockOffset(), reqProp.CloneEssentialFields())
@@ -429,7 +428,7 @@ func (*ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalPr
 }
 
 func getImplForHashJoin(expr *memo.GroupExpr, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) memo.Implementation {
-	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[0] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	chReqProps[1] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
@@ -449,8 +448,8 @@ type ImplHashJoinBuildLeft struct {
 
 // Match implements ImplementationRule Match interface.
 func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	switch expr.ExprNode.(*plannercore.LogicalJoin).JoinType {
-	case plannercore.InnerJoin, plannercore.LeftOuterJoin, plannercore.RightOuterJoin:
+	switch expr.ExprNode.(*logicalop.LogicalJoin).JoinType {
+	case logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin:
 		return prop.IsSortItemEmpty()
 	default:
 		return false
@@ -459,13 +458,13 @@ func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.Physica
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case plannercore.InnerJoin:
+	case logicalop.InnerJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
-	case plannercore.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, true)}, nil
-	case plannercore.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
 	default:
 		return nil, nil
@@ -483,16 +482,16 @@ func (*ImplHashJoinBuildRight) Match(_ *memo.GroupExpr, prop *property.PhysicalP
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case plannercore.SemiJoin, plannercore.AntiSemiJoin,
-		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin,
+		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case plannercore.InnerJoin:
+	case logicalop.InnerJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case plannercore.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case plannercore.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, true)}, nil
 	}
 	return nil, nil
@@ -509,7 +508,7 @@ func (*ImplMergeJoin) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (ma
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplMergeJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	physicalMergeJoins := plannercore.GetMergeJoin(join, reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats, expr.Children[1].Prop.Stats)
 	mergeJoinImpls := make([]memo.Implementation, 0, len(physicalMergeJoins))
 	for _, physicalPlan := range physicalMergeJoins {

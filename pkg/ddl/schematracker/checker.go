@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -490,11 +489,6 @@ func (d *Checker) Start(ctxPool *pools.ResourcePool) error {
 	return d.realDDL.Start(ctxPool)
 }
 
-// GetLease implements the DDL interface.
-func (d *Checker) GetLease() time.Duration {
-	return d.realDDL.GetLease()
-}
-
 // Stats implements the DDL interface.
 func (d *Checker) Stats(vars *variable.SessionVars) (map[string]any, error) {
 	return d.realDDL.Stats(vars)
@@ -543,16 +537,6 @@ func (d *Checker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl tab
 // SetBinlogClient implements the DDL interface.
 func (d *Checker) SetBinlogClient(client *pumpcli.PumpsClient) {
 	d.realDDL.SetBinlogClient(client)
-}
-
-// GetHook implements the DDL interface.
-func (d *Checker) GetHook() ddl.Callback {
-	return d.realDDL.GetHook()
-}
-
-// SetHook implements the DDL interface.
-func (d *Checker) SetHook(h ddl.Callback) {
-	d.realDDL.SetHook(h)
 }
 
 // DoDDLJob implements the DDL interface.

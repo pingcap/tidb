@@ -3091,12 +3091,12 @@ func TestTypeAndCharsetOfSendLongData(t *testing.T) {
 
 func TestIssue53634(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
-	ts.RunTestIssue53634(t, ts.Domain)
+	ts.RunTestIssue53634(t)
 }
 
 func TestIssue54254(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
-	ts.RunTestIssue54254(t, ts.Domain)
+	ts.RunTestIssue54254(t)
 }
 
 func TestAuthSocket(t *testing.T) {

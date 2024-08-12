@@ -164,8 +164,6 @@ type DDL interface {
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
 	Start(ctxPool *pools.ResourcePool) error
-	// GetLease returns current schema lease time.
-	GetLease() time.Duration
 	// Stats returns the DDL statistics.
 	Stats(vars *variable.SessionVars) (map[string]any, error)
 	// GetScope gets the status variables scope.
@@ -186,10 +184,6 @@ type DDL interface {
 	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
-	// GetHook gets the hook. It's exported for testing.
-	GetHook() Callback
-	// SetHook sets the hook.
-	SetHook(h Callback)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 }
@@ -352,16 +346,11 @@ type ddlCtx struct {
 		// jobCtxMap maps job ID to job's ctx.
 		jobCtxMap map[int64]*JobContext
 	}
-
-	// hook may be modified.
-	mu hookStruct
 }
 
-// TODO remove it after we remove hook.
-type hookStruct struct {
-	sync.RWMutex
-	// see newDefaultCallBack for its value in normal flow.
-	hook Callback
+// SchemaLoader is used to avoid import loop, the only impl is domain currently.
+type SchemaLoader interface {
+	Reload() error
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -582,14 +571,6 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 // give up notify and log it.
 func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
 	if d.ddlEventCh != nil {
-		if d.lease == 0 {
-			// If lease is 0, it's always used in test.
-			select {
-			case d.ddlEventCh <- e:
-			default:
-			}
-			return
-		}
 		for i := 0; i < 10; i++ {
 			select {
 			case d.ddlEventCh <- e:
@@ -609,9 +590,7 @@ func NewDDL(ctx context.Context, options ...Option) (DDL, Executor) {
 }
 
 func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
-	opt := &Options{
-		Hook: &BaseCallback{},
-	}
+	opt := &Options{}
 	for _, o := range options {
 		o(opt)
 	}
@@ -661,7 +640,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
-	ddlCtx.mu.hook = opt.Hook
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.schemaVersionManager = newSchemaVersionManager()
@@ -702,7 +680,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ownerManager:    d.ownerManager,
 		ddlJobDoneChMap: &d.ddlJobDoneChMap,
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
-		mu:              &d.mu,
 		globalIDLock:    &d.globalIDLock,
 	}
 	d.executor = e
@@ -866,12 +843,6 @@ func (d *ddl) close() {
 	logutil.DDLLogger().Info("DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
-// GetLease implements DDL.GetLease interface.
-func (d *ddl) GetLease() time.Duration {
-	lease := d.lease
-	return lease
-}
-
 // SchemaSyncer implements DDL.SchemaSyncer interface.
 func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
 	return d.schemaSyncer
@@ -895,22 +866,6 @@ func (d *ddl) GetID() string {
 // SetBinlogClient implements DDL.SetBinlogClient interface.
 func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
 	d.binlogCli = binlogCli
-}
-
-// GetHook implements DDL.GetHook interface.
-func (d *ddl) GetHook() Callback {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	return d.mu.hook
-}
-
-// SetHook set the customized hook.
-func (d *ddl) SetHook(h Callback) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.hook = h
 }
 
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
@@ -1050,9 +1005,19 @@ type RecoverSchemaInfo struct {
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
 	if variable.EnableMDL.Load() {
-		// If metadata lock is enabled. The transaction of DDL must begin after prewrite of the async commit transaction,
-		// then the commit ts of DDL must be greater than the async commit transaction. In this case, the corresponding schema of the async commit transaction
-		// is correct. But if metadata lock is disabled, we can't ensure that the corresponding schema of the async commit transaction isn't change.
+		// If metadata lock is enabled. The transaction of DDL must begin after
+		// pre-write of the async commit transaction, then the commit ts of DDL
+		// must be greater than the async commit transaction. In this case, the
+		// corresponding schema of the async commit transaction is correct.
+		// suppose we're adding index:
+		// - schema state -> StateWriteOnly with version V
+		// - some txn T started using async commit and version V,
+		//   and T do pre-write before or after V+1
+		// - schema state -> StateWriteReorganization with version V+1
+		// - T commit finish, with TS
+		// - 'wait schema synced' finish
+		// - schema state -> Done with version V+2, commit-ts of this
+		//   transaction must > TS, so it's safe for T to commit.
 		return
 	}
 	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
