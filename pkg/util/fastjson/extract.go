@@ -41,10 +41,35 @@ func unexpectedEOF(err error) error {
 	return err
 }
 
-// next iterates and returns the top-level key and value as token. The odd
-// invocations return key tokens, the even invocations return value tokens. If
-// the value is a JSON array or object, all tokens belongs to the value will be
-// returned.
+// readName reads a name belongs to the top-level of JSON objects. Caller should
+// call readOrDiscardValue to consume its value before calling next readName.
+func (i *topLevelJSONTokenIter) readName() (string, error) {
+	ts, err := i.next(false)
+	if err != nil {
+		return "", err
+	}
+	if len(ts) != 1 {
+		return "", fmt.Errorf("unexpected JSON name, %v", ts)
+	}
+	name, ok := ts[0].(string)
+	if !ok {
+		// > An object is an unordered collection of zero or more name/value
+		//   pairs, where a name is a string...
+		// https://datatracker.ietf.org/doc/html/rfc8259#section-1
+		return "", fmt.Errorf("unexpected JSON name, %T %v", ts, ts)
+	}
+	return name, nil
+}
+
+// readOrDiscardValue reads a value belongs to the top-level of JSON objects. It
+// must be called after readName. If caller don't need the value, it can pass
+// true to discard it.
+func (i *topLevelJSONTokenIter) readOrDiscardValue(discard bool) ([]json.Token, error) {
+	return i.next(discard)
+}
+
+// next is an internal method to iterate the JSON tokens. Callers should use
+// readName / readOrDiscardValue instead.
 func (i *topLevelJSONTokenIter) next(discard bool) ([]json.Token, error) {
 	if i.level == 0 {
 		t, err := i.d.Token()
