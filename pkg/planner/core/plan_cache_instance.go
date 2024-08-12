@@ -127,12 +127,12 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 // step 1: iterate all values to collect their last_used
 // step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
-func (pc *instancePlanCache) Evict() (skipReason string, numEvicted int) {
+func (pc *instancePlanCache) Evict() (detailInfo string, numEvicted int) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
 	currentTot, softLimit := pc.totCost.Load(), pc.softMemLimit.Load()
 	if currentTot < softLimit {
-		skipReason = fmt.Sprintf("memory usage is below the soft limit, currentTot: %v, softLimit: %v", currentTot, softLimit)
+		detailInfo = fmt.Sprintf("memory usage is below the soft limit, currentTot: %v, softLimit: %v", currentTot, softLimit)
 		return
 	}
 	//lastUsedTimes := make([]time.Time, 0, 64)
@@ -143,8 +143,9 @@ func (pc *instancePlanCache) Evict() (skipReason string, numEvicted int) {
 		return false
 	})
 	threshold := int64(pc.calcEvictionThreshold(counts)) // step 2
-	pc.foreach(func(prev, this *instancePCNode) bool {   // step 3
-		if this.count.Load() < threshold { // if lastUsed<=threshold, evict this value
+	detailInfo = fmt.Sprintf("evict threshold: %v", threshold)
+	pc.foreach(func(prev, this *instancePCNode) bool { // step 3
+		if this.count.Load() <= threshold { // if lastUsed<=threshold, evict this value
 			if prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
 				pc.totCost.Sub(this.value.MemoryUsage()) //  it might have been updated by other thread
 				pc.totPlan.Sub(1)

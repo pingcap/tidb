@@ -71,7 +71,7 @@ type InstancePlanCache interface {
 	// Put puts the key and value into the cache.
 	Put(key string, value, paramTypes any) (succ bool)
 	// Evict evicts some cached values.
-	Evict() (skipReason string, numEvicted int)
+	Evict() (detailInfo string, numEvicted int)
 	// Size returns the number of cached values.
 	Size() int64
 	// MemUsage returns the total memory usage of this plan cache.
