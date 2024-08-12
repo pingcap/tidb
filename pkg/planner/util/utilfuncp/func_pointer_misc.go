@@ -147,6 +147,14 @@ var ExhaustPhysicalPlans4LogicalLock func(lp base.LogicalPlan, prop *property.Ph
 var ExhaustPhysicalPlans4LogicalUnionScan func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
+// ExhaustPhysicalPlans4LogicalSelection will be called by LogicalSelection in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalSelection func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalJoin will be called by LogicalJoin in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
 // *************************************** physical op related *******************************************
 
 // GetEstimatedProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.
@@ -159,3 +167,7 @@ var GetActualProbeCntFromProbeParents func(pps []base.PhysicalPlan, statsColl *e
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
 var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task
+
+// WindowIsTopN is used in DeriveTopNFromWindow rule.
+// todo: @arenatlx: remove it after logical_datasource is migrated to logicalop.
+var WindowIsTopN func(p base.LogicalPlan) (bool, uint64)

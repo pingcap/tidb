@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -210,40 +211,21 @@ func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
 	return
 }
 
-func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expression.Schema {
-	leftSchema := join.Children()[0].Schema()
-	switch joinType {
-	case SemiJoin, AntiSemiJoin:
-		return leftSchema.Clone()
-	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := leftSchema.Clone()
-		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
-		return newSchema
-	}
-	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
-	if joinType == LeftOuterJoin {
-		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
-	} else if joinType == RightOuterJoin {
-		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
-	}
-	return newSchema
-}
-
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType JoinType, join base.PhysicalPlan) *expression.Schema {
+func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
-	case SemiJoin, AntiSemiJoin:
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
 		return leftSchema.Clone()
-	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		newSchema := leftSchema.Clone()
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
-	if joinType == LeftOuterJoin {
+	if joinType == logicalop.LeftOuterJoin {
 		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
-	} else if joinType == RightOuterJoin {
+	} else if joinType == logicalop.RightOuterJoin {
 		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
@@ -427,14 +409,4 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		return nil, err
 	}
 	return encodedIdxVals, nil
-}
-
-// GetPushDownCtx creates a PushDownContext from PlanContext
-func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
-	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
-}
-
-// GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
-func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
-	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
 }
