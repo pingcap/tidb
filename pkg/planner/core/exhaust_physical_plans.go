@@ -1125,16 +1125,9 @@ func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPl
 		return child
 	}
 	physicalProj := PhysicalProjection{
-<<<<<<< HEAD
-		Exprs:                proj.Exprs,
-		CalculateNoDelay:     proj.CalculateNoDelay,
-		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
-	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), nil)
-=======
 		Exprs:            proj.Exprs,
 		CalculateNoDelay: proj.CalculateNoDelay,
-	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), prop)
->>>>>>> 004b442fb9a (pkg/planner: set proj.AvoidColumnEvaluator in postOptimize (#55333))
+	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), nil)
 	physicalProj.SetChildren(child)
 	physicalProj.SetSchema(proj.schema)
 	return physicalProj
