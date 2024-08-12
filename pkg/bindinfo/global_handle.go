@@ -55,10 +55,10 @@ type GlobalBindingHandle interface {
 
 	// CreateGlobalBinding creates a Bindings to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
-	CreateGlobalBinding(sctx sessionctx.Context, binding Binding) (err error)
+	CreateGlobalBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
 
 	// DropGlobalBinding drop Bindings to the storage and Bindings int the cache.
-	DropGlobalBinding(sqlDigest string) (deletedRows uint64, err error)
+	DropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error)
 
 	// SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
 	SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error)
@@ -256,9 +256,11 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 
 // CreateGlobalBinding creates a Bindings to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, binding Binding) (err error) {
-	if err := prepareHints(sctx, &binding); err != nil {
-		return err
+func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
+	for _, binding := range bindings {
+		if err := prepareHints(sctx, binding); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		if err == nil {
@@ -272,63 +274,90 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 			return err
 		}
 
-		now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+		for i, binding := range bindings {
+			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
-		updateTs := now.String()
-		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-			deleted, updateTs, binding.OriginalSQL, updateTs)
-		if err != nil {
-			return err
-		}
+			updateTs := now.String()
+			_, err = exec(
+				sctx,
+				`UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+				deleted,
+				updateTs,
+				binding.OriginalSQL,
+				updateTs,
+			)
+			if err != nil {
+				return err
+			}
 
-		binding.CreateTime = now
-		binding.UpdateTime = now
+			binding.CreateTime = now
+			binding.UpdateTime = now
 
-		// Insert the Bindings to the storage.
-		_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
-			binding.OriginalSQL,
-			binding.BindSQL,
-			strings.ToLower(binding.Db),
-			binding.Status,
-			binding.CreateTime.String(),
-			binding.UpdateTime.String(),
-			binding.Charset,
-			binding.Collation,
-			binding.Source,
-			binding.SQLDigest,
-			binding.PlanDigest,
-		)
-		if err != nil {
-			return err
+			// Insert the Bindings to the storage.
+			_, err = exec(
+				sctx,
+				`INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+				binding.OriginalSQL,
+				binding.BindSQL,
+				strings.ToLower(binding.Db),
+				binding.Status,
+				binding.CreateTime.String(),
+				binding.UpdateTime.String(),
+				binding.Charset,
+				binding.Collation,
+				binding.Source,
+				binding.SQLDigest,
+				binding.PlanDigest,
+			)
+			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
+				n := val.(int)
+				if n == i {
+					err = errors.NewNoStackErrorf("An injected error")
+				}
+			})
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
 }
 
 // dropGlobalBinding drops a Bindings to the storage and Bindings int the cache.
-func (h *globalBindingHandle) dropGlobalBinding(sqlDigest string) (deletedRows uint64, err error) {
-	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+func (h *globalBindingHandle) dropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error) {
+	err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
 
-		updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
-
-		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?`,
-			deleted, updateTs, sqlDigest, updateTs, deleted)
-		if err != nil {
-			return err
+		for _, sqlDigest := range sqlDigests {
+			updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
+			_, err = exec(
+				sctx,
+				`UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?`,
+				deleted,
+				updateTs,
+				sqlDigest,
+				updateTs,
+				deleted,
+			)
+			if err != nil {
+				return err
+			}
+			deletedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		}
-		deletedRows = sctx.GetSessionVars().StmtCtx.AffectedRows()
 		return nil
 	})
+	if err != nil {
+		deletedRows = 0
+	}
 	return
 }
 
 // DropGlobalBinding drop Bindings to the storage and Bindings int the cache.
-func (h *globalBindingHandle) DropGlobalBinding(sqlDigest string) (deletedRows uint64, err error) {
-	if sqlDigest == "" {
+func (h *globalBindingHandle) DropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error) {
+	if len(sqlDigests) == 0 {
 		return 0, errors.New("sql digest is empty")
 	}
 	defer func() {
@@ -336,7 +365,7 @@ func (h *globalBindingHandle) DropGlobalBinding(sqlDigest string) (deletedRows u
 			err = h.LoadFromStorageToCache(false)
 		}
 	}()
-	return h.dropGlobalBinding(sqlDigest)
+	return h.dropGlobalBinding(sqlDigests)
 }
 
 // SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
@@ -452,7 +481,7 @@ func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	invalidBindings := h.invalidBindings.getAll()
 	h.invalidBindings.reset()
 	for _, invalidBinding := range invalidBindings {
-		if _, err := h.dropGlobalBinding(invalidBinding.SQLDigest); err != nil {
+		if _, err := h.dropGlobalBinding([]string{invalidBinding.SQLDigest}); err != nil {
 			logutil.BindLogger().Debug("flush bind record failed", zap.Error(err))
 		}
 	}
