@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncer
+package schemaver
 
 import (
 	"context"
@@ -95,7 +95,7 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	etcdCli := mockCluster.RandClient()
 	_, err := etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/1/aa", "123")
 	require.NoError(t, err)
-	s := NewSchemaSyncer(etcdCli, "1111").(*schemaVersionSyncer)
+	s := NewEtcdSyncer(etcdCli, "1111").(*etcdSyncer)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
