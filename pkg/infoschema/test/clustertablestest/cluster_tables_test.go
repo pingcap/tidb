@@ -1389,6 +1389,48 @@ func TestBatchCreateBindingFromHistory(t *testing.T) {
 	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("1"))
 }
 
+func TestBatchCreateBindingFromHistoryAtomic(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t1(a INT, b INT, c INT, INDEX ia(a));")
+	tk.MustExec("CREATE TABLE t2(a INT, b INT, c INT, INDEX ia(a));")
+	tk.MustExec("INSERT INTO t1 SELECT * FROM t2 WHERE a = 1;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("0"))
+	tk.MustExec("UPDATE /*+ INL_JOIN(t2) */ t1, t2 SET t1.a = 1 WHERE t1.b = t2.a;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("0"))
+	tk.MustExec("DELETE /*+ HASH_JOIN(t1) */ t1 FROM t1 JOIN t2 WHERE t1.b = t2.a;")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT * FROM t1 WHERE t1.a IN (SELECT a FROM t2);")
+	tk.MustQuery("SELECT @@LAST_PLAN_FROM_BINDING;").Check(testkit.Rows("0"))
+
+	tk.MustQuery(
+		"SELECT @digests:=GROUP_CONCAT(plan_digest) FROM information_schema.statements_summary " +
+			"WHERE table_names LIKE '%test.t1%' AND stmt_type != 'CreateTable';",
+	)
+	// Inject error to one of the digests
+	require.NoError(t,
+		failpoint.Enable(
+			"github.com/pingcap/tidb/pkg/bindinfo/CreateGlobalBindingNthFail",
+			"return(3)"),
+	)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/bindinfo/CreateGlobalBindingNthFail"))
+	}()
+	tk.MustExecToErr("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @digests;")
+	// Error of one digest should make the entire batch fail
+	tk.MustQuery("SHOW GLOBAL BINDINGS;").Check(testkit.Rows())
+}
+
 func TestRepeatedBatchCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)

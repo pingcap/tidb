@@ -274,7 +274,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 			return err
 		}
 
-		for _, binding := range bindings {
+		for i, binding := range bindings {
 			now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
 			updateTs := now.String()
@@ -309,6 +309,12 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 				binding.SQLDigest,
 				binding.PlanDigest,
 			)
+			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
+				n := val.(int)
+				if n == i {
+					err = errors.NewNoStackErrorf("An injected error")
+				}
+			})
 			if err != nil {
 				return err
 			}
