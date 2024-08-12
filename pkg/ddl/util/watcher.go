@@ -35,8 +35,8 @@ type Watcher interface {
 }
 
 type watcher struct {
-	sync.RWMutex
 	wCh clientv3.WatchChan
+	sync.RWMutex
 }
 
 // NewWatcher creates a new watcher.
