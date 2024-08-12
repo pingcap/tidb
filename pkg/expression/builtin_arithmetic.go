@@ -57,6 +57,10 @@ var (
 	_ builtinFunc = &builtinArithmeticModIntSignedSignedSig{}
 	_ builtinFunc = &builtinArithmeticModRealSig{}
 	_ builtinFunc = &builtinArithmeticModDecimalSig{}
+
+	_ builtinFunc = &builtinArithmeticPlusVectorFloat32Sig{}
+	_ builtinFunc = &builtinArithmeticMinusVectorFloat32Sig{}
+	_ builtinFunc = &builtinArithmeticMultiplyVectorFloat32Sig{}
 )
 
 // isConstantBinaryLiteral return true if expr is constant binary literal
@@ -166,6 +170,15 @@ type arithmeticPlusFunctionClass struct {
 func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
+	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinArithmeticPlusVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
+		return sig, nil
 	}
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
@@ -316,6 +329,15 @@ type arithmeticMinusFunctionClass struct {
 func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
+	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinArithmeticMinusVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
+		return sig, nil
 	}
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
@@ -499,6 +521,15 @@ type arithmeticMultiplyFunctionClass struct {
 func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
+	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinArithmeticMultiplyVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
+		return sig, nil
 	}
 	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
@@ -1156,4 +1187,91 @@ func (s *builtinArithmeticModIntSignedSignedSig) evalInt(ctx EvalContext, row ch
 	}
 
 	return a % b, false, nil
+}
+
+type builtinArithmeticPlusVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinArithmeticPlusVectorFloat32Sig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticPlusVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	a, isLHSNull, err := s.args[0].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isLHSNull, err
+	}
+	b, isRHSNull, err := s.args[1].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	v, err := a.Add(b)
+	if err != nil {
+		return types.ZeroVectorFloat32, true, err
+	}
+	return v, false, nil
+}
+
+type builtinArithmeticMinusVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticMinusVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinArithmeticMinusVectorFloat32Sig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticMinusVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	a, isLHSNull, err := s.args[0].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isLHSNull, err
+	}
+	b, isRHSNull, err := s.args[1].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	v, err := a.Sub(b)
+	if err != nil {
+		return types.ZeroVectorFloat32, true, err
+	}
+	return v, false, nil
+}
+
+type builtinArithmeticMultiplyVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticMultiplyVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinArithmeticMultiplyVectorFloat32Sig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticMultiplyVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	a, isLHSNull, err := s.args[0].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isLHSNull, err
+	}
+	b, isRHSNull, err := s.args[1].EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	v, err := a.Mul(b)
+	if err != nil {
+		return types.ZeroVectorFloat32, true, err
+	}
+	return v, false, nil
 }

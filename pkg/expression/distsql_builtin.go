@@ -1076,6 +1076,42 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_FromBinary:
 		// TODO: set the `cannotConvertStringAsWarning` accordingly
 		f = &builtinInternalFromBinarySig{base, false}
+	case tipb.ScalarFuncSig_CastVectorFloat32AsString:
+		f = &builtinCastVectorFloat32AsStringSig{base}
+	case tipb.ScalarFuncSig_CastVectorFloat32AsVectorFloat32:
+		f = &builtinCastVectorFloat32AsVectorFloat32Sig{base}
+	case tipb.ScalarFuncSig_LTVectorFloat32:
+		f = &builtinLTVectorFloat32Sig{base}
+	case tipb.ScalarFuncSig_LEVectorFloat32:
+		f = &builtinLEVectorFloat32Sig{base}
+	case tipb.ScalarFuncSig_GTVectorFloat32:
+		f = &builtinGTVectorFloat32Sig{base}
+	case tipb.ScalarFuncSig_GEVectorFloat32:
+		f = &builtinGEVectorFloat32Sig{base}
+	case tipb.ScalarFuncSig_NEVectorFloat32:
+		f = &builtinNEVectorFloat32Sig{base}
+	case tipb.ScalarFuncSig_EQVectorFloat32:
+		f = &builtinEQVectorFloat32Sig{base}
+	case tipb.ScalarFuncSig_NullEQVectorFloat32:
+		f = &builtinNullEQVectorFloat32Sig{base}
+	case tipb.ScalarFuncSig_VectorFloat32AnyValue:
+		f = &builtinVectorFloat32AnyValueSig{base}
+	case tipb.ScalarFuncSig_VectorFloat32IsNull:
+		f = &builtinVectorFloat32IsNullSig{base}
+	case tipb.ScalarFuncSig_VecAsTextSig:
+		f = &builtinVecAsTextSig{base}
+	case tipb.ScalarFuncSig_VecDimsSig:
+		f = &builtinVecDimsSig{base}
+	case tipb.ScalarFuncSig_VecL1DistanceSig:
+		f = &builtinVecL1DistanceSig{base}
+	case tipb.ScalarFuncSig_VecL2DistanceSig:
+		f = &builtinVecL2DistanceSig{base}
+	case tipb.ScalarFuncSig_VecNegativeInnerProductSig:
+		f = &builtinVecNegativeInnerProductSig{base}
+	case tipb.ScalarFuncSig_VecCosineDistanceSig:
+		f = &builtinVecCosineDistanceSig{base}
+	case tipb.ScalarFuncSig_VecL2NormSig:
+		f = &builtinVecL2NormSig{base}
 
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
@@ -1149,6 +1185,8 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 		return convertJSON(expr.Val)
 	case tipb.ExprType_MysqlEnum:
 		return convertEnum(expr.Val, expr.FieldType)
+	case tipb.ExprType_TiDBVectorFloat32:
+		return convertVectorFloat32(expr.Val)
 	}
 	if expr.Tp != tipb.ExprType_ScalarFunc {
 		panic("should be a tipb.ExprType_ScalarFunc")
@@ -1291,6 +1329,16 @@ func convertJSON(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid Datum.Kind() %d", d.Kind())
 	}
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeJSON)}, nil
+}
+
+func convertVectorFloat32(val []byte) (*Constant, error) {
+	v, _, err := types.ZeroCopyDeserializeVectorFloat32(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid VectorFloat32 %x", val)
+	}
+	var d types.Datum
+	d.SetVectorFloat32(v)
+	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeTiDBVectorFloat32)}, nil
 }
 
 func convertEnum(val []byte, tp *tipb.FieldType) (*Constant, error) {
