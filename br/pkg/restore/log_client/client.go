@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -155,6 +155,10 @@ func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*
 	for tid, rules := range rules {
 		log.Info("Using rewrite rules.", zap.Int64("table_id", tid), zap.Stringer("rules", rules))
 	}
+	batchSize := 8
+	restoreFiles := make([]sstfiles.SstFilesInfo, 0, batchSize)
+	splitRanges := make([]rtree.Range, 0, batchSize)
+	cnt := 0
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
@@ -165,26 +169,42 @@ func (rc *LogClient) RestoreCompactedSsts(ctx context.Context, rules map[int64]*
 			log.Warn("Skipped excluded tables.", zap.Int64("table_id", i.Meta.TableId))
 			continue
 		}
+
+		restoreFiles = append(restoreFiles, sstfiles.SstFilesInfo{
+			TableID:      i.Meta.TableId,
+			Files:        i.SstOutputs,
+			RewriteRules: rewriteRules,
+		})
+
 		// no need to merge sst files here
 		ranges, _, err := restoreutils.MergeAndRewriteFileRanges(i.SstOutputs, rewriteRules, 0, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		restoreFiles := sstfiles.SstFilesInfo{
-			TableID:      i.Meta.TableId,
-			Files:        i.SstOutputs,
-			RewriteRules: rewriteRules,
+		for _, r := range ranges {
+			cnt += 1
+			// TODO When log backup supports record region range, use it to split ranges.
+			// currently, we use the min key of the record key to split ranges.
+			if cnt >= batchSize {
+				r.StartKey = i.Meta.MinKey
+				// TODO implement update ch
+				splitRanges = append(splitRanges, r)
+				cnt = 0
+			}
 		}
-		// TODO implement update ch
-		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-			if _, ok := os.LookupEnv("br_skip_split"); !ok {
-				err = rc.restorer.SplitRanges(eCtx, ranges, nil)
+		if len(splitRanges) > 0 {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				// TODO implement update ch
+				err := rc.restorer.SplitRanges(eCtx, splitRanges, nil)
 				if err != nil {
 					return errors.Trace(err)
 				}
-			}
-			return rc.restorer.RestoreFiles(eCtx, []sstfiles.SstFilesInfo{restoreFiles}, nil)
-		})
+				return rc.restorer.RestoreFiles(eCtx, restoreFiles, nil)
+			})
+			// reset for next batch
+			splitRanges = nil
+			restoreFiles = nil
+		}
 	}
 	return eg.Wait()
 }
@@ -287,7 +307,6 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
-	// TODO make a better concurrencyPerStore
 	log.Info("Initializing client.", zap.Stringer("api", rc.dom.Store().GetCodec().GetAPIVersion()))
 	snapFileImporter, err := sstfiles.NewSnapFileImporter(
 		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
@@ -295,9 +314,7 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
-	// TODO make a better concurrency
-	workerPool := tidbutil.NewWorkerPool(128, "sst files")
-	rc.restorer = sstfiles.NewSimpleFileRestorer(snapFileImporter, metaClient, workerPool)
+	rc.restorer = sstfiles.NewSimpleFileRestorer(true, snapFileImporter, metaClient, rc.workerPool)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {

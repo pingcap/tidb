@@ -16,16 +16,31 @@ import (
 	"go.uber.org/zap"
 )
 
+type SplitOption interface {
+	apply(*RegionSplitter)
+}
+
+type UseStartKeyOption struct{}
+
+func (o *UseStartKeyOption) apply(r *RegionSplitter) {
+	r.useStartKey = true
+}
+
 // RegionSplitter is a executor of region split by rules.
 type RegionSplitter struct {
-	client split.SplitClient
+	useStartKey bool
+	client      split.SplitClient
 }
 
 // NewRegionSplitter returns a new RegionSplitter.
-func NewRegionSplitter(client split.SplitClient) *RegionSplitter {
-	return &RegionSplitter{
+func NewRegionSplitter(client split.SplitClient, opts ...SplitOption) *RegionSplitter {
+	r := &RegionSplitter{
 		client: client,
 	}
+	for _, opt := range opts {
+		opt.apply(r)
+	}
+	return r
 }
 
 // SplitWaitAndScatter expose the function `SplitWaitAndScatter` of split client.
@@ -67,7 +82,11 @@ func (rs *RegionSplitter) ExecuteSplit(
 	sortedKeys := make([][]byte, 0, len(sortedRanges))
 	totalRangeSize := uint64(0)
 	for _, r := range sortedRanges {
-		sortedKeys = append(sortedKeys, r.EndKey)
+		if rs.useStartKey {
+			sortedKeys = append(sortedKeys, r.StartKey)
+		} else {
+			sortedKeys = append(sortedKeys, r.EndKey)
+		}
 		totalRangeSize += r.Size
 	}
 	// the range size must be greater than 0 here
