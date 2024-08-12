@@ -205,8 +205,8 @@ go_test(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
-        "@io_gorm_driver_mysql//:go_default_library",
-        "@io_gorm_gorm//:go_default_library",
+        "@io_gorm_driver_mysql//:mysql",
+        "@io_gorm_gorm//:gorm",
         "@org_uber_go_goleak//:goleak",
     ],
 )
