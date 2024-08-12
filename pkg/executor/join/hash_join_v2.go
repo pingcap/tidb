@@ -126,7 +126,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 			totalSegmentCnt += len(rt.segments)
 		}
 	}
-	taggedBits := uint8(initTaggedBits)
+	taggedBits := uint8(maxTaggedBits)
 	for i := 0; i < int(partitionNumber); i++ {
 		for _, seg := range rowTables[i].segments {
 			taggedBits = min(taggedBits, seg.taggedBits)

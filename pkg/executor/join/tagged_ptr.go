@@ -18,8 +18,8 @@ import (
 	"unsafe"
 )
 
-const initTaggedBits = int8(24)
-const initTaggedMask = uint64(0xffffffffff)
+const maxTaggedBits = int8(24)
+const maxTaggedMask = uint64(0xffffffffff)
 
 // taggedPtr is a struct to save unsafe.Pointer with tagged value
 // the value of unsafe.Pointer is actually an uint64 and in most
@@ -70,8 +70,8 @@ func getTaggedBitsFromUintptr(ptr uintptr) uint8 {
 	if sizeOfUintptr != 8 {
 		return 0
 	}
-	taggedBits := initTaggedBits
-	taggedMask := initTaggedMask
+	taggedBits := maxTaggedBits
+	taggedMask := maxTaggedMask
 	pValue := uint64(ptr)
 	for taggedBits > 0 {
 		if pValue & ^taggedMask == 0 {

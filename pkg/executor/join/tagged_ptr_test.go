@@ -25,14 +25,14 @@ func TestTaggedBits(t *testing.T) {
 	p := uintptr(0)
 	for i := 0; i <= 64; i++ {
 		taggedBits := getTaggedBitsFromUintptr(p)
-		require.Equal(t, min(int8(64-i), initTaggedBits), int8(taggedBits))
+		require.Equal(t, min(int8(64-i), maxTaggedBits), int8(taggedBits))
 		p = (p << 1) + 1
 	}
 }
 
 func TestTagHelperInit(t *testing.T) {
-	mask := ^initTaggedMask
-	for taggedBits := initTaggedBits; taggedBits >= 0; taggedBits-- {
+	mask := ^maxTaggedMask
+	for taggedBits := maxTaggedBits; taggedBits >= 0; taggedBits-- {
 		tagHelper := &tagPtrHelper{}
 		tagHelper.init(uint8(taggedBits))
 		require.Equal(t, mask, tagHelper.taggedMask)
@@ -51,7 +51,7 @@ func TestTagHelper(t *testing.T) {
 	taggedBits := getTaggedBitsFromUintptr(startUintptr | endUintptr)
 	tagHelper := &tagPtrHelper{}
 	tagHelper.init(taggedBits)
-	taggedValue := uint64(0x1234) << (64 - initTaggedBits)
+	taggedValue := uint64(0x1234) << (64 - maxTaggedBits)
 	for {
 		if taggedValue&tagHelper.taggedMask != taggedValue {
 			taggedValue <<= 1

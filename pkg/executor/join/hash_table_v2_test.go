@@ -86,7 +86,7 @@ func createRowTable(rows int) (*rowTable, uint8, error) {
 		return nil, 0, err
 	}
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
-	taggedBits := uint8(initTaggedBits)
+	taggedBits := uint8(maxTaggedBits)
 	for _, seg := range hashJoinCtx.hashTableContext.rowTables[0][0].segments {
 		taggedBits = min(taggedBits, seg.taggedBits)
 	}
