@@ -41,6 +41,7 @@ func NewInstancePlanCache(softMemLimit, hardMemLimit int64) sessionctx.InstanceP
 type instancePCNode struct {
 	value    *PlanCacheValue
 	lastUsed atomic.Time
+	count    atomic.Int64
 	next     atomic.Pointer[instancePCNode]
 }
 
@@ -88,6 +89,7 @@ func (*instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes a
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
 		if checkTypesCompatibility4PC(node.value.paramTypes, paramTypes) { // v.Plan is read-only, no need to lock
 			node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
+			node.count.Add(1)
 			return node.value, true
 		}
 	}
@@ -130,14 +132,16 @@ func (pc *instancePlanCache) Evict() (numEvicted int) {
 	if pc.totCost.Load() < pc.softMemLimit.Load() {
 		return // do nothing
 	}
-	lastUsedTimes := make([]time.Time, 0, 64)
+	//lastUsedTimes := make([]time.Time, 0, 64)
+	counts := make([]int, 0, 64)
 	pc.foreach(func(_, this *instancePCNode) bool { // step 1
-		lastUsedTimes = append(lastUsedTimes, this.lastUsed.Load())
+		//lastUsedTimes = append(lastUsedTimes, this.lastUsed.Load())
+		counts = append(counts, int(this.count.Load()))
 		return false
 	})
-	threshold := pc.calcEvictionThreshold(lastUsedTimes) // step 2
+	threshold := int64(pc.calcEvictionThreshold(counts)) // step 2
 	pc.foreach(func(prev, this *instancePCNode) bool {   // step 3
-		if !this.lastUsed.Load().After(threshold) { // if lastUsed<=threshold, evict this value
+		if this.count.Load() < threshold { // if lastUsed<=threshold, evict this value
 			if prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
 				pc.totCost.Sub(this.value.MemoryUsage()) //  it might have been updated by other thread
 				pc.totPlan.Sub(1)
@@ -168,12 +172,12 @@ func (pc *instancePlanCache) Size() int64 {
 	return pc.totPlan.Load()
 }
 
-func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t time.Time) {
-	if len(lastUsedTimes) == 0 {
+func (pc *instancePlanCache) calcEvictionThreshold(counts []int) (c int) {
+	if len(counts) == 0 {
 		return
 	}
 	totCost, softMemLimit := pc.totCost.Load(), pc.softMemLimit.Load()
-	avgPerPlan := totCost / int64(len(lastUsedTimes))
+	avgPerPlan := totCost / int64(len(counts))
 	if avgPerPlan <= 0 {
 		return
 	}
@@ -183,13 +187,11 @@ func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t
 	if numToEvict <= 0 {
 		return
 	}
-	sort.Slice(lastUsedTimes, func(i, j int) bool {
-		return lastUsedTimes[i].Before(lastUsedTimes[j])
-	})
-	if len(lastUsedTimes) < int(numToEvict) {
+	sort.Ints(counts)
+	if len(counts) < int(numToEvict) {
 		return // for safety, avoid index-of-range panic
 	}
-	return lastUsedTimes[numToEvict-1]
+	return counts[numToEvict-1]
 }
 
 func (pc *instancePlanCache) foreach(callback func(prev, this *instancePCNode) (thisRemoved bool)) {
