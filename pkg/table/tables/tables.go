@@ -833,7 +833,6 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	sessVars := sctx.GetSessionVars()
 	for _, col := range t.Columns {
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
@@ -918,8 +917,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 	var flags []kv.FlagsOp
 	if setPresume {
 		flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
-		if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic && sessVars.InTxn() &&
-			!sctx.InRestrictedSQL() && sctx.ConnectionID() > 0 {
+		if opt.PessimisticLazyDupKeyCheck() == table.DupKeyCheckInPrewrite && txn.IsPessimistic() {
 			flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 		}
 	}

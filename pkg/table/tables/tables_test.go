@@ -1206,4 +1206,70 @@ func TestDupKeyCheckMode(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("PessimisticLazyMode", func(t *testing.T) {
+		defer tk.MustExec("rollback")
+		// DupKeyCheckInAcquireLock should not add flagNeedConstraintCheckInPrewrite
+		memBuffer := prepareTxn("pessimistic").GetMemBuffer()
+		h := expectAddRecordSucc(types.MakeDatums(1, 2, 3), table.DupKeyCheckLazy, table.DupKeyCheckInAcquireLock)
+		flags := getHandleFlags(h, memBuffer)
+		require.True(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		flags = getUniqueKeyFlags(h, types.NewIntDatum(2), memBuffer)
+		require.True(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		tk.MustExec("rollback")
+
+		// DupKeyCheckInPrewrite should add flagNeedConstraintCheckInPrewrite
+		memBuffer = prepareTxn("pessimistic").GetMemBuffer()
+		h = expectAddRecordSucc(types.MakeDatums(11, 12, 13), table.DupKeyCheckLazy, table.DupKeyCheckInPrewrite)
+		flags = getHandleFlags(h, memBuffer)
+		require.True(t, flags.HasPresumeKeyNotExists())
+		require.True(t, flags.HasNeedConstraintCheckInPrewrite())
+		flags = getUniqueKeyFlags(h, types.NewIntDatum(12), memBuffer)
+		require.True(t, flags.HasPresumeKeyNotExists())
+		require.True(t, flags.HasNeedConstraintCheckInPrewrite())
+		tk.MustExec("rollback")
+
+		// DupKeyCheckInPrewrite should not add flagNeedConstraintCheckInPrewrite for deleted rows
+		memBuffer = prepareTxn("pessimistic").GetMemBuffer()
+		tk.MustExec("delete from t where a=1")
+		h = expectAddRecordSucc(types.MakeDatums(1, 2, 3), table.DupKeyCheckLazy, table.DupKeyCheckInPrewrite)
+		flags = getHandleFlags(h, memBuffer)
+		require.False(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		flags = getUniqueKeyFlags(h, types.NewIntDatum(2), memBuffer)
+		require.False(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		tk.MustExec("rollback")
+
+		// PessimisticLazyDupKeyCheckMode can only work with DupKeyCheckLazy
+		memBuffer = prepareTxn("pessimistic").GetMemBuffer()
+		h = expectAddRecordSucc(types.MakeDatums(101, 102, 103), table.DupKeyCheckSkip, table.DupKeyCheckInPrewrite)
+		flags = getHandleFlags(h, memBuffer)
+		require.False(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		flags = getUniqueKeyFlags(h, types.NewIntDatum(102), memBuffer)
+		require.False(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		h = expectAddRecordSucc(types.MakeDatums(201, 202, 203), table.DupKeyCheckInPlace, table.DupKeyCheckInPrewrite)
+		flags = getHandleFlags(h, memBuffer)
+		require.False(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		flags = getUniqueKeyFlags(h, types.NewIntDatum(202), memBuffer)
+		require.False(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		tk.MustExec("rollback")
+
+		// optimistic mode should ignore PessimisticLazyDupKeyCheckMode
+		memBuffer = prepareTxn("optimistic").GetMemBuffer()
+		h = expectAddRecordSucc(types.MakeDatums(1, 2, 3), table.DupKeyCheckLazy, table.DupKeyCheckInPrewrite)
+		flags = getHandleFlags(h, memBuffer)
+		require.True(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		flags = getUniqueKeyFlags(h, types.NewIntDatum(2), memBuffer)
+		require.True(t, flags.HasPresumeKeyNotExists())
+		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		tk.MustExec("rollback")
+	})
 }
