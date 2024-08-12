@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncer_test
+package serverstate_test
 
 import (
 	"context"
@@ -21,7 +21,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/session"
@@ -29,8 +30,21 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyValue) {
+	require.Len(t, kvs, kvCount)
+
+	if kvCount == 0 {
+		return
+	}
+
+	kv := kvs[0]
+	require.Equal(t, key, string(kv.Key))
+	require.Equal(t, val, string(kv.Value))
+}
 
 func TestStateSyncerSimple(t *testing.T) {
 	variable.EnableMDL.Store(false)
@@ -39,10 +53,10 @@ func TestStateSyncerSimple(t *testing.T) {
 	}
 	integration.BeforeTestExternal(t)
 
-	origin := syncer.CheckVersFirstWaitTime
-	syncer.CheckVersFirstWaitTime = 0
+	origin := schemaver.CheckVersFirstWaitTime
+	schemaver.CheckVersFirstWaitTime = 0
 	defer func() {
-		syncer.CheckVersFirstWaitTime = origin
+		schemaver.CheckVersFirstWaitTime = origin
 	}()
 
 	store, err := mockstore.NewMockStore()
@@ -62,7 +76,7 @@ func TestStateSyncerSimple(t *testing.T) {
 		ctx,
 		WithEtcdClient(cli),
 		WithStore(store),
-		WithLease(testLease),
+		WithLease(5*time.Millisecond),
 		WithInfoCache(ic),
 		WithSchemaLoader(domain),
 	)
@@ -76,14 +90,14 @@ func TestStateSyncerSimple(t *testing.T) {
 
 	// for GetGlobalState
 	// for the initial state
-	stateInfo := &syncer.StateInfo{State: syncer.StateNormalRunning}
+	stateInfo := &serverstate.StateInfo{State: serverstate.StateNormalRunning}
 	respState, err := d.StateSyncer().GetGlobalState(ctx)
 	require.Nil(t, err)
 	require.Equal(t, stateInfo, respState)
 	require.False(t, d.StateSyncer().IsUpgradingState())
 	// for watchCh
 	var checkErr string
-	stateInfo.State = syncer.StateUpgrading
+	stateInfo.State = serverstate.StateUpgrading
 	stateInfoByte, err := stateInfo.Marshal()
 	require.Nil(t, err)
 	checkValue := func() {
@@ -94,7 +108,7 @@ func TestStateSyncerSimple(t *testing.T) {
 				return
 			}
 			checkRespKV(t, 1, util2.ServerGlobalState, string(stateInfoByte), resp.Events[0].Kv)
-			if stateInfo.State == syncer.StateUpgrading {
+			if stateInfo.State == serverstate.StateUpgrading {
 				require.False(t, d.StateSyncer().IsUpgradingState())
 			} else {
 				require.True(t, d.StateSyncer().IsUpgradingState())
@@ -103,7 +117,7 @@ func TestStateSyncerSimple(t *testing.T) {
 			respState, err := d.StateSyncer().GetGlobalState(ctx)
 			require.Nil(t, err)
 			require.Equal(t, stateInfo, respState)
-			if stateInfo.State == syncer.StateUpgrading {
+			if stateInfo.State == serverstate.StateUpgrading {
 				require.True(t, d.StateSyncer().IsUpgradingState())
 			} else {
 				require.False(t, d.StateSyncer().IsUpgradingState())
@@ -117,15 +131,15 @@ func TestStateSyncerSimple(t *testing.T) {
 	// for update UpdateGlobalState
 	// for StateUpgrading
 	wg.Run(checkValue)
-	require.NoError(t, d.StateSyncer().UpdateGlobalState(ctx, &syncer.StateInfo{State: syncer.StateUpgrading}))
+	require.NoError(t, d.StateSyncer().UpdateGlobalState(ctx, &serverstate.StateInfo{State: serverstate.StateUpgrading}))
 	wg.Wait()
 	require.Equal(t, "", checkErr)
 	// for StateNormalRunning
-	stateInfo.State = syncer.StateNormalRunning
+	stateInfo.State = serverstate.StateNormalRunning
 	stateInfoByte, err = stateInfo.Marshal()
 	require.Nil(t, err)
 	wg.Run(checkValue)
-	require.NoError(t, d.StateSyncer().UpdateGlobalState(ctx, &syncer.StateInfo{State: syncer.StateNormalRunning}))
+	require.NoError(t, d.StateSyncer().UpdateGlobalState(ctx, &serverstate.StateInfo{State: serverstate.StateNormalRunning}))
 	wg.Wait()
 	require.Equal(t, "", checkErr)
 }
