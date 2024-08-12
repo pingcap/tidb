@@ -19,6 +19,7 @@ package sstfiles
 
 import (
 	"context"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/log"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -84,11 +86,15 @@ func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesI
 	for _, file := range files {
 		fileReplica := file
 		r.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
+			func() (restoreErr error) {
+				fileStart := time.Now()
 				defer func() {
-					log.Info("import sst files done", logutil.Files(fileReplica.Files))
-					if updateCh != nil {
-						updateCh.Inc()
+					if restoreErr == nil {
+						log.Info("import sst files done", logutil.Files(fileReplica.Files),
+							zap.Duration("take", time.Since(fileStart)))
+						if updateCh != nil {
+							updateCh.Inc()
+						}
 					}
 				}()
 				return r.fileImporter.ImportSSTFiles(ectx, fileReplica.Files, fileReplica.RewriteRules)
