@@ -710,7 +710,7 @@ func (b *builtinCastUnsupportedAsVectorFloat32Sig) Clone() builtinFunc {
 
 func (b *builtinCastUnsupportedAsVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, _ chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
 	return types.ZeroVectorFloat32, false, errors.Errorf(
-		"cannot cast from %s to vector<float>",
+		"cannot cast from %s to vector",
 		types.TypeStr(b.args[0].GetType(ctx).GetType()))
 }
 
