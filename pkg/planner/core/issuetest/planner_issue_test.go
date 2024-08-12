@@ -220,4 +220,15 @@ LIMIT 65122436;`).Check(testkit.Rows(
 		"  └─IndexReader_38 6.40 root  index:StreamAgg_17",
 		"    └─StreamAgg_17 6.40 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#6",
 		"      └─IndexRangeScan_34 10.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], keep order:true, stats:pseudo"))
+	tk.MustQuery(`explain SELECT BIT_XOR(ta31c32a7.col_63) AS r0
+FROM ta31c32a7
+WHERE ISNULL(ta31c32a7.col_63)
+  OR ta31c32a7.col_63 IN (1780.7418079754723, 5904.959667345741, 1531.4023068774668)
+GROUP BY ta31c32a7.col_63
+LIMIT 65122436;`).Check(testkit.Rows(
+		"Limit_11 32.00 root  offset:0, count:65122436",
+		"└─StreamAgg_35 32.00 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#5)->Column#3",
+		"  └─IndexReader_36 32.00 root  index:StreamAgg_15",
+		"    └─StreamAgg_15 32.00 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#5",
+		"      └─IndexRangeScan_32 40.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], [1531.4023068774668,1531.4023068774668], [1780.7418079754723,1780.7418079754723], [5904.959667345741,5904.959667345741], keep order:true, stats:pseudo"))
 }
