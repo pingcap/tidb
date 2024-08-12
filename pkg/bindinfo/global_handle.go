@@ -319,7 +319,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 
 // dropGlobalBinding drops a Bindings to the storage and Bindings int the cache.
 func (h *globalBindingHandle) dropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error) {
-	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+	err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -343,6 +343,9 @@ func (h *globalBindingHandle) dropGlobalBinding(sqlDigests []string) (deletedRow
 		}
 		return nil
 	})
+	if err != nil {
+		deletedRows = 0
+	}
 	return
 }
 

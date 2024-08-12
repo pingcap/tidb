@@ -17,6 +17,7 @@ package bindinfo
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -80,6 +81,8 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bin
 		if err := prepareHints(sctx, binding); err != nil {
 			return err
 		}
+	}
+	for _, binding := range bindings {
 		binding.Db = strings.ToLower(binding.Db)
 		now := types.NewTime(
 			types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())),
@@ -97,10 +100,10 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bin
 
 // DropSessionBinding drop Bindings in the cache.
 func (h *sessionBindingHandle) DropSessionBinding(sqlDigests []string) error {
+	if slices.Contains(sqlDigests, "") {
+		return errors.New("sql digest is empty")
+	}
 	for _, sqlDigest := range sqlDigests {
-		if sqlDigest == "" {
-			return errors.New("sql digest is empty")
-		}
 		h.ch.RemoveBinding(sqlDigest)
 	}
 	return nil
