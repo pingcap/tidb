@@ -37,8 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/fastjson"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/partialjson"
 )
 
 var (
@@ -1152,7 +1152,7 @@ var tableNameInfoFields = []string{"id", "name"}
 
 // FastUnmarshalTableNameInfo is exported for testing.
 func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
-	m, err := fastjson.ExtractTopLevelMembers(data, tableNameInfoFields)
+	m, err := partialjson.ExtractTopLevelMembers(data, tableNameInfoFields)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

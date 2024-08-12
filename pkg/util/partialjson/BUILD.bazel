@@ -15,3 +15,17 @@ go_test(
     flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )
+
+go_library(
+    name = "partialjson",
+    srcs = ["extract.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/partialjson",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "partialjson_test",
+    srcs = ["extract_test.go"],
+    embed = [":partialjson"],
+    deps = ["@com_github_stretchr_testify//require"],
+)
