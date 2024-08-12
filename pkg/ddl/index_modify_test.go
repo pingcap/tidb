@@ -756,7 +756,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
 	tk.MustExec("insert into t values (1, 2), (1, 3)")
 	// Duplicate
-	tk.MustExecToErr("alter table t add unique index idx(a)i global")
+	tk.MustContainErrMsg("alter table t add unique index idx(a) global", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 
 	// with multi schema change
 	tk.MustExec("drop table t")
