@@ -412,7 +412,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
-	plan = avoidColumnEvaluatorForProjBelowUnion(sctx, plan)
+	plan = avoidColumnEvaluatorForProjBelowUnion(plan)
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
@@ -1087,10 +1087,10 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 }
 
 // avoidColumnEvaluatorForProjBelowUnion sets AvoidColumnEvaluator to false for the projection operator which is a child of Union operator.
-func avoidColumnEvaluatorForProjBelowUnion(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
+func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPlan {
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
-		switch x := p.(type) {
-		case *PhysicalUnionAll:
+		x, ok := p.(*PhysicalUnionAll)
+		if ok {
 			for _, child := range x.Children() {
 				if proj, ok := child.(*PhysicalProjection); ok {
 					proj.AvoidColumnEvaluator = true
