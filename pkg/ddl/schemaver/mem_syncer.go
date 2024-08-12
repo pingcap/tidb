@@ -28,24 +28,25 @@ import (
 
 const checkVersionsInterval = 2 * time.Millisecond
 
-// memSyncer is in memory schema version syncer, used for uni-store where there is
+// MemSyncer is in memory schema version syncer, used for uni-store where there is
 // only 1 TiDB instance. it's mainly for test.
-type memSyncer struct {
+// exported for testing.
+type MemSyncer struct {
 	selfSchemaVersion int64
 	mdlSchemaVersions sync.Map
 	globalVerCh       chan clientv3.WatchResponse
 	mockSession       chan struct{}
 }
 
-var _ Syncer = &memSyncer{}
+var _ Syncer = &MemSyncer{}
 
 // NewMemSyncer creates a new memory Syncer.
 func NewMemSyncer() Syncer {
-	return &memSyncer{}
+	return &MemSyncer{}
 }
 
 // Init implements Syncer.Init interface.
-func (s *memSyncer) Init(_ context.Context) error {
+func (s *MemSyncer) Init(_ context.Context) error {
 	s.mdlSchemaVersions = sync.Map{}
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
 	s.mockSession = make(chan struct{}, 1)
@@ -53,15 +54,15 @@ func (s *memSyncer) Init(_ context.Context) error {
 }
 
 // GlobalVersionCh implements Syncer.GlobalVersionCh interface.
-func (s *memSyncer) GlobalVersionCh() clientv3.WatchChan {
+func (s *MemSyncer) GlobalVersionCh() clientv3.WatchChan {
 	return s.globalVerCh
 }
 
 // WatchGlobalSchemaVer implements Syncer.WatchGlobalSchemaVer interface.
-func (*memSyncer) WatchGlobalSchemaVer(context.Context) {}
+func (*MemSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements Syncer.UpdateSelfVersion interface.
-func (s *memSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version int64) error {
+func (s *MemSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version int64) error {
 	failpoint.Inject("mockUpdateMDLToETCDError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock update mdl to etcd error"))
@@ -76,23 +77,23 @@ func (s *memSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version in
 }
 
 // Done implements Syncer.Done interface.
-func (s *memSyncer) Done() <-chan struct{} {
+func (s *MemSyncer) Done() <-chan struct{} {
 	return s.mockSession
 }
 
 // CloseSession mockSession, it is exported for testing.
-func (s *memSyncer) CloseSession() {
+func (s *MemSyncer) CloseSession() {
 	close(s.mockSession)
 }
 
 // Restart implements Syncer.Restart interface.
-func (s *memSyncer) Restart(_ context.Context) error {
+func (s *MemSyncer) Restart(_ context.Context) error {
 	s.mockSession = make(chan struct{}, 1)
 	return nil
 }
 
 // OwnerUpdateGlobalVersion implements Syncer.OwnerUpdateGlobalVersion interface.
-func (s *memSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) error {
+func (s *MemSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) error {
 	select {
 	case s.globalVerCh <- clientv3.WatchResponse{}:
 	default:
@@ -101,7 +102,7 @@ func (s *memSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) error {
 }
 
 // OwnerCheckAllVersions implements Syncer.OwnerCheckAllVersions interface.
-func (s *memSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
+func (s *MemSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
 	ticker := time.NewTicker(checkVersionsInterval)
 	defer ticker.Stop()
 
@@ -132,8 +133,8 @@ func (s *memSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, late
 }
 
 // SyncJobSchemaVerLoop implements Syncer.SyncJobSchemaVerLoop interface.
-func (*memSyncer) SyncJobSchemaVerLoop(context.Context) {
+func (*MemSyncer) SyncJobSchemaVerLoop(context.Context) {
 }
 
 // Close implements Syncer.Close interface.
-func (*memSyncer) Close() {}
+func (*MemSyncer) Close() {}
