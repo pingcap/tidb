@@ -308,6 +308,7 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	log.Info("Initializing client.", zap.Stringer("api", rc.dom.Store().GetCodec().GetAPIVersion()))
+	// TODO set concurrencyPerStore correctly
 	snapFileImporter, err := sstfiles.NewSnapFileImporter(
 		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
 		importCli, backend, false, false, stores, sstfiles.RewriteModeKeyspace, 128, createCallBacks, closeCallBacks)
