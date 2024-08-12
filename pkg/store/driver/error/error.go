@@ -133,6 +133,9 @@ func ToTiDBErr(err error) error {
 		// connection id is unknown in client, which should be logged or filled by upper layers
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(-1)
 	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.RunawayQueryExceeded}) {
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.GenWithStackByArgs()
+	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVServerBusy) {
 		return ErrTiKVServerBusy
