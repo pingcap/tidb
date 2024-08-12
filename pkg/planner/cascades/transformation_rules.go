@@ -2444,7 +2444,7 @@ func NewRuleTransformApplyToJoin() Transformation {
 
 // OnTransform implements Transformation interface.
 func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	apply := old.GetExpr().ExprNode.(*plannercore.LogicalApply)
+	apply := old.GetExpr().ExprNode.(*logicalop.LogicalApply)
 	groupExpr := old.GetExpr()
 	// It's safe to use the old apply instead of creating a new LogicalApply here,
 	// Because apply.CorCols will only be used and updated by this rule during Transformation.
@@ -2502,7 +2502,7 @@ func NewRulePullSelectionUpApply() Transformation {
 // This rule tries to pull up the inner side Selection, and add these conditions
 // to Join condition inside the Apply.
 func (*PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	apply := old.GetExpr().ExprNode.(*plannercore.LogicalApply)
+	apply := old.GetExpr().ExprNode.(*logicalop.LogicalApply)
 	outerChildGroup := old.Children[0].Group
 	innerChildGroup := old.Children[1].Group
 	sel := old.Children[1].GetExpr().ExprNode.(*logicalop.LogicalSelection)
@@ -2510,7 +2510,7 @@ func (*PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	for _, cond := range sel.Conditions {
 		newConds = append(newConds, cond.Clone().Decorrelate(outerChildGroup.Prop.Schema))
 	}
-	newApply := plannercore.LogicalApply{
+	newApply := logicalop.LogicalApply{
 		LogicalJoin: *(apply.LogicalJoin.Shallow()),
 		CorCols:     apply.CorCols,
 	}.Init(apply.SCtx(), apply.QueryBlockOffset())

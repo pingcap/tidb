@@ -81,7 +81,7 @@ func TestGroupNDVs(t *testing.T) {
 				join = v
 				lp = v.Children()[0]
 				stack = append(stack, v.Children()[1])
-			case *core.LogicalApply:
+			case *logicalop.LogicalApply:
 				lp = lp.Children()[0]
 				stack = append(stack, v.Children()[1])
 			case *core.LogicalUnionAll:
