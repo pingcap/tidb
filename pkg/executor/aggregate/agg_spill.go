@@ -79,10 +79,10 @@ func newSpillHelper(
 	finalWorkerAggFuncs []aggfuncs.AggFunc,
 	getNewSpillChunkFunc func() *chunk.Chunk,
 	spillChunkFieldTypes []*types.FieldType) (*parallelHashAggSpillHelper, error) {
-		if len(aggFuncsForRestoring) != len(finalWorkerAggFuncs) {
-			return nil, errors.NewNoStackError("len(aggFuncsForRestoring) != len(finalWorkerAggFuncs)")
-		}
-		
+	if len(aggFuncsForRestoring) != len(finalWorkerAggFuncs) {
+		return nil, errors.NewNoStackError("len(aggFuncsForRestoring) != len(finalWorkerAggFuncs)")
+	}
+
 	mu := new(sync.Mutex)
 	helper := &parallelHashAggSpillHelper{
 		lock: struct {
