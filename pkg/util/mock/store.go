@@ -28,6 +28,11 @@ type Store struct {
 	Client kv.Client
 }
 
+// CurrentAllTSOKeyspaceGroupMinTs implements kv.Storage interface.
+func (*Store) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
+	return 0, nil
+}
+
 // GetClient implements kv.Storage interface.
 func (s *Store) GetClient() kv.Client { return s.Client }
 
