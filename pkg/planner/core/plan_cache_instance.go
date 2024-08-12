@@ -124,7 +124,7 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 // step 1: iterate all values to collect their last_used
 // step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
-func (pc *instancePlanCache) Evict() (evicted bool) {
+func (pc *instancePlanCache) Evict() (numEvicted int) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
 	if pc.totCost.Load() < pc.softMemLimit.Load() {
@@ -141,7 +141,7 @@ func (pc *instancePlanCache) Evict() (evicted bool) {
 			if prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
 				pc.totCost.Sub(this.value.MemoryUsage()) //  it might have been updated by other thread
 				pc.totPlan.Sub(1)
-				evicted = true
+				numEvicted++
 				return true
 			}
 		}
