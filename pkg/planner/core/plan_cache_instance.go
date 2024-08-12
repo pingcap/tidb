@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -126,11 +127,13 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 // step 1: iterate all values to collect their last_used
 // step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
-func (pc *instancePlanCache) Evict() (numEvicted int) {
+func (pc *instancePlanCache) Evict() (skipReason string, numEvicted int) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
-	if pc.totCost.Load() < pc.softMemLimit.Load() {
-		return // do nothing
+	currentTot, softLimit := pc.totCost.Load(), pc.softMemLimit.Load()
+	if currentTot < softLimit {
+		skipReason = fmt.Sprintf("memory usage is below the soft limit, currentTot: %v, softLimit: %v", currentTot, softLimit)
+		return
 	}
 	//lastUsedTimes := make([]time.Time, 0, 64)
 	counts := make([]int, 0, 64)
