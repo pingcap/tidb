@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -94,7 +95,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 
 func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, error) {
 	tblScan := e.TblScan
-	tbl, ok := b.is.TableByID(tblScan.TableId)
+	tbl, ok := b.is.TableByID(context.Background(), tblScan.TableId)
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblScan.TableId)
 	}

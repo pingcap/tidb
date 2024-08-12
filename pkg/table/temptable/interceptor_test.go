@@ -265,13 +265,13 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 		AddTable(model.TempTableGlobal, 3).
 		AddTable(model.TempTableLocal, 5)
 
-	normalTb, ok := is.TableByID(1)
+	normalTb, ok := is.TableByID(context.Background(), 1)
 	require.True(t, ok)
 	require.Equal(t, model.TempTableNone, normalTb.Meta().TempTableType)
-	globalTb, ok := is.TableByID(3)
+	globalTb, ok := is.TableByID(context.Background(), 3)
 	require.True(t, ok)
 	require.Equal(t, model.TempTableGlobal, globalTb.Meta().TempTableType)
-	localTb, ok := is.TableByID(5)
+	localTb, ok := is.TableByID(context.Background(), 5)
 	require.True(t, ok)
 	require.Equal(t, model.TempTableLocal, localTb.Meta().TempTableType)
 
@@ -1283,7 +1283,7 @@ func TestIterTable(t *testing.T) {
 		}
 		require.Equal(t, c.result, result, i)
 
-		tbl, ok := is.TableByID(c.tblID)
+		tbl, ok := is.TableByID(context.Background(), c.tblID)
 		if !ok || tbl.Meta().TempTableType == model.TempTableNone {
 			require.Equal(t, 0, len(retriever.GetInvokes()), i)
 			require.Equal(t, 1, len(snap.GetInvokes()), i)

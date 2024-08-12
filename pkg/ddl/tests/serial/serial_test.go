@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
@@ -410,7 +410,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 }
 
-func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain) {
+func createMockStore(t *testing.T) (store kv.Storage) {
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -418,7 +418,7 @@ func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domai
 	var err error
 	store, err = mockstore.NewMockStore()
 	require.NoError(t, err)
-	dom, err = session.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		dom.Close()
@@ -429,7 +429,7 @@ func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domai
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func TestCancelAddIndexPanic(t *testing.T) {
-	store, dom := createMockStoreAndDomain(t)
+	store := createMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/errorMockPanic", `return(true)`))
 	defer func() {
@@ -448,13 +448,11 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	rs, err := tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
 		require.NoError(t, rs.Close())
@@ -466,7 +464,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 }
 
 func TestRecoverTableWithTTL(t *testing.T) {
-	store, _ := createMockStoreAndDomain(t)
+	store := createMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -530,7 +528,7 @@ func TestRecoverTableWithTTL(t *testing.T) {
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
-	store, _ := createMockStoreAndDomain(t)
+	store := createMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -646,7 +644,7 @@ func TestRecoverTableByJobID(t *testing.T) {
 }
 
 func TestRecoverTableByJobIDFail(t *testing.T) {
-	store, dom := createMockStoreAndDomain(t)
+	store := createMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -687,14 +685,12 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
@@ -714,7 +710,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 }
 
 func TestRecoverTableByTableNameFail(t *testing.T) {
-	store, dom := createMockStoreAndDomain(t)
+	store := createMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -746,14 +742,12 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
@@ -773,7 +767,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 }
 
 func TestCancelJobByErrorCountLimit(t *testing.T) {
-	store, _ := createMockStoreAndDomain(t)
+	store := createMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit", `return(true)`))
 	defer func() {
@@ -814,14 +808,13 @@ func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 }
 
 func TestCanceledJobTakeTime(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_cjtt(a int)")
 
-	hook := &callback.TestDDLCallback{}
 	once := sync.Once{}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -834,8 +827,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 			})
 			require.NoError(t, err)
 		})
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)

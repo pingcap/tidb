@@ -20,8 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -29,6 +27,7 @@ import (
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -88,7 +87,7 @@ func TestLockTableReadOnly(t *testing.T) {
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
 func TestConcurrentLockTables(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -98,7 +97,7 @@ func TestConcurrentLockTables(t *testing.T) {
 	// Test concurrent lock tables read.
 	sql1 := "lock tables t1 read"
 	sql2 := "lock tables t1 read"
-	testParallelExecSQL(t, store, dom, sql1, sql2, tk1.Session(), tk2.Session(), func(t *testing.T, err1, err2 error) {
+	testParallelExecSQL(t, store, sql1, sql2, tk1.Session(), tk2.Session(), func(t *testing.T, err1, err2 error) {
 		require.NoError(t, err1)
 		require.NoError(t, err2)
 	})
@@ -108,7 +107,7 @@ func TestConcurrentLockTables(t *testing.T) {
 	// Test concurrent lock tables write.
 	sql1 = "lock tables t1 write"
 	sql2 = "lock tables t1 write"
-	testParallelExecSQL(t, store, dom, sql1, sql2, tk1.Session(), tk2.Session(), func(t *testing.T, err1, err2 error) {
+	testParallelExecSQL(t, store, sql1, sql2, tk1.Session(), tk2.Session(), func(t *testing.T, err1, err2 error) {
 		require.NoError(t, err1)
 		require.True(t, terror.ErrorEqual(err2, infoschema.ErrTableLocked))
 	})
@@ -118,7 +117,7 @@ func TestConcurrentLockTables(t *testing.T) {
 	// Test concurrent lock tables write local.
 	sql1 = "lock tables t1 write local"
 	sql2 = "lock tables t1 write local"
-	testParallelExecSQL(t, store, dom, sql1, sql2, tk1.Session(), tk2.Session(), func(t *testing.T, err1, err2 error) {
+	testParallelExecSQL(t, store, sql1, sql2, tk1.Session(), tk2.Session(), func(t *testing.T, err1, err2 error) {
 		require.NoError(t, err1)
 		require.True(t, terror.ErrorEqual(err2, infoschema.ErrTableLocked))
 	})
@@ -127,10 +126,9 @@ func TestConcurrentLockTables(t *testing.T) {
 	tk2.MustExec("unlock tables")
 }
 
-func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql1, sql2 string, se1, se2 sessiontypes.Session, f func(t *testing.T, err1, err2 error)) {
-	callback := &callback.TestDDLCallback{}
+func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1, se2 sessiontypes.Session, f func(t *testing.T, err1, err2 error)) {
 	times := 0
-	callback.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if times != 0 {
 			return
 		}
@@ -148,11 +146,8 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 			time.Sleep(5 * time.Millisecond)
 		}
 		times++
-	}
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	d.SetHook(callback)
+	})
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 
 	var wg util.WaitGroupWrapper
 	var err1 error

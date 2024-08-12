@@ -16,6 +16,7 @@ package tables
 
 import (
 	"bytes"
+	stdctx "context"
 	stderr "errors"
 	"fmt"
 	"hash/crc32"
@@ -1569,16 +1570,17 @@ func (t *partitionTableWithGivenSets) GetPartitionByRow(ctx expression.EvalConte
 // It check if rowData inserted or updated violate checkConstraints of non-partitionTable.
 func checkConstraintForExchangePartition(sctx table.MutateContext, row []types.Datum, partID, ntID int64) error {
 	type InfoSchema interface {
-		TableByID(id int64) (val table.Table, ok bool)
+		TableByID(ctx stdctx.Context, id int64) (val table.Table, ok bool)
 	}
 	is, ok := sctx.GetDomainInfoSchema().(InfoSchema)
 	if !ok {
 		return errors.Errorf("exchange partition process assert inforSchema failed")
 	}
-	nt, tableFound := is.TableByID(ntID)
+	ctx := stdctx.Background()
+	nt, tableFound := is.TableByID(ctx, ntID)
 	if !tableFound {
 		// Now partID is nt tableID.
-		nt, tableFound = is.TableByID(partID)
+		nt, tableFound = is.TableByID(ctx, partID)
 		if !tableFound {
 			return errors.Errorf("exchange partition process table by id failed")
 		}
