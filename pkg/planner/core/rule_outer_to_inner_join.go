@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -36,10 +35,11 @@ func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression)
 	return combinedCond
 }
 
-// convertOuterToInnerJoin converts outer to inner joins if the unmtaching rows are filtered.
-type convertOuterToInnerJoin struct {
+// ConvertOuterToInnerJoin converts outer to inner joins if the unmtaching rows are filtered.
+type ConvertOuterToInnerJoin struct {
 }
 
+// Optimize implements base.LogicalOptRule.<0th> interface.
 // convertOuterToInnerJoin is refactoring of the outer to inner join logic that used to be part of predicate push down.
 // The rewrite passes down predicates from selection (WHERE clause) and join predicates (ON clause).
 // All nodes except LogicalJoin are pass through where the rewrite is done for the child and nothing for the node itself.
@@ -51,7 +51,7 @@ type convertOuterToInnerJoin struct {
 //     - For inner/semi joins, the ON clause can be applied on both children
 //     - For anti semi joins, ON clause applied only on left side
 //     - For all other cases, do not pass ON clause.
-func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*ConvertOuterToInnerJoin) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.ConvertOuterToInnerJoin(nil), planChanged, nil
 }
@@ -60,60 +60,7 @@ func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, 
 // Also, predicates involving aggregate expressions are not null filtering. IsNullReject always returns
 // false for those cases.
 
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	innerTable := p.Children()[0]
-	outerTable := p.Children()[1]
-	switchChild := false
-
-	if p.JoinType == LeftOuterJoin {
-		innerTable, outerTable = outerTable, innerTable
-		switchChild = true
-	}
-
-	// First, simplify this join
-	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
-		canBeSimplified := false
-		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
-			if isOk {
-				canBeSimplified = true
-				break
-			}
-		}
-		if canBeSimplified {
-			p.JoinType = InnerJoin
-		}
-	}
-
-	// Next simplify join children
-
-	combinedCond := mergeOnClausePredicates(p, predicates)
-	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	} else if p.JoinType == InnerJoin || p.JoinType == SemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else if p.JoinType == AntiSemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	}
-
-	if switchChild {
-		p.SetChild(0, outerTable)
-		p.SetChild(1, innerTable)
-	} else {
-		p.SetChild(0, innerTable)
-		p.SetChild(1, outerTable)
-	}
-
-	return p
-}
-
-func (*convertOuterToInnerJoin) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*ConvertOuterToInnerJoin) Name() string {
 	return "convert_outer_to_inner_joins"
 }

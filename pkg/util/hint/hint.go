@@ -56,7 +56,7 @@ const (
 	HintINLJ = "inl_join"
 	// HintINLHJ is hint enforce index nested loop hash join.
 	HintINLHJ = "inl_hash_join"
-	// HintINLMJ is hint enforce index nested loop merge join.
+	// Deprecated: HintINLMJ is hint enforce index nested loop merge join.
 	HintINLMJ = "inl_merge_join"
 	// HintNoIndexJoin is the hint to enforce the query not to use index join.
 	HintNoIndexJoin = "no_index_join"
@@ -290,7 +290,7 @@ func (sh *StmtHints) addHypoIndex(db, tbl, idx string, idxInfo *model.IndexInfo)
 // ParseStmtHints parses statement hints.
 func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVarHintChecker func(varName, hint string) (ok bool, warning error),
-	hypoIndexChecker func(db, tbl model.CIStr, cols ...model.CIStr) error,
+	hypoIndexChecker func(db, tbl, col model.CIStr) (colOffset int, err error),
 	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
@@ -345,16 +345,22 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			idx := hint.Tables[1].TableName
 			var colNames []model.CIStr
 			var cols []*model.IndexColumn
+			invalid := false
 			for i := 2; i < len(hint.Tables); i++ {
 				colNames = append(colNames, hint.Tables[i].TableName)
+				offset, err := hypoIndexChecker(model.NewCIStr(db), tbl, hint.Tables[i].TableName)
+				if err != nil {
+					invalid = true
+					warns = append(warns, errors.NewNoStackErrorf("invalid HYPO_INDEX hint: %v", err))
+					break
+				}
 				cols = append(cols, &model.IndexColumn{
 					Name:   hint.Tables[i].TableName,
-					Offset: i - 2,
+					Offset: offset,
 					Length: types.UnspecifiedLength,
 				})
 			}
-			if err := hypoIndexChecker(model.NewCIStr(db), tbl, colNames...); err != nil {
-				warns = append(warns, errors.NewNoStackErrorf("invalid HYPO_INDEX hint: %v", err))
+			if invalid {
 				continue
 			}
 			idxInfo := &model.IndexInfo{
@@ -770,7 +776,10 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintINLHJ:
 			inlhjTables = append(inlhjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintINLMJ:
-			inlmjTables = append(inlmjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			if hint.Tables != nil {
+				warnHandler.SetHintWarning("The INDEX MERGE JOIN hint is deprecated for usage, try other hints.")
+				continue
+			}
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintNoHashJoin:

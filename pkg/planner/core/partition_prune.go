@@ -27,7 +27,7 @@ import (
 // idx in the partition definitions array, use pi.Definitions[idx] to get the partition ID
 func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
 	columns []*expression.Column, names types.NameSlice) ([]int, error) {
-	s := partitionProcessor{}
+	s := PartitionProcessor{}
 	pi := tbl.Meta().Partition
 	switch pi.Type {
 	case model.PartitionTypeHash, model.PartitionTypeKey:

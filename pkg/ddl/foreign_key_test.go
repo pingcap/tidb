@@ -23,17 +23,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
-func testCreateForeignKey(t *testing.T, d ddl.DDL, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete model.ReferOptionType, onUpdate model.ReferOptionType) *model.Job {
+func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete model.ReferOptionType, onUpdate model.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
 	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
@@ -68,12 +68,12 @@ func testCreateForeignKey(t *testing.T, d ddl.DDL, ctx sessionctx.Context, dbInf
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	return job
 }
 
-func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
+func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
@@ -84,7 +84,7 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo 
 		Args:       []any{model.NewCIStr(foreignKeyName)},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -107,10 +107,10 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 func TestForeignKey(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
-	d := dom.DDL()
 	dbInfo, err := testSchemaInfo(store, "test_foreign")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
+	de := dom.DDLExecutor().(ddl.ExecutorForTest)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), de, dbInfo)
 	tblInfo, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
 	tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{
@@ -124,14 +124,13 @@ func TestForeignKey(t *testing.T) {
 		}},
 		State: model.StatePublic,
 	})
-	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
+	testCreateTable(t, testkit.NewTestKit(t, store).Session(), de, dbInfo, tblInfo)
 
 	// fix data race
 	var mu sync.Mutex
 	checkOK := false
 	var hookErr error
-	tc := &callback.TestDDLCallback{}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -149,14 +148,10 @@ func TestForeignKey(t *testing.T) {
 			return
 		}
 		checkOK = true
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
+	})
 
 	ctx := testkit.NewTestKit(t, store).Session()
-	job := testCreateForeignKey(t, d, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, model.ReferOptionCascade, model.ReferOptionSetNull)
+	job := testCreateForeignKey(t, de, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, model.ReferOptionCascade, model.ReferOptionSetNull)
 	testCheckJobDone(t, store, job.ID, true)
 	require.NoError(t, err)
 	mu.Lock()
@@ -172,8 +167,7 @@ func TestForeignKey(t *testing.T) {
 	checkOK = false
 	mu.Unlock()
 	// fix data race pr/#9491
-	tc2 := &callback.TestDDLCallback{}
-	onJobUpdatedExportedFunc2 := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -191,11 +185,9 @@ func TestForeignKey(t *testing.T) {
 			return
 		}
 		checkOK = true
-	}
-	tc2.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
-	d.SetHook(tc2)
+	})
 
-	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")
+	job = testDropForeignKey(t, ctx, de, dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(t, store, job.ID, false)
 	mu.Lock()
 	hErr = hookErr
@@ -203,7 +195,7 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	require.NoError(t, hErr)
 	require.True(t, ok)
-	d.SetHook(originalHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	tk := testkit.NewTestKit(t, store)
 	jobID := testDropTable(tk, t, dbInfo.Name.L, tblInfo.Name.L, dom)
@@ -213,8 +205,7 @@ func TestForeignKey(t *testing.T) {
 }
 
 func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -229,8 +220,7 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 	var wg sync.WaitGroup
 	var truncateErr, dropErr error
 	testTruncate := true
-	tc := &callback.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateNone {
 			return
 		}
@@ -251,10 +241,7 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 		}
 		// make sure tk2's ddl job already put into ddl job queue.
 		time.Sleep(time.Millisecond * 100)
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
+	})
 
 	tk.MustExec("create table t2 (a int, b int, foreign key fk(b) references t1(id));")
 	wg.Wait()
@@ -270,8 +257,7 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 }
 
 func TestDropIndexNeededInForeignKey2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -285,8 +271,7 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var dropErr error
-	tc := &callback.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
 		}
@@ -297,10 +282,7 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 		}()
 		// make sure tk2's ddl job already put into ddl job queue.
 		time.Sleep(time.Millisecond * 100)
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
+	})
 
 	tk.MustExec("alter table t2 drop index idx1")
 	wg.Wait()
@@ -309,8 +291,7 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 }
 
 func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -324,8 +305,7 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	tk.MustExec("create database test2")
 	var wg sync.WaitGroup
 	var dropErr error
-	tc := &callback.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateNone {
 			return
 		}
@@ -339,10 +319,7 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 		}()
 		// make sure tk2's ddl job already put into ddl job queue.
 		time.Sleep(time.Millisecond * 100)
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
+	})
 
 	tk.MustExec("create table test2.t3 (id int key, b int, foreign key fk_b(b) references test.t2(id));")
 	wg.Wait()
@@ -353,8 +330,7 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 }
 
 func TestAddForeignKey2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -365,8 +341,7 @@ func TestAddForeignKey2(t *testing.T) {
 	tk.MustExec("create table t2 (id int key, b int, index(b));")
 	var wg sync.WaitGroup
 	var addErr error
-	tc := &callback.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
 		}
@@ -377,10 +352,7 @@ func TestAddForeignKey2(t *testing.T) {
 		}()
 		// make sure tk2's ddl job already put into ddl job queue.
 		time.Sleep(time.Millisecond * 100)
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
+	})
 
 	tk.MustExec("alter table t2 drop index b")
 	wg.Wait()
@@ -389,8 +361,7 @@ func TestAddForeignKey2(t *testing.T) {
 }
 
 func TestAddForeignKey3(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := dom.DDL()
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -405,8 +376,7 @@ func TestAddForeignKey3(t *testing.T) {
 
 	var insertErrs []error
 	var deleteErrs []error
-	tc := &callback.TestDDLCallback{}
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type != model.ActionAddForeignKey {
 			return
 		}
@@ -416,10 +386,7 @@ func TestAddForeignKey3(t *testing.T) {
 			err = tk2.ExecToErr("delete from t1 where id = 1")
 			deleteErrs = append(deleteErrs, err)
 		}
-	}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-	d.SetHook(tc)
+	})
 
 	tk.MustExec("alter table t2 add foreign key (id) references t1(id) on delete cascade")
 	require.Equal(t, 2, len(insertErrs))

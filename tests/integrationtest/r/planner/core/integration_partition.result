@@ -649,6 +649,7 @@ c1	c2	c3	c4
 4	4	4	4
 drop table t2;
 drop database issue_27532;
+set autocommit = DEFAULT;
 use planner__core__integration_partition;
 set @@tidb_partition_prune_mode = 'dynamic';
 select @@tidb_partition_prune_mode;
@@ -736,39 +737,29 @@ a	b	c
 10	2022-01-01 00:00:00	Wowe
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
 id	estRows	task	access object	operator info
-Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
-└─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), eq(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p3	data:Selection
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), eq(rangecolumnsmulti.t.c, "Wow")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.00	root	partition:p3	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), eq(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
 id	estRows	task	access object	operator info
-Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
-└─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p2,p3	data:Selection
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.00	root	partition:p2,p3	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
 id	estRows	task	access object	operator info
-Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
-└─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p2	data:Selection
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.00	root	partition:p2	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
 id	estRows	task	access object	operator info
-Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
-└─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), gt(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p3	data:Selection
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), gt(rangecolumnsmulti.t.c, "Wow")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.00	root	partition:p3	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), gt(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
 id	estRows	task	access object	operator info
-Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
-└─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), ge(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p3	data:Selection
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), ge(rangecolumnsmulti.t.c, "Wow")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.00	root	partition:p3	data:Selection
+└─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), ge(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 a	b	c
 -2147483648	0000-00-00 00:00:00	
@@ -785,11 +776,9 @@ a	b	c
 5	0000-00-00 00:00:00	Hi
 explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 id	estRows	task	access object	operator info
-Projection	367.05	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
-└─UnionScan	367.05	root		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	367.05	root	partition:p1,p2,p3	data:Selection
-    └─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	367.05	root	partition:p1,p2,p3	data:Selection
+└─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a <= 11 and b <= '2022-01-01' and c < "Wow";
 a	b	c
 -2147483648	0000-00-00 00:00:00	
@@ -797,22 +786,18 @@ a	b	c
 5	0000-00-00 00:00:00	Hi
 explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 id	estRows	task	access object	operator info
-Projection	367.05	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
-└─UnionScan	367.05	root		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	367.05	root	partition:p1,p2,p3	data:Selection
-    └─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	367.05	root	partition:p1,p2,p3	data:Selection
+└─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 create table tref (a int, b datetime, c varchar(255), key (a,b,c));
 set @@sql_mode = '';
 insert into tref select * from t;
 set @@sql_mode = DEFAULT;
 explain format = 'brief' select * from tref where a <= 10 and b <= '2022-01-01' and c < "Wow";
 id	estRows	task	access object	operator info
-Projection	367.05	root		rangecolumnsmulti.tref.a, rangecolumnsmulti.tref.b, rangecolumnsmulti.tref.c
-└─UnionScan	367.05	root		le(rangecolumnsmulti.tref.a, 10), le(rangecolumnsmulti.tref.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.tref.c, "Wow")
-  └─IndexReader	367.05	root		index:Selection
-    └─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.tref.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.tref.c, "Wow")
-      └─IndexRangeScan	3323.33	cop[tikv]	table:tref, index:a(a, b, c)	range:[-inf,10], keep order:false, stats:pseudo
+IndexReader	367.05	root		index:Selection
+└─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.tref.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.tref.c, "Wow")
+  └─IndexRangeScan	3323.33	cop[tikv]	table:tref, index:a(a, b, c)	range:[-inf,10], keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
 id	estRows	task	access object	operator info
 TableReader	367.05	root	partition:p1,p2,p3	data:Selection
@@ -893,21 +878,17 @@ a	b	c
 1	NULL	Wow
 explain format = 'brief' select a,b,c from t where a = 1 AND c = "Wow";
 id	estRows	task	access object	operator info
-Projection	0.01	root		rcolumnsmulti.t.a, rcolumnsmulti.t.b, rcolumnsmulti.t.c
-└─UnionScan	0.01	root		eq(rcolumnsmulti.t.a, 1), eq(rcolumnsmulti.t.c, "Wow")
-  └─IndexReader	0.01	root	partition:p8	index:Selection
-    └─Selection	0.01	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
-      └─IndexRangeScan	10.00	cop[tikv]	table:t, index:a(a, b, c)	range:[1,1], keep order:false, stats:pseudo
+IndexReader	0.50	root	partition:p8	index:Selection
+└─Selection	0.50	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
+  └─IndexRangeScan	1.00	cop[tikv]	table:t, index:a(a, b, c)	range:[1,1], keep order:false
 select a,b,c from t where a = 0 AND c = "Wow";
 a	b	c
 0	2020-01-01 00:00:00	Wow
 explain format = 'brief' select a,b,c from t where a = 0 AND c = "Wow";
 id	estRows	task	access object	operator info
-Projection	0.01	root		rcolumnsmulti.t.a, rcolumnsmulti.t.b, rcolumnsmulti.t.c
-└─UnionScan	0.01	root		eq(rcolumnsmulti.t.a, 0), eq(rcolumnsmulti.t.c, "Wow")
-  └─IndexReader	0.01	root	partition:p3,p4,p5,p6,p7	index:Selection
-    └─Selection	0.01	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
-      └─IndexRangeScan	10.00	cop[tikv]	table:t, index:a(a, b, c)	range:[0,0], keep order:false, stats:pseudo
+IndexReader	0.50	root	partition:p3,p4,p5,p6,p7	index:Selection
+└─Selection	0.50	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
+  └─IndexRangeScan	1.00	cop[tikv]	table:t, index:a(a, b, c)	range:[0,0], keep order:false
 create database rce;
 use rce;
 create table tref (a int unsigned, b int, c int);
@@ -1012,46 +993,34 @@ a	b	c
 17	17	17
 explain format = 'brief' select * from t where c = 3;
 id	estRows	task	access object	operator info
-Projection	10.00	root		rce.t.a, rce.t.b, rce.t.c
-└─UnionScan	10.00	root		eq(rce.t.c, 3)
-  └─TableReader	10.00	root	partition:all	data:Selection
-    └─Selection	10.00	cop[tikv]		eq(rce.t.c, 3)
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	10.00	root	partition:all	data:Selection
+└─Selection	10.00	cop[tikv]		eq(rce.t.c, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where b > 3 and c = 3;
 id	estRows	task	access object	operator info
-Projection	3.33	root		rce.t.a, rce.t.b, rce.t.c
-└─UnionScan	3.33	root		eq(rce.t.c, 3), gt(rce.t.b, 3)
-  └─TableReader	3.33	root	partition:all	data:Selection
-    └─Selection	3.33	cop[tikv]		eq(rce.t.c, 3), gt(rce.t.b, 3)
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	3.33	root	partition:all	data:Selection
+└─Selection	3.33	cop[tikv]		eq(rce.t.c, 3), gt(rce.t.b, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 5 and c = 3;
 id	estRows	task	access object	operator info
-Projection	0.01	root		rce.t.a, rce.t.b, rce.t.c
-└─UnionScan	0.01	root		eq(rce.t.a, 5), eq(rce.t.c, 3)
-  └─TableReader	0.01	root	partition:p9	data:Selection
-    └─Selection	0.01	cop[tikv]		eq(rce.t.a, 5), eq(rce.t.c, 3)
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.01	root	partition:p9	data:Selection
+└─Selection	0.01	cop[tikv]		eq(rce.t.a, 5), eq(rce.t.c, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 4 and c = 3;
 id	estRows	task	access object	operator info
-Projection	0.01	root		rce.t.a, rce.t.b, rce.t.c
-└─UnionScan	0.01	root		eq(rce.t.a, 4), eq(rce.t.c, 3)
-  └─TableReader	0.01	root	partition:p1,p2,p3,p4,p5,p6,p7,p8	data:Selection
-    └─Selection	0.01	cop[tikv]		eq(rce.t.a, 4), eq(rce.t.c, 3)
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.01	root	partition:p1,p2,p3,p4,p5,p6,p7,p8	data:Selection
+└─Selection	0.01	cop[tikv]		eq(rce.t.a, 4), eq(rce.t.c, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a in (4,14) and c = 3;
 id	estRows	task	access object	operator info
-Projection	0.02	root		rce.t.a, rce.t.b, rce.t.c
-└─UnionScan	0.02	root		eq(rce.t.c, 3), in(rce.t.a, 4, 14)
-  └─TableReader	0.02	root	partition:p1,p2,p3,p4,p5,p6,p7,p8,p11,p12	data:Selection
-    └─Selection	0.02	cop[tikv]		eq(rce.t.c, 3), in(rce.t.a, 4, 14)
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.02	root	partition:p1,p2,p3,p4,p5,p6,p7,p8,p11,p12	data:Selection
+└─Selection	0.02	cop[tikv]		eq(rce.t.c, 3), in(rce.t.a, 4, 14)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a in (4,14) and b in (null,10);
 id	estRows	task	access object	operator info
-Projection	0.02	root		rce.t.a, rce.t.b, rce.t.c
-└─UnionScan	0.02	root		in(rce.t.a, 4, 14), in(rce.t.b, NULL, 10)
-  └─TableReader	0.02	root	partition:p5,p12	data:Selection
-    └─Selection	0.02	cop[tikv]		in(rce.t.a, 4, 14), in(rce.t.b, NULL, 10)
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.02	root	partition:p5,p12	data:Selection
+└─Selection	0.02	cop[tikv]		in(rce.t.a, 4, 14), in(rce.t.b, NULL, 10)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from tref where a in (4,14) and b in (null,10);
 a	b	c
 14	10	4
@@ -1062,11 +1031,9 @@ a	b	c
 4	10	3
 explain format = 'brief' select * from t where a in (4,14) and (b in (11,10) OR b is null);
 id	estRows	task	access object	operator info
-Projection	0.06	root		rce.t.a, rce.t.b, rce.t.c
-└─UnionScan	0.06	root		in(rce.t.a, 4, 14), or(in(rce.t.b, 11, 10), isnull(rce.t.b))
-  └─TableReader	0.06	root	partition:p1,p5,p6,p11,p12	data:Selection
-    └─Selection	0.06	cop[tikv]		in(rce.t.a, 4, 14), or(in(rce.t.b, 11, 10), isnull(rce.t.b))
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	0.06	root	partition:p1,p5,p6,p11,p12	data:Selection
+└─Selection	0.06	cop[tikv]		in(rce.t.a, 4, 14), or(in(rce.t.b, 11, 10), isnull(rce.t.b))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from tref where a in (4,14) and (b in (11,10) OR b is null);
 a	b	c
 14	NULL	NULL
@@ -1130,18 +1097,14 @@ h
 l
 explain format = 'brief' select * from t where a > 'C' and a < 'q';
 id	estRows	task	access object	operator info
-Projection	250.00	root		cwc.t.a
-└─UnionScan	250.00	root		gt(cwc.t.a, "C"), lt(cwc.t.a, "q")
-  └─TableReader	250.00	root	partition:p1,p2,p3,p4	data:Selection
-    └─Selection	250.00	cop[tikv]		gt(cwc.t.a, "C"), lt(cwc.t.a, "q")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	250.00	root	partition:p1,p2,p3,p4	data:Selection
+└─Selection	250.00	cop[tikv]		gt(cwc.t.a, "C"), lt(cwc.t.a, "q")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a > 'c' and a < 'Q';
 id	estRows	task	access object	operator info
-Projection	250.00	root		cwc.t.a
-└─UnionScan	250.00	root		gt(cwc.t.a, "c"), lt(cwc.t.a, "Q")
-  └─TableReader	250.00	root	partition:p1,p2,p3,p4	data:Selection
-    └─Selection	250.00	cop[tikv]		gt(cwc.t.a, "c"), lt(cwc.t.a, "Q")
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	250.00	root	partition:p1,p2,p3,p4	data:Selection
+└─Selection	250.00	cop[tikv]		gt(cwc.t.a, "c"), lt(cwc.t.a, "Q")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop database if exists rcd;
 create database rcd;
 use rcd;
@@ -1191,95 +1154,69 @@ a
 2020-01-01
 explain select * from t where a < '1943-02-12';
 id	estRows	task	access object	operator info
-Projection_5	3323.33	root		rcd.t.a
-└─UnionScan_6	3323.33	root		lt(rcd.t.a, 1943-02-12 00:00:00.000000)
-  └─TableReader_9	3323.33	root	partition:p0	data:Selection_8
-    └─Selection_8	3323.33	cop[tikv]		lt(rcd.t.a, 1943-02-12 00:00:00.000000)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3323.33	root	partition:p0	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		lt(rcd.t.a, 1943-02-12 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a >= '19690213';
 id	estRows	task	access object	operator info
-Projection_5	3333.33	root		rcd.t.a
-└─UnionScan_6	3333.33	root		ge(rcd.t.a, 1969-02-13 00:00:00.000000)
-  └─TableReader_9	3333.33	root	partition:all	data:Selection_8
-    └─Selection_8	3333.33	cop[tikv]		ge(rcd.t.a, 1969-02-13 00:00:00.000000)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3333.33	root	partition:all	data:Selection_6
+└─Selection_6	3333.33	cop[tikv]		ge(rcd.t.a, 1969-02-13 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a > '2003-03-13';
 id	estRows	task	access object	operator info
-Projection_5	3333.33	root		rcd.t.a
-└─UnionScan_6	3333.33	root		gt(rcd.t.a, 2003-03-13 00:00:00.000000)
-  └─TableReader_9	3333.33	root	partition:p2,p3,p4,p5,p6	data:Selection_8
-    └─Selection_8	3333.33	cop[tikv]		gt(rcd.t.a, 2003-03-13 00:00:00.000000)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3333.33	root	partition:p2,p3,p4,p5,p6	data:Selection_6
+└─Selection_6	3333.33	cop[tikv]		gt(rcd.t.a, 2003-03-13 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a < '2006-02-03';
 id	estRows	task	access object	operator info
-Projection_5	3323.33	root		rcd.t.a
-└─UnionScan_6	3323.33	root		lt(rcd.t.a, 2006-02-03 00:00:00.000000)
-  └─TableReader_9	3323.33	root	partition:p0,p1,p2	data:Selection_8
-    └─Selection_8	3323.33	cop[tikv]		lt(rcd.t.a, 2006-02-03 00:00:00.000000)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3323.33	root	partition:p0,p1,p2	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		lt(rcd.t.a, 2006-02-03 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a = '20070707';
 id	estRows	task	access object	operator info
-Projection_5	10.00	root		rcd.t.a
-└─UnionScan_6	10.00	root		eq(rcd.t.a, 2007-07-07 00:00:00.000000)
-  └─TableReader_9	10.00	root	partition:p2	data:Selection_8
-    └─Selection_8	10.00	cop[tikv]		eq(rcd.t.a, 2007-07-07 00:00:00.000000)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	10.00	root	partition:p2	data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(rcd.t.a, 2007-07-07 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a > '1949-10-10';
 id	estRows	task	access object	operator info
-Projection_5	3333.33	root		rcd.t.a
-└─UnionScan_6	3333.33	root		gt(rcd.t.a, 1949-10-10 00:00:00.000000)
-  └─TableReader_9	3333.33	root	partition:all	data:Selection_8
-    └─Selection_8	3333.33	cop[tikv]		gt(rcd.t.a, 1949-10-10 00:00:00.000000)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3333.33	root	partition:all	data:Selection_6
+└─Selection_6	3333.33	cop[tikv]		gt(rcd.t.a, 1949-10-10 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a > '2016-02-01' AND a < '20000103';
 id	estRows	task	access object	operator info
-Projection_5	0.00	root		rcd.t.a
-└─UnionScan_6	0.00	root		gt(rcd.t.a, 2016-02-01 00:00:00.000000), lt(rcd.t.a, 2000-01-03 00:00:00.000000)
-  └─TableReader_9	0.00	root	partition:dual	data:Selection_8
-    └─Selection_8	0.00	cop[tikv]		gt(rcd.t.a, 2016-02-01 00:00:00.000000), lt(rcd.t.a, 2000-01-03 00:00:00.000000)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	0.00	root	partition:dual	data:Selection_6
+└─Selection_6	0.00	cop[tikv]		gt(rcd.t.a, 2016-02-01 00:00:00.000000), lt(rcd.t.a, 2000-01-03 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a < '19691112' or a >= '2019-09-18';
 id	estRows	task	access object	operator info
-Projection_5	6656.67	root		rcd.t.a
-└─UnionScan_6	6656.67	root		or(lt(rcd.t.a, 1969-11-12 00:00:00.000000), ge(rcd.t.a, 2019-09-18 00:00:00.000000))
-  └─TableReader_9	6656.67	root	partition:p0,p5,p6	data:Selection_8
-    └─Selection_8	6656.67	cop[tikv]		or(lt(rcd.t.a, 1969-11-12 00:00:00.000000), ge(rcd.t.a, 2019-09-18 00:00:00.000000))
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	6656.67	root	partition:p0,p5,p6	data:Selection_6
+└─Selection_6	6656.67	cop[tikv]		or(lt(rcd.t.a, 1969-11-12 00:00:00.000000), ge(rcd.t.a, 2019-09-18 00:00:00.000000))
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a is null;
 id	estRows	task	access object	operator info
-Projection_5	10.00	root		rcd.t.a
-└─UnionScan_6	10.00	root		isnull(rcd.t.a)
-  └─TableReader_9	10.00	root	partition:p0	data:Selection_8
-    └─Selection_8	10.00	cop[tikv]		isnull(rcd.t.a)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	10.00	root	partition:p0	data:Selection_6
+└─Selection_6	10.00	cop[tikv]		isnull(rcd.t.a)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where '2003-02-27' >= a;
 id	estRows	task	access object	operator info
-Projection_5	3323.33	root		rcd.t.a
-└─UnionScan_6	3323.33	root		ge(2003-02-27 00:00:00.000000, rcd.t.a)
-  └─TableReader_9	3323.33	root	partition:p0,p1,p2	data:Selection_8
-    └─Selection_8	3323.33	cop[tikv]		ge(2003-02-27 00:00:00.000000, rcd.t.a)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3323.33	root	partition:p0,p1,p2	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		ge(2003-02-27 00:00:00.000000, rcd.t.a)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where '20141024' < a;
 id	estRows	task	access object	operator info
-Projection_5	3333.33	root		rcd.t.a
-└─UnionScan_6	3333.33	root		lt(2014-10-24 00:00:00.000000, rcd.t.a)
-  └─TableReader_9	3333.33	root	partition:p4,p5,p6	data:Selection_8
-    └─Selection_8	3333.33	cop[tikv]		lt(2014-10-24 00:00:00.000000, rcd.t.a)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3333.33	root	partition:p4,p5,p6	data:Selection_6
+└─Selection_6	3333.33	cop[tikv]		lt(2014-10-24 00:00:00.000000, rcd.t.a)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where '2003-03-30' > a;
 id	estRows	task	access object	operator info
-Projection_5	3323.33	root		rcd.t.a
-└─UnionScan_6	3323.33	root		gt(2003-03-30 00:00:00.000000, rcd.t.a)
-  └─TableReader_9	3323.33	root	partition:p0,p1,p2	data:Selection_8
-    └─Selection_8	3323.33	cop[tikv]		gt(2003-03-30 00:00:00.000000, rcd.t.a)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	3323.33	root	partition:p0,p1,p2	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		gt(2003-03-30 00:00:00.000000, rcd.t.a)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where a between '2003-03-30' AND '2014-01-01';
 id	estRows	task	access object	operator info
-Projection_5	250.00	root		rcd.t.a
-└─UnionScan_6	250.00	root		ge(rcd.t.a, 2003-03-30 00:00:00.000000), le(rcd.t.a, 2014-01-01 00:00:00.000000)
-  └─TableReader_9	250.00	root	partition:p2,p3,p4	data:Selection_8
-    └─Selection_8	250.00	cop[tikv]		ge(rcd.t.a, 2003-03-30 00:00:00.000000), le(rcd.t.a, 2014-01-01 00:00:00.000000)
-      └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_7	250.00	root	partition:p2,p3,p4	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		ge(rcd.t.a, 2003-03-30 00:00:00.000000), le(rcd.t.a, 2014-01-01 00:00:00.000000)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop database if exists rcd;
 create database rcd;
 use rcd;
@@ -1288,11 +1225,9 @@ insert into t1 values ('a', NULL, 'd');
 analyze table t1;
 explain format=brief select * from t1 where a = 'a' AND c = 'd';
 id	estRows	task	access object	operator info
-Projection	0.01	root		rcd.t1.a, rcd.t1.b, rcd.t1.c
-└─UnionScan	0.01	root		eq(rcd.t1.a, "a"), eq(rcd.t1.c, "d")
-  └─TableReader	0.01	root	partition:p0,p1	data:Selection
-    └─Selection	0.01	cop[tikv]		eq(rcd.t1.a, "a"), eq(rcd.t1.c, "d")
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+TableReader	0.01	root	partition:p0,p1	data:Selection
+└─Selection	0.01	cop[tikv]		eq(rcd.t1.a, "a"), eq(rcd.t1.c, "d")
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where a = 'a' AND c = 'd';
 a	b	c
 a	NULL	d
@@ -1358,3 +1293,29 @@ insert into tlist values (1);
 Error 1142 (42000): INSERT command denied to user 'priv_test'@'%' for table 'tlist'
 use planner__core__integration_partition;
 set tidb_enable_list_partition = DEFAULT;
+drop table if exists t;
+create table t(id int) PARTITION BY HASH(id) partitions 5;
+insert into t values(0),(0);
+analyze table t;
+explain select *,_tidb_rowid from t where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+TableReader_6	10000.00	root	partition:all	data:TableRangeScan_5
+└─TableRangeScan_5	10000.00	cop[tikv]	table:t	range:[1,1], keep order:false, stats:pseudo
+select *,_tidb_rowid from t where _tidb_rowid=1;
+id	_tidb_rowid
+0	1
+explain select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+Point_Get_5	1.00	root	table:t, partition:p0	handle:1
+select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+id	_tidb_rowid
+0	1
+explain select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+Point_Get_5	1.00	root	table:t, partition:p1	handle:1
+select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+id	_tidb_rowid
+explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
+id	estRows	task	access object	operator info
+TableReader_6	10000.00	root	partition:p0,p1	data:TableRangeScan_5
+└─TableRangeScan_5	10000.00	cop[tikv]	table:t	range:[1,1], keep order:false, stats:pseudo

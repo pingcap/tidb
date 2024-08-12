@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1666,13 +1666,12 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-	sc := ctx.GetSessionVars().StmtCtx
 
 	pattern := "handle:\\s(\\d+)"
 	r := regexp.MustCompile(pattern)
 
 	getCommonHandle := func(randomRow int) *kv.CommonHandle {
-		h, err := codec.EncodeKey(sc.TimeZone(), nil, types.MakeDatums(randomRow)...)
+		h, err := codec.EncodeKey(ctx.GetExprCtx().GetEvalCtx().Location(), nil, types.MakeDatums(randomRow)...)
 		require.NoError(t, err)
 		ch, err := kv.NewCommonHandle(h)
 		require.NoError(t, err)
@@ -2054,21 +2053,18 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 }
 
 func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	originalHook := dom.DDL().GetHook()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	var schemaMap = make(map[model.SchemaState]struct{})
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	hook := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		schemaMap[job.SchemaState] = struct{}{}
 		_, err := tk1.Exec("admin check table admin_test")
 		assert.NoError(t, err)
 	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 
 	// check table after delete some index key/value pairs.
 	ddl.MockDMLExecution = func() {
@@ -2093,11 +2089,11 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert admin_test values (%d, %d, %d)", i*5+1, i, i*5+1))
 		}
 
-		dom.DDL().SetHook(hook)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", onJobUpdatedExportedFunc)
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
 		tk.MustExec("alter table admin_test truncate partition p1")
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
-		dom.DDL().SetHook(originalHook)
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 		// Should have 3 different schema states, `none`, `deleteOnly`, `deleteReorg`
 		require.Len(t, schemaMap, 3)

@@ -86,7 +86,7 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
 	}()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
@@ -95,8 +95,7 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
 
-	tk1, tk2, ch, originalCallback := prepareTestControlParallelExecSQL(t, store, dom)
-	defer dom.DDL().SetHook(originalCallback)
+	tk1, tk2, ch := prepareTestControlParallelExecSQL(t, store)
 
 	t1 := external.GetTableByName(t, tk, "test_db_state", "t1")
 
@@ -105,12 +104,12 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		// Mock for table tiflash replica was available.
-		err1 = domain.GetDomain(tk1.Session()).DDL().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
+		err1 = domain.GetDomain(tk1.Session()).DDLExecutor().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
 	})
 	wg.Run(func() {
 		<-ch
 		// Mock for table tiflash replica was available.
-		err2 = domain.GetDomain(tk2.Session()).DDL().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
+		err2 = domain.GetDomain(tk2.Session()).DDLExecutor().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
 	})
 	wg.Wait()
 	require.NoError(t, err1)

@@ -276,6 +276,7 @@ func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error
 			OldTableID:  recoverTabsInfo[i].TableInfo.ID,
 		}
 	}
+	diff.ReadTableFromMeta = true
 	return nil
 }
 
@@ -390,7 +391,7 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 // but schema version might not sync.
 // So here we get the latest schema version to make sure all servers' schema version
 // update to the latest schema version in a cluster.
-func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime time.Duration) error {
+func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -413,5 +414,5 @@ func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime t
 		}
 	})
 
-	return waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
+	return waitSchemaChanged(ctx, d, latestSchemaVersion, job)
 }

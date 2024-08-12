@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -95,16 +97,27 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
 type physicalSchemaProducer struct {
 	schema *expression.Schema
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
+}
+
+func (s *physicalSchemaProducer) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, bool) {
+	cloned := new(physicalSchemaProducer)
+	cloned.schema = s.Schema().Clone()
+	base, ok := s.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, newSelf)
+	if !ok {
+		return nil, false
+	}
+	cloned.BasePhysicalPlan = *base
+	return cloned, true
 }
 
 func (s *physicalSchemaProducer) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
-	base, err := s.basePhysicalPlan.cloneWithSelf(newCtx, newSelf)
+	base, err := s.BasePhysicalPlan.CloneWithSelf(newCtx, newSelf)
 	if err != nil {
 		return nil, err
 	}
 	return &physicalSchemaProducer{
-		basePhysicalPlan: *base,
+		BasePhysicalPlan: *base,
 		schema:           s.Schema().Clone(),
 	}, nil
 }
@@ -134,15 +147,24 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
+	sum = s.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer
 	return
 }
 
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
-	names  types.NameSlice
+	names  types.NameSlice `plan-cache-clone:"shallow"`
 	baseimpl.Plan
+}
+
+// CloneWithNewCtx clones the baseSchemaProducer with new context.
+func (s *baseSchemaProducer) CloneWithNewCtx(newCtx base.PlanContext) *baseSchemaProducer {
+	cloned := new(baseSchemaProducer)
+	cloned.Plan = *s.Plan.CloneWithNewCtx(newCtx)
+	cloned.schema = s.schema.Clone()
+	cloned.names = s.names
+	return cloned
 }
 
 // OutputNames returns the outputting names of each column.
@@ -200,9 +222,9 @@ func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expressio
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
 	if joinType == LeftOuterJoin {
-		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == RightOuterJoin {
-		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
 }
@@ -220,9 +242,9 @@ func BuildPhysicalJoinSchema(joinType JoinType, join base.PhysicalPlan) *express
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
 	if joinType == LeftOuterJoin {
-		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == RightOuterJoin {
-		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
 }

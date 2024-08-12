@@ -16,6 +16,7 @@
 set -euo pipefail
 
 go generate ./...
+pushd pkg/parser && make generate && popd
 set +e
 diffline=$(git status -s | awk '{print $2}' | xargs grep '^// Code generated .* DO NOT EDIT\.$' 2>/dev/null)
 set -e

@@ -397,6 +397,7 @@ func closeConn(cc *clientConn) error {
 				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 			}
 		}
+
 		// Close statements and session
 		// At first, it'll decrese the count of connections in the resource group, update the corresponding gauge.
 		// Then it'll close the statements and session, which release advisory locks, row locks, etc.
@@ -405,6 +406,8 @@ func closeConn(cc *clientConn) error {
 			metrics.ConnGauge.WithLabelValues(resourceGroupName).Dec()
 
 			err = ctx.Close()
+		} else {
+			metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Dec()
 		}
 	})
 	return err
@@ -1262,6 +1265,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 
 	for _, dbName := range session.GetDBNames(vars) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
+		if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
+			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys))
+		}
 	}
 }
 
@@ -2435,10 +2442,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start = time.Now()
 	}
 
-	iter := rs.GetRowContainerReader()
+	iter := rs.GetRowIterator()
 	// send the rows to the client according to fetchSize.
-	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
-		row := iter.Current()
+	for i := 0; i < fetchSize && iter.Current(ctx) != iter.End(); i++ {
+		row := iter.Current(ctx)
 
 		data = data[0:4]
 		data, err = column.DumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
@@ -2449,7 +2456,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 			return err
 		}
 
-		iter.Next()
+		iter.Next(ctx)
 	}
 	if iter.Error() != nil {
 		return iter.Error()
@@ -2457,7 +2464,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
-	if iter.Current() == iter.End() {
+	if iter.Current(ctx) == iter.End() {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
 	}

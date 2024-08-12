@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -211,7 +212,8 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 }
 
-type joinReOrderSolver struct {
+// JoinReOrderSolver is used to reorder the join nodes in a logical plan.
+type JoinReOrderSolver struct {
 }
 
 type jrNode struct {
@@ -224,7 +226,8 @@ type joinTypeWithExtMsg struct {
 	outerBindCondition []expression.Expression
 }
 
-func (s *joinReOrderSolver) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
 	tracer.traceJoinReorder(p)
@@ -235,7 +238,7 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p base.LogicalPlan, opt 
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
-func (s *joinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
+func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
 	}
@@ -317,7 +320,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			}
 		}
 		if schemaChanged {
-			proj := LogicalProjection{
+			proj := logicalop.LogicalProjection{
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
 			}.Init(p.SCtx(), p.QueryBlockOffset())
 			// Clone the schema here, because the schema may be changed by column pruning rules.
@@ -538,13 +541,13 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 }
 
 func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*logicalop.LogicalProjection)
 	if !ok {
-		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj = logicalop.LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
 		proj.SetSchema(p.Schema().Clone())
 		proj.SetChildren(p)
 	}
-	return proj, proj.appendExpr(expr)
+	return proj, proj.AppendExpr(expr)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
@@ -678,7 +681,7 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 		newJoin.RightPreferJoinType = joinMethodHint.preferredJoinMethod
 		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
 	}
-	newJoin.setPreferredJoinType()
+	newJoin.SetPreferredJoinType()
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
@@ -686,7 +689,8 @@ func (*baseSingleGroupJoinOrderSolver) calcJoinCumCost(join base.LogicalPlan, lN
 	return join.StatsInfo().RowCount + lNode.cumCost + rNode.cumCost
 }
 
-func (*joinReOrderSolver) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (*JoinReOrderSolver) Name() string {
 	return "join_reorder"
 }
 

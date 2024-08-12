@@ -18,6 +18,7 @@ import (
 	"cmp"
 	stdctx "context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -98,7 +100,8 @@ type SchemaAndTableName struct {
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := newInfoSchema()
-	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
+	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test")}
+	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
@@ -138,7 +141,8 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 			State: model.StatePublic,
 		},
 	}
-	mysqlDBInfo := &model.DBInfo{ID: 2, Name: model.NewCIStr("mysql"), Tables: tables}
+	mysqlDBInfo := &model.DBInfo{ID: 2, Name: model.NewCIStr("mysql")}
+	mysqlDBInfo.Deprecated.Tables = tables
 	tableNames = &schemaTables{
 		dbInfo: mysqlDBInfo,
 		tables: make(map[string]table.Table),
@@ -162,7 +166,8 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := newInfoSchema()
-	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
+	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test")}
+	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
@@ -289,7 +294,7 @@ func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo
 	return is.SchemaByID(tableInfo.DBID)
 }
 
-func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
+func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return nil, false
 	}
@@ -304,7 +309,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 
 // TableInfoByID implements InfoSchema.TableInfoByID
 func (is *infoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(stdctx.Background(), id)
 	return getTableInfo(tbl), ok
 }
 
@@ -316,9 +321,33 @@ func (is *infoSchema) FindTableInfoByPartitionID(
 	return getTableInfo(tbl), db, partDef
 }
 
-// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
-func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
-	return getTableInfoList(is.SchemaTables(schema))
+// SchemaTableInfos implements MetaOnlyInfoSchema.
+func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableInfo, error) {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil, nil
+	}
+	tables := make([]*model.TableInfo, 0, len(schemaTables.tables))
+	for _, tbl := range schemaTables.tables {
+		tables = append(tables, tbl.Meta())
+	}
+	return tables, nil
+}
+
+// SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
+func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CIStr) ([]*model.TableNameInfo, error) {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil, nil
+	}
+	ret := make([]*model.TableNameInfo, 0, len(schemaTables.tables))
+	for _, t := range schemaTables.tables {
+		ret = append(ret, &model.TableNameInfo{
+			ID:   t.Meta().ID,
+			Name: t.Meta().Name,
+		})
+	}
+	return ret, nil
 }
 
 type tableInfoResult struct {
@@ -330,7 +359,9 @@ func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilt
 	ret := make([]tableInfoResult, 0, 10)
 	for _, dbName := range is.AllSchemaNames() {
 		res := tableInfoResult{DBName: dbName.O}
-		for _, tblInfo := range is.SchemaTableInfos(dbName) {
+		tblInfos, err := is.SchemaTableInfos(stdctx.Background(), dbName)
+		terror.Log(err)
+		for _, tblInfo := range tblInfos {
 			if !filter(tblInfo) {
 				continue
 			}
@@ -363,18 +394,6 @@ func (is *infoSchema) AllSchemaNames() (schemas []model.CIStr) {
 		rs = append(rs, v.dbInfo.Name)
 	}
 	return rs
-}
-
-func (is *infoSchema) SchemaTables(schema model.CIStr) []table.Table {
-	schemaTables, ok := is.schemaMap[schema.L]
-	if !ok {
-		return nil
-	}
-	tables := make([]table.Table, 0, len(schemaTables.tables))
-	for _, tbl := range schemaTables.tables {
-		tables = append(tables, tbl)
-	}
-	return tables
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
@@ -453,8 +472,8 @@ func init() {
 		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
-		Tables:  infoSchemaTables,
 	}
+	infoSchemaDB.Deprecated.Tables = infoSchemaTables
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
 	util.GetSequenceByName = func(is context.MetaOnlyInfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
@@ -513,6 +532,12 @@ func (is *infoSchemaMisc) AllResourceGroups() []*model.ResourceGroupInfo {
 	return groups
 }
 
+func (is *infoSchemaMisc) CloneResourceGroups() map[string]*model.ResourceGroupInfo {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	return maps.Clone(is.resourceGroupMap)
+}
+
 // AllPlacementPolicies returns all placement policies
 func (is *infoSchemaMisc) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
@@ -522,6 +547,12 @@ func (is *infoSchemaMisc) AllPlacementPolicies() []*model.PolicyInfo {
 		policies = append(policies, policy)
 	}
 	return policies
+}
+
+func (is *infoSchemaMisc) ClonePlacementPolicies() map[string]*model.PolicyInfo {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	return maps.Clone(is.policyMap)
 }
 
 func (is *infoSchemaMisc) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
@@ -779,7 +810,7 @@ func (ts *SessionExtendedInfoSchema) TableInfoByName(schema, table model.CIStr) 
 
 // TableInfoByID implements InfoSchema.TableInfoByID
 func (ts *SessionExtendedInfoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
-	tbl, ok := ts.TableByID(id)
+	tbl, ok := ts.TableByID(stdctx.Background(), id)
 	return getTableInfo(tbl), ok
 }
 
@@ -792,7 +823,7 @@ func (ts *SessionExtendedInfoSchema) FindTableInfoByPartitionID(
 }
 
 // TableByID implements InfoSchema.TableByID
-func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
+func (ts *SessionExtendedInfoSchema) TableByID(ctx stdctx.Context, id int64) (table.Table, bool) {
 	if !tableIDIsValid(id) {
 		return nil, false
 	}
@@ -809,7 +840,7 @@ func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
 		}
 	}
 
-	return ts.InfoSchema.TableByID(id)
+	return ts.InfoSchema.TableByID(ctx, id)
 }
 
 // SchemaByID implements InfoSchema.SchemaByID, it returns a stale DBInfo even if it's dropped.
@@ -861,7 +892,7 @@ func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionEx
 // If the id is a partition id, the corresponding table.Table and PartitionDefinition will be returned.
 // If the id is not found in the InfoSchema, nil will be returned for both return values.
 func FindTableByTblOrPartID(is InfoSchema, id int64) (table.Table, *model.PartitionDefinition) {
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(stdctx.Background(), id)
 	if ok {
 		return tbl, nil
 	}

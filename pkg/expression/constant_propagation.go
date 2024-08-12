@@ -32,10 +32,10 @@ var MaxPropagateColsCnt = 100
 
 // nolint:structcheck
 type basePropConstSolver struct {
-	colMapper map[int64]int       // colMapper maps column to its index
-	eqList    []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
-	unionSet  *disjointset.IntSet // unionSet stores the relations like col_i = col_j
-	columns   []*Column           // columns stores all columns appearing in the conditions
+	colMapper map[int64]int             // colMapper maps column to its index
+	eqList    []*Constant               // if eqList[i] != nil, it means col_i = eqList[i]
+	unionSet  *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
+	columns   []*Column                 // columns stores all columns appearing in the conditions
 	ctx       exprctx.ExprContext
 }
 

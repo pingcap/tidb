@@ -75,7 +75,7 @@ func Test53726(t *testing.T) {
 			"  └─HashAgg_4 8000.00 cop[tikv]  group by:cast(test.t7.c, bigint(22) BINARY), cast(test.t7.c, decimal(10,0) BINARY), ",
 			"    └─TableFullScan_7 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
 
-	tk.MustExec("analyze table t7")
+	tk.MustExec("analyze table t7 all columns")
 	tk.MustQuery("select distinct cast(c as decimal), cast(c as signed) from t7").
 		Sort().
 		Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
@@ -85,4 +85,62 @@ func Test53726(t *testing.T) {
 			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#11, cast(test.t7.c, bigint(22) BINARY)->Column#12",
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
+}
+
+func TestIssue54535(t *testing.T) {
+	// test for tidb_enable_inl_join_inner_multi_pattern system variable
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_enable_inl_join_inner_multi_pattern='ON'")
+	tk.MustExec("create table ta(a1 int, a2 int, a3 int, index idx_a(a1))")
+	tk.MustExec("create table tb(b1 int, b2 int, b3 int, index idx_b(b1))")
+	tk.MustExec("analyze table ta")
+	tk.MustExec("analyze table tb")
+
+	tk.MustQuery("explain SELECT /*+ inl_join(tmp) */ * FROM ta, (SELECT b1, COUNT(b3) AS cnt FROM tb GROUP BY b1, b2) as tmp where ta.a1 = tmp.b1").
+		Check(testkit.Rows(
+			"Projection_9 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#9",
+			"└─IndexJoin_16 9990.00 root  inner join, inner:HashAgg_14, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
+			"  ├─TableReader_43(Build) 9990.00 root  data:Selection_42",
+			"  │ └─Selection_42 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
+			"  │   └─TableFullScan_41 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+			"  └─HashAgg_14(Probe) 79840080.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
+			"    └─IndexLookUp_15 79840080.00 root  ",
+			"      ├─Selection_12(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
+			"      │ └─IndexRangeScan_10 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
+			"      └─HashAgg_13(Probe) 79840080.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
+			"        └─TableRowIDScan_11 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
+	// test for issues/55169
+	tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
+	tk.MustExec("create table t2(col_1 int, col_2 int, index idx_2(col_1));")
+	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(distinct col_2 order by col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
+}
+
+func TestIssue54803(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+    CREATE TABLE t1db47fc1 (
+        col_67 time NOT NULL DEFAULT '16:58:45',
+        col_68 tinyint(3) unsigned DEFAULT NULL,
+        col_69 bit(6) NOT NULL DEFAULT b'11110',
+        col_72 double NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    PARTITION BY HASH (col_68) PARTITIONS 5;
+    `)
+	tk.MustQuery(`EXPLAIN SELECT TRIM(t1db47fc1.col_68) AS r0
+    FROM t1db47fc1
+    WHERE ISNULL(t1db47fc1.col_68)
+    GROUP BY t1db47fc1.col_68
+    HAVING ISNULL(t1db47fc1.col_68) OR t1db47fc1.col_68 IN (62, 200, 196, 99)
+    LIMIT 106149535;
+    `).Check(testkit.Rows("Projection_11 8.00 root  trim(cast(test.t1db47fc1.col_68, var_string(20)))->Column#7",
+		"└─Limit_14 8.00 root  offset:0, count:106149535",
+		"  └─HashAgg_17 8.00 root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
+		"    └─TableReader_24 10.00 root partition:p0 data:Selection_23",
+		"      └─Selection_23 10.00 cop[tikv]  isnull(test.t1db47fc1.col_68), or(isnull(test.t1db47fc1.col_68), in(test.t1db47fc1.col_68, 62, 200, 196, 99))",
+		"        └─TableFullScan_22 10000.00 cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
 }

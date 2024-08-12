@@ -23,7 +23,7 @@ import (
 	"testing"
 	gotime "time"
 
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -260,7 +261,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
-		require.Equal(t, upperBounds[i], expr.StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx()))
+		require.Equal(t, upperBounds[i], expr.StringWithCtx(tk.Session().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 	}
 }
 
@@ -279,7 +280,7 @@ func TestLocatePartition(t *testing.T) {
     	PARTITION watch_event VALUES IN ("WatchEvent")
     )`)
 	tk.MustExec(`insert into t values (1,"PushEvent"),(2,"WatchEvent"),(3, "WatchEvent")`)
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -2069,25 +2070,6 @@ func TestPruneModeWarningInfo(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
 }
 
-type testCallback struct {
-	ddl.Callback
-	OnJobRunBeforeExported func(job *model.Job)
-}
-
-func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
-	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
-	require.NoError(t, err)
-	return &testCallback{
-		Callback: defHookFactory(dom),
-	}
-}
-
-func (c *testCallback) OnJobRunBefore(job *model.Job) {
-	if c.OnJobRunBeforeExported != nil {
-		c.OnJobRunBeforeExported(job)
-	}
-}
-
 func TestPartitionByIntListExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
@@ -2644,13 +2626,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	rows, pkInserts, pkUpdates, pkDeletes int,
 	reorgRand *rand.Rand,
 	getNewPK func(map[string]struct{}, string, *rand.Rand) string,
-	getValues func(string, bool, *rand.Rand) string) {
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := newTestCallBack(t, dom)
-	dom.DDL().SetHook(hook)
-
+	getValues func(string, bool, *rand.Rand) string,
+) {
 	pkMap := make(map[string]struct{}, rows)
 	pkArray := make([]string, 0, len(pkMap))
 	// Generate a start set:
@@ -2693,7 +2670,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	prevTbl, err := currSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	var hookErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if hookErr != nil {
 			// Enough to find a single error
 			return
@@ -3132,7 +3109,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			logutil.BgLogger().Info("State after ins/upd/del", zap.Int("transitions", transitions),
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
 		}
-	}
+	})
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	tk.MustExec(alterStr)
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)
@@ -3182,7 +3160,7 @@ func TestExplainPartition(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`CREATE TABLE t (a int, b int) PARTITION BY hash(a) PARTITIONS 3`)
 	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6)`)
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
 	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
 		`TableReader 1.00 root  data:Selection`,
@@ -3232,7 +3210,7 @@ func TestPartitionCoverage(t *testing.T) {
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b int, primary key (a,b)) partition by hash(b) partitions 3`)
 	tk.MustExec(`insert into t values (1,1),(1,2),(2,1),(2,2),(1,3)`)
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
 	query := `select * from t where a in (1,2) and b = 1 order by a`
 	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"))
@@ -3264,7 +3242,7 @@ func TestPartitionCoverage(t *testing.T) {
 		"TableReader 10.00 root partition:dual data:Selection",
 		"└─Selection 10.00 cop[tikv]  eq(test.t.a, 10)",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t all columns`)
 	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
 		`TableReader 0.00 root partition:dual data:Selection`,
 		`└─Selection 0.00 cop[tikv]  eq(test.t.a, 10)`,

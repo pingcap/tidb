@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -373,7 +373,7 @@ func TestTableDDLWithTimeType(t *testing.T) {
 }
 
 func TestUpdateMultipleTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int)")
@@ -383,17 +383,13 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	d := dom.DDL()
-	hook := &callback.TestDDLCallback{Do: dom}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
 			tk2.MustQuery("select * from t2").Check(testkit.Rows("1 10", "2 10"))
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(hook)
+	})
 
 	tk.MustExec("alter table t1 add column c3 bigint default 9")
 
@@ -2944,10 +2940,11 @@ func TestDDLLastInfo(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows("\"\" 0"))
+	lastDDLSQL := "select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')"
+	tk.MustQuery(lastDDLSQL).Check(testkit.Rows("\"\" 0"))
 	tk.MustExec("create table t(a int)")
 	firstSequence := 0
-	res := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')")
+	res := tk.MustQuery(lastDDLSQL)
 	require.Len(t, res.Rows(), 1)
 	require.Equal(t, "\"create table t(a int)\"", res.Rows()[0][0])
 	var err error
@@ -2957,10 +2954,22 @@ func TestDDLLastInfo(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test;`)
 	tk.MustExec("create table t2(a int)")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
+	tk.MustQuery(lastDDLSQL).Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
 
 	tk.MustExec("drop table t, t2")
-	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
+	tk.MustQuery(lastDDLSQL).Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
+
+	// owner change, sequence will be reset
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterSchedulerClose", func() {
+		close(ch)
+	})
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	require.NoError(t, dom.DDL().OwnerManager().ResignOwner(context.Background()))
+	<-ch
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery(lastDDLSQL).Check(testkit.Rows(fmt.Sprintf(`"create table t(a int)" %d`, 1)))
 }
 
 func TestDefaultCollationForUTF8MB4(t *testing.T) {
@@ -3084,16 +3093,13 @@ func TestIssue52680(t *testing.T) {
 }
 
 func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	originCfg := config.GetGlobalConfig()
 	defer func() {
 		config.StoreGlobalConfig(originCfg)
 	}()
 
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex {
 			return
 		}
@@ -3102,8 +3108,7 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 			newCfg.MaxIndexLength = 1000
 			config.StoreGlobalConfig(&newCfg)
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
