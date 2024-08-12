@@ -874,6 +874,7 @@ func (w *GCWorker) deleteRanges(
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
 				zap.Error(err))
+			return
 		}
 		// We only delete rules, so concurrently updating rules should not return errors.
 		if err := w.doGCLabelRules(r); err != nil {
