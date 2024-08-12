@@ -2073,7 +2073,7 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 	}
 
 	batchSize := 32
-	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_batch_size = %d", batchSize))
+	tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_batch_size = %d", batchSize))
 
 	var enableFastCheck = []bool{false, true}
 	for _, enabled := range enableFastCheck {
