@@ -75,6 +75,9 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 			return
 		}
 		infoSchema := sessiontxn.GetTxnManager(worker.sctx).GetTxnInfoSchema()
-		statsHandle.Update(ctx, infoSchema)
+		err = statsHandle.Update(ctx, infoSchema)
+		if err != nil {
+			logutil.Logger(ctx).Warn("fail to update stats cache", zap.Error(err))
+		}
 	}
 }
