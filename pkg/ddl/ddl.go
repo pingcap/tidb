@@ -33,8 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -164,8 +165,6 @@ type DDL interface {
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
 	Start(ctxPool *pools.ResourcePool) error
-	// GetLease returns current schema lease time.
-	GetLease() time.Duration
 	// Stats returns the DDL statistics.
 	Stats(vars *variable.SessionVars) (map[string]any, error)
 	// GetScope gets the status variables scope.
@@ -175,9 +174,9 @@ type DDL interface {
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() syncer.SchemaSyncer
+	SchemaSyncer() schemaver.Syncer
 	// StateSyncer gets the cluster state syncer.
-	StateSyncer() syncer.StateSyncer
+	StateSyncer() serverstate.Syncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -317,13 +316,13 @@ func (w *waitSchemaSyncedController) clearOnceMap() {
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	uuid         string
-	store        kv.Storage
-	ownerManager owner.Manager
-	schemaSyncer syncer.SchemaSyncer
-	stateSyncer  syncer.StateSyncer
+	ctx               context.Context
+	cancel            context.CancelFunc
+	uuid              string
+	store             kv.Storage
+	ownerManager      owner.Manager
+	schemaVerSyncer   schemaver.Syncer
+	serverStateSyncer serverstate.Syncer
 	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
 	// jobID -> chan struct{}
 	ddlJobDoneChMap generic.SyncMap[int64, chan struct{}]
@@ -573,14 +572,6 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 // give up notify and log it.
 func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
 	if d.ddlEventCh != nil {
-		if d.lease == 0 {
-			// If lease is 0, it's always used in test.
-			select {
-			case d.ddlEventCh <- e:
-			default:
-			}
-			return
-		}
 		for i := 0; i < 10; i++ {
 			select {
 			case d.ddlEventCh <- e:
@@ -607,19 +598,19 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 
 	id := uuid.New().String()
 	var manager owner.Manager
-	var schemaSyncer syncer.SchemaSyncer
-	var stateSyncer syncer.StateSyncer
+	var schemaVerSyncer schemaver.Syncer
+	var serverStateSyncer serverstate.Syncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
-		// So we use mockOwnerManager and MockSchemaSyncer.
+		// So we use mockOwnerManager and memSyncer.
 		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
-		schemaSyncer = NewMockSchemaSyncer()
-		stateSyncer = NewMockStateSyncer()
+		schemaVerSyncer = schemaver.NewMemSyncer()
+		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
-		stateSyncer = syncer.NewStateSyncer(etcdCli, util.ServerGlobalState)
+		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
+		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -638,8 +629,8 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		lease:                      opt.Lease,
 		ddlJobDoneChMap:            generic.NewSyncMap[int64, chan struct{}](10),
 		ownerManager:               manager,
-		schemaSyncer:               schemaSyncer,
-		stateSyncer:                stateSyncer,
+		schemaVerSyncer:            schemaVerSyncer,
+		serverStateSyncer:          serverStateSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -737,7 +728,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
-	if err := d.stateSyncer.Init(d.ctx); err != nil {
+	if err := d.serverStateSyncer.Init(d.ctx); err != nil {
 		logutil.DDLLogger().Warn("start DDL init state syncer failed", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -838,7 +829,7 @@ func (d *ddl) close() {
 	d.cancel()
 	d.wg.Wait()
 	d.ownerManager.Cancel()
-	d.schemaSyncer.Close()
+	d.schemaVerSyncer.Close()
 
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -853,20 +844,14 @@ func (d *ddl) close() {
 	logutil.DDLLogger().Info("DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
-// GetLease implements DDL.GetLease interface.
-func (d *ddl) GetLease() time.Duration {
-	lease := d.lease
-	return lease
-}
-
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
-	return d.schemaSyncer
+func (d *ddl) SchemaSyncer() schemaver.Syncer {
+	return d.schemaVerSyncer
 }
 
 // StateSyncer implements DDL.StateSyncer interface.
-func (d *ddl) StateSyncer() syncer.StateSyncer {
-	return d.stateSyncer
+func (d *ddl) StateSyncer() serverstate.Syncer {
+	return d.serverStateSyncer
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
@@ -1021,9 +1006,19 @@ type RecoverSchemaInfo struct {
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
 	if variable.EnableMDL.Load() {
-		// If metadata lock is enabled. The transaction of DDL must begin after prewrite of the async commit transaction,
-		// then the commit ts of DDL must be greater than the async commit transaction. In this case, the corresponding schema of the async commit transaction
-		// is correct. But if metadata lock is disabled, we can't ensure that the corresponding schema of the async commit transaction isn't change.
+		// If metadata lock is enabled. The transaction of DDL must begin after
+		// pre-write of the async commit transaction, then the commit ts of DDL
+		// must be greater than the async commit transaction. In this case, the
+		// corresponding schema of the async commit transaction is correct.
+		// suppose we're adding index:
+		// - schema state -> StateWriteOnly with version V
+		// - some txn T started using async commit and version V,
+		//   and T do pre-write before or after V+1
+		// - schema state -> StateWriteReorganization with version V+1
+		// - T commit finish, with TS
+		// - 'wait schema synced' finish
+		// - schema state -> Done with version V+2, commit-ts of this
+		//   transaction must > TS, so it's safe for T to commit.
 		return
 	}
 	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit

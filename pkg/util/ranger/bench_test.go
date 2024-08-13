@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -115,7 +116,7 @@ WHERE
 	ctx := context.Background()
 	p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 	require.NoError(b, err)
-	selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+	selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
 	tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
 	require.NotNil(b, selection)
 	conds := make([]expression.Expression, len(selection.Conditions))

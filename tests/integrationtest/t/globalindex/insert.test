@@ -1,7 +1,7 @@
 set tidb_enable_global_index = true;
 
 drop table if exists t;
-create table t(a int, b int, unique index idx(a)) partition by hash(b) partitions 5;
+create table t(a int, b int, unique index idx(a) global) partition by hash(b) partitions 5;
 insert into t values (1, 1), (1, 2) on duplicate key update a=1, b=3;
 select * from t use index (idx);
 

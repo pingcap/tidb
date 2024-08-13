@@ -15,7 +15,9 @@
 package util
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strconv"
 	"time"
 
@@ -256,6 +258,13 @@ type JSONTable struct {
 	ModifyCount       int64                  `json:"modify_count"`
 	Version           uint64                 `json:"version"`
 	IsHistoricalStats bool                   `json:"is_historical_stats"`
+}
+
+// Sort is used to sort the object in the JSONTable. it is used for testing to avoid flaky test.
+func (j *JSONTable) Sort() {
+	slices.SortFunc(j.PredicateColumns, func(a, b *JSONPredicateColumn) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 }
 
 // JSONExtendedStats is used for dumping extended statistics.

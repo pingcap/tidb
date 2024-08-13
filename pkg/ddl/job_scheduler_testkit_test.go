@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -187,7 +187,7 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 		{"alter table e2 add index idx3(id)", model.JobStateRollbackDone, errors.New("[ddl:8214]Cancelled DDL job")},
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpgradingState", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/serverstate/mockUpgradingState", `return(true)`)
 
 	// TODO this case only checks that when a job cannot be paused, it can still run normally.
 	// we should add a ut for processJobDuringUpgrade, not this complex integration test.
@@ -202,7 +202,7 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 			tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 		if job.State == testCases[num].jobState {
-			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateUpgrading})
+			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &serverstate.StateInfo{State: serverstate.StateUpgrading})
 		}
 	})
 
@@ -214,7 +214,7 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 			_, err := tk.Exec(tc.sql)
 			require.Equal(t, tc.err.Error(), err.Error())
 		}
-		dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateNormalRunning})
+		dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &serverstate.StateInfo{State: serverstate.StateNormalRunning})
 	}
 }
 

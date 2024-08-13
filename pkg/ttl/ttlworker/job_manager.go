@@ -1160,7 +1160,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	defer se.Close()
 
 	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := is.TableByID(tableID)
+	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		return false
 	}

@@ -17,23 +17,9 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
-
-func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	combinedCond := make([]expression.Expression, 0,
-		len(p.LeftConditions)+len(p.RightConditions)+
-			len(p.EqualConditions)+len(p.OtherConditions)+
-			len(predicates))
-	combinedCond = append(combinedCond, p.LeftConditions...)
-	combinedCond = append(combinedCond, p.RightConditions...)
-	combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-	combinedCond = append(combinedCond, p.OtherConditions...)
-	combinedCond = append(combinedCond, predicates...)
-	return combinedCond
-}
 
 // ConvertOuterToInnerJoin converts outer to inner joins if the unmtaching rows are filtered.
 type ConvertOuterToInnerJoin struct {

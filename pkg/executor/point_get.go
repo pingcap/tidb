@@ -659,7 +659,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	tblInfo, _ := is.TableByID((e.tblInfo.ID))
+	tblInfo, _ := is.TableByID(context.Background(), e.tblInfo.ID)
 	tblName := tblInfo.Meta().Name.String()
 	tblID := GetPhysID(tblInfo.Meta(), e.partitionDefIdx)
 	if tblID != tblInfo.Meta().ID {

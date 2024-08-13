@@ -118,11 +118,6 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 		if p.Schema().Len() != 0 {
 			childProj.SetSchema(p.Schema())
 		}
-		// If any of the consecutive projection operators has the AvoidColumnEvaluator set to true,
-		// we need to set the AvoidColumnEvaluator of the remaining projection to true.
-		if proj.AvoidColumnEvaluator {
-			childProj.AvoidColumnEvaluator = true
-		}
 	}
 	for i, col := range p.Schema().Columns {
 		if p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan.Has(int(col.UniqueID)) && !child.Schema().Columns[i].Equal(nil, col) {
@@ -183,10 +178,10 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 
 	// replace logical plan schema
 	switch x := p.(type) {
-	case *LogicalJoin:
-		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
+	case *logicalop.LogicalJoin:
+		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
 	case *LogicalApply:
-		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
+		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
 	default:
 		for _, dst := range p.Schema().Columns {
 			ruleutil.ResolveColumnAndReplace(dst, replace)

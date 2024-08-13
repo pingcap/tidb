@@ -16,7 +16,6 @@ go_test(
         "//pkg/server",
         "//pkg/server/internal/util",
         "//pkg/server/tests/servertestkit",
-        "//pkg/session",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
