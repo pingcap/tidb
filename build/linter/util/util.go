@@ -19,6 +19,7 @@ import (
 	"go/ast"
 	"go/token"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -266,6 +267,7 @@ func SetGoPath() {
 	if goRoot == "" {
 		return
 	}
+	goRoot = filepath.Join(goRoot, "bin", "go")
 	oldPath := os.Getenv("PATH")
 	newPathEnv := oldPath + string(os.PathListSeparator) + goRoot
 	err := os.Setenv("PATH", newPathEnv)
