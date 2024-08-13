@@ -11,6 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// 	NOTE: For assigning new fix control numbers - use the issue number associated with the fix.
+//
 
 package fixcontrol
 
@@ -20,8 +23,6 @@ import (
 )
 
 const (
-	// NOTE: For assigning new fix control numbers - use the issue number associated with the fix.
-	//
 	// Fix33031 controls whether to disallow plan cache for partitioned
 	// tables (both prepared statments and non-prepared statements)
 	// See #33031
