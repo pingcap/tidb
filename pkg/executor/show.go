@@ -504,12 +504,6 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 	if !e.is.SchemaExists(e.DBName) {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
-	// sort for tables
-	schemaTables, err := e.is.SchemaTableInfos(ctx, e.DBName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tableNames := make([]string, 0, len(schemaTables))
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	var (
 		tableTypes        = make(map[string]string)
@@ -521,14 +515,49 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
+
+	var (
+		schemaTables = make([]*model.TableInfo, 0)
+		err          error
+	)
+
+	// prefilter for table names
+	if fieldFilter != "" {
+		tb, err := e.is.TableByName(ctx, e.DBName, model.NewCIStr(fieldFilter))
+		if err != nil {
+			// do nothing if table not exists
+			if !infoschema.ErrTableNotExists.Equal(err) {
+				return errors.Trace(err)
+			}
+		} else {
+			schemaTables = append(schemaTables, tb.Meta())
+		}
+	} else if fieldPatternsLike != nil {
+		schemaTableNames, err := e.is.SchemaSimpleTableInfos(ctx, e.DBName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, v := range schemaTableNames {
+			if fieldPatternsLike.DoMatch(v.Name.L) {
+				tb, err := e.is.TableByName(ctx, e.DBName, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				schemaTables = append(schemaTables, tb.Meta())
+			}
+		}
+	} else {
+		schemaTables, err = e.is.SchemaTableInfos(ctx, e.DBName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	tableNames := make([]string, 0, len(schemaTables))
 	for _, v := range schemaTables {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask) {
-			continue
-		} else if fieldFilter != "" && v.Name.L != fieldFilter {
-			continue
-		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name.L) {
 			continue
 		}
 		tableNames = append(tableNames, v.Name.O)
