@@ -1593,6 +1593,7 @@ var (
 	InstancePlanCacheTargetMemSize    = atomic.NewInt64(int64(DefTiDBInstancePlanCacheTargetMemSize))
 	InstancePlanCacheMaxMemSize       = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
 	InstancePlanCacheEvictInterval    = atomic.NewInt64(30)
+	InstancePlanCachePinnedDigests    = atomic.NewString("")
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable             = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	DDLForce2Queue                    = atomic.NewBool(false)

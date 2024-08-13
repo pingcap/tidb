@@ -1383,6 +1383,14 @@ var defaultSysVars = []*SysVar{
 			InstancePlanCacheEvictInterval.Store(int64(v))
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCachePinnedDigests, Value: "", Type: TypeStr,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return InstancePlanCachePinnedDigests.Load(), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			InstancePlanCachePinnedDigests.Store(val)
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return OOMAction.Load(), nil
