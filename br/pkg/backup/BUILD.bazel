@@ -66,9 +66,15 @@ go_test(
         "client_test.go",
         "main_test.go",
         "schema_test.go",
+        "store_test.go",
     ],
     embed = [":backup"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    race = "on",
+    shard_count = 14,
+>>>>>>> d04299ef627 (br: resolve stuck in backup (#54736))
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",
@@ -97,6 +103,7 @@ go_test(
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_pd_client//:client",
         "@io_opencensus_go//stats/view",
+        "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
     ],
 )
