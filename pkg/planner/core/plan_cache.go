@@ -306,6 +306,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
 		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
+		cached.SQLDigest = stmt.SQLDigest.String()
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)

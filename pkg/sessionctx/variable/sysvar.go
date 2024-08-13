@@ -1385,10 +1385,23 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: ScopeGlobal, Name: TiDBInstancePlanCachePinnedDigests, Value: "", Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return InstancePlanCachePinnedDigests.Load(), nil
+			var digests []string
+			m := *InstancePlanCachePinnedDigests.Load()
+			for d := range m {
+				digests = append(digests, d)
+			}
+			return strings.Join(digests, ","), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			InstancePlanCachePinnedDigests.Store(val)
+			m := make(map[string]struct{})
+			for _, d := range strings.Split(val, ",") {
+				d = strings.TrimSpace(d)
+				if d == "" {
+					continue
+				}
+				m[d] = struct{}{}
+			}
+			InstancePlanCachePinnedDigests.Store(&m)
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,

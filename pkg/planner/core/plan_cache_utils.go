@@ -404,7 +404,8 @@ func bool2Byte(flag bool) byte {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan          base.Plan          // not-read-only, session might update it before reusing
+	Plan          base.Plan // not-read-only, session might update it before reusing
+	SQLDigest     string
 	OutputColumns types.NameSlice    // read-only
 	memoryUsage   int64              // read-only
 	testKey       int64              // test-only

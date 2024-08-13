@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"sort"
 	"sync"
 	"time"
@@ -103,8 +104,10 @@ func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramType
 // Put puts the key and values into the cache.
 // Due to some thread-safety issues, this Put operation might fail, use the returned succ to indicate it.
 func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) {
+	m := *variable.InstancePlanCachePinnedDigests.Load()
+	_, pinned := m[value.(*PlanCacheValue).SQLDigest]
 	vMem := value.(*PlanCacheValue).MemoryUsage()
-	if vMem+pc.totCost.Load() > pc.hardMemLimit.Load() {
+	if !pinned && vMem+pc.totCost.Load() > pc.hardMemLimit.Load() {
 		return // do nothing if it exceeds the hard limit
 	}
 	headNode := pc.getHead(key, true)
@@ -135,6 +138,7 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 // step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
 func (pc *instancePlanCache) Evict() (detailInfo string, numEvicted int) {
+	m := *variable.InstancePlanCachePinnedDigests.Load()
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
 	pc.inEvict.Store(true)
@@ -155,7 +159,8 @@ func (pc *instancePlanCache) Evict() (detailInfo string, numEvicted int) {
 	detailInfo = fmt.Sprintf("evict threshold: %v", threshold)
 	pc.foreach(func(prev, this *instancePCNode) bool { // step 3
 		if this.count.Load() <= threshold { // if lastUsed<=threshold, evict this value
-			if prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
+			_, pinned := m[this.value.SQLDigest]
+			if !pinned && prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
 				pc.totCost.Sub(this.value.MemoryUsage()) //  it might have been updated by other thread
 				pc.totPlan.Sub(1)
 				numEvicted++
