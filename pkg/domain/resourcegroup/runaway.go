@@ -526,15 +526,16 @@ func (r *RunawayChecker) BeforeExecutor() error {
 }
 
 // CheckAction is used to check current action of the query.
+// It's safe to call this method concurrently.
 func (r *RunawayChecker) CheckAction() rmpb.RunawayAction {
 	if r == nil {
 		return rmpb.RunawayAction_NoneAction
 	}
-	if r.markedByRule.Load() {
-		return r.setting.Action
-	}
 	if r.markedByWatch.Load() {
 		return r.watchAction
+	}
+	if r.markedByRule.Load() {
+		return r.setting.Action
 	}
 	return rmpb.RunawayAction_NoneAction
 }

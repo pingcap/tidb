@@ -220,8 +220,8 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		it.concurrency = 1
 	}
 
-	// if the request is triggered cool down by the runaway checker, we need to adjust the concurrency, let the sql run slowly.\
-	if len(req.ResourceGroupName) > 0 && req.ResourceGroupName != resourcegroup.DefaultResourceGroupName && req.RunawayChecker != nil {
+	// if the request is triggered cool down by the runaway checker, we need to adjust the concurrency, let the sql run slowly.
+	if req.RunawayChecker != nil {
 		action := req.RunawayChecker.CheckAction()
 		if action == rmpb.RunawayAction_CoolDown {
 			it.concurrency = 1
