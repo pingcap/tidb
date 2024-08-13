@@ -4832,15 +4832,27 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			ex.initExtractableColNames(upTbl)
 			p.Extractor = ex
 		case infoschema.TableReferConst,
-			infoschema.TableKeyColumn,
 			infoschema.TableSequences,
 			infoschema.TableCheckConstraints,
 			infoschema.TableTiDBCheckConstraints,
-			infoschema.TableTiDBIndexUsage,
-			infoschema.TableTiDBIndexes,
-			infoschema.TableViews,
-			infoschema.TableConstraints:
+			infoschema.TableTiDBIndexUsage:
 			ex := &InfoSchemaBaseExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableTiDBIndexes:
+			ex := &InfoSchemaIndexesExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableViews:
+			ex := &InfoSchemaViewsExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableKeyColumn:
+			ex := &InfoSchemaKeyColumnUsageExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableConstraints:
+			ex := &InfoSchemaTableConstraintsExtractor{}
 			ex.initExtractableColNames(upTbl)
 			p.Extractor = ex
 		case infoschema.TableTiKVRegionStatus:
