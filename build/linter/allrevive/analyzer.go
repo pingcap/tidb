@@ -37,6 +37,7 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func init() {
+	util.SetGoPath()
 	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

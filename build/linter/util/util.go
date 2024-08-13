@@ -259,3 +259,18 @@ func GetPackageName(imports []*ast.ImportSpec, path, defaultName string) string 
 	}
 	return ""
 }
+
+// SetGoPath sets the GOROOT to the PATH.
+func SetGoPath() {
+	goRoot := os.Getenv("GOROOT")
+	if goRoot == "" {
+		return
+	}
+	oldPath := os.Getenv("PATH")
+	newPathEnv := oldPath + string(os.PathListSeparator) + goRoot
+	err := os.Setenv("PATH", newPathEnv)
+	if err != nil {
+		fmt.Printf("Error setting PATH: %v\n", err)
+		return
+	}
+}
