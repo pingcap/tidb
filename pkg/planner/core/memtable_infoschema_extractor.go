@@ -45,6 +45,8 @@ const (
 	_constraintSchema = "constraint_schema"
 	_constraintName   = "constraint_name"
 	_tableID          = "table_id"
+	_sequenceSchema   = "sequence_schema"
+	_sequenceName     = "sequence_name"
 )
 
 var extractableColumns = map[string][]string{
@@ -104,17 +106,22 @@ var extractableColumns = map[string][]string{
 		_constraintSchema,
 		_constraintName,
 	},
-	// See infoschema.referConstCols for full columns.
+	// See infoschema.tableTiDBCheckConstraintsCols for full columns.
 	// Used by InfoSchemaTiDBCheckConstraintsExtractor and setDataFromTiDBCheckConstraints.
 	infoschema.TableTiDBCheckConstraints: {
 		_constraintSchema, _tableName, _tableID,
 		_constraintName,
 	},
-	// See infoschema.tableReferConstCols for full columns.
+	// See infoschema.referConstCols for full columns.
 	// Used by InfoSchemaReferConstExtractor and setDataFromReferConst.
 	infoschema.TableReferConst: {
 		_constraintSchema, _tableName,
 		_constraintName,
+	},
+	// See infoschema.tableSequencesCols for full columns.
+	// Used by InfoSchemaSequenceExtractor and setDataFromSequences.
+	infoschema.TableSequences: {
+		_sequenceSchema, _sequenceName,
 	},
 }
 
@@ -463,6 +470,22 @@ func (e *InfoSchemaReferConstExtractor) ListSchemasAndTables(
 	tableNames := e.getSchemaObjectNames(_tableName)
 	if len(tableNames) > 0 {
 		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
+type InfoSchemaSequenceExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+func (e *InfoSchemaSequenceExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _sequenceSchema)
+	seqNames := e.getSchemaObjectNames(_sequenceName)
+	if len(seqNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, seqNames)
 	}
 	return listTablesForEachSchema(ctx, is, schemas)
 }

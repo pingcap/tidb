@@ -4831,9 +4831,11 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			ex := &InfoSchemaSchemataExtractor{}
 			ex.initExtractableColNames(upTbl)
 			p.Extractor = ex
-		case
-			infoschema.TableSequences,
-			infoschema.TableTiDBIndexUsage:
+		case infoschema.TableSequences:
+			ex := &InfoSchemaSequenceExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableTiDBIndexUsage:
 			ex := &InfoSchemaBaseExtractor{}
 			ex.initExtractableColNames(upTbl)
 			p.Extractor = ex
