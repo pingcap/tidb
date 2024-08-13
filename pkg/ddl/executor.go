@@ -4721,6 +4721,12 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
 	reorgMeta.TargetScope = variable.ServiceScope.Load()
+	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
+		reorgMeta.Concurrency = variable.TidbOptInt(sv, 0)
+	}
+	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
+		reorgMeta.BatchSize = variable.TidbOptInt(sv, 0)
+	}
 
 	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
 		return nil, dbterror.ErrUnsupportedDistTask
@@ -4736,6 +4742,17 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 			LastReorgMetaFastReorgDisabled = true
 		})
 	}
+
+	logutil.DDLLogger().Info("initialize reorg meta",
+		zap.String("jobSchema", job.SchemaName),
+		zap.String("jobTable", job.TableName),
+		zap.Stringer("jobType", job.Type),
+		zap.Bool("enableDistTask", reorgMeta.IsDistReorg),
+		zap.Bool("enableFastReorg", reorgMeta.IsFastReorg),
+		zap.String("targetScope", reorgMeta.TargetScope),
+		zap.Int("concurrency", reorgMeta.Concurrency),
+		zap.Int("batchSize", reorgMeta.BatchSize),
+	)
 	return reorgMeta, nil
 }
 
