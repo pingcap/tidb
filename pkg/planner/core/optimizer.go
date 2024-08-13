@@ -110,7 +110,7 @@ var optRuleList = []base.LogicalOptRule{
 	&SkewDistinctAggRewriter{},
 	&ProjectionEliminator{},
 	&MaxMinEliminator{},
-	&ConstantPropagationSolver{},
+	&rule.ConstantPropagationSolver{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&OuterJoinEliminator{},
