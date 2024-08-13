@@ -1619,7 +1619,7 @@ func (b *builtinValuesVectorFloat32Sig) RequiredOptionalEvalProps() OptionalEval
 func (b *builtinValuesVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, _ chunk.Row) (types.VectorFloat32, bool, error) {
 	sessionvar, err := b.GetSessionVars(ctx)
 	if err != nil {
-		return types.VectorFloat32{}, true, err
+		return types.ZeroVectorFloat32, true, err
 	}
 	row := sessionvar.CurrInsertValues
 	if row.IsEmpty() {
