@@ -81,7 +81,7 @@ func (trecv *timeoutRecv) Stop() {
 	trecv.wg.Wait()
 }
 
-var TimeOneResponse = time.Hour
+var TimeoutOneResponse = time.Hour
 
 func (trecv *timeoutRecv) loop(timeout time.Duration) {
 	defer trecv.wg.Done()
@@ -123,7 +123,7 @@ func doSendBackup(
 ) error {
 	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
 	// terminate the backup if it does not receive any new response for a long time.
-	ctx, timerecv := StartTimeoutRecv(pctx, TimeOneResponse)
+	ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse)
 	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
