@@ -2595,12 +2595,11 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 	if extractor.SkipRequest {
 		return nil
 	}
-	var rows [][]types.Datum
-
 	schemas, tables, err := extractor.ListSchemasAndTables(ctx, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rows := make([][]types.Datum, 0, len(tables))
 	for i, table := range tables {
 		schema := schemas[i]
 		if !table.IsSequence() {
