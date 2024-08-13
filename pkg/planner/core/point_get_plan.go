@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -368,7 +369,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		return false
 	}
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	tbl, ok := is.TableByID(p.TblInfo.ID)
+	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 	if tbl == nil || !ok {
 		// Can this happen?
 		intest.Assert(false)
@@ -666,7 +667,7 @@ func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []model.CISt
 // Map each index value to Partition ID
 func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	tbl, ok := is.TableByID(p.TblInfo.ID)
+	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 	intest.Assert(ok)
 	pTbl, ok := tbl.(table.PartitionedTable)
 	intest.Assert(ok)
@@ -760,7 +761,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 		}
 		if pi != nil {
 			is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-			tbl, ok := is.TableByID(p.TblInfo.ID)
+			tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 			intest.Assert(ok)
 			pTbl, ok := tbl.(table.PartitionedTable)
 			intest.Assert(ok)
@@ -946,7 +947,7 @@ func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
 
 func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
 	if lockInfo != nil {
-		if logicalop.IsSelectForUpdateLockType(lockInfo.LockType) {
+		if logicalop.IsSupportedSelectLockType(lockInfo.LockType) {
 			// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 			// is disabled (either by beginning transaction with START TRANSACTION or by setting
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -957,7 +958,7 @@ func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock b
 				waitTime = sessVars.LockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
 					waitTime = int64(lockInfo.WaitSec * 1000)
-				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait {
+				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait || lockInfo.LockType == ast.SelectLockForShareNoWait {
 					waitTime = tikvstore.LockNoWait
 				}
 			}
@@ -978,7 +979,7 @@ func newBatchPointGetPlan(
 		// Only keeping it for now to limit impact of
 		// enable plan cache for partitioned tables PR.
 		is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-		table, ok := is.TableByID(tbl.ID)
+		table, ok := is.TableByID(context.Background(), tbl.ID)
 		if !ok {
 			return nil
 		}
@@ -1950,10 +1951,11 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 		VirtualAssignmentsOffset:  len(orderedList),
+		IgnoreError:               updateStmt.IgnoreErr,
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	t, _ := is.TableByID(tbl.ID)
+	t, _ := is.TableByID(context.Background(), tbl.ID)
 	updatePlan.tblID2Table = map[int64]table.Table{
 		tbl.ID: t,
 	}
@@ -2069,7 +2071,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	}.Init(ctx)
 	var err error
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	t, _ := is.TableByID(tbl.ID)
+	t, _ := is.TableByID(context.Background(), tbl.ID)
 	if t != nil {
 		tblID2Table := map[int64]table.Table{tbl.ID: t}
 		err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
@@ -2135,7 +2137,7 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 		return nil
 	}
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(tbl.ID)
+	table, ok := is.TableByID(context.Background(), tbl.ID)
 	if !ok {
 		return nil
 	}

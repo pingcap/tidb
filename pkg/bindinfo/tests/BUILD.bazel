@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 18,
+    shard_count = 19,
     deps = [
         "//pkg/bindinfo",
         "//pkg/bindinfo/internal",

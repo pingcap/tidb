@@ -623,16 +623,83 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 	}
 
-	partCols, err := getPartitionColSlices(exprCtx, tbInfo, s)
-	if err != nil {
-		return errors.Trace(err)
+	if len(s.UpdateIndexes) > 0 {
+		updateIndexes := make([]model.UpdateIndexInfo, 0, len(s.UpdateIndexes))
+		dupCheck := make(map[string]struct{})
+		for _, idxUpdate := range s.UpdateIndexes {
+			idxOffset := -1
+			for i := range tbInfo.Indices {
+				if strings.EqualFold(tbInfo.Indices[i].Name.L, idxUpdate.Name) {
+					idxOffset = i
+					break
+				}
+			}
+			if idxOffset == -1 {
+				if strings.EqualFold("primary", idxUpdate.Name) &&
+					tbInfo.PKIsHandle {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
+				}
+				return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(idxUpdate.Name)
+			}
+			if _, ok := dupCheck[strings.ToLower(idxUpdate.Name)]; ok {
+				return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(idxUpdate.Name)
+			}
+			dupCheck[strings.ToLower(idxUpdate.Name)] = struct{}{}
+			if idxUpdate.Option != nil && idxUpdate.Option.Global {
+				tbInfo.Indices[idxOffset].Global = true
+			} else {
+				tbInfo.Indices[idxOffset].Global = false
+			}
+			updateIndexes = append(updateIndexes, model.UpdateIndexInfo{IndexName: idxUpdate.Name, Global: tbInfo.Indices[idxOffset].Global})
+			tbInfo.Partition.DDLUpdateIndexes = updateIndexes
+		}
 	}
 
 	for _, index := range tbInfo.Indices {
-		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
-			index.Global = ctx.GetSessionVars().EnableGlobalIndex
+		if index.Unique {
+			ck, err := checkPartitionKeysConstraint(pi, index.Columns, tbInfo)
+			if err != nil {
+				return err
+			}
+			if !ck {
+				indexTp := ""
+				if !ctx.GetSessionVars().EnableGlobalIndex {
+					if index.Primary {
+						indexTp = "PRIMARY KEY"
+						if tbInfo.IsCommonHandle {
+							indexTp = "CLUSTERED INDEX"
+						}
+					} else {
+						indexTp = "UNIQUE INDEX"
+					}
+				} else if index.Primary && tbInfo.IsCommonHandle {
+					indexTp = "CLUSTERED INDEX"
+				}
+				if indexTp != "" {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+				}
+				if !index.Global {
+					return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
+				}
+			}
 		}
 	}
+	if tbInfo.PKIsHandle {
+		// This case is covers when the Handle is the PK (only ints), since it would not
+		// have an entry in the tblInfo.Indices
+		indexCols := []*model.IndexColumn{{
+			Name:   tbInfo.GetPkName(),
+			Length: types.UnspecifiedLength,
+		}}
+		ck, err := checkPartitionKeysConstraint(pi, indexCols, tbInfo)
+		if err != nil {
+			return err
+		}
+		if !ck {
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
+		}
+	}
+
 	return nil
 }
 
@@ -2233,7 +2300,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
+			err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
 						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -2431,7 +2498,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
+			err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
 						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -2702,9 +2769,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// partition to be exchange with.
 	// So we need to rollback that change, instead of just cancelling.
 
-	if d.lease > 0 {
-		delayForAsyncCommit()
-	}
+	delayForAsyncCommit()
 
 	if defID != partDef.ID {
 		// Should never happen, should have been updated above, in previous state!
@@ -2881,6 +2946,18 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	return ver, nil
 }
 
+func getNewGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
+	if len(partInfo.DDLUpdateIndexes) == 0 {
+		return idx.Global
+	}
+	for _, newIdx := range partInfo.DDLUpdateIndexes {
+		if strings.EqualFold(idx.Name.L, newIdx.IndexName) {
+			return newIdx.Global
+		}
+	}
+	return idx.Global
+}
+
 func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []string, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
@@ -3051,28 +3128,56 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// All global indexes must be recreated, we cannot update them in-place, since we must have
 		// both old and new set of partition ids in the unique index at the same time!
 		for _, index := range tblInfo.Indices {
+			newGlobal := getNewGlobal(partInfo, index)
+			if job.Type == model.ActionRemovePartitioning {
+				// When removing partitioning, set all indexes to 'local' since it will become a non-partitioned table!
+				newGlobal = false
+			}
 			if !index.Unique {
 				// for now, only unique index can be global, non-unique indexes are 'local'
+				// TODO: For the future loosen this restriction and allow non-unique global indexes
+				if newGlobal {
+					job.State = model.JobStateCancelled
+					return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("PARTITION BY, index '%v' is not unique, but has Global Index set", index.Name.O))
+				}
 				continue
 			}
 			inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			if index.Global || !inAllPartitionColumns {
+			if !inAllPartitionColumns {
+				// Currently only support Explicit Global indexes.
+				if !newGlobal {
+					job.State = model.JobStateCancelled
+					return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
+				}
 				// Duplicate the unique indexes with new index ids.
 				// If previously was Global or will be Global:
 				// it must be recreated with new index ID
+				// TODO: Could we allow that session in StateWriteReorganization, when StateDeleteReorganization
+				// has started, may not find changes through the global index that sessions in StateDeleteReorganization made?
+				// If so, then we could avoid copying the full Global Index if it has not changed from LOCAL!
+				// It might be possible to use the new, not yet public partitions to access those rows?!
+				// Just that it would not work with explicit partition select SELECT FROM t PARTITION (p,...)
 				newIndex := index.Clone()
 				newIndex.State = model.StateDeleteOnly
 				newIndex.ID = AllocateIndexID(tblInfo)
-				if inAllPartitionColumns {
-					newIndex.Global = false
-				} else {
-					// If not including all partitioning columns, make it Global
-					newIndex.Global = true
-				}
+				newIndex.Global = true
 				tblInfo.Indices = append(tblInfo.Indices, newIndex)
+			} else {
+				if newGlobal {
+					// TODO: For the future loosen this restriction and allow global indexes for unique keys also including all partitioning columns
+					return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("PARTITION BY, index '%v' is unique and contains all partitioning columns, but has Global Index set", index.Name.O))
+				}
+				if index.Global {
+					// Index was previously Global, now it needs to be duplicated and become a local index.
+					newIndex := index.Clone()
+					newIndex.State = model.StateDeleteOnly
+					newIndex.ID = AllocateIndexID(tblInfo)
+					newIndex.Global = false
+					tblInfo.Indices = append(tblInfo.Indices, newIndex)
+				}
 			}
 		}
 		// From now on we cannot just cancel the DDL, we must roll back if changesMade!
@@ -3451,7 +3556,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, partTbl, physTblIDs, elements)
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
+	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)

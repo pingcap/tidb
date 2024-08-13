@@ -63,7 +63,6 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
-	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer dom.Close()

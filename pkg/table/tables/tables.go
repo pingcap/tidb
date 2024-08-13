@@ -518,7 +518,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldDat
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 		checkRowBuffer.AddColVal(value)
-		if shouldWriteBinlog && !t.canSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog && !t.canSkipUpdateBinlog(col) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -624,7 +624,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			if err != nil {
 				return err
 			}
-			if err = t.removeRowIndex(ctx, h, oldVs, idx, txn); err != nil {
+			if err = idx.Delete(ctx, txn, oldVs, h); err != nil {
 				return err
 			}
 			break
@@ -646,7 +646,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			untouched = false
 			break
 		}
-		if untouched && opt.SkipWriteUntouchedIndices {
+		if untouched && opt.SkipWriteUntouchedIndices() {
 			continue
 		}
 		newVs, err := idx.FetchValues(newData, nil)
@@ -757,8 +757,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 	}
 
 	var ctx context.Context
-	if opt.Ctx != nil {
-		ctx = opt.Ctx
+	if ctx = opt.Ctx(); ctx != nil {
 		var r tracing.Region
 		r, ctx = tracing.StartRegionEx(ctx, "table.AddRecord")
 		defer r.End()
@@ -774,7 +773,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 	// opt.IsUpdate is a flag for update.
 	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
 	// Currently, only insert can set _tidb_rowid, update can not update _tidb_rowid.
-	if len(r) > len(cols) && !opt.IsUpdate {
+	if len(r) > len(cols) && !opt.IsUpdate() {
 		// The last value is _tidb_rowid.
 		recordID = kv.IntHandle(r[len(r)-1].GetInt64())
 		hasRecordID = true
@@ -805,14 +804,14 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 		}
 	}
 	if !hasRecordID {
-		if opt.ReserveAutoID > 0 {
+		if reserveAutoID := opt.ReserveAutoID(); reserveAutoID > 0 {
 			// Reserve a batch of auto ID in the statement context.
 			// The reserved ID could be used in the future within this statement, by the
 			// following AddRecord() operation.
 			// Make the IDs continuous benefit for the performance of TiKV.
 			if reserved, ok := sctx.GetReservedRowIDAlloc(); ok {
 				var baseRowID, maxRowID int64
-				if baseRowID, maxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID)); err != nil {
+				if baseRowID, maxRowID, err = AllocHandleIDs(ctx, sctx, t, uint64(reserveAutoID)); err != nil {
 					return nil, err
 				}
 				reserved.Reset(baseRowID, maxRowID)
@@ -863,7 +862,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 			// because `col.State != model.StatePublic` is true here, if col.ChangeStateInfo is not nil, the col should
 			// be handle by the previous if-block.
 
-			if opt.IsUpdate {
+			if opt.IsUpdate() {
 				// If `AddRecord` is called by an update, the default value should be handled the update.
 				value = r[col.Offset]
 			} else {
@@ -892,11 +891,11 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 	}
 	key := t.RecordKey(recordID)
 	var setPresume bool
-	if opt.DupKeyCheck != table.DupKeyCheckSkip {
+	if opt.DupKeyCheck() != table.DupKeyCheckSkip {
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			_, err = txn.Get(ctx, key)
-		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() || txn.IsPipelined() {
+		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy {
 			var v []byte
 			v, err = txn.GetMemBuffer().GetLocal(ctx, key)
 			if err != nil {
@@ -1012,7 +1011,7 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opt *table.CreateIdxOpt) (kv.Handle, error) {
 	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
-	skipCheck := opt.DupKeyCheck == table.DupKeyCheckSkip
+	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
 	for _, v := range t.Indices() {
 		if !IsIndexWritable(v) {
 			continue
@@ -1414,11 +1413,6 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, h kv.Handle, rec
 	return nil
 }
 
-// removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *TableCommon) removeRowIndex(ctx table.MutateContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(ctx, txn, vals, h)
-}
-
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
 	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
@@ -1667,7 +1661,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 }
 
 // canSkipUpdateBinlog checks whether the column can be skipped or not.
-func (t *TableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
+func (t *TableCommon) canSkipUpdateBinlog(col *table.Column) bool {
 	return col.IsVirtualGenerated()
 }
 

@@ -573,6 +573,9 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 				return nil
 			})
 		}
+		if n.StrValue == "Global" {
+			ctx.WriteKeyWord(" GLOBAL")
+		}
 	case ColumnOptionNotNull:
 		ctx.WriteKeyWord("NOT NULL")
 	case ColumnOptionAutoIncrement:
@@ -596,6 +599,9 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		}
 	case ColumnOptionUniqKey:
 		ctx.WriteKeyWord("UNIQUE KEY")
+		if n.StrValue == "Global" {
+			ctx.WriteKeyWord(" GLOBAL")
+		}
 	case ColumnOptionNull:
 		ctx.WriteKeyWord("NULL")
 	case ColumnOptionOnUpdate:
@@ -715,8 +721,10 @@ const (
 //	| index_type
 //	| WITH PARSER parser_name
 //	| COMMENT 'string'
+//	| GLOBAL
 //
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
+// with the addition of Global Index
 type IndexOption struct {
 	node
 
@@ -726,6 +734,22 @@ type IndexOption struct {
 	ParserName   model.CIStr
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
+	Global       bool
+}
+
+// IsEmpty is true if only default options are given
+// and it should not be added to the output
+func (n *IndexOption) IsEmpty() bool {
+	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault ||
+		n.KeyBlockSize > 0 ||
+		n.Tp != model.IndexTypeInvalid ||
+		len(n.ParserName.O) > 0 ||
+		n.Comment != "" ||
+		n.Global ||
+		n.Visibility != IndexVisibilityDefault {
+		return false
+	}
+	return true
 }
 
 // Restore implements Node interface.
@@ -771,6 +795,17 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WriteString(n.Comment)
+		hasPrevOption = true
+	}
+
+	if n.Global {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
+			ctx.WriteKeyWord("GLOBAL")
+			return nil
+		})
 		hasPrevOption = true
 	}
 
@@ -920,7 +955,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.Option != nil {
+	if n.Option != nil && !n.Option.IsEmpty() {
 		ctx.WritePlain(" ")
 		if err := n.Option.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing Constraint Option")
@@ -1823,7 +1858,7 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(")")
 
-	if n.IndexOption.Tp != model.IndexTypeInvalid || n.IndexOption.KeyBlockSize > 0 || n.IndexOption.Comment != "" || len(n.IndexOption.ParserName.O) > 0 || n.IndexOption.Visibility != IndexVisibilityDefault {
+	if n.IndexOption != nil && !n.IndexOption.IsEmpty() {
 		ctx.WritePlain(" ")
 		if err := n.IndexOption.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.IndexOption")
@@ -4344,8 +4379,9 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 // PartitionOptions specifies the partition options.
 type PartitionOptions struct {
 	PartitionMethod
-	Sub         *PartitionMethod
-	Definitions []*PartitionDefinition
+	Sub           *PartitionMethod
+	Definitions   []*PartitionDefinition
+	UpdateIndexes []*Constraint
 }
 
 // Validate checks if the partition is well-formed.
@@ -4434,6 +4470,22 @@ func (n *PartitionOptions) Restore(ctx *format.RestoreCtx) error {
 			}
 			if err := def.Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore PartitionOptions.Definitions[%d]", i)
+			}
+		}
+		ctx.WritePlain(")")
+	}
+
+	if len(n.UpdateIndexes) > 0 {
+		ctx.WritePlain(" UPDATE INDEXES (")
+		for i, update := range n.UpdateIndexes {
+			if i > 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(update.Name)
+			if update.Option != nil && update.Option.Global {
+				ctx.WritePlain(" GLOBAL")
+			} else {
+				ctx.WritePlain(" LOCAL")
 			}
 		}
 		ctx.WritePlain(")")

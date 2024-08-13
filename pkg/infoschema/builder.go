@@ -705,7 +705,7 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 		b.addTemporaryTable(tableID)
 	}
 
-	newTbl, ok := b.infoSchema.TableByID(tableID)
+	newTbl, ok := b.infoSchema.TableByID(context.Background(), tableID)
 	if ok {
 		dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, newTbl.Meta())
 	}

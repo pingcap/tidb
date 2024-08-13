@@ -1512,3 +1512,8 @@ func TestExplainExpand(t *testing.T) {
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
+	// PhysicalApply is expected not to implement PhysicalJoin.
+	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
+}

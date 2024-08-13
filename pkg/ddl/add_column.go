@@ -495,6 +495,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				if col.GetFlag()&mysql.PriKeyFlag == 0 {
 					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys,
 						Option: &ast.IndexOption{PrimaryKeyTp: v.PrimaryKeyTp}}
+					if v.StrValue == "Global" {
+						constraint.Option.Global = true
+					}
 					constraints = append(constraints, constraint)
 					col.AddFlag(mysql.PriKeyFlag)
 					// Add NotNullFlag early so that processColumnFlags() can see it.
@@ -504,6 +507,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				// Check UniqueFlag first to avoid extra duplicate constraints.
 				if col.GetFlag()&mysql.UniqueFlag == 0 {
 					constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Keys: keys}
+					if v.StrValue == "Global" {
+						constraint.Option = &ast.IndexOption{Global: true}
+					}
 					constraints = append(constraints, constraint)
 					col.AddFlag(mysql.UniqueKeyFlag)
 				}
