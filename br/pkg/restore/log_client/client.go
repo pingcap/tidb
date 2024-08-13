@@ -173,7 +173,9 @@ func (rc *LogClient) RestoreCompactedSsts(
 	importModeSwitcher *restore.ImportModeSwitcher,
 ) error {
 	// need to enter import mode before restore SST files
+	// it will set to noral mode whatever
 	importModeSwitcher.SwitchToImportMode(ctx)
+	defer importModeSwitcher.SwitchToNormalMode(ctx)
 
 	for tid, rules := range rules {
 		log.Info("Using rewrite rules.", zap.Int64("table_id", tid), zap.Stringer("rules", rules))

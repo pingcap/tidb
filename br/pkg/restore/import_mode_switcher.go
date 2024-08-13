@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"crypto/tls"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
@@ -47,8 +48,8 @@ func NewImportModeSwitcher(
 }
 
 // switchToNormalMode switch tikv cluster to normal mode.
-func (switcher *ImportModeSwitcher) switchToNormalMode(ctx context.Context) error {
-	close(switcher.switchCh)
+func (switcher *ImportModeSwitcher) SwitchToNormalMode(ctx context.Context) error {
+	sync.OnceFunc(func() { close(switcher.switchCh) })
 	return switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Normal)
 }
 
@@ -186,7 +187,7 @@ func RestorePostWork(
 		ctx = context.Background()
 	}
 
-	if err := switcher.switchToNormalMode(ctx); err != nil {
+	if err := switcher.SwitchToNormalMode(ctx); err != nil {
 		log.Warn("fail to switch to normal mode", zap.Error(err))
 	}
 	if err := restoreSchedulers(ctx); err != nil {
