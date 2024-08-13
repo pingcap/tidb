@@ -396,8 +396,8 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from tint where b=1;
 id	estRows	task	access object	operator info
-TableReader_7	1.84	root		data:Selection_6
-└─Selection_6	1.84	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 1)
+TableReader_7	1.00	root		data:Selection_6
+└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 1)
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tint where b=4;
 id	estRows	task	access object	operator info
@@ -406,8 +406,8 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tint where b=8;
 id	estRows	task	access object	operator info
-TableReader_7	2.07	root		data:Selection_6
-└─Selection_6	2.07	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 8)
+TableReader_7	1.00	root		data:Selection_6
+└─Selection_6	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 8)
   └─TableFullScan_5	8.00	cop[tikv]	table:tint	keep order:false
 explain select * from tdouble where b=1;
 id	estRows	task	access object	operator info
@@ -471,8 +471,8 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from ct1 where pk>='1' and pk <='4';
 id	estRows	task	access object	operator info
-TableReader_6	7.40	root		data:TableRangeScan_5
-└─TableRangeScan_5	7.40	cop[tikv]	table:ct1	range:["1","4"], keep order:false
+TableReader_6	5.00	root		data:TableRangeScan_5
+└─TableRangeScan_5	5.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
 explain select * from ct1 where pk>='4' and pk <='6';
 id	estRows	task	access object	operator info
 TableReader_6	3.75	root		data:TableRangeScan_5
