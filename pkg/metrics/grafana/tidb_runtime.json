@@ -138,7 +138,7 @@
             },
             {
               "$$hashKey": "object:273",
-              "alias": "go_runtime_metatdata",
+              "alias": "go_runtime_metadata",
               "color": "#FF780A"
             },
             {
@@ -211,7 +211,7 @@
               "hide": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "go_runtime_metatdata",
+              "legendFormat": "go_runtime_metadata",
               "refId": "E"
             },
             {
