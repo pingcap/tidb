@@ -80,7 +80,7 @@ func randomVarcharVal() string {
 	case 2:
 		return randomItem(fmt.Sprintf("'%v'", rand.Intn(1000)), fmt.Sprintf("'-%v'", rand.Intn(1000)))
 	default:
-		str := "weoiruklmdsSDFjfDSFpqru23h#@$@#r90ds8a90dhfksdjfl#@!@#~$@#^BFDSAFDS=========+_+-21KLEJSDKLX;FJP';ipo][1"
+		str := "weoiruklmdsSDFjfDSFpqru23h#@$@#r90ds8a90dhfksdjfl#@!@#~$@#^BFDSAFDS=========+_+-21KLEJSDKLX;FJP;ipo][1"
 		start := rand.Intn(len(str))
 		end := start + rand.Intn(len(str)-start)
 		return fmt.Sprintf("'%v'", str[start:end])
