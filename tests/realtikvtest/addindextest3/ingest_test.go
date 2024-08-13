@@ -191,7 +191,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key);")
 	var sb strings.Builder
 	sb.WriteString("insert into t values ")
@@ -219,7 +219,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 			running = false
 		case wg := <-ddl.TestCheckWorkerNumCh:
 			offset = (offset + 1) % 3
-			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", cnt[offset]))
+			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", cnt[offset]))
 			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset]/2+2))
 			wg.Done()
 		}
@@ -231,7 +231,6 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 	require.Len(t, rows, 1)
 	jobTp := rows[0][3].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 4;")
 }
 
 func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
@@ -244,7 +243,7 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 
 	ingest.ImporterRangeConcurrencyForTest = &atomic.Int32{}
 	ingest.ImporterRangeConcurrencyForTest.Store(2)
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 20;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 20;")
 
 	tk.MustExec("create table t (a int primary key);")
 	var sb strings.Builder
@@ -262,7 +261,6 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	require.Len(t, rows, 1)
 	jobTp := rows[0][3].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 4;")
 	ingest.ImporterRangeConcurrencyForTest = nil
 }
 
@@ -399,8 +397,8 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=1;")
-	tk.MustExec("set global tidb_enable_dist_task = 0;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt=1;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
 	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
@@ -410,8 +408,6 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	ingest.ForceSyncFlagForTest = true
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 	ingest.ForceSyncFlagForTest = false
-
-	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=4;")
 }
 
 func TestAddIndexBackfillLostUpdate(t *testing.T) {

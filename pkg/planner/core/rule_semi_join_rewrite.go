@@ -100,7 +100,7 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 		innerChild = sel
 	}
 
-	subAgg := LogicalAggregation{
+	subAgg := logicalop.LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(join.EqualConditions)),
 		GroupByItems: make([]expression.Expression, 0, len(join.EqualConditions)),
 	}.Init(p.SCtx(), p.Children()[1].QueryBlockOffset())
@@ -118,7 +118,7 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	}
 	subAgg.SetChildren(innerChild)
 	subAgg.SetSchema(expression.NewSchema(aggOutputCols...))
-	subAgg.buildSelfKeyInfo(subAgg.Schema())
+	subAgg.BuildSelfKeyInfo(subAgg.Schema())
 
 	innerJoin := logicalop.LogicalJoin{
 		JoinType:        logicalop.InnerJoin,

@@ -46,7 +46,7 @@ func (a *MaxMinEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
-func (*MaxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, aggs []*LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (plan base.LogicalPlan) {
+func (*MaxMinEliminator) composeAggsByInnerJoin(originAgg *logicalop.LogicalAggregation, aggs []*logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (plan base.LogicalPlan) {
 	plan = aggs[0]
 	sctx := plan.SCtx()
 	joins := make([]*logicalop.LogicalJoin, 0)
@@ -142,7 +142,7 @@ func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 // `select max(a) from t` + `select min(a) from t` + `select max(b) from t`.
 // Then we check whether `a` and `b` have indices. If any of the used column has no index, we cannot eliminate
 // this aggregation.
-func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (aggs []*LogicalAggregation, canEliminate bool) {
+func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (aggs []*logicalop.LogicalAggregation, canEliminate bool) {
 	for _, f := range agg.AggFuncs {
 		// We must make sure the args of max/min is a simple single column.
 		col, ok := f.Args[0].(*expression.Column)
@@ -153,10 +153,10 @@ func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 			return nil, false
 		}
 	}
-	aggs = make([]*LogicalAggregation, 0, len(agg.AggFuncs))
+	aggs = make([]*logicalop.LogicalAggregation, 0, len(agg.AggFuncs))
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
-		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
+		newAgg := logicalop.LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
 		newAgg.SetChildren(a.cloneSubPlans(agg.Children()[0]))
 		newAgg.SetSchema(expression.NewSchema(agg.Schema().Columns[i]))
 		// Since LogicalAggregation doesn’t use the parent base.LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
@@ -167,14 +167,14 @@ func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.Schema().Columns[0]}, opt); err != nil {
 			return nil, false
 		}
-		newAgg = p.(*LogicalAggregation)
+		newAgg = p.(*logicalop.LogicalAggregation)
 		aggs = append(aggs, newAgg)
 	}
 	return aggs, true
 }
 
 // eliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
-func (*MaxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *LogicalAggregation {
+func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *logicalop.LogicalAggregation {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
 	ctx := agg.SCtx()
@@ -225,7 +225,7 @@ func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrac
 		newChildren = append(newChildren, a.eliminateMaxMin(child, opt))
 	}
 	p.SetChildren(newChildren...)
-	if agg, ok := p.(*LogicalAggregation); ok {
+	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
 		if len(agg.GroupByItems) != 0 {
 			return agg
 		}
@@ -266,7 +266,7 @@ func (*MaxMinEliminator) Name() string {
 	return "max_min_eliminate"
 }
 
-func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *logicalop.LogicalSelection, sort *logicalop.LogicalSort, limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
+func appendEliminateSingleMaxMinTrace(agg *logicalop.LogicalAggregation, sel *logicalop.LogicalSelection, sort *logicalop.LogicalSort, limit *logicalop.LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString("")
 		if sel != nil {
@@ -291,7 +291,7 @@ func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *logicalop.Lo
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*LogicalAggregation, joins []*logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
+func appendEliminateMultiMinMaxTraceStep(originAgg *logicalop.LogicalAggregation, aggs []*logicalop.LogicalAggregation, joins []*logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v splited into [", originAgg.TP(), originAgg.ID()))
 		for i, agg := range aggs {

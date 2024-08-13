@@ -215,3 +215,14 @@ select count(1) from information_schema.statistics where table_name = 'temp_tabl
 count(1)
 0
 drop table temp_table;
+create global temporary table temp_table(a int, index idx(a)) on commit delete rows;
+select count(1) from information_schema.tables where table_schema = 'infoschema__infoschema';
+count(1)
+1
+select count(1) from information_schema.tables where table_name = 'temp_table';
+count(1)
+1
+select count(1) from information_schema.statistics where table_name = 'temp_table';
+count(1)
+1
+drop table temp_table;

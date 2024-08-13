@@ -68,13 +68,13 @@ func TestGroupNDVs(t *testing.T) {
 		lp := p.(base.LogicalPlan)
 		_, err = core.RecursiveDeriveStats4Test(lp)
 		require.NoError(t, err, comment)
-		var agg *core.LogicalAggregation
+		var agg *logicalop.LogicalAggregation
 		var join *logicalop.LogicalJoin
 		stack := make([]base.LogicalPlan, 0, 2)
 		traversed := false
 		for !traversed {
 			switch v := lp.(type) {
-			case *core.LogicalAggregation:
+			case *logicalop.LogicalAggregation:
 				agg = v
 				lp = lp.Children()[0]
 			case *logicalop.LogicalJoin:

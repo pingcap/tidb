@@ -48,16 +48,16 @@ func genConfig(
 	memRoot MemRoot,
 	unique bool,
 	resourceGroup string,
+	concurrency int,
 ) (*litConfig, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
 	// Each backend will build a single dir in lightning dir.
 	cfg.TikvImporter.SortedKVDir = jobSortPath
+	cfg.TikvImporter.RangeConcurrency = concurrency
 	if ImporterRangeConcurrencyForTest != nil {
 		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
-	} else {
-		cfg.TikvImporter.RangeConcurrency = int(variable.GetDDLReorgWorkerCounter())
 	}
 	err := cfg.AdjustForDDL()
 	if err != nil {
@@ -89,6 +89,26 @@ func genConfig(
 	}
 
 	return c, nil
+}
+
+// CopReadBatchSize is the batch size of coprocessor read.
+// It multiplies the tidb_ddl_reorg_batch_size by 10 to avoid
+// sending too many cop requests for the same handle range.
+func CopReadBatchSize(hintSize int) int {
+	if hintSize > 0 {
+		return hintSize
+	}
+	return 10 * int(variable.GetDDLReorgBatchSize())
+}
+
+// CopReadChunkPoolSize is the size of chunk pool, which
+// represents the max concurrent ongoing coprocessor requests.
+// It multiplies the tidb_ddl_reorg_worker_cnt by 10.
+func CopReadChunkPoolSize(hintConc int) int {
+	if hintConc > 0 {
+		return 10 * hintConc
+	}
+	return 10 * int(variable.GetDDLReorgWorkerCounter())
 }
 
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.

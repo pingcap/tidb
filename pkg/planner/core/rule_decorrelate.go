@@ -108,7 +108,7 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan, outerSchemas []*
 // DecorrelateSolver tries to convert apply plan to join plan.
 type DecorrelateSolver struct{}
 
-func (*DecorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
+func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
 		switch f.Name {
@@ -230,8 +230,8 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 				appendRemoveLimitTraceStep(li, opt)
 				return s.Optimize(ctx, p, opt)
 			}
-		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
-			if apply.CanPullUpAgg() && agg.canPullUp() {
+		} else if agg, ok := innerPlan.(*logicalop.LogicalAggregation); ok {
+			if apply.CanPullUpAgg() && agg.CanPullUp() {
 				innerPlan = agg.Children()[0]
 				apply.JoinType = logicalop.LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
@@ -463,7 +463,7 @@ func appendRemoveSortTraceStep(sort *logicalop.LogicalSort, opt *optimizetrace.L
 	opt.AppendStepToCurrent(sort.ID(), sort.TP(), reason, action)
 }
 
-func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v pulled up as %v_%v's parent, and %v_%v's join type becomes %v",
 			agg.TP(), agg.ID(), np.TP(), np.ID(), p.TP(), p.ID(), p.JoinType.String())
@@ -485,7 +485,7 @@ func appendAddProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, 
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *LogicalAggregation, sel *logicalop.LogicalSelection,
+func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *logicalop.LogicalAggregation, sel *logicalop.LogicalSelection,
 	appendedGroupByCols *expression.Schema, appendedAggFuncs []*aggregation.AggFuncDesc,
 	eqCondWithCorCol []*expression.ScalarFunction, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := outerPlan.SCtx().GetExprCtx().GetEvalCtx()

@@ -2050,6 +2050,14 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			base = &ex.InfoSchemaBaseExtractor
 		case *plannercore.InfoSchemaSchemataExtractor:
 			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaIndexesExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaViewsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaKeyColumnUsageExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaTableConstraintsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
 		default:
 			require.Failf(t, "unexpected extractor type", "%T", ex)
 		}

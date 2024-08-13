@@ -3,7 +3,7 @@ drop table if exists t;
 CREATE TABLE `t` (
 `a` int(11) DEFAULT NULL,
 `b` char(11) DEFAULT NULL,
-UNIQUE KEY `idx` ((lower(`b`)))
+UNIQUE KEY `idx` ((lower(`b`))) global
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
 insert into t values (1, 'a'), (2, 'b'), (3, 'C'), (4, 'd'), (5, 'x');

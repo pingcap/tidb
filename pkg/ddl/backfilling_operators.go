@@ -171,15 +171,11 @@ func NewAddIndexIngestPipeline(
 	if err != nil {
 		return nil, err
 	}
-	poolSize := copReadChunkPoolSize()
-	srcChkPool := make(chan *chunk.Chunk, poolSize)
-	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
-	}
+	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, cpMgr)
-	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr, reorgMeta.BatchSize)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr, rowCntListener)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, cpMgr, rowCntListener)
@@ -226,11 +222,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-	poolSize := copReadChunkPoolSize()
-	srcChkPool := make(chan *chunk.Chunk, poolSize)
-	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
-	}
+	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
@@ -248,7 +240,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
-	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil, reorgMeta.BatchSize)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, nil, rowCntListener)
@@ -268,6 +260,16 @@ func NewWriteIndexToExternalStoragePipeline(
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, writeOp, sinkOp,
 	), nil
+}
+
+func createChunkPool(copCtx copr.CopContext, hintConc, hintBatchSize int) chan *chunk.Chunk {
+	poolSize := ingest.CopReadChunkPoolSize(hintConc)
+	batchSize := ingest.CopReadBatchSize(hintBatchSize)
+	srcChkPool := make(chan *chunk.Chunk, poolSize)
+	for i := 0; i < poolSize; i++ {
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+	}
+	return srcChkPool
 }
 
 // TableScanTask contains the start key and the end key of a region.
@@ -457,6 +459,7 @@ func NewTableScanOperator(
 	srcChkPool chan *chunk.Chunk,
 	concurrency int,
 	cpMgr *ingest.CheckpointManager,
+	hintBatchSize int,
 ) *TableScanOperator {
 	pool := workerpool.NewWorkerPool(
 		"TableScanOperator",
@@ -464,12 +467,13 @@ func NewTableScanOperator(
 		concurrency,
 		func() workerpool.Worker[TableScanTask, IndexRecordChunk] {
 			return &tableScanWorker{
-				ctx:        ctx,
-				copCtx:     copCtx,
-				sessPool:   sessPool,
-				se:         nil,
-				srcChkPool: srcChkPool,
-				cpMgr:      cpMgr,
+				ctx:           ctx,
+				copCtx:        copCtx,
+				sessPool:      sessPool,
+				se:            nil,
+				srcChkPool:    srcChkPool,
+				cpMgr:         cpMgr,
+				hintBatchSize: hintBatchSize,
 			}
 		})
 	return &TableScanOperator{
@@ -484,7 +488,8 @@ type tableScanWorker struct {
 	se         *session.Session
 	srcChkPool chan *chunk.Chunk
 
-	cpMgr *ingest.CheckpointManager
+	cpMgr         *ingest.CheckpointManager
+	hintBatchSize int
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
@@ -554,7 +559,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
 	chk := <-w.srcChkPool
-	newCap := copReadBatchSize()
+	newCap := ingest.CopReadBatchSize(w.hintBatchSize)
 	if chk.Capacity() != newCap {
 		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, newCap)
 	}

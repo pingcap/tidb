@@ -163,7 +163,7 @@ func TestImplicitCastNotNullFlag(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
-	castNotNullFlag := (p.(*logicalop.LogicalProjection).Children()[0].(*logicalop.LogicalSelection).Children()[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag()) & mysql.NotNullFlag
+	castNotNullFlag := (p.(*logicalop.LogicalProjection).Children()[0].(*logicalop.LogicalSelection).Children()[0].(*logicalop.LogicalAggregation).AggFuncs[1].Args[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag()) & mysql.NotNullFlag
 	var nullableFlag uint = 0
 	require.Equal(t, nullableFlag, castNotNullFlag)
 }
@@ -392,7 +392,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	require.NoError(t, err, comment)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 	require.NoError(t, err, comment)
-	ds := p.(*logicalop.LogicalProjection).Children()[0].(*LogicalAggregation).Children()[0].(*DataSource)
+	ds := p.(*logicalop.LogicalProjection).Children()[0].(*logicalop.LogicalAggregation).Children()[0].(*DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Schema().Columns[2].RetType.GetFlag())
@@ -761,7 +761,7 @@ func TestCS3389(t *testing.T) {
 	require.True(t, isProj)
 	require.True(t, len(proj.Exprs) > 0)
 	child := proj.Children()[0]
-	agg, isAgg := child.(*LogicalAggregation)
+	agg, isAgg := child.(*logicalop.LogicalAggregation)
 	require.True(t, isAgg)
 	child = agg.Children()[0]
 	_, isJoin := child.(*logicalop.LogicalJoin)

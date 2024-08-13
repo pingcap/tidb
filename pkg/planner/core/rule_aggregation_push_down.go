@@ -104,7 +104,7 @@ func (*AggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFun
 // collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
 // arguments are all from left child or right child separately. If some aggregate functions have the arguments that have
 // columns both from left and right children, the whole aggregation is forbidden to push down.
-func (a *AggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, join *logicalop.LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
+func (a *AggregationPushDownSolver) collectAggFuncs(agg *logicalop.LogicalAggregation, join *logicalop.LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
 	valid = true
 	leftChild := join.Children()[0]
 	rightChild := join.Children()[1]
@@ -147,7 +147,7 @@ func (a *AggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, joi
 // query should be "SELECT SUM(B.agg) FROM A, (SELECT SUM(id) as agg, c1, c2, c3 FROM B GROUP BY id, c1, c2, c3) as B
 // WHERE A.c1 = B.c1 AND A.c2 != B.c2 GROUP BY B.c3". As you see, all the columns appearing in join-conditions should be
 // treated as group by columns in join subquery.
-func (a *AggregationPushDownSolver) collectGbyCols(agg *LogicalAggregation, join *logicalop.LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
+func (a *AggregationPushDownSolver) collectGbyCols(agg *logicalop.LogicalAggregation, join *logicalop.LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.Children()[0]
 	ctx := agg.SCtx()
 	for _, gbyExpr := range agg.GroupByItems {
@@ -186,7 +186,7 @@ func (a *AggregationPushDownSolver) collectGbyCols(agg *LogicalAggregation, join
 	return
 }
 
-func (a *AggregationPushDownSolver) splitAggFuncsAndGbyCols(agg *LogicalAggregation, join *logicalop.LogicalJoin) (valid bool,
+func (a *AggregationPushDownSolver) splitAggFuncsAndGbyCols(agg *logicalop.LogicalAggregation, join *logicalop.LogicalJoin) (valid bool,
 	leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc,
 	leftGbyCols, rightGbyCols []*expression.Column) {
 	valid, leftAggFuncs, rightAggFuncs = a.collectAggFuncs(agg, join)
@@ -253,7 +253,7 @@ func (*AggregationPushDownSolver) decompose(ctx base.PlanContext, aggFunc *aggre
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
-func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column,
+func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column,
 	join *logicalop.LogicalJoin, childIdx int, blockOffset int, opt *optimizetrace.LogicalOptimizeOp) (_ base.LogicalPlan, err error) {
 	child := join.Children()[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
@@ -294,7 +294,7 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 	return agg, nil
 }
 
-func (*AggregationPushDownSolver) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
+func (*AggregationPushDownSolver) getDefaultValues(agg *logicalop.LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
 	for _, aggFunc := range agg.AggFuncs {
 		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.SCtx().GetExprCtx(), agg.Children()[0].Schema())
@@ -331,8 +331,8 @@ func (*AggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncDes
 //  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
 //  2. remove this method and use splitPartialAgg instead for clean code.
 func (a *AggregationPushDownSolver) makeNewAgg(ctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc,
-	gbyCols []*expression.Column, preferAggType uint, preferAggToCop bool, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
-	agg := LogicalAggregation{
+	gbyCols []*expression.Column, preferAggType uint, preferAggToCop bool, blockOffset int, nullGenerating bool) (*logicalop.LogicalAggregation, error) {
+	agg := logicalop.LogicalAggregation{
 		GroupByItems:   expression.Column2Exprs(gbyCols),
 		PreferAggType:  preferAggType,
 		PreferAggToCop: preferAggToCop,
@@ -362,7 +362,7 @@ func (a *AggregationPushDownSolver) makeNewAgg(ctx base.PlanContext, aggFuncs []
 	return agg, nil
 }
 
-func (*AggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pushedAgg *LogicalAggregation) {
+func (*AggregationPushDownSolver) splitPartialAgg(agg *logicalop.LogicalAggregation) (pushedAgg *logicalop.LogicalAggregation) {
 	partial, final, _ := BuildFinalModeAggregation(agg.SCtx(), &AggInfo{
 		AggFuncs:     agg.AggFuncs,
 		GroupByItems: agg.GroupByItems,
@@ -376,7 +376,7 @@ func (*AggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (push
 	agg.AggFuncs = final.AggFuncs
 	agg.GroupByItems = final.GroupByItems
 
-	pushedAgg = LogicalAggregation{
+	pushedAgg = logicalop.LogicalAggregation{
 		AggFuncs:       partial.AggFuncs,
 		GroupByItems:   partial.GroupByItems,
 		PreferAggType:  agg.PreferAggType,
@@ -388,9 +388,9 @@ func (*AggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (push
 
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
-func (*AggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, unionSchema *expression.Schema, unionChild base.LogicalPlan) (base.LogicalPlan, error) {
+func (*AggregationPushDownSolver) pushAggCrossUnion(agg *logicalop.LogicalAggregation, unionSchema *expression.Schema, unionChild base.LogicalPlan) (base.LogicalPlan, error) {
 	ctx := agg.SCtx()
-	newAgg := LogicalAggregation{
+	newAgg := logicalop.LogicalAggregation{
 		AggFuncs:       make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs)),
 		GroupByItems:   make([]expression.Expression, 0, len(agg.GroupByItems)),
 		PreferAggType:  agg.PreferAggType,
@@ -446,7 +446,7 @@ func (a *AggregationPushDownSolver) Optimize(_ context.Context, p base.LogicalPl
 	return newLogicalPlan, planChanged, err
 }
 
-func (a *AggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) error {
+func (a *AggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) error {
 	for _, aggFunc := range agg.AggFuncs {
 		if !a.isDecomposableWithUnion(aggFunc) {
 			return nil
@@ -482,7 +482,7 @@ func (a *AggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 
 // aggPushDown tries to push down aggregate functions to join paths.
 func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (_ base.LogicalPlan, err error) {
-	if agg, ok := p.(*LogicalAggregation); ok {
+	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
 		proj := a.tryToEliminateAggregation(agg, opt)
 		if proj != nil {
 			p = proj
@@ -537,14 +537,14 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 					// Notice that even if we eliminate new agg below if possible, the agg's schema is inherited by proj.
 					// Therefore, we don't need to set the join's schema again, just build the keyInfo again.
 					changed := false
-					if newAgg, ok1 := lChild.(*LogicalAggregation); ok1 {
+					if newAgg, ok1 := lChild.(*logicalop.LogicalAggregation); ok1 {
 						proj := a.tryToEliminateAggregation(newAgg, opt)
 						if proj != nil {
 							lChild = proj
 							changed = true
 						}
 					}
-					if newAgg, ok2 := rChild.(*LogicalAggregation); ok2 {
+					if newAgg, ok2 := rChild.(*logicalop.LogicalAggregation); ok2 {
 						proj := a.tryToEliminateAggregation(newAgg, opt)
 						if proj != nil {
 							rChild = proj
@@ -691,7 +691,7 @@ func (*AggregationPushDownSolver) Name() string {
 	return "aggregation_push_down"
 }
 
-func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *logicalop.LogicalJoin,
+func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *logicalop.LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *logicalop.LogicalJoin,
 	childIdx int, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := oldAgg.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
@@ -718,7 +718,7 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
-func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAggPushDownAcrossProjTraceStep(agg *logicalop.LogicalAggregation, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := agg.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is eliminated, and %v_%v's functions changed into[", proj.TP(), proj.ID(), agg.TP(), agg.ID()))
@@ -737,7 +737,7 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *logical
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := union.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v functions[", agg.TP(), agg.ID()))

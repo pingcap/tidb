@@ -64,7 +64,7 @@ func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
 		}
-	case *LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		strs = append(strs, "{"+x.FDs().String()+"}")
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
@@ -248,7 +248,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "HashAgg"
 	case *PhysicalStreamAgg:
 		str = "StreamAgg"
-	case *LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
 			str += aggFunc.StringWithCtx(ectx, perrors.RedactLogDisable)

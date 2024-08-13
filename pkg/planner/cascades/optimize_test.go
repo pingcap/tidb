@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -154,7 +155,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.NotNil(t, columnF)
 	require.NotNil(t, columnA)
 
-	agg, ok := logic.Children()[0].(*plannercore.LogicalAggregation)
+	agg, ok := logic.Children()[0].(*logicalop.LogicalAggregation)
 	require.True(t, ok)
 
 	group := memo.Convert2Group(agg)

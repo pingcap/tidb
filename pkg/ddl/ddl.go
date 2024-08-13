@@ -33,8 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -173,9 +174,9 @@ type DDL interface {
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() syncer.SchemaSyncer
+	SchemaSyncer() schemaver.Syncer
 	// StateSyncer gets the cluster state syncer.
-	StateSyncer() syncer.StateSyncer
+	StateSyncer() serverstate.Syncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -315,13 +316,13 @@ func (w *waitSchemaSyncedController) clearOnceMap() {
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	uuid         string
-	store        kv.Storage
-	ownerManager owner.Manager
-	schemaSyncer syncer.SchemaSyncer
-	stateSyncer  syncer.StateSyncer
+	ctx               context.Context
+	cancel            context.CancelFunc
+	uuid              string
+	store             kv.Storage
+	ownerManager      owner.Manager
+	schemaVerSyncer   schemaver.Syncer
+	serverStateSyncer serverstate.Syncer
 	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
 	// jobID -> chan struct{}
 	ddlJobDoneChMap generic.SyncMap[int64, chan struct{}]
@@ -597,19 +598,19 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 
 	id := uuid.New().String()
 	var manager owner.Manager
-	var schemaSyncer syncer.SchemaSyncer
-	var stateSyncer syncer.StateSyncer
+	var schemaVerSyncer schemaver.Syncer
+	var serverStateSyncer serverstate.Syncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
-		// So we use mockOwnerManager and MockSchemaSyncer.
+		// So we use mockOwnerManager and memSyncer.
 		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
-		schemaSyncer = NewMockSchemaSyncer()
-		stateSyncer = NewMockStateSyncer()
+		schemaVerSyncer = schemaver.NewMemSyncer()
+		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
-		stateSyncer = syncer.NewStateSyncer(etcdCli, util.ServerGlobalState)
+		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
+		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -628,8 +629,8 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		lease:                      opt.Lease,
 		ddlJobDoneChMap:            generic.NewSyncMap[int64, chan struct{}](10),
 		ownerManager:               manager,
-		schemaSyncer:               schemaSyncer,
-		stateSyncer:                stateSyncer,
+		schemaVerSyncer:            schemaVerSyncer,
+		serverStateSyncer:          serverStateSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -727,7 +728,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
-	if err := d.stateSyncer.Init(d.ctx); err != nil {
+	if err := d.serverStateSyncer.Init(d.ctx); err != nil {
 		logutil.DDLLogger().Warn("start DDL init state syncer failed", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -828,7 +829,7 @@ func (d *ddl) close() {
 	d.cancel()
 	d.wg.Wait()
 	d.ownerManager.Cancel()
-	d.schemaSyncer.Close()
+	d.schemaVerSyncer.Close()
 
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -844,13 +845,13 @@ func (d *ddl) close() {
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
-	return d.schemaSyncer
+func (d *ddl) SchemaSyncer() schemaver.Syncer {
+	return d.schemaVerSyncer
 }
 
 // StateSyncer implements DDL.StateSyncer interface.
-func (d *ddl) StateSyncer() syncer.StateSyncer {
-	return d.stateSyncer
+func (d *ddl) StateSyncer() serverstate.Syncer {
+	return d.serverStateSyncer
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
