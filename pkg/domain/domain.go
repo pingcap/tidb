@@ -3188,7 +3188,7 @@ func (do *Domain) planCacheEvictTrigger() {
 
 	for {
 		select {
-		case <-time.After(time.Second * 30):
+		case <-time.After(time.Second * time.Duration(variable.InstancePlanCacheEvictInterval.Load())):
 			// trigger the eviction
 			begin := time.Now()
 			detailInfo, numEvicted := do.instancePlanCache.Evict()

@@ -852,6 +852,10 @@ const (
 	// TiDBInstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
 	TiDBInstancePlanCacheMaxMemSize = "tidb_instance_plan_cache_max_mem_size"
 
+	TiDBInstancePlanCacheEvictInterval = "tidb_instance_plan_cache_evict_interval"
+
+	TiDBInstancePlanCachePinnedDigests = "tidb_instance_plan_cache_pinned_digests"
+
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
 
@@ -1588,6 +1592,7 @@ var (
 	EnableInstancePlanCache           = atomic.NewBool(false)
 	InstancePlanCacheTargetMemSize    = atomic.NewInt64(int64(DefTiDBInstancePlanCacheTargetMemSize))
 	InstancePlanCacheMaxMemSize       = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
+	InstancePlanCacheEvictInterval    = atomic.NewInt64(30)
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable             = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	DDLForce2Queue                    = atomic.NewBool(false)
