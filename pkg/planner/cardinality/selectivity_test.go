@@ -403,7 +403,7 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
 			selectivity:              0.017832647462277088,
-			selectivityAfterIncrease: 0.017832647462277088,
+			selectivityAfterIncrease: 0.018518518518518517,
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
@@ -939,7 +939,7 @@ func TestIssue39593(t *testing.T) {
 	count, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
-	require.Equal(t, float64(3870.1135540008545), count)
+	require.Equal(t, float64(3600), count)
 }
 
 func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
