@@ -56,6 +56,7 @@ type instancePlanCache struct {
 	totPlan atomic.Int64
 
 	evictMutex   sync.Mutex
+	inEvict      atomic.Bool
 	softMemLimit atomic.Int64
 	hardMemLimit atomic.Int64
 }
@@ -85,10 +86,12 @@ func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool
 	return pc.getPlanFromList(headNode, paramTypes)
 }
 
-func (*instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
+func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
 		if checkTypesCompatibility4PC(node.value.paramTypes, paramTypes) { // v.Plan is read-only, no need to lock
-			node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
+			if !pc.inEvict.Load() {
+				node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
+			}
 			return node.value, true
 		}
 	}
@@ -98,6 +101,9 @@ func (*instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes a
 // Put puts the key and values into the cache.
 // Due to some thread-safety issues, this Put operation might fail, use the returned succ to indicate it.
 func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) {
+	if pc.inEvict.Load() {
+		return // do nothing if eviction is in progress
+	}
 	vMem := value.(*PlanCacheValue).MemoryUsage()
 	if vMem+pc.totCost.Load() > pc.hardMemLimit.Load() {
 		return // do nothing if it exceeds the hard limit
@@ -108,6 +114,9 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 	}
 	if _, ok := pc.getPlanFromList(headNode, paramTypes); ok {
 		return // some other thread has inserted the same plan before
+	}
+	if pc.inEvict.Load() {
+		return // do nothing if eviction is in progress
 	}
 
 	firstNode := headNode.next.Load()
@@ -128,6 +137,8 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 func (pc *instancePlanCache) Evict() (detailInfo string, numEvicted int) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
+	pc.inEvict.Store(true)
+	defer pc.inEvict.Store(false)
 	currentTot, softLimit := pc.totCost.Load(), pc.softMemLimit.Load()
 	if currentTot < softLimit {
 		detailInfo = fmt.Sprintf("memory usage is below the soft limit, currentTot: %v, softLimit: %v", currentTot, softLimit)
