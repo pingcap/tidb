@@ -1055,6 +1055,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// Adjust by increaseFactor if our estimate is low
 		rowCount *= increaseFactor
 	}
+
 	// Use modifyCount as a final bound
 	return min(rowCount, float64(modifyCount))
 }
