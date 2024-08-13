@@ -92,6 +92,7 @@ var allRules = append([]lint.Rule{
 }, defaultRules...)
 
 func run(pass *analysis.Pass) (any, error) {
+	util.SetGoPath()
 	files := make([]string, 0, len(pass.Files))
 	for _, file := range pass.Files {
 		files = append(files, pass.Fset.PositionFor(file.Pos(), false).Filename)
