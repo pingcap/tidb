@@ -20,6 +20,8 @@ import (
 )
 
 const (
+	// NOTE: For assigning new fix control numbers - use the issue number associated with the fix.
+	//
 	// Fix33031 controls whether to disallow plan cache for partitioned
 	// tables (both prepared statments and non-prepared statements)
 	// See #33031
@@ -48,6 +50,8 @@ const (
 	Fix45798 uint64 = 45798
 	// Fix46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
 	Fix46177 uint64 = 46177
+	// Fix47400 controls whether to allow a rowEst below 1
+	Fix47400 uint64 = 47400
 	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
 	// This fix-control is test-only.
 	Fix49736 uint64 = 49736
