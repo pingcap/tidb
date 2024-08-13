@@ -553,6 +553,40 @@ type TableNameInfo struct {
 	Name CIStr `json:"name"`
 }
 
+type TableType int
+
+const (
+	// TableBaseTable is the base table type.
+	TableBaseTable TableType = iota
+	// TableView is the view type.
+	TableView
+	// TableSequence is the sequence type.
+	TableSequence
+)
+
+// TableTypeInfo is the type info of the table.
+type TableTypeInfo struct {
+	Name CIStr     `json:"name"`
+	Type TableType `json:"type"`
+}
+
+// NewTableType converts TableInfo to TableTypeInfo.
+func NewTableTypeInfo(tb *TableInfo) *TableTypeInfo {
+	tableTypeInfo := &TableTypeInfo{
+		Name: tb.Name,
+	}
+
+	switch {
+	case tb.View != nil:
+		tableTypeInfo.Type = TableView
+	case tb.Sequence != nil:
+		tableTypeInfo.Type = TableSequence
+	default:
+		tableTypeInfo.Type = TableBaseTable
+	}
+	return tableTypeInfo
+}
+
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
 func (t *TableInfo) SepAutoInc() bool {
 	return t.Version >= TableInfoVersion5 && t.AutoIdCache == 1

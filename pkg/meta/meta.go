@@ -1148,7 +1148,36 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 	return tables, nil
 }
 
-var tableNameInfoFields = []string{"id", "name"}
+// ListTableTypes shows all table types in database.
+func (m *Meta) ListTableTypes(dbID int64) ([]*model.TableTypeInfo, error) {
+	res, err := m.GetMetasByDBID(dbID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableTypeInfo, 0, len(res)/2)
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+
+		tbInfo, err2 := FastUnmarshalTableTypeInfo(r.Value)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
+		}
+
+		tables = append(tables, tbInfo)
+	}
+
+	return tables, nil
+}
+
+var (
+	tableNameInfoFields = []string{"id", "name"}
+	tableTypeInfoFields = []string{"name", "view", "sequence"}
+)
 
 // FastUnmarshalTableNameInfo is exported for testing.
 func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
@@ -1191,6 +1220,55 @@ func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 	return &model.TableNameInfo{
 		ID:   id,
 		Name: model.NewCIStr(name),
+	}, nil
+}
+
+// FastUnmarshalTableTypeInfo is exported for testing.
+func FastUnmarshalTableTypeInfo(data []byte) (*model.TableTypeInfo, error) {
+	m, err := partialjson.ExtractTopLevelMembers(data, tableTypeInfoFields)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	nameTokens, ok := m["name"]
+	if !ok {
+		return nil, errors.New("name field not found in JSON")
+	}
+	// 6 tokens; {, O, ..., L, ..., }
+	if len(nameTokens) != 6 {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+	name, ok := nameTokens[2].(string)
+	if !ok {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+
+	var tableType model.TableType
+	viewTokens, ok := m["view"]
+	if !ok {
+		return nil, errors.New("view field not found in JSON")
+	}
+	if len(viewTokens) != 1 {
+		return nil, errors.Errorf("unexpected view field in JSON, %v", viewTokens)
+	}
+	if viewTokens[0] != nil {
+		tableType = model.TableView
+	}
+
+	sequenceTokens, ok := m["sequence"]
+	if !ok {
+		return nil, errors.New("sequence field not found in JSON")
+	}
+	if len(sequenceTokens) != 1 {
+		return nil, errors.Errorf("unexpected sequence field in JSON, %v", sequenceTokens)
+	}
+	if sequenceTokens[0] != nil {
+		tableType = model.TableSequence
+	}
+
+	return &model.TableTypeInfo{
+		Name: model.NewCIStr(name),
+		Type: tableType,
 	}, nil
 }
 

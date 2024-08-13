@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -516,10 +517,7 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
-	var (
-		schemaTables = make([]*model.TableInfo, 0)
-		err          error
-	)
+	schemaTables := make([]*model.TableTypeInfo, 0)
 
 	// prefilter for table names
 	if fieldFilter != "" {
@@ -530,24 +528,20 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 				return errors.Trace(err)
 			}
 		} else {
-			schemaTables = append(schemaTables, tb.Meta())
+			schemaTables = append(schemaTables, model.NewTableTypeInfo(tb.Meta()))
 		}
-	} else if fieldPatternsLike != nil {
-		schemaTableNames, err := e.is.SchemaSimpleTableInfos(ctx, e.DBName)
+	} else {
+		txn, err := e.Ctx().Txn(true)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for _, v := range schemaTableNames {
-			if fieldPatternsLike.DoMatch(v.Name.L) {
-				tb, err := e.is.TableByName(ctx, e.DBName, v.Name)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				schemaTables = append(schemaTables, tb.Meta())
-			}
+		meta := meta.NewMeta(txn)
+		db, ok := e.is.SchemaByName(e.DBName)
+		if !ok {
+			return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 		}
-	} else {
-		schemaTables, err = e.is.SchemaTableInfos(ctx, e.DBName)
+
+		schemaTables, err = meta.ListTableTypes(db.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -560,10 +554,13 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask) {
 			continue
 		}
+		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name.L) {
+			continue
+		}
 		tableNames = append(tableNames, v.Name.O)
-		if v.IsView() {
+		if v.Type == model.TableView {
 			tableTypes[v.Name.O] = "VIEW"
-		} else if v.IsSequence() {
+		} else if v.Type == model.TableSequence {
 			tableTypes[v.Name.O] = "SEQUENCE"
 		} else if util.IsSystemView(e.DBName.L) {
 			tableTypes[v.Name.O] = "SYSTEM VIEW"
