@@ -3692,7 +3692,10 @@ func (e *memtableRetriever) setDataForClusterIndexUsage(ctx context.Context, sct
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
 	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaBaseExtractor", e.extractor)
+	}
+	if extractor.SkipRequest {
 		return nil
 	}
 
@@ -3750,8 +3753,11 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaIndexesExtractor)
-	if ok && extractor.SkipRequest {
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaIndexUsageExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexUsageExtractor", e.extractor)
+	}
+	if extractor.SkipRequest {
 		return nil
 	}
 

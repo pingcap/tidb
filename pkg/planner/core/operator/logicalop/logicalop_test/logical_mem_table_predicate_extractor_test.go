@@ -2052,6 +2052,8 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			base = &ex.InfoSchemaBaseExtractor
 		case *plannercore.InfoSchemaIndexesExtractor:
 			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaIndexUsageExtractor:
+			base = &ex.InfoSchemaBaseExtractor
 		case *plannercore.InfoSchemaViewsExtractor:
 			base = &ex.InfoSchemaBaseExtractor
 		case *plannercore.InfoSchemaKeyColumnUsageExtractor:

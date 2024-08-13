@@ -630,9 +630,9 @@ func (e *InfoSchemaBaseExtractor) getSchemaObjectNames(colName string) []model.C
 	return nil
 }
 
-// InfoSchemaTableNameExtractor is a base struct.
-// It is used to list matching schemas and tables in predicates.
-// Subclass **must** reimplement `Filter` method to use like operators for filtering.
+// InfoSchemaTableNameExtractor is a base struct to list matching schemas and tables in predicates,
+// so there is no need to call `Filter` for returns from `ListSchemas` and `ListTables`.
+// But for other columns, Subclass **must** reimplement `Filter` method to use like operators for filtering.
 // Currently, table_id is not taken into consideration.
 type InfoSchemaTableNameExtractor struct {
 	InfoSchemaSchemataExtractor
@@ -643,6 +643,7 @@ type InfoSchemaTableNameExtractor struct {
 		is infoschema.InfoSchema,
 	) ([]*model.TableInfo, error)
 
+	// table names from predicate, used by `ListTables`
 	tableNames []model.CIStr
 
 	// all predicates in lower case
@@ -717,13 +718,19 @@ func (e *InfoSchemaTableNameExtractor) getPredicates(colNames ...string) (
 	return filters, regexp, hasPredicates
 }
 
+// Get all predicates related to schema extraction.
+// Add more columns if necessary.
+func (e *InfoSchemaTableNameExtractor) getSchemaNames() (
+	set.StringSet, []collate.WildcardPattern, bool) {
+	return e.getPredicates(_tableSchema, _schemaName, _constraintSchema)
+}
+
 // ListSchemas lists related schemas from predicates.
 // Returned schemas is examined by like operators, so there is no need to call Filter again.
 func (e *InfoSchemaTableNameExtractor) ListSchemas(
 	is infoschema.InfoSchema,
 ) []model.CIStr {
-	// All predicates related to schema extraction
-	schemaFilters, schemaRegexp, hasPredicates := e.getPredicates(_tableSchema, _schemaName)
+	schemaFilters, schemaRegexp, hasPredicates := e.getSchemaNames()
 
 	// Get all schema names
 	var schemas []model.CIStr
@@ -887,14 +894,14 @@ ForLoop:
 	return columns, ordinalPos
 }
 
-// InfoSchemaIndexesExtractor is the predicate extractor for information_schema.tidb_index_usage.
-type InfoSchemaIndexesExtractor struct {
+// InfoSchemaIndexUsageExtractor is the predicate extractor for information_schema.tidb_index_usage.
+type InfoSchemaIndexUsageExtractor struct {
 	InfoSchemaTableNameExtractor
 }
 
 // ListIndexes lists related indexes for given table from predicate.
 // If no index found in predicate, it return all indexes.
-func (e *InfoSchemaIndexesExtractor) ListIndexes(
+func (e *InfoSchemaIndexUsageExtractor) ListIndexes(
 	tbl *model.TableInfo,
 ) []*model.IndexInfo {
 	predCol, regexp, _ := e.getPredicates(_indexName)

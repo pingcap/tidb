@@ -4834,7 +4834,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			ex.initExtractableColNames(upTbl)
 			p.Extractor = ex
 		case infoschema.TableTiDBIndexUsage:
-			ex := &InfoSchemaIndexesExtractor{}
+			ex := &InfoSchemaIndexUsageExtractor{}
 			ex.initExtractableColNames(upTbl)
 			p.Extractor = ex
 		case infoschema.TableReferConst,
