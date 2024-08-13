@@ -397,7 +397,7 @@ func newVectorFloat32RandGener(dimension int) *vectorFloat32RandGener {
 	return &vectorFloat32RandGener{dimension, newDefaultRandGen()}
 }
 
-func (g *vectorFloat32RandGener) gen() interface{} {
+func (g *vectorFloat32RandGener) gen() any {
 	if g.dimension == -1 {
 		return nil
 	}
