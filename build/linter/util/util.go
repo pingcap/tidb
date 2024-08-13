@@ -275,7 +275,7 @@ func SetGoPath() {
 	goRoot = filepath.Join(wd, goRoot, "bin", "go")
 	oldPath := os.Getenv("PATH")
 	newPathEnv := oldPath + string(os.PathListSeparator) + goRoot
-	err := os.Setenv("PATH", newPathEnv)
+	err = os.Setenv("PATH", newPathEnv)
 	if err != nil {
 		fmt.Printf("Error setting PATH: %v\n", err)
 		return
