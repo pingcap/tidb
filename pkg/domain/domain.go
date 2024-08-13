@@ -3182,15 +3182,13 @@ func (do *Domain) planCacheMetricsAndVars() {
 // planCacheEvictTrigger triggers the plan cache eviction periodically.
 func (do *Domain) planCacheEvictTrigger() {
 	defer util.Recover(metrics.LabelDomain, "planCacheEvictTrigger", nil, false)
-	ticker := time.NewTicker(time.Second * 30) // 30s by default
 	defer func() {
-		ticker.Stop()
 		logutil.BgLogger().Info("planCacheEvictTrigger exited.")
 	}()
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-time.After(time.Second * 30):
 			// trigger the eviction
 			begin := time.Now()
 			detailInfo, numEvicted := do.instancePlanCache.Evict()
