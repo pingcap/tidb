@@ -55,7 +55,7 @@ func (mbbc *MockBackupBackupClient) Recv() (*backuppb.BackupResponse, error) {
 
 func TestTimeoutRecv(t *testing.T) {
 	ctx := context.Background()
-	TIMEOUT_ONE_RESPONSE = time.Millisecond * 800
+	TimeOneResponse = time.Millisecond * 800
 	// Just Timeout Once
 	{
 		err := doSendBackup(ctx, &MockBackupClient{
