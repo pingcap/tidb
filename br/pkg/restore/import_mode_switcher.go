@@ -113,8 +113,8 @@ func (switcher *ImportModeSwitcher) switchTiKVMode(
 	return nil
 }
 
-// switchToImportMode switch tikv cluster to import mode.
-func (switcher *ImportModeSwitcher) switchToImportMode(
+// SwitchToImportMode switch tikv cluster to import mode.
+func (switcher *ImportModeSwitcher) SwitchToImportMode(
 	ctx context.Context,
 ) {
 	// tikv automatically switch to normal mode in every 10 minutes
@@ -163,7 +163,7 @@ func RestorePreWork(
 
 	if switchToImport {
 		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-		switcher.switchToImportMode(ctx)
+		switcher.SwitchToImportMode(ctx)
 	}
 
 	return mgr.RemoveSchedulersWithConfig(ctx)

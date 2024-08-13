@@ -1433,7 +1433,7 @@ func restoreStream(
 		// TODO consider checkpoint
 
 		compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
-		err = client.RestoreCompactedSsts(ctx, rewriteRules, compactionIter)
+		err = client.RestoreCompactedSsts(ctx, rewriteRules, compactionIter, importModeSwitcher)
 		if err != nil {
 			return errors.Trace(err)
 		}
