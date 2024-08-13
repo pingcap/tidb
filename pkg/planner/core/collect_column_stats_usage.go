@@ -250,7 +250,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
 			// regard statistics of the columns in the conditions as needed.
 			c.addPredicateColumnsFromExpressions(x.Conditions)
-		case *LogicalAggregation:
+		case *logicalop.LogicalAggregation:
 			// Just assume statistics of all the columns in GroupByItems are needed.
 			c.addPredicateColumnsFromExpressions(x.GroupByItems)
 			// Schema change from children to self.

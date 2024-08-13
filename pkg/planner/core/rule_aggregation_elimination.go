@@ -51,7 +51,7 @@ type aggregationEliminateChecker struct {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *logicalop.LogicalProjection {
+func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *logicalop.LogicalProjection {
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
 		// arguments it accepts are promised to be NOT-NULL.
@@ -92,7 +92,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
 // have unique key column. see detail example in https://github.com/pingcap/tidb/issues/23436
-func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
 	for _, af := range agg.AggFuncs {
 		if af.HasDistinct {
 			cols := make([]*expression.Column, 0, len(af.Args))
@@ -132,7 +132,7 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregati
 	}
 }
 
-func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *logicalop.LogicalProjection, uniqueKey expression.KeyInfo, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAggregationEliminateTraceStep(agg *logicalop.LogicalAggregation, proj *logicalop.LogicalProjection, uniqueKey expression.KeyInfo, opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
 	}
@@ -143,7 +143,7 @@ func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *logicalo
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
+func appendDistinctEliminateTraceStep(agg *logicalop.LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
 	opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
@@ -156,7 +156,7 @@ func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey express
 
 // CheckCanConvertAggToProj check whether a special old aggregation (which has already been pushed down) to projection.
 // link: issue#44795
-func CheckCanConvertAggToProj(agg *LogicalAggregation) bool {
+func CheckCanConvertAggToProj(agg *logicalop.LogicalAggregation) bool {
 	var mayNullSchema *expression.Schema
 	if join, ok := agg.Children()[0].(*logicalop.LogicalJoin); ok {
 		if join.JoinType == logicalop.LeftOuterJoin {
@@ -183,7 +183,7 @@ func CheckCanConvertAggToProj(agg *LogicalAggregation) bool {
 }
 
 // ConvertAggToProj convert aggregation to projection.
-func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool, *logicalop.LogicalProjection) {
+func ConvertAggToProj(agg *logicalop.LogicalAggregation, schema *expression.Schema) (bool, *logicalop.LogicalProjection) {
 	proj := logicalop.LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
@@ -269,7 +269,7 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
-	agg, ok := p.(*LogicalAggregation)
+	agg, ok := p.(*logicalop.LogicalAggregation)
 	if !ok {
 		return p, planChanged, nil
 	}

@@ -29,12 +29,10 @@ func init() {
 	// For code refactor init.
 	utilfuncp.AddSelection = addSelection
 	utilfuncp.FindBestTask = findBestTask
+	utilfuncp.PruneByItems = pruneByItems
 	utilfuncp.HasMaxOneRowUtil = HasMaxOneRow
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CanPushToCopImpl = canPushToCopImpl
-	utilfuncp.GetStreamAggs = getStreamAggs
-	utilfuncp.GetHashAggs = getHashAggs
-	utilfuncp.PruneByItems = pruneByItems
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
 	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
 	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
@@ -52,6 +50,7 @@ func init() {
 	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
 	utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan = exhaustPhysicalPlans4LogicalUnionScan
 	utilfuncp.ExhaustPhysicalPlans4LogicalProjection = exhaustPhysicalPlans4LogicalProjection
+	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
 
 	utilfuncp.GetActualProbeCntFromProbeParents = getActualProbeCntFromProbeParents
 	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
