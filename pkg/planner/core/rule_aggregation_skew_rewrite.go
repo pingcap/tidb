@@ -50,7 +50,7 @@ type SkewDistinctAggRewriter struct {
 // - The aggregate has 1 and only 1 distinct aggregate function (limited to count, avg, sum)
 //
 // This rule is disabled by default. Use tidb_opt_skew_distinct_agg to enable the rule.
-func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// only group aggregate is applicable
 	if len(agg.GroupByItems) == 0 {
 		return nil
@@ -194,7 +194,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	}
 
 	// now create the bottom and top aggregate operators
-	bottomAgg := LogicalAggregation{
+	bottomAgg := logicalop.LogicalAggregation{
 		AggFuncs:      bottomAggFuncs,
 		GroupByItems:  bottomAggGroupbyItems,
 		PreferAggType: agg.PreferAggType,
@@ -202,7 +202,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	bottomAgg.SetChildren(agg.Children()...)
 	bottomAgg.SetSchema(bottomAggSchema)
 
-	topAgg := LogicalAggregation{
+	topAgg := logicalop.LogicalAggregation{
 		AggFuncs:       topAggFuncs,
 		GroupByItems:   agg.GroupByItems,
 		PreferAggToCop: agg.PreferAggToCop,
@@ -266,7 +266,7 @@ func (*SkewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc)
 	}
 }
 
-func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
+func appendSkewDistinctAggRewriteTraceStep(agg *logicalop.LogicalAggregation, result base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%v_%v has a distinct agg function", agg.TP(), agg.ID())
 	}
@@ -289,7 +289,7 @@ func (a *SkewDistinctAggRewriter) Optimize(ctx context.Context, p base.LogicalPl
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
-	agg, ok := p.(*LogicalAggregation)
+	agg, ok := p.(*logicalop.LogicalAggregation)
 	if !ok {
 		return p, planChanged, nil
 	}

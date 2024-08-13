@@ -35,13 +35,15 @@ import (
 )
 
 const (
-	_tableSchema     = "table_schema"
-	_tableName       = "table_name"
-	_tidbTableID     = "tidb_table_id"
-	_partitionName   = "partition_name"
-	_tidbPartitionID = "tidb_partition_id"
-	_indexName       = "index_name"
-	_schemaName      = "schema_name"
+	_tableSchema      = "table_schema"
+	_tableName        = "table_name"
+	_tidbTableID      = "tidb_table_id"
+	_partitionName    = "partition_name"
+	_tidbPartitionID  = "tidb_partition_id"
+	_indexName        = "index_name"
+	_schemaName       = "schema_name"
+	_constraintSchema = "constraint_schema"
+	_constraintName   = "constraint_name"
 )
 
 var extractableColumns = map[string][]string{
@@ -66,6 +68,34 @@ var extractableColumns = map[string][]string{
 	// Used by InfoSchemaSchemataExtractor and setDataFromSchemata.
 	infoschema.TableSchemata: {
 		_schemaName,
+	},
+	// See infoschema.tableTiDBIndexesCols for full columns.
+	// Used by InfoSchemaIndexesExtractor and setDataFromIndexes.
+	infoschema.TableTiDBIndexes: {
+		_tableSchema,
+		_tableName,
+	},
+	// See infoschema.tableViewsCols for full columns.
+	// Used by InfoSchemaViewsExtractor and setDataFromViews.
+	infoschema.TableViews: {
+		_tableSchema,
+		_tableName,
+	},
+	// See infoschema.keyColumnUsageCols for full columns.
+	// Used by InfoSchemaViewsExtractor and setDataFromKeyColumn
+	infoschema.TableKeyColumn: {
+		_tableSchema,
+		_constraintSchema,
+		_tableName,
+		_constraintName,
+	},
+	// See infoschema.tableConstraintsCols for full columns.
+	// Used by InfoSchemaTableConstraintsExtractor and setDataFromTableConstraints.
+	infoschema.TableConstraints: {
+		_tableSchema,
+		_constraintSchema,
+		_tableName,
+		_constraintName,
 	},
 }
 
@@ -184,6 +214,25 @@ func (e *InfoSchemaBaseExtractor) Filter(colName string, val string) bool {
 	return false
 }
 
+// InfoSchemaIndexesExtractor is the predicate extractor for information_schema.tidb_indexes.
+type InfoSchemaIndexesExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+// If there is no error, returning schema slice and table slice are guaranteed to have the same length.
+func (e *InfoSchemaIndexesExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _tableSchema)
+	tableNames := e.getSchemaObjectNames(_tableName)
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
 // InfoSchemaTablesExtractor is the predicate extractor for information_schema.tables.
 type InfoSchemaTablesExtractor struct {
 	InfoSchemaBaseExtractor
@@ -205,6 +254,63 @@ func (e *InfoSchemaTablesExtractor) ListSchemasAndTables(
 		findTablesByID(is, tableIDs, tableNames, tableMap)
 		return findSchemasForTables(ctx, is, schemas, maps.Values(tableMap))
 	}
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
+// InfoSchemaViewsExtractor is the predicate extractor for information_schema.views.
+type InfoSchemaViewsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+// If there is no error, returning schema slice and table slice are guaranteed to have the same length.
+func (e *InfoSchemaViewsExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _tableSchema)
+	tableNames := e.getSchemaObjectNames(_tableName)
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
+// InfoSchemaKeyColumnUsageExtractor is the predicate extractor for information_schema.key_column_usage.
+type InfoSchemaKeyColumnUsageExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+// If there is no error, returning schema slice and table slice are guaranteed to have the same length.
+func (e *InfoSchemaKeyColumnUsageExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _tableSchema)
+	tableNames := e.getSchemaObjectNames(_tableName)
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
+// InfoSchemaTableConstraintsExtractor is the predicate extractor for information_schema.constraints.
+type InfoSchemaTableConstraintsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+// If there is no error, returning schema slice and table slice are guaranteed to have the same length.
+func (e *InfoSchemaTableConstraintsExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _tableSchema)
+	tableNames := e.getSchemaObjectNames(_tableName)
 	if len(tableNames) > 0 {
 		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
 	}
@@ -322,7 +428,7 @@ func findNameAndAppendToTableMap(
 			return errors.Trace(err)
 		}
 		tblInfo := tbl.Meta()
-		if tblInfo.TempTableType != model.TempTableNone {
+		if tblInfo.TempTableType == model.TempTableLocal {
 			continue
 		}
 		tables[tblInfo.ID] = tblInfo
@@ -347,7 +453,7 @@ func findTablesByID(
 			continue
 		}
 		tblInfo := tbl.Meta()
-		if tblInfo.TempTableType != model.TempTableNone {
+		if tblInfo.TempTableType == model.TempTableLocal {
 			continue
 		}
 		if len(tableNames) > 0 {
@@ -408,7 +514,7 @@ func findTableAndSchemaByName(
 				return nil, nil, errors.Trace(err)
 			}
 			tblInfo := tbl.Meta()
-			if tblInfo.TempTableType != model.TempTableNone {
+			if tblInfo.TempTableType == model.TempTableLocal {
 				continue
 			}
 			tableMap[tblInfo.ID] = schemaAndTable{s, tblInfo}

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -39,7 +38,7 @@ import (
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
@@ -58,7 +57,7 @@ type LogicalAggregation struct {
 
 // Init initializes LogicalAggregation.
 func (la LogicalAggregation) Init(ctx base.PlanContext, offset int) *LogicalAggregation {
-	la.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeAgg, &la, offset)
+	la.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeAgg, &la, offset)
 	return &la
 }
 
@@ -207,7 +206,7 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 		return
 	}
 	la.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
-	la.buildSelfKeyInfo(selfSchema)
+	la.BuildSelfKeyInfo(selfSchema)
 }
 
 // PushDownTopN inherits BaseLogicalPlan.LogicalPlan.<5rd> implementation.
@@ -291,33 +290,7 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if la.PreferAggToCop {
-		if !la.CanPushToCop(kv.TiKV) {
-			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-				"Optimizer Hint AGG_TO_COP is inapplicable")
-			la.PreferAggToCop = false
-		}
-	}
-
-	preferHash, preferStream := la.ResetHintIfConflicted()
-
-	hashAggs := utilfuncp.GetHashAggs(la, prop)
-	if hashAggs != nil && preferHash {
-		return hashAggs, true, nil
-	}
-
-	streamAggs := utilfuncp.GetStreamAggs(la, prop)
-	if streamAggs != nil && preferStream {
-		return streamAggs, true, nil
-	}
-
-	aggs := append(hashAggs, streamAggs...)
-
-	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
-		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
-	}
-
-	return aggs, !(preferStream || preferHash), nil
+	return utilfuncp.ExhaustPhysicalPlans4LogicalAggregation(la, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -705,7 +678,8 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 	return condsToPush, ret
 }
 
-func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
+// BuildSelfKeyInfo builds the key information for the aggregation itself.
+func (la *LogicalAggregation) BuildSelfKeyInfo(selfSchema *expression.Schema) {
 	groupByCols := la.GetGroupByCols()
 	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
 		indices := selfSchema.ColumnsIndices(groupByCols)
@@ -722,8 +696,8 @@ func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
 	}
 }
 
-// canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
-func (la *LogicalAggregation) canPullUp() bool {
+// CanPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
+func (la *LogicalAggregation) CanPullUp() bool {
 	if len(la.GroupByItems) > 0 {
 		return false
 	}

@@ -21,7 +21,7 @@ import (
 
 var (
 	_ base.LogicalPlan = &logicalop.LogicalJoin{}
-	_ base.LogicalPlan = &LogicalAggregation{}
+	_ base.LogicalPlan = &logicalop.LogicalAggregation{}
 	_ base.LogicalPlan = &logicalop.LogicalProjection{}
 	_ base.LogicalPlan = &logicalop.LogicalSelection{}
 	_ base.LogicalPlan = &LogicalApply{}

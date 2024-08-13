@@ -144,11 +144,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableAnalyzeStatus:
 			err = e.setDataForAnalyzeStatus(ctx, sctx)
 		case infoschema.TableTiDBIndexes:
-			dbs := getAllSchemas()
-			err = e.setDataFromIndexes(ctx, sctx, dbs)
+			err = e.setDataFromIndexes(ctx, sctx)
 		case infoschema.TableViews:
-			dbs := getAllSchemas()
-			err = e.setDataFromViews(ctx, sctx, dbs)
+			err = e.setDataFromViews(ctx, sctx)
 		case infoschema.TableEngines:
 			e.setDataFromEngines()
 		case infoschema.TableCharacterSets:
@@ -156,8 +154,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableCollations:
 			e.setDataFromCollations()
 		case infoschema.TableKeyColumn:
-			dbs := getAllSchemas()
-			err = e.setDataFromKeyColumnUsage(ctx, sctx, dbs)
+			err = e.setDataFromKeyColumnUsage(ctx, sctx)
 		case infoschema.TableMetricTables:
 			e.setDataForMetricTables()
 		case infoschema.TableProfiling:
@@ -175,8 +172,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiDBHotRegions:
 			err = e.setDataForTiDBHotRegions(ctx, sctx)
 		case infoschema.TableConstraints:
-			dbs := getAllSchemas()
-			err = e.setDataFromTableConstraints(ctx, sctx, dbs)
+			err = e.setDataFromTableConstraints(ctx, sctx)
 		case infoschema.TableSessionVar:
 			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
@@ -1320,154 +1316,159 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
-	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
+func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx sessionctx.Context) error {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaIndexesExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexesExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
+
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	var rows [][]types.Datum
-	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
-			continue
-		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
+	for i, table := range tables {
+		rows, err = e.setDataFromIndex(sctx, schemas[i], table, rows)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		for _, tb := range tables {
-			if ok && extractor.Filter("table_name", tb.Name.L) {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tb.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			if tb.PKIsHandle {
-				var pkCol *model.ColumnInfo
-				for _, col := range tb.Cols() {
-					if mysql.HasPriKeyFlag(col.GetFlag()) {
-						pkCol = col
-						break
-					}
-				}
-				record := types.MakeDatums(
-					schema.O,     // TABLE_SCHEMA
-					tb.Name.O,    // TABLE_NAME
-					0,            // NON_UNIQUE
-					"PRIMARY",    // KEY_NAME
-					1,            // SEQ_IN_INDEX
-					pkCol.Name.O, // COLUMN_NAME
-					nil,          // SUB_PART
-					"",           // INDEX_COMMENT
-					nil,          // Expression
-					0,            // INDEX_ID
-					"YES",        // IS_VISIBLE
-					"YES",        // CLUSTERED
-					0,            // IS_GLOBAL
-				)
-				rows = append(rows, record)
-			}
-			for _, idxInfo := range tb.Indices {
-				if idxInfo.State != model.StatePublic {
-					continue
-				}
-				isClustered := "NO"
-				if tb.IsCommonHandle && idxInfo.Primary {
-					isClustered = "YES"
-				}
-				for i, col := range idxInfo.Columns {
-					nonUniq := 1
-					if idxInfo.Unique {
-						nonUniq = 0
-					}
-					var subPart any
-					if col.Length != types.UnspecifiedLength {
-						subPart = col.Length
-					}
-					colName := col.Name.O
-					var expression any
-					expression = nil
-					tblCol := tb.Columns[col.Offset]
-					if tblCol.Hidden {
-						colName = "NULL"
-						expression = tblCol.GeneratedExprString
-					}
-					visible := "YES"
-					if idxInfo.Invisible {
-						visible = "NO"
-					}
-					record := types.MakeDatums(
-						schema.O,        // TABLE_SCHEMA
-						tb.Name.O,       // TABLE_NAME
-						nonUniq,         // NON_UNIQUE
-						idxInfo.Name.O,  // KEY_NAME
-						i+1,             // SEQ_IN_INDEX
-						colName,         // COLUMN_NAME
-						subPart,         // SUB_PART
-						idxInfo.Comment, // INDEX_COMMENT
-						expression,      // Expression
-						idxInfo.ID,      // INDEX_ID
-						visible,         // IS_VISIBLE
-						isClustered,     // CLUSTERED
-						idxInfo.Global,  // IS_GLOBAL
-					)
-					rows = append(rows, record)
-				}
-			}
 		}
 	}
 	e.rows = rows
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (*memtableRetriever) setDataFromIndex(
+	sctx sessionctx.Context,
+	schema model.CIStr,
+	tb *model.TableInfo,
+	rows [][]types.Datum) ([][]types.Datum, error) {
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
-		return nil
+	if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tb.Name.L, "", mysql.AllPrivMask) {
+		return rows, nil
 	}
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+
+	if tb.PKIsHandle {
+		var pkCol *model.ColumnInfo
+		for _, col := range tb.Cols() {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				pkCol = col
+				break
+			}
+		}
+		record := types.MakeDatums(
+			schema.O,     // TABLE_SCHEMA
+			tb.Name.O,    // TABLE_NAME
+			0,            // NON_UNIQUE
+			"PRIMARY",    // KEY_NAME
+			1,            // SEQ_IN_INDEX
+			pkCol.Name.O, // COLUMN_NAME
+			nil,          // SUB_PART
+			"",           // INDEX_COMMENT
+			nil,          // Expression
+			0,            // INDEX_ID
+			"YES",        // IS_VISIBLE
+			"YES",        // CLUSTERED
+			0,            // IS_GLOBAL
+		)
+		rows = append(rows, record)
+	}
+	for _, idxInfo := range tb.Indices {
+		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
+		isClustered := "NO"
+		if tb.IsCommonHandle && idxInfo.Primary {
+			isClustered = "YES"
 		}
-		for _, table := range tables {
-			if ok && extractor.Filter("table_name", table.Name.L) {
-				continue
+		for i, col := range idxInfo.Columns {
+			nonUniq := 1
+			if idxInfo.Unique {
+				nonUniq = 0
 			}
-			if !table.IsView() {
-				continue
+			var subPart any
+			if col.Length != types.UnspecifiedLength {
+				subPart = col.Length
 			}
-			collation := table.Collate
-			charset := table.Charset
-			if collation == "" {
-				collation = mysql.DefaultCollationName
+			colName := col.Name.O
+			var expression any
+			expression = nil
+			tblCol := tb.Columns[col.Offset]
+			if tblCol.Hidden {
+				colName = "NULL"
+				expression = tblCol.GeneratedExprString
 			}
-			if charset == "" {
-				charset = mysql.DefaultCharset
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
+			visible := "YES"
+			if idxInfo.Invisible {
+				visible = "NO"
 			}
 			record := types.MakeDatums(
-				infoschema.CatalogVal,           // TABLE_CATALOG
-				schema.O,                        // TABLE_SCHEMA
-				table.Name.O,                    // TABLE_NAME
-				table.View.SelectStmt,           // VIEW_DEFINITION
-				table.View.CheckOption.String(), // CHECK_OPTION
-				"NO",                            // IS_UPDATABLE
-				table.View.Definer.String(),     // DEFINER
-				table.View.Security.String(),    // SECURITY_TYPE
-				charset,                         // CHARACTER_SET_CLIENT
-				collation,                       // COLLATION_CONNECTION
+				schema.O,        // TABLE_SCHEMA
+				tb.Name.O,       // TABLE_NAME
+				nonUniq,         // NON_UNIQUE
+				idxInfo.Name.O,  // KEY_NAME
+				i+1,             // SEQ_IN_INDEX
+				colName,         // COLUMN_NAME
+				subPart,         // SUB_PART
+				idxInfo.Comment, // INDEX_COMMENT
+				expression,      // Expression
+				idxInfo.ID,      // INDEX_ID
+				visible,         // IS_VISIBLE
+				isClustered,     // CLUSTERED
+				idxInfo.Global,  // IS_GLOBAL
 			)
 			rows = append(rows, record)
 		}
+	}
+	return rows, nil
+}
+
+func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaViewsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexesExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
+		return nil
+	}
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows := make([][]types.Datum, 0, len(tables))
+	for i, table := range tables {
+		schema := schemas[i]
+		if !table.IsView() {
+			continue
+		}
+		collation := table.Collate
+		charset := table.Charset
+		if collation == "" {
+			collation = mysql.DefaultCollationName
+		}
+		if charset == "" {
+			charset = mysql.DefaultCharset
+		}
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+			continue
+		}
+		record := types.MakeDatums(
+			infoschema.CatalogVal,           // TABLE_CATALOG
+			schema.O,                        // TABLE_SCHEMA
+			table.Name.O,                    // TABLE_NAME
+			table.View.SelectStmt,           // VIEW_DEFINITION
+			table.View.CheckOption.String(), // CHECK_OPTION
+			"NO",                            // IS_UPDATABLE
+			table.View.Definer.String(),     // DEFINER
+			table.View.Security.String(),    // SECURITY_TYPE
+			charset,                         // CHARACTER_SET_CLIENT
+			collation,                       // COLLATION_CONNECTION
+		)
+		rows = append(rows, record)
 	}
 	e.rows = rows
 	return nil
@@ -1722,35 +1723,30 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
-	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaKeyColumnUsageExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexesExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
-	for _, schema := range schemas {
-		// `constraint_schema` and `table_schema` are always the same in MySQL.
-		if ok && extractor.Filter("constraint_schema", schema.L) {
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows := make([][]types.Datum, 0, len(tables))
+	for i, table := range tables {
+		schema := schemas[i]
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
-		if ok && extractor.Filter("table_schema", schema.L) {
+		if ex.Filter("constraint_schema", schema.O) {
 			continue
 		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, table := range tables {
-			if ok && extractor.Filter("table_name", table.Name.L) {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			rs := keyColumnUsageInTable(schema, table, extractor)
-			rows = append(rows, rs...)
-		}
+		rs := keyColumnUsageInTable(schema, table, ex)
+		rows = append(rows, rs...)
 	}
 	e.rows = rows
 	return nil
@@ -1818,7 +1814,7 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	e.rows = rows
 }
 
-func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaBaseExtractor) [][]types.Datum {
+func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		if extractor == nil || !extractor.Filter("constraint_name", lowerPrimaryKeyName) {
@@ -2131,89 +2127,85 @@ func (e *memtableRetriever) setDataForHotRegionByMetrics(metrics []helper.HotTab
 }
 
 // setDataFromTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
-func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTableConstraintsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexesExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		if ok && extractor.Filter("constraint_schema", schema.L) {
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows := make([][]types.Datum, 0, len(tables))
+	for i, tbl := range tables {
+		schema := schemas[i]
+		if ex.Filter("constraint_schema", schema.L) {
 			continue
 		}
-		if ok && extractor.Filter("table_schema", schema.L) {
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tbl := range tables {
-			if ok && extractor.Filter("table_name", tbl.Name.L) {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
 
-			if tbl.PKIsHandle {
-				if !ok || !extractor.Filter("constraint_name", lowerPrimaryKeyName) {
-					record := types.MakeDatums(
-						infoschema.CatalogVal,     // CONSTRAINT_CATALOG
-						schema.O,                  // CONSTRAINT_SCHEMA
-						mysql.PrimaryKeyName,      // CONSTRAINT_NAME
-						schema.O,                  // TABLE_SCHEMA
-						tbl.Name.O,                // TABLE_NAME
-						infoschema.PrimaryKeyType, // CONSTRAINT_TYPE
-					)
-					rows = append(rows, record)
-				}
-			}
-
-			for _, idx := range tbl.Indices {
-				var cname, ctype string
-				var filterName string
-				if idx.Primary {
-					cname = mysql.PrimaryKeyName
-					filterName = lowerPrimaryKeyName
-					ctype = infoschema.PrimaryKeyType
-				} else if idx.Unique {
-					cname = idx.Name.O
-					filterName = idx.Name.L
-					ctype = infoschema.UniqueKeyType
-				} else {
-					// The index has no constriant.
-					continue
-				}
-				if ok && extractor.Filter("constraint_name", filterName) {
-					continue
-				}
-				record := types.MakeDatums(
-					infoschema.CatalogVal, // CONSTRAINT_CATALOG
-					schema.O,              // CONSTRAINT_SCHEMA
-					cname,                 // CONSTRAINT_NAME
-					schema.O,              // TABLE_SCHEMA
-					tbl.Name.O,            // TABLE_NAME
-					ctype,                 // CONSTRAINT_TYPE
-				)
-				rows = append(rows, record)
-			}
-			//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
-			for _, fk := range tbl.ForeignKeys {
-				if ok && extractor.Filter("constraint_name", fk.Name.L) {
-					continue
-				}
+		if tbl.PKIsHandle {
+			if !ex.Filter("constraint_name", lowerPrimaryKeyName) {
 				record := types.MakeDatums(
 					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
 					schema.O,                  // CONSTRAINT_SCHEMA
-					fk.Name.O,                 // CONSTRAINT_NAME
+					mysql.PrimaryKeyName,      // CONSTRAINT_NAME
 					schema.O,                  // TABLE_SCHEMA
 					tbl.Name.O,                // TABLE_NAME
-					infoschema.ForeignKeyType, // CONSTRAINT_TYPE
+					infoschema.PrimaryKeyType, // CONSTRAINT_TYPE
 				)
 				rows = append(rows, record)
 			}
+		}
+
+		for _, idx := range tbl.Indices {
+			var cname, ctype string
+			var filterName string
+			if idx.Primary {
+				cname = mysql.PrimaryKeyName
+				filterName = lowerPrimaryKeyName
+				ctype = infoschema.PrimaryKeyType
+			} else if idx.Unique {
+				cname = idx.Name.O
+				filterName = idx.Name.L
+				ctype = infoschema.UniqueKeyType
+			} else {
+				// The index has no constriant.
+				continue
+			}
+			if ex.Filter("constraint_name", filterName) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal, // CONSTRAINT_CATALOG
+				schema.O,              // CONSTRAINT_SCHEMA
+				cname,                 // CONSTRAINT_NAME
+				schema.O,              // TABLE_SCHEMA
+				tbl.Name.O,            // TABLE_NAME
+				ctype,                 // CONSTRAINT_TYPE
+			)
+			rows = append(rows, record)
+		}
+		//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
+		for _, fk := range tbl.ForeignKeys {
+			if ex.Filter("constraint_name", fk.Name.L) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+				schema.O,                  // CONSTRAINT_SCHEMA
+				fk.Name.O,                 // CONSTRAINT_NAME
+				schema.O,                  // TABLE_SCHEMA
+				tbl.Name.O,                // TABLE_NAME
+				infoschema.ForeignKeyType, // CONSTRAINT_TYPE
+			)
+			rows = append(rows, record)
 		}
 	}
 	e.rows = rows

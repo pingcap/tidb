@@ -110,8 +110,13 @@ select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema = 'db1' ord
 drop database db1;
 drop database db2;
 
-# TestTemporaryTableShouldNotAppear
+# TestLocalTemporaryTableShouldNotAppear
 create temporary table temp_table (a int, index idx(a));
+select count(1) from information_schema.tables where table_schema = 'infoschema__infoschema';
+select count(1) from information_schema.tables where table_name = 'temp_table';
+select count(1) from information_schema.statistics where table_name = 'temp_table';
+drop table temp_table;
+create global temporary table temp_table(a int, index idx(a)) on commit delete rows;
 select count(1) from information_schema.tables where table_schema = 'infoschema__infoschema';
 select count(1) from information_schema.tables where table_name = 'temp_table';
 select count(1) from information_schema.statistics where table_name = 'temp_table';

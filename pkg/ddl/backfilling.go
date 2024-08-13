@@ -178,6 +178,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 	}
 
 	exprCtx := sessCtx.GetExprCtx()
+	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.d,
@@ -188,7 +189,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		loc:        exprCtx.GetEvalCtx().Location(),
 		schemaName: schemaName,
 		table:      tbl,
-		batchCnt:   int(variable.GetDDLReorgBatchSize()),
+		batchCnt:   batchCnt,
 		jobContext: jobCtx,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
@@ -415,7 +416,8 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		})
 
 		// Change the batch size dynamically.
-		w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
+		newBatchCnt := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		w.GetCtx().batchCnt = newBatchCnt
 		result := w.handleBackfillTask(d, task, bf)
 		w.sendResult(result)
 
@@ -675,8 +677,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, importConc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -705,16 +708,15 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		bcCtx.AttachCheckpointManager(cpMgr)
 	}
 
-	reorgCtx := dc.getReorgCtx(reorgInfo.Job.ID)
+	reorgCtx := dc.getReorgCtx(job.ID)
 	rowCntListener := &localRowCntListener{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
-		reorgCtx:           dc.getReorgCtx(reorgInfo.Job.ID),
+		reorgCtx:           reorgCtx,
 		counter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
 	}
 
 	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
-	concurrency := int(variable.GetDDLReorgWorkerCounter())
 
 	engines, err := bcCtx.Register(indexIDs, uniques, t)
 	if err != nil {
@@ -724,7 +726,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
-
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
 		dc.store,
@@ -738,7 +739,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		reorgInfo.EndKey,
 		job.ReorgMeta,
 		avgRowSize,
-		concurrency,
+		importConc,
 		cpMgr,
 		rowCntListener,
 	)

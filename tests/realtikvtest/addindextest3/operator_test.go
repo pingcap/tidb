@@ -95,7 +95,7 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		src := testutil.NewOperatorTestSource(opTasks...)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil)
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil, 0)
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
