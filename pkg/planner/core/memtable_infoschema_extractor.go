@@ -322,7 +322,7 @@ func findNameAndAppendToTableMap(
 			return errors.Trace(err)
 		}
 		tblInfo := tbl.Meta()
-		if tblInfo.TempTableType != model.TempTableNone {
+		if tblInfo.TempTableType == model.TempTableLocal {
 			continue
 		}
 		tables[tblInfo.ID] = tblInfo
@@ -347,7 +347,7 @@ func findTablesByID(
 			continue
 		}
 		tblInfo := tbl.Meta()
-		if tblInfo.TempTableType != model.TempTableNone {
+		if tblInfo.TempTableType == model.TempTableLocal {
 			continue
 		}
 		if len(tableNames) > 0 {
@@ -408,7 +408,7 @@ func findTableAndSchemaByName(
 				return nil, nil, errors.Trace(err)
 			}
 			tblInfo := tbl.Meta()
-			if tblInfo.TempTableType != model.TempTableNone {
+			if tblInfo.TempTableType == model.TempTableLocal {
 				continue
 			}
 			tableMap[tblInfo.ID] = schemaAndTable{s, tblInfo}
