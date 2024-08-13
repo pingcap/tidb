@@ -966,6 +966,10 @@ const (
 	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result of
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
+
+	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
+	// as `select for update` statements which do acquire pessimistic locks.
+	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
 )
 
 // TiDB vars that have only global scope
@@ -1186,6 +1190,8 @@ const (
 	// The value can be STANDARD, BULK.
 	// Currently, the BULK mode only affects auto-committed DML.
 	TiDBDMLType = "tidb_dml_type"
+	// TiFlashHashAggPreAggMode indicates the policy of 1st hashagg.
+	TiFlashHashAggPreAggMode = "tiflash_hashagg_preaggregation_mode"
 	// TiDBEnableLazyCursorFetch defines whether to enable the lazy cursor fetch. If it's `OFF`, all results of
 	// of a cursor will be stored in the tidb node in `EXECUTE` command.
 	TiDBEnableLazyCursorFetch = "tidb_enable_lazy_cursor_fetch"
@@ -1523,8 +1529,10 @@ const (
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
+	DefTiFlashPreAggMode                              = ForcePreAggStr
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
+	DefTiDBEnableSharedLockPromotion                  = false
 )
 
 // Process global variables.

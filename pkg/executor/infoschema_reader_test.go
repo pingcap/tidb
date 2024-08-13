@@ -673,14 +673,14 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	for db := 0; db < 2; db++ {
 		for table := 0; table < 2; table++ {
-			tk.MustExec(fmt.Sprintf("create database if not exists db%d;", db))
-			tk.MustExec(fmt.Sprintf(`create table db%d.table%d (id int primary key, data0 varchar(255), data1 varchar(255))
+			tk.MustExec(fmt.Sprintf("create database if not exists Db%d;", db))
+			tk.MustExec(fmt.Sprintf(`create table Db%d.Table%d (id int primary key, data0 varchar(255), data1 varchar(255))
 				partition by range (id) (
 					partition p0 values less than (10),
 					partition p1 values less than (20)
 				);`, db, table))
 			for index := 0; index < 2; index++ {
-				tk.MustExec(fmt.Sprintf("create index idx%d on db%d.table%d (data%d);", index, db, table, index))
+				tk.MustExec(fmt.Sprintf("create unique index Idx%d on Db%d.Table%d (id, data%d);", index, db, table, index))
 			}
 		}
 	}
@@ -733,12 +733,46 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 			colName := cols[i].Column.Name.L
 			if valPrefix, ok := testColumns[colName]; ok {
 				for j := 0; j < 2; j++ {
-					rows := tk.MustQuery(fmt.Sprintf("select * from information_schema.%s where %s = '%s%d';",
-						table, colName, valPrefix, j)).Rows()
+					sql := fmt.Sprintf("select * from information_schema.%s where %s = '%s%d';",
+						table, colName, valPrefix, j)
+					rows := tk.MustQuery(sql).Rows()
 					rowCountWithCondition := len(rows)
-					require.Less(t, rowCountWithCondition, rowCount, "%s has no effect on %s", colName, table)
+					require.Less(t, rowCountWithCondition, rowCount, "%s has no effect on %s. SQL: %s", colName, table, sql)
+
+					// check the condition works as expected
+					for _, row := range rows {
+						require.Equal(t, fmt.Sprintf("%s%d", valPrefix, j), strings.ToLower(row[i].(string)),
+							"%s has no effect on %s. SQL: %s", colName, table, sql)
+					}
 				}
 			}
 		}
 	}
+
+	// Test the PRIMARY constraint filter
+	rows := tk.MustQuery("select constraint_name, table_schema from information_schema.table_constraints where constraint_name = 'PRIMARY' and table_schema = 'db0';").Rows()
+	require.Equal(t, 2, len(rows))
+	for _, row := range rows {
+		require.Equal(t, "PRIMARY", row[0].(string))
+		require.Equal(t, "Db0", row[1].(string))
+	}
+	rows = tk.MustQuery("select constraint_name, table_schema from information_schema.key_column_usage where constraint_name = 'PRIMARY' and table_schema = 'db1';").Rows()
+	require.Equal(t, 2, len(rows))
+	for _, row := range rows {
+		require.Equal(t, "PRIMARY", row[0].(string))
+		require.Equal(t, "Db1", row[1].(string))
+	}
+
+	// Test the `partition_name` filter
+	tk.MustExec("create database if not exists db_no_partition;")
+	tk.MustExec("create table db_no_partition.t_no_partition (id int primary key, data0 varchar(255), data1 varchar(255));")
+	tk.MustExec(`create table db_no_partition.t_partition (id int primary key, data0 varchar(255), data1 varchar(255))
+		partition by range (id) (
+			partition p0 values less than (10),
+			partition p1 values less than (20)
+		);`)
+	rows = tk.MustQuery("select * from information_schema.partitions where table_schema = 'db_no_partition' and partition_name is NULL;").Rows()
+	require.Equal(t, 1, len(rows))
+	rows = tk.MustQuery("select * from information_schema.partitions where table_schema = 'db_no_partition' and (partition_name is NULL or partition_name = 'p0');").Rows()
+	require.Equal(t, 2, len(rows))
 }

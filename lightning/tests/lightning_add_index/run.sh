@@ -29,7 +29,7 @@ non_pk_auto_inc_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" 
 non_pk_auto_inc_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Checksum_crc64_xor" | awk '{print $2}')
 
 run_sql "DROP DATABASE add_index;"
-run_lightning --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
+run_lightning --config "$CUR/config2-mysql.toml" --log-file "$LOG_FILE2"
 actual_multi_indexes_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
 actual_multi_indexes_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
 actual_non_pk_auto_inc_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Total_kvs" | awk '{print $2}')
@@ -82,18 +82,24 @@ grep -Fq "ALTER TABLE \`add_index\`.\`non_pk_auto_inc\` DROP PRIMARY KEY" "$LOG_
 grep -Fq "ALTER TABLE \`add_index\`.\`non_pk_auto_inc\` ADD PRIMARY KEY (\`pk\`)" "$LOG_FILE2"
 
 # 3. Check for recovering from checkpoint
-export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/AddIndexCrash=return()"
-run_sql "DROP DATABASE add_index;"
-run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
-grep -Fq "task canceled" "$LOG_FILE2"
+function recover_from_checkpoint() {
+  tp=$1
+  export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/AddIndexCrash=return()"
+  run_sql "DROP DATABASE add_index;"
+  rm -rf /tmp/add-index-by-sql-checkpoint.pb
+  run_lightning --enable-checkpoint=1 --config "$CUR/config2-$tp.toml" --log-file "$LOG_FILE2"
+  grep -Fq "task canceled" "$LOG_FILE2"
 
-unset GO_FAILPOINTS
-run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
-actual_multi_indexes_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
-actual_multi_indexes_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
-actual_non_pk_auto_inc_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Total_kvs" | awk '{print $2}')
-actual_non_pk_auto_inc_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Checksum_crc64_xor" | awk '{print $2}')
+  unset GO_FAILPOINTS
+  run_lightning --enable-checkpoint=1 --config "$CUR/config2-$tp.toml" --log-file "$LOG_FILE2"
+  actual_multi_indexes_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
+  actual_multi_indexes_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
+  actual_non_pk_auto_inc_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Total_kvs" | awk '{print $2}')
+  actual_non_pk_auto_inc_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Checksum_crc64_xor" | awk '{print $2}')
 
-set -x
-[ "$multi_indexes_kvs" == "$actual_multi_indexes_kvs" ] && [ "$multi_indexes_cksum" == "$actual_multi_indexes_cksum" ]
-[ "$non_pk_auto_inc_kvs" == "$actual_non_pk_auto_inc_kvs" ] && [ "$non_pk_auto_inc_cksum" == "$actual_non_pk_auto_inc_cksum" ]
+  set -x
+  [ "$multi_indexes_kvs" == "$actual_multi_indexes_kvs" ] && [ "$multi_indexes_cksum" == "$actual_multi_indexes_cksum" ]
+  [ "$non_pk_auto_inc_kvs" == "$actual_non_pk_auto_inc_kvs" ] && [ "$non_pk_auto_inc_cksum" == "$actual_non_pk_auto_inc_cksum" ]
+}
+recover_from_checkpoint file
+recover_from_checkpoint mysql

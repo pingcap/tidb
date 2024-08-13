@@ -1551,6 +1551,11 @@ error = '''
 The operation is not allowed while the bdr role of this cluster is set to %s.
 '''
 
+["ddl:8264"]
+error = '''
+Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV

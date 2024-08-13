@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -236,7 +237,7 @@ func TestFailSchemaSyncer(t *testing.T) {
 		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
 	require.True(t, s.dom.SchemaValidator.IsStarted())
-	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
+	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*schemaver.MemSyncer)
 	require.True(t, ok)
 
 	// make reload failed.

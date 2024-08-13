@@ -38,7 +38,7 @@ func TestCheckOwner(t *testing.T) {
 
 	time.Sleep(testLease)
 	require.Equal(t, dom.DDL().OwnerManager().IsOwner(), true)
-	require.Equal(t, dom.DDL().GetLease(), testLease)
+	require.Equal(t, dom.GetSchemaLease(), testLease)
 }
 
 func TestInvalidDDLJob(t *testing.T) {

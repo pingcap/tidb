@@ -15,6 +15,8 @@
 package usage
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -33,7 +35,7 @@ func (u *statsUsageImpl) GCIndexUsage() error {
 	return util.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		schema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		u.idxUsageCollector.GCIndexUsage(func(id int64) (*model.TableInfo, bool) {
-			tbl, ok := schema.TableByID(id)
+			tbl, ok := schema.TableByID(context.Background(), id)
 			if !ok {
 				return nil, false
 			}

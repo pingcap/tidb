@@ -243,7 +243,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is 
 						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s partition (%s)", schema.Name, tbl.Meta().Name.O, def.Name.O))
 					}
 				} else {
-					tbl, ok := is.TableByID(physicalTableID)
+					tbl, ok := is.TableByID(context.Background(), physicalTableID)
 					if !ok {
 						logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", physicalTableID))
 					} else {

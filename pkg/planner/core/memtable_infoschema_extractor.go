@@ -342,7 +342,7 @@ func findTablesByID(
 		tblNameMap[n.L] = struct{}{}
 	}
 	for _, tid := range parseIDs(tableIDs) {
-		tbl, ok := is.TableByID(tid)
+		tbl, ok := is.TableByID(context.Background(), tid)
 		if !ok {
 			continue
 		}

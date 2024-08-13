@@ -2168,9 +2168,9 @@ create table nt14 (id int not null, lname varchar(30), fname varchar(100) genera
 alter table pt14 exchange partition p0 with table nt14;
 
 --echo ## unique index
-create table pt15 (id int not null, unique index uk_id (id)) partition by hash(id) partitions 1;
+create table pt15 (id int not null, unique index uk_id (id) global) partition by hash(id) partitions 1;
 create table nt15 (id int not null, index uk_id (id));
--- error 1736
+-- error 1731
 alter table pt15 exchange partition p0 with table nt15;
 
 --echo ## auto_increment
@@ -2271,7 +2271,7 @@ create temporary table nt34 (id int);
 alter table pt34 exchange partition p0 with table nt34;
 
 --echo ## global index
-create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;
+create table pt35 (a int, b int, unique index(b) global) partition by hash(a) partitions 1;
 create table nt35 (a int, b int, unique index(b));
 -- error 1731
 alter table pt35 exchange partition p0 with table nt35;

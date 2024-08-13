@@ -15,7 +15,6 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/server",
         "//pkg/server/tests/servertestkit",
-        "//pkg/session",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

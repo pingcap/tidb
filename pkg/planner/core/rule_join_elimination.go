@@ -39,12 +39,12 @@ type OuterJoinEliminator struct {
 //  2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
 //     If the parent only use the columns from left table with 'distinct' label. The left outer join can
 //     be eliminated.
-func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	var innerChildIdx int
 	switch p.JoinType {
-	case LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		innerChildIdx = 1
-	case RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		innerChildIdx = 0
 	default:
 		return p, false, nil
@@ -97,7 +97,7 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 }
 
 // extract join keys as a schema for inner child of a outer join
-func (*OuterJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChildIdx int) *expression.Schema {
+func (*OuterJoinEliminator) extractInnerJoinKeys(join *logicalop.LogicalJoin, innerChildIdx int) *expression.Schema {
 	joinKeys := make([]*expression.Column, 0, len(join.EqualConditions))
 	for _, eqCond := range join.EqualConditions {
 		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
@@ -203,7 +203,7 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	}
 	var err error
 	var isEliminated bool
-	for join, isJoin := p.(*LogicalJoin); isJoin; join, isJoin = p.(*LogicalJoin) {
+	for join, isJoin := p.(*logicalop.LogicalJoin); isJoin; join, isJoin = p.(*logicalop.LogicalJoin) {
 		p, isEliminated, err = o.tryToEliminateOuterJoin(join, aggCols, parentCols, opt)
 		if err != nil {
 			return p, err
@@ -262,7 +262,7 @@ func (*OuterJoinEliminator) Name() string {
 	return "outer_join_eliminate"
 }
 
-func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan base.LogicalPlan, parentCols []*expression.Column,
+func appendOuterJoinEliminateTraceStep(join *logicalop.LogicalJoin, outerPlan base.LogicalPlan, parentCols []*expression.Column,
 	innerJoinKeys *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) {
 	ectx := join.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
@@ -289,7 +289,7 @@ func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan base.Logical
 	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
-func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan base.LogicalPlan, aggCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
+func appendOuterJoinEliminateAggregationTraceStep(join *logicalop.LogicalJoin, outerPlan base.LogicalPlan, aggCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
 	ectx := join.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString("The columns[")

@@ -689,7 +689,7 @@ func TestAddGlobalIndex(t *testing.T) {
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
 	tk.MustExec("insert test_t1 values (1, 1)")
-	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	tk.MustExec("alter table test_t1 add unique index p_a (a) global")
 	tk.MustExec("insert test_t1 values (2, 11)")
 	tbl := external.GetTableByName(t, tk, "test", "test_t1")
 	tblInfo := tbl.Meta()
@@ -719,7 +719,7 @@ func TestAddGlobalIndex(t *testing.T) {
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
 	tk.MustExec("insert test_t2 values (1, 1)")
-	tk.MustExec("alter table test_t2 add primary key (a) nonclustered;")
+	tk.MustExec("alter table test_t2 add primary key (a) nonclustered global")
 	tk.MustExec("insert test_t2 values (2, 11)")
 	tbl = external.GetTableByName(t, tk, "test", "test_t2")
 	tblInfo = tbl.Meta()
@@ -749,19 +749,19 @@ func TestAddGlobalIndex(t *testing.T) {
 	// normal index
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
-	tk.MustExec("alter table t add unique index idx(a)")
+	tk.MustExec("alter table t add unique index idx(a) global")
 
 	// meets duplicate
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
 	tk.MustExec("insert into t values (1, 2), (1, 3)")
 	// Duplicate
-	tk.MustExecToErr("alter table t add unique index idx(a)")
+	tk.MustContainErrMsg("alter table t add unique index idx(a) global", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 
 	// with multi schema change
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
-	tk.MustExec("alter table t add unique index idx(a), add index idx1(b)")
+	tk.MustExec("alter table t add unique index idx(a) global, add index idx1(b)")
 }
 
 // checkGlobalIndexRow reads one record from global index and check. Only support int handle.
