@@ -3692,10 +3692,7 @@ func (e *memtableRetriever) setDataForClusterIndexUsage(ctx context.Context, sct
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
 	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if !ok {
-		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaBaseExtractor", e.extractor)
-	}
-	if extractor.SkipRequest {
+	if ok && extractor.SkipRequest {
 		return nil
 	}
 
