@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -73,5 +74,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 		if err != nil {
 			return
 		}
+		infoSchema := sessiontxn.GetTxnManager(worker.sctx).GetTxnInfoSchema()
+		statsHandle.Update(ctx, infoSchema)
 	}
 }
