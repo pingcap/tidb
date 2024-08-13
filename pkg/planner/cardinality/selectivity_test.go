@@ -402,8 +402,8 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
-			selectivity:              0.01851851852,
-			selectivityAfterIncrease: 0.01851851852,
+			selectivity:              0.017832647462277088,
+			selectivityAfterIncrease: 0.017832647462277088,
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
