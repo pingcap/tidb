@@ -828,7 +828,7 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context,
 
 type hugeMemTableRetriever struct {
 	dummyCloser
-	extractor          *plannercore.ColumnsTableExtractor
+	extractor          *plannercore.InfoSchemaColumnsExtractor
 	table              *model.TableInfo
 	columns            []*model.ColumnInfo
 	retrieved          bool

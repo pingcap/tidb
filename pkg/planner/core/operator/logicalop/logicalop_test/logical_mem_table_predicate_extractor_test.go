@@ -1632,7 +1632,7 @@ func TestColumns(t *testing.T) {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
-		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.ColumnsTableExtractor)
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
 		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
 
 		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColPredicates["column_name"].Count())
@@ -1763,7 +1763,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
 			checker: func(extractor base.MemTablePredicateExtractor) {
-				rse := extractor.(*plannercore.ColumnsTableExtractor)
+				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
 			},
 		},
@@ -2060,7 +2060,7 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			base = &ex.InfoSchemaBaseExtractor
 		case *plannercore.InfoSchemaTableConstraintsExtractor:
 			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.ColumnsTableExtractor:
+		case *plannercore.InfoSchemaColumnsExtractor:
 			base = &ex.InfoSchemaBaseExtractor
 		default:
 			require.Failf(t, "unexpected extractor type", "%T", ex)

@@ -68,7 +68,7 @@ var extractableColumns = map[string][]string{
 		_indexName,
 	},
 	// See infoschema.columns for full columns.
-	// Used by InfoSchemaStatisticsExtractor and setDataFromColumns.
+	// Used by InfoSchemaColumnsExtractor and setDataFromColumns.
 	infoschema.TableColumns: {
 		_tableSchema, _tableName,
 		_columnName,
@@ -858,8 +858,8 @@ func (e *InfoSchemaTableNameExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	return s
 }
 
-// ColumnsTableExtractor is the predicate extractor for information_schema.columns.
-type ColumnsTableExtractor struct {
+// InfoSchemaColumnsExtractor is the predicate extractor for information_schema.columns.
+type InfoSchemaColumnsExtractor struct {
 	InfoSchemaTableNameExtractor
 }
 
