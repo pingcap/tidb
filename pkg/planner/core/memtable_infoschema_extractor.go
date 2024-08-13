@@ -474,10 +474,12 @@ func (e *InfoSchemaReferConstExtractor) ListSchemasAndTables(
 	return listTablesForEachSchema(ctx, is, schemas)
 }
 
+// InfoSchemaSequenceExtractor is the predicate extractor for information_schema.sequences.
 type InfoSchemaSequenceExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
 func (e *InfoSchemaSequenceExtractor) ListSchemasAndTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
