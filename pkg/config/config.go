@@ -723,7 +723,7 @@ type Performance struct {
 	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
 	StatsLoadConcurrency int    `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	// Deprecated: this config will not have any effect
+	// Deprecated: this config has been deprecated. It has no effect.
 	AnalyzePartitionConcurrencyQuota  uint `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
 	PlanReplayerDumpWorkerConcurrency uint `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
 	EnableStatsCacheMemQuota          bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
