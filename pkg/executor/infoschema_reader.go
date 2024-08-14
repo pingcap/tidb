@@ -3563,10 +3563,10 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 			watch.ResourceGroupName,
 			watch.StartTime.UTC().Format(time.DateTime),
 			watch.EndTime.UTC().Format(time.DateTime),
-			rmpb.RunawayWatchType_name[int32(watch.Watch)],
+			watch.Watch.String(),
 			watch.WatchText,
 			watch.Source,
-			rmpb.RunawayAction_name[int32(action)],
+			action.String(),
 		)
 		if watch.EndTime.Equal(resourcegroup.NullTime) {
 			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)

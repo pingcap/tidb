@@ -106,7 +106,7 @@ func (eqh *Handle) Run() {
 						sm.Kill(info.ID, true, false, false)
 					}
 				}
-				if info.RunawayChecker != nil && info.RunawayChecker.CheckKillAction() {
+				if info.RunawayChecker != nil && info.RunawayChecker.CheckRuleKillAction() {
 					logutil.BgLogger().Warn("runaway query timeout", zap.Duration("costTime", costTime), zap.String("groupName", info.ResourceGroupName),
 						zap.String("rule", info.RunawayChecker.Rule()), zap.String("processInfo", info.String()))
 					sm.Kill(info.ID, true, false, true)
