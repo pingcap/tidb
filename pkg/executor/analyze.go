@@ -386,20 +386,18 @@ func (e *AnalyzeExec) handleResultsError(
 		}
 	}()
 	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
-	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
+	// The concurrency of saving partition-level stats should not exceed the total number of tasks.
 	partitionStatsConcurrency = min(taskNum, partitionStatsConcurrency)
-	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if partitionStatsConcurrency > 1 {
 		logutil.BgLogger().Info("save analyze results concurrently", zap.Int("concurrency", concurrency))
-		return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
+		return e.handleResultsErrorWithConcurrency(concurrency, needGlobalStats, globalStatsMap, resultsCh)
 	}
 	logutil.BgLogger().Info("save analyze results in single-thread", zap.Int("concurrency", concurrency))
 	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
-	return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
+	return e.handleResultsErrorWithConcurrency(concurrency, needGlobalStats, globalStatsMap, resultsCh)
 }
 
 func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
-	ctx context.Context,
 	statsConcurrency int,
 	needGlobalStats bool,
 	globalStatsMap globalStatsMap,
@@ -433,7 +431,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			} else {
-				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
+				logutil.BgLogger().Error("save analyze results failed", zap.Error(err))
 			}
 			finishJobWithLog(statsHandle, results.Job, err)
 			continue
