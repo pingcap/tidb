@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -763,14 +762,14 @@ func TestAddColumn2(t *testing.T) {
 	// mock for outdated tidb update record.
 	require.NotNil(t, writeOnlyTable)
 	ctx := context.Background()
-	err = sessiontxn.NewTxn(ctx, tk.Session())
+	txn, err := newTxn(tk.Session())
 	require.NoError(t, err)
 	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Session(), kv.IntHandle(1), writeOnlyTable.WritableCols())
 	require.NoError(t, err)
 	require.Equal(t, 3, len(oldRow))
-	err = writeOnlyTable.RemoveRecord(tk.Session().GetTableCtx(), kv.IntHandle(1), oldRow)
+	err = writeOnlyTable.RemoveRecord(tk.Session().GetTableCtx(), txn, kv.IntHandle(1), oldRow)
 	require.NoError(t, err)
-	_, err = writeOnlyTable.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
+	_, err = writeOnlyTable.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	require.NoError(t, err)
 	tk.Session().StmtCommit(ctx)
 	err = tk.Session().CommitTxn(ctx)
