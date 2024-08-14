@@ -46,6 +46,9 @@ const (
 	_schemaName       = "schema_name"
 	_constraintSchema = "constraint_schema"
 	_constraintName   = "constraint_name"
+	_tableID          = "table_id"
+	_sequenceSchema   = "sequence_schema"
+	_sequenceName     = "sequence_name"
 	_columnName       = "column_name"
 )
 
@@ -111,6 +114,29 @@ var extractableColumns = map[string][]string{
 		_constraintSchema,
 		_tableName,
 		_constraintName,
+	},
+	// See infoschema.tableCheckConstraintsCols for full columns.
+	// Used by InfoSchemaCheckConstraintsExtractor and setDataFromCheckConstraints.
+	infoschema.TableCheckConstraints: {
+		_constraintSchema,
+		_constraintName,
+	},
+	// See infoschema.tableTiDBCheckConstraintsCols for full columns.
+	// Used by InfoSchemaTiDBCheckConstraintsExtractor and setDataFromTiDBCheckConstraints.
+	infoschema.TableTiDBCheckConstraints: {
+		_constraintSchema, _tableName, _tableID,
+		_constraintName,
+	},
+	// See infoschema.referConstCols for full columns.
+	// Used by InfoSchemaReferConstExtractor and setDataFromReferConst.
+	infoschema.TableReferConst: {
+		_constraintSchema, _tableName,
+		_constraintName,
+	},
+	// See infoschema.tableSequencesCols for full columns.
+	// Used by InfoSchemaSequenceExtractor and setDataFromSequences.
+	infoschema.TableSequences: {
+		_sequenceSchema, _sequenceName,
 	},
 }
 
@@ -407,6 +433,78 @@ type InfoSchemaSchemataExtractor struct {
 // If no schema found in predicate, it return all schemas.
 func (e *InfoSchemaSchemataExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
 	return e.listSchemas(is, _schemaName)
+}
+
+// InfoSchemaCheckConstraintsExtractor is the predicate extractor for information_schema.check_constraints.
+type InfoSchemaCheckConstraintsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemas lists related schemas from predicate.
+func (e *InfoSchemaCheckConstraintsExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
+	return e.listSchemas(is, _constraintSchema)
+}
+
+// InfoSchemaTiDBCheckConstraintsExtractor is the predicate extractor for information_schema.tidb_check_constraints.
+type InfoSchemaTiDBCheckConstraintsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+func (e *InfoSchemaTiDBCheckConstraintsExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _constraintSchema)
+
+	tableIDs := e.getSchemaObjectNames(_tableID)
+	tableNames := e.getSchemaObjectNames(_tableName)
+
+	if len(tableIDs) > 0 {
+		tableMap := make(map[int64]*model.TableInfo, len(tableIDs))
+		findTablesByID(is, tableIDs, tableNames, tableMap)
+		return findSchemasForTables(ctx, is, schemas, maps.Values(tableMap))
+	}
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
+// InfoSchemaReferConstExtractor is the predicate extractor for information_schema.referential_constraints.
+type InfoSchemaReferConstExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+func (e *InfoSchemaReferConstExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _constraintSchema)
+	tableNames := e.getSchemaObjectNames(_tableName)
+	if len(tableNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
+}
+
+// InfoSchemaSequenceExtractor is the predicate extractor for information_schema.sequences.
+type InfoSchemaSequenceExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+func (e *InfoSchemaSequenceExtractor) ListSchemasAndTables(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]model.CIStr, []*model.TableInfo, error) {
+	schemas := e.listSchemas(is, _sequenceSchema)
+	seqNames := e.getSchemaObjectNames(_sequenceName)
+	if len(seqNames) > 0 {
+		return findTableAndSchemaByName(ctx, is, schemas, seqNames)
+	}
+	return listTablesForEachSchema(ctx, is, schemas)
 }
 
 func (e *InfoSchemaBaseExtractor) listSchemas(is infoschema.InfoSchema, schemaCol string) []model.CIStr {

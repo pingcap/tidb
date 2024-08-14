@@ -132,11 +132,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTables:
 			err = e.setDataFromTables(ctx, sctx)
 		case infoschema.TableReferConst:
-			dbs := getAllSchemas()
-			err = e.setDataFromReferConst(ctx, sctx, dbs)
+			err = e.setDataFromReferConst(ctx, sctx)
 		case infoschema.TableSequences:
-			dbs := getAllSchemas()
-			err = e.setDataFromSequences(ctx, sctx, dbs)
+			err = e.setDataFromSequences(ctx, sctx)
 		case infoschema.TablePartitions:
 			err = e.setDataFromPartitions(ctx, sctx)
 		case infoschema.TableClusterInfo:
@@ -211,11 +209,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableRunawayWatches:
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
-			dbs := getAllSchemas()
-			err = e.setDataFromCheckConstraints(ctx, sctx, dbs)
+			err = e.setDataFromCheckConstraints(ctx, sctx)
 		case infoschema.TableTiDBCheckConstraints:
-			dbs := getAllSchemas()
-			err = e.setDataFromTiDBCheckConstraints(ctx, sctx, dbs)
+			err = e.setDataFromTiDBCheckConstraints(ctx, sctx)
 		case infoschema.TableKeywords:
 			err = e.setDataFromKeywords()
 		case infoschema.TableTiDBIndexUsage:
@@ -510,57 +506,53 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, tabl
 	e.rows = append(e.rows, rows...)
 }
 
-func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaReferConstExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaReferConstExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
-	for _, schema := range schemas {
-		if ok && extractor.Filter("constraint_schema", schema.L) {
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, table := range tables {
+		schema := schemas[i]
+		if !table.IsBaseTable() {
 			continue
 		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+			continue
 		}
-		for _, table := range tables {
-			if ok && extractor.Filter("table_name", table.Name.L) {
+		for _, fk := range table.ForeignKeys {
+			if ok && ex.Filter("constraint_name", fk.Name.L) {
 				continue
 			}
-			if !table.IsBaseTable() {
-				continue
+			updateRule, deleteRule := "NO ACTION", "NO ACTION"
+			if model.ReferOptionType(fk.OnUpdate) != 0 {
+				updateRule = model.ReferOptionType(fk.OnUpdate).String()
 			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
+			if model.ReferOptionType(fk.OnDelete) != 0 {
+				deleteRule = model.ReferOptionType(fk.OnDelete).String()
 			}
-			for _, fk := range table.ForeignKeys {
-				if ok && extractor.Filter("constraint_name", fk.Name.L) {
-					continue
-				}
-				updateRule, deleteRule := "NO ACTION", "NO ACTION"
-				if model.ReferOptionType(fk.OnUpdate) != 0 {
-					updateRule = model.ReferOptionType(fk.OnUpdate).String()
-				}
-				if model.ReferOptionType(fk.OnDelete) != 0 {
-					deleteRule = model.ReferOptionType(fk.OnDelete).String()
-				}
-				record := types.MakeDatums(
-					infoschema.CatalogVal, // CONSTRAINT_CATALOG
-					schema.O,              // CONSTRAINT_SCHEMA
-					fk.Name.O,             // CONSTRAINT_NAME
-					infoschema.CatalogVal, // UNIQUE_CONSTRAINT_CATALOG
-					schema.O,              // UNIQUE_CONSTRAINT_SCHEMA
-					"PRIMARY",             // UNIQUE_CONSTRAINT_NAME
-					"NONE",                // MATCH_OPTION
-					updateRule,            // UPDATE_RULE
-					deleteRule,            // DELETE_RULE
-					table.Name.O,          // TABLE_NAME
-					fk.RefTable.O,         // REFERENCED_TABLE_NAME
-				)
-				rows = append(rows, record)
-			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal, // CONSTRAINT_CATALOG
+				schema.O,              // CONSTRAINT_SCHEMA
+				fk.Name.O,             // CONSTRAINT_NAME
+				infoschema.CatalogVal, // UNIQUE_CONSTRAINT_CATALOG
+				schema.O,              // UNIQUE_CONSTRAINT_SCHEMA
+				"PRIMARY",             // UNIQUE_CONSTRAINT_NAME
+				"NONE",                // MATCH_OPTION
+				updateRule,            // UPDATE_RULE
+				deleteRule,            // DELETE_RULE
+				table.Name.O,          // TABLE_NAME
+				fk.RefTable.O,         // REFERENCED_TABLE_NAME
+			)
+			rows = append(rows, record)
 		}
 	}
 	e.rows = rows
@@ -738,17 +730,17 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 
 // Data for inforation_schema.CHECK_CONSTRAINTS
 // This is standards (ISO/IEC 9075-11) compliant and is compatible with the implementation in MySQL as well.
-func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaCheckConstraintsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaCheckConstraintsExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
-	for _, schema := range schemas {
-		if ok && extractor.Filter("constraint_schema", schema.L) {
-			continue
-		}
+	for _, schema := range ex.ListSchemas(e.is) {
 		tables, err := e.is.SchemaTableInfos(ctx, schema)
 		if err != nil {
 			return errors.Trace(err)
@@ -762,7 +754,7 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 					if constraint.State != model.StatePublic {
 						continue
 					}
-					if ok && extractor.Filter("constraint_name", constraint.Name.L) {
+					if ok && ex.Filter("constraint_name", constraint.Name.L) {
 						continue
 					}
 					record := types.MakeDatums(
@@ -782,43 +774,42 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 
 // Data for inforation_schema.TIDB_CHECK_CONSTRAINTS
 // This has non-standard TiDB specific extensions.
-func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBCheckConstraintsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTiDBCheckConstraintsExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
 		return nil
 	}
-	for _, schema := range schemas {
-		if ok && extractor.Filter("constraint_schema", schema.L) {
-			continue
-		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, table := range tables {
-			if len(table.Constraints) > 0 {
-				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, table := range tables {
+		schema := schemas[i]
+		if len(table.Constraints) > 0 {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
+				continue
+			}
+			for _, constraint := range table.Constraints {
+				if constraint.State != model.StatePublic {
 					continue
 				}
-				for _, constraint := range table.Constraints {
-					if constraint.State != model.StatePublic {
-						continue
-					}
-					if ok && extractor.Filter("constraint_name", constraint.Name.L) {
-						continue
-					}
-					record := types.MakeDatums(
-						infoschema.CatalogVal, // CONSTRAINT_CATALOG
-						schema.O,              // CONSTRAINT_SCHEMA
-						constraint.Name.O,     // CONSTRAINT_NAME
-						fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
-						table.Name.O, // TABLE_NAME
-						table.ID,     // TABLE_ID
-					)
-					rows = append(rows, record)
+				if ok && ex.Filter("constraint_name", constraint.Name.L) {
+					continue
 				}
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // CONSTRAINT_CATALOG
+					schema.O,              // CONSTRAINT_SCHEMA
+					constraint.Name.O,     // CONSTRAINT_NAME
+					fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
+					table.Name.O, // TABLE_NAME
+					table.ID,     // TABLE_ID
+				)
+				rows = append(rows, record)
 			}
 		}
 	}
@@ -2539,46 +2530,42 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
+func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaSequenceExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaSequenceExtractor", e.extractor)
+	}
+	if extractor.SkipRequest {
 		return nil
 	}
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		if ok && extractor.Filter("sequence_schema", schema.L) {
+	schemas, tables, err := extractor.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows := make([][]types.Datum, 0, len(tables))
+	for i, table := range tables {
+		schema := schemas[i]
+		if !table.IsSequence() {
 			continue
 		}
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+			continue
 		}
-		for _, table := range tables {
-			if ok && extractor.Filter("sequence_name", table.Name.L) {
-				continue
-			}
-			if !table.IsSequence() {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			record := types.MakeDatums(
-				infoschema.CatalogVal,     // TABLE_CATALOG
-				schema.O,                  // SEQUENCE_SCHEMA
-				table.Name.O,              // SEQUENCE_NAME
-				table.Sequence.Cache,      // Cache
-				table.Sequence.CacheValue, // CACHE_VALUE
-				table.Sequence.Cycle,      // CYCLE
-				table.Sequence.Increment,  // INCREMENT
-				table.Sequence.MaxValue,   // MAXVALUE
-				table.Sequence.MinValue,   // MINVALUE
-				table.Sequence.Start,      // START
-				table.Sequence.Comment,    // COMMENT
-			)
-			rows = append(rows, record)
-		}
+		record := types.MakeDatums(
+			infoschema.CatalogVal,     // TABLE_CATALOG
+			schema.O,                  // SEQUENCE_SCHEMA
+			table.Name.O,              // SEQUENCE_NAME
+			table.Sequence.Cache,      // Cache
+			table.Sequence.CacheValue, // CACHE_VALUE
+			table.Sequence.Cycle,      // CYCLE
+			table.Sequence.Increment,  // INCREMENT
+			table.Sequence.MaxValue,   // MAXVALUE
+			table.Sequence.MinValue,   // MINVALUE
+			table.Sequence.Start,      // START
+			table.Sequence.Comment,    // COMMENT
+		)
+		rows = append(rows, record)
 	}
 	e.rows = rows
 	return nil
