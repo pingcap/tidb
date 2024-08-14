@@ -217,7 +217,9 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if totalCount-float64(lastCount) <= valuesPerBucket || (multiCol && hg.Buckets[bucketIdx].Repeat == 1) {
+		} else if totalCount-float64(lastCount) <= valuesPerBucket ||
+			// Allow the bucket to grow for multi-column unique indexes - provided the numBuckets is set at the default 256
+			(numBuckets == 256 && multiCol && hg.Buckets[bucketIdx].Repeat == 1) {
 			// The bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
