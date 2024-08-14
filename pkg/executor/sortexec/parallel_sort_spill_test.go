@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -142,4 +143,17 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, dataSource)
 		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, dataSource)
 	}
+}
+
+func TestIssue55344(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t0(c0 BOOL);")
+	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES('predicate_push_down'),('column_prune');")
+	tk.MustExec("ADMIN reload opt_rule_blacklist;")
+
+	// Should not be panic
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE 0 ORDER BY -646041453 ASC;")
 }

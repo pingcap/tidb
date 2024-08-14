@@ -16,6 +16,7 @@ package sortexec
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,6 +97,12 @@ type SortExec struct {
 	enableTmpStorageOnOOM bool
 }
 
+// When fetcher and workers are not created, we need to initiatively close these channels
+func (e *SortExec) closeChannels() {
+	close(e.Parallel.resultChannel)
+	close(e.Parallel.chunkChannel)
+}
+
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
 	// TopN not initializes `e.finishCh` but it will call the Close function
@@ -112,8 +119,7 @@ func (e *SortExec) Close() error {
 		}
 	} else if e.finishCh != nil {
 		if e.fetched.CompareAndSwap(false, true) {
-			close(e.Parallel.resultChannel)
-			close(e.Parallel.chunkChannel)
+			e.closeChannels()
 		} else {
 			for range e.Parallel.chunkChannel {
 				e.Parallel.fetcherAndWorkerSyncer.Done()
@@ -260,6 +266,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
 		err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
 		if err != nil {
+			e.closeChannels()
 			return err
 		}
 
@@ -752,6 +759,19 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 }
 
 func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
+	var err error
+	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
+		if val.(bool) {
+			randNum := rand.Int31n(10000)
+			if randNum < 500 {
+				err = errors.NewNoStackError("return error by random failpoint")
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
 		keyType := e.ByItems[i].Expr.GetType(ctx)
@@ -766,7 +786,11 @@ func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
 func (e *SortExec) buildKeyColumns() {
 	e.keyColumns = make([]int, 0, len(e.ByItems))
 	for _, by := range e.ByItems {
-		col := by.Expr.(*expression.Column)
+		col, ok := by.Expr.(*expression.Column)
+		if !ok {
+			// Variable `by` may be constant
+			continue
+		}
 		e.keyColumns = append(e.keyColumns, col.Index)
 	}
 }
