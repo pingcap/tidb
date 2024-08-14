@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -72,6 +72,10 @@ type ProbeV2 interface {
 	// InitForScanRowTable do some pre-work before ScanRowTable, it must be called before ScanRowTable
 	InitForScanRowTable(inSpillMode bool)
 	GetSpilledRowNum() map[int]int // TODO remove it
+	// Return probe collsion
+	GetProbeCollision() uint64
+	// Reset probe collsion
+	ResetProbeCollision()
 }
 
 type offsetAndLength struct {
@@ -145,7 +149,16 @@ type baseJoinProbe struct {
 
 	spilledIdx []int
 
-	spilledRowNum map[int]int // TODO remove it
+	spilledRowNum  map[int]int // TODO remove it
+	probeCollision uint64
+}
+
+func (j *baseJoinProbe) GetProbeCollision() uint64 {
+	return j.probeCollision
+}
+
+func (j *baseJoinProbe) ResetProbeCollision() {
+	j.probeCollision = 0
 }
 
 func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
@@ -670,7 +683,7 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 }
 
 // NewJoinProbe create a join probe used for hash join v2
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool, probeChkFieldTypes []*types.FieldType) ProbeV2 {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool, probeChkFieldTypes []*types.FieldType) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -719,11 +732,11 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		base.rowIndexInfos = make([]*matchedRowInfo, 0, chunk.InitialCapacity)
 	}
 	switch joinType {
-	case core.InnerJoin:
+	case logicalop.InnerJoin:
 		return &innerJoinProbe{base}
-	case core.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
-	case core.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
 	default:
 		panic("unsupported join type")

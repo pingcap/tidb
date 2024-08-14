@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -213,17 +213,17 @@ func printResult(expectedResult []chunk.Row, retTypes []*types.FieldType) {
 	log.Info(result)
 }
 
-func getReturnTypes(joinType plannercore.JoinType, param spillTestParam) []*types.FieldType {
+func getReturnTypes(joinType logicalop.JoinType, param spillTestParam) []*types.FieldType {
 	resultTypes := make([]*types.FieldType, 0, len(param.leftUsed)+len(param.rightUsed))
 	for _, colIndex := range param.leftUsed {
 		resultTypes = append(resultTypes, param.leftTypes[colIndex].Clone())
-		if joinType == plannercore.RightOuterJoin {
+		if joinType == logicalop.RightOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
 	for _, colIndex := range param.rightUsed {
 		resultTypes = append(resultTypes, param.rightTypes[colIndex].Clone())
-		if joinType == plannercore.LeftOuterJoin {
+		if joinType == logicalop.LeftOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
@@ -235,7 +235,7 @@ func getReturnTypes(joinType plannercore.JoinType, param spillTestParam) []*type
 // Case 3: Trigger spill before creating hash table when row table has been built and spill partial partitions
 // Case 4: Trigger re-spill
 // Case 5: Trigger re-spill and exceed max spill round
-func testSpill(t *testing.T, ctx *mock.Context, joinType plannercore.JoinType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, param spillTestParam) {
+func testSpill(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, param spillTestParam) {
 	returnTypes := getReturnTypes(joinType, param)
 
 	var buildKeys []*expression.Column
@@ -315,7 +315,7 @@ func TestInnerJoinSpillBasic(t *testing.T) {
 	spillChunkSize = 100
 
 	for _, param := range params {
-		testSpill(t, ctx, plannercore.InnerJoin, leftDataSource, rightDataSource, param)
+		testSpill(t, ctx, logicalop.InnerJoin, leftDataSource, rightDataSource, param)
 	}
 }
 
@@ -364,7 +364,7 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 	spillChunkSize = 100
 
 	for _, param := range params {
-		testSpill(t, ctx, plannercore.InnerJoin, leftDataSource, rightDataSource, param)
+		testSpill(t, ctx, logicalop.InnerJoin, leftDataSource, rightDataSource, param)
 	}
 }
 
@@ -383,7 +383,7 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 		schema:           buildSchema(retTypes),
 		leftExec:         leftDataSource,
 		rightExec:        rightDataSource,
-		joinType:         plannercore.InnerJoin,
+		joinType:         logicalop.InnerJoin,
 		rightAsBuildSide: true,
 		buildKeys: []*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},

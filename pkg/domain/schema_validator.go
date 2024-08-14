@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -78,6 +79,7 @@ type schemaValidator struct {
 
 // NewSchemaValidator returns a SchemaValidator structure.
 func NewSchemaValidator(lease time.Duration, do *Domain) SchemaValidator {
+	intest.Assert(lease > 0, "lease should be greater than 0")
 	return &schemaValidator{
 		isStarted:        true,
 		lease:            lease,
@@ -236,9 +238,6 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 		logutil.BgLogger().Info("the schema version is too old, TiDB and PD maybe unhealthy after the transaction started",
 			zap.Int64("schemaVer", schemaVer))
 		return nil, ResultFail
-	}
-	if s.lease == 0 {
-		return nil, ResultSucc
 	}
 
 	// Schema changed, result decided by whether related tables change.

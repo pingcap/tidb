@@ -24,7 +24,6 @@ import (
 	gotime "time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -2070,25 +2070,6 @@ func TestPruneModeWarningInfo(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
 }
 
-type testCallback struct {
-	ddl.Callback
-	OnJobRunBeforeExported func(job *model.Job)
-}
-
-func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
-	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
-	require.NoError(t, err)
-	return &testCallback{
-		Callback: defHookFactory(dom),
-	}
-}
-
-func (c *testCallback) OnJobRunBefore(job *model.Job) {
-	if c.OnJobRunBeforeExported != nil {
-		c.OnJobRunBeforeExported(job)
-	}
-}
-
 func TestPartitionByIntListExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
@@ -2304,8 +2285,10 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	tk2.MustExec(`set @@tidb_enable_global_index = ON`)
 
 	tBase := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b), key (c,b), unique key idx_dc(d,c), key(e))`
+	tBaseA := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b) Global, key (c,b), unique key idx_dc(d,c) Global, key(e))`
+	tBaseB := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a) Global, unique key idx_b(b), key (c,b), unique key idx_dc(d,c) Global, key(e))`
 	t2Str := `create table t2 ` + tBase
-	tStr := `create table t ` + tBase
+	tStr := `create table t `
 
 	rows := 100
 	pkInserts := 20
@@ -2316,16 +2299,16 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	twoThirdUintRangeStr := fmt.Sprintf("%d", 2*thirdUintRange)
 	tStart := []string{
 		// Non partitioned
-		tStr,
+		tStr + tBase,
 		// RANGE COLUMNS
-		tStr + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
+		tStr + tBaseA + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
 			`partition pMid values less than (` + twoThirdUintRangeStr + `), partition pLast values less than (maxvalue))`,
 		// KEY
-		tStr + ` partition by key(b) partitions 5`,
+		tStr + tBaseB + ` partition by key(b) partitions 5`,
 		// HASH
-		tStr + ` partition by hash(a) partitions 5`,
+		tStr + tBaseA + ` partition by hash(a) partitions 5`,
 		// HASH with function
-		tStr + ` partition by hash(a DIV 3) partitions 5`,
+		tStr + tBaseA + ` partition by hash(a DIV 3) partitions 5`,
 	}
 	if limitSizeOfTest {
 		tStart = tStart[:2]
@@ -2341,11 +2324,11 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 		`alter table t partition by range (a+2) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
 			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
 			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
-			`partition pLast values less than (maxvalue))`,
+			`partition pLast values less than (maxvalue)) update indexes (idx_a local, idx_dc global, idx_b global)`,
 		// KEY
-		`alter table t partition by key(b) partitions 3`,
+		`alter table t partition by key(b) partitions 3 update indexes(idx_a global, idx_b local, idx_dc global)`,
 		// Hash
-		`alter table t partition by hash(a) partitions 7`,
+		`alter table t partition by hash(a) partitions 7 update indexes (idx_dc global, idx_a local, idx_b global)`,
 	}
 	if limitSizeOfTest {
 		tAlter = tAlter[:2]
@@ -2645,13 +2628,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	rows, pkInserts, pkUpdates, pkDeletes int,
 	reorgRand *rand.Rand,
 	getNewPK func(map[string]struct{}, string, *rand.Rand) string,
-	getValues func(string, bool, *rand.Rand) string) {
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := newTestCallBack(t, dom)
-	dom.DDL().SetHook(hook)
-
+	getValues func(string, bool, *rand.Rand) string,
+) {
 	pkMap := make(map[string]struct{}, rows)
 	pkArray := make([]string, 0, len(pkMap))
 	// Generate a start set:
@@ -2694,7 +2672,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	prevTbl, err := currSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	var hookErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if hookErr != nil {
 			// Enough to find a single error
 			return
@@ -3133,7 +3111,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			logutil.BgLogger().Info("State after ins/upd/del", zap.Int("transitions", transitions),
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
 		}
-	}
+	})
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	tk.MustExec(alterStr)
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)

@@ -208,7 +208,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 
 // AddRecord adds a record into encoder
 func (e *BaseKVEncoder) AddRecord(record []types.Datum) (kv.Handle, error) {
-	return e.table.AddRecord(e.SessionCtx.GetTableCtx(), record)
+	return e.table.AddRecord(e.SessionCtx.GetTableCtx(), record, table.DupKeyCheckSkip)
 }
 
 // TableAllocators returns the allocators of the table

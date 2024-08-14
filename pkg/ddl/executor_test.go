@@ -217,7 +217,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
-			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
+			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
 			wg.Add(1)
 			go func() {
 				_, createErr = tk1.Exec("create table t (b int);")
@@ -232,7 +232,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, createErr)
 	require.NoError(t, fpErr)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow"))
 
 	rs := tk.MustQuery("admin show ddl jobs 3;").Rows()
 	create1JobID := rs[0][0].(string)
@@ -297,10 +297,15 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	}}
 	initialGID := getGlobalID(ctx, t, store)
 	threads, iterations := 10, 500
+	tks := make([]*testkit.TestKit, threads)
+	for i := 0; i < threads; i++ {
+		tks[i] = testkit.NewTestKit(t, store)
+	}
 	var wg util.WaitGroupWrapper
 	for i := 0; i < threads; i++ {
+		idx := i
 		wg.Run(func() {
-			kit := testkit.NewTestKit(t, store)
+			kit := tks[idx]
 			ddlSe := sess.NewSession(kit.Session())
 			for j := 0; j < iterations; j++ {
 				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))

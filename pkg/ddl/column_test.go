@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -52,7 +51,7 @@ func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context,
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -75,7 +74,7 @@ func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -94,7 +93,7 @@ func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Co
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -125,7 +124,7 @@ func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -150,7 +149,7 @@ func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
 	return id
@@ -889,13 +888,13 @@ func TestDropColumns(t *testing.T) {
 
 func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
 	require.NoError(t, dom.Reload())
-	tbl, exist := dom.InfoSchema().TableByID(tableID)
+	tbl, exist := dom.InfoSchema().TableByID(context.Background(), tableID)
 	require.True(t, exist)
 	return tbl
 }
 
 func TestWriteDataWriteOnlyMode(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -903,29 +902,21 @@ func TestWriteDataWriteOnlyMode(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("CREATE TABLE t (`col1` bigint(20) DEFAULT 1,`col2` float,UNIQUE KEY `key1` (`col1`))")
 
-	originalCallback := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originalCallback)
-
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		tk2.MustExec("insert ignore into t values (1, 2)")
 		tk2.MustExec("insert ignore into t values (2, 2)")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t change column `col1` `col1` varchar(20)")
 
-	hook = &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		tk2.MustExec("insert ignore into t values (1)")
 		tk2.MustExec("insert ignore into t values (2)")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t drop column `col1`")
-	dom.DDL().SetHook(originalCallback)
 }

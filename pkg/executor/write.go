@@ -56,7 +56,7 @@ var (
 func updateRecord(
 	ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool,
 	t table.Table,
-	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec,
+	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, dupKeyMode table.DupKeyCheckMode,
 ) (bool, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
@@ -179,7 +179,7 @@ func updateRecord(
 				return false, err
 			}
 
-			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx))
+			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx), dupKeyMode)
 			if err != nil {
 				return false, err
 			}
@@ -193,8 +193,19 @@ func updateRecord(
 			return updated, err
 		}
 	} else {
+		var opts []table.UpdateRecordOption
+		if sctx.GetSessionVars().InTxn() || sc.InHandleForeignKeyTrigger || sc.ForeignKeyTriggerCtx.HasFKCascades {
+			// If txn is auto commit and index is untouched, no need to write index value.
+			// If InHandleForeignKeyTrigger or ForeignKeyTriggerCtx.HasFKCascades is true indicate we may have
+			// foreign key cascade need to handle later, then we still need to write index value,
+			// otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode}
+		} else {
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode, table.SkipWriteUntouchedIndices}
+		}
+
 		// Update record to new value and update index.
-		if err := t.UpdateRecord(ctx, sctx.GetTableCtx(), h, oldData, newData, modified); err != nil {
+		if err := t.UpdateRecord(sctx.GetTableCtx(), h, oldData, newData, modified, opts...); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
 				return false, ec.HandleError(err)
@@ -321,7 +332,7 @@ func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
 func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, tbl *model.TableInfo) error {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
+	pt, tableFound := is.TableByID(context.Background(), tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {
 		return errors.Errorf("exchange partition process table by id failed")
 	}

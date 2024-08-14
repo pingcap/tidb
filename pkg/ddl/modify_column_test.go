@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -49,7 +49,7 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 }
 
 func TestModifyColumnReorgInfo(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	originalTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
@@ -75,14 +75,13 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	var currJob *model.Job
 	var elements []*meta.Element
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID || checkErr != nil || job.SchemaState != model.StateWriteReorganization {
 			return
 		}
@@ -113,9 +112,8 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			indexInfo := tbl.Meta().FindIndexByName("idx2")
 			elements = []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 		}
-	}
+	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
-	dom.DDL().SetHook(hook)
 	err := tk.ExecToErr(sql)
 	require.EqualError(t, err, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
 	require.NoError(t, checkErr)
@@ -189,7 +187,7 @@ func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
 }
 
 func TestModifyColumnNullToNotNull(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 600*time.Millisecond)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -201,19 +199,17 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &callback.TestDDLCallback{Do: dom}
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
 		once.Do(func() {
 			checkErr = tk2.ExecToErr("insert into t1 values ()")
 		})
-	}
-	dom.DDL().SetHook(hook)
+	})
 	err := tk1.ExecToErr("alter table t1 change c2 c2 int not null")
 	require.NoError(t, checkErr)
 	require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
@@ -221,7 +217,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -231,8 +227,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 		}
 		// now c2 has PreventNullInsertFlag, an error is expected.
 		checkErr = tk2.ExecToErr("insert into t1 values ()")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk1.MustExec("alter table t1 change c2 c2 int not null")
 	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
@@ -244,7 +239,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 }
 
 func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 600*time.Millisecond)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -256,19 +251,17 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &callback.TestDDLCallback{Do: dom}
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
 		once.Do(func() {
 			checkErr = tk2.ExecToErr("insert into t1 values ()")
 		})
-	}
-	dom.DDL().SetHook(hook)
+	})
 	err := tk1.ExecToErr("alter table t1 change c2 c2 tinyint not null")
 	require.NoError(t, checkErr)
 	require.EqualError(t, err, "[ddl:1265]Data truncated for column 'c2' at row 1")
@@ -276,7 +269,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -286,8 +279,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 		}
 		// now c2 has PreventNullInsertFlag, an error is expected.
 		checkErr = tk2.ExecToErr("insert into t1 values ()")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk1.MustExec("alter table t1 change c2 c2 tinyint not null")
 	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 

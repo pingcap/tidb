@@ -372,7 +372,7 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 	})
 
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
+	err := d.schemaVerSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))

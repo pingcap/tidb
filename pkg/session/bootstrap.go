@@ -1422,6 +1422,8 @@ func upgrade(s sessiontypes.Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
+	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
+	// but during upgrade we disable it.
 	if isNull {
 		upgradeToVer99Before(s)
 	}
@@ -3380,7 +3382,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-			tbl, ok := is.TableByID(t.ID)
+			tbl, ok := is.TableByID(s.currentCtx, t.ID)
 			intest.Assert(ok, "table not found in infoschema")
 			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {

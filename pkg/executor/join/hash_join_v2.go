@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -48,16 +48,12 @@ var (
 	enableHashJoinV2 = atomic.Bool{}
 )
 
-func init() {
-	enableHashJoinV2.Store(true)
-}
-
 // IsHashJoinV2Enabled return true if hash join v2 is enabled
 func IsHashJoinV2Enabled() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
 	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
 	// change this
-	return enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
+	return !heapObjectsCanMove() && enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
 }
 
 // SetEnableHashJoinV2 enable/disable hash join v2
@@ -535,10 +531,10 @@ func (e *HashJoinV2Exec) initMaxSpillRound() {
 }
 
 func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
-	if fetcher.JoinType == plannercore.LeftOuterJoin && fetcher.RightAsBuildSide {
+	if fetcher.JoinType == logicalop.LeftOuterJoin && fetcher.RightAsBuildSide {
 		return true
 	}
-	if fetcher.JoinType == plannercore.RightOuterJoin && !fetcher.RightAsBuildSide {
+	if fetcher.JoinType == logicalop.RightOuterJoin && !fetcher.RightAsBuildSide {
 		return true
 	}
 	return false
@@ -546,13 +542,13 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 
 func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 	switch e.JoinType {
-	case plannercore.InnerJoin:
+	case logicalop.InnerJoin:
 		return true
-	case plannercore.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		return !e.RightAsBuildSide
-	case plannercore.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		return e.RightAsBuildSide
-	case plannercore.SemiJoin:
+	case logicalop.SemiJoin:
 		return e.RightAsBuildSide
 	default:
 		return false
@@ -569,6 +565,7 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
+		e.ProbeWorkers[i].JoinProbe.ResetProbeCollision()
 	}
 }
 
@@ -705,6 +702,12 @@ func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 	for {
 		// Wait for the wake-up from probe fetcher
 		<-syncer
+
+		if e.stats != nil {
+			for _, prober := range e.ProbeWorkers {
+				e.stats.hashStat.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
+			}
+		}
 
 		if e.finished.Load() {
 			return
@@ -1204,12 +1207,20 @@ func (*hashJoinRuntimeStatsV2) Tp() int {
 func (e *hashJoinRuntimeStatsV2) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{total:")
+		buf.WriteString("build_hash_table:{concurrency:")
+		buf.WriteString(strconv.Itoa(e.concurrent))
+		buf.WriteString(", total:")
 		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(int64(e.fetchAndBuildHashTable) - e.maxBuildHashTable - e.maxPartitionData)))
+		buf.WriteString(", partition:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.partitionData)))
+		buf.WriteString(", max partition:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxPartitionData)))
 		buf.WriteString(", build:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.buildHashTable)))
+		buf.WriteString(", max build:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable)))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {

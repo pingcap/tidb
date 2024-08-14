@@ -19,6 +19,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 )
 
@@ -150,6 +151,10 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 }
 
 func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
+	failpoint.Inject("skipGet", func() {
+		var v V
+		failpoint.Return(v, false)
+	})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e, ok := s.items[key]; ok {

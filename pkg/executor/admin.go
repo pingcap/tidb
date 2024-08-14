@@ -513,8 +513,6 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		return result, err
 	}
 
-	// Constrains is already checked.
-	e.Ctx().GetSessionVars().StmtCtx.BatchCheck = true
 	for _, row := range rows {
 		if row.skip {
 			continue
@@ -526,7 +524,11 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.Ctx().GetTableCtx(), txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
+		_, err = e.index.Create(e.Ctx().GetTableCtx(), txn, row.idxVals, row.handle, row.rsData,
+			table.WithIgnoreAssertion,
+			// Constrains have already been checked.
+			table.DupKeyCheckSkip,
+		)
 		if err != nil {
 			return result, err
 		}

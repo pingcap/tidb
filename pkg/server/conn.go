@@ -1265,6 +1265,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 
 	for _, dbName := range session.GetDBNames(vars) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
+		if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
+			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys))
+		}
 	}
 }
 

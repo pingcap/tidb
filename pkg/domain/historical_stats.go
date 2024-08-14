@@ -15,6 +15,8 @@
 package domain
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
@@ -64,7 +66,7 @@ func (w *HistoricalStatsWorker) DumpHistoricalStats(tableID int64, statsHandle *
 	is := GetDomain(sctx).InfoSchema()
 	isPartition := false
 	var tblInfo *model.TableInfo
-	tbl, existed := is.TableByID(tableID)
+	tbl, existed := is.TableByID(context.Background(), tableID)
 	if !existed {
 		tbl, db, p := is.FindTableByPartitionID(tableID)
 		if !(tbl != nil && db != nil && p != nil) {

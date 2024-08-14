@@ -15,7 +15,6 @@
 package join
 
 import (
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -54,9 +53,7 @@ func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlk
 				j.matchedRowsForCurrentProbeRow++
 				remainCap--
 			} else {
-				if j.ctx.stats != nil {
-					atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
-				}
+				j.probeCollision++
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {

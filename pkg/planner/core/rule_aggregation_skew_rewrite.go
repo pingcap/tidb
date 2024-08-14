@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
-type skewDistinctAggRewriter struct {
+// SkewDistinctAggRewriter rewrites group distinct aggregate into 2 level aggregates.
+type SkewDistinctAggRewriter struct {
 }
 
 // skewDistinctAggRewriter will rewrite group distinct aggregate into 2 level aggregates, e.g.:
@@ -49,7 +50,7 @@ type skewDistinctAggRewriter struct {
 // - The aggregate has 1 and only 1 distinct aggregate function (limited to count, avg, sum)
 //
 // This rule is disabled by default. Use tidb_opt_skew_distinct_agg to enable the rule.
-func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// only group aggregate is applicable
 	if len(agg.GroupByItems) == 0 {
 		return nil
@@ -193,7 +194,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	}
 
 	// now create the bottom and top aggregate operators
-	bottomAgg := LogicalAggregation{
+	bottomAgg := logicalop.LogicalAggregation{
 		AggFuncs:      bottomAggFuncs,
 		GroupByItems:  bottomAggGroupbyItems,
 		PreferAggType: agg.PreferAggType,
@@ -201,7 +202,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	bottomAgg.SetChildren(agg.Children()...)
 	bottomAgg.SetSchema(bottomAggSchema)
 
-	topAgg := LogicalAggregation{
+	topAgg := logicalop.LogicalAggregation{
 		AggFuncs:       topAggFuncs,
 		GroupByItems:   agg.GroupByItems,
 		PreferAggToCop: agg.PreferAggToCop,
@@ -237,7 +238,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	return proj
 }
 
-func (*skewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc) bool {
+func (*SkewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc) bool {
 	if aggFunc.Mode != aggregation.CompleteMode {
 		return false
 	}
@@ -265,7 +266,7 @@ func (*skewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc)
 	}
 }
 
-func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
+func appendSkewDistinctAggRewriteTraceStep(agg *logicalop.LogicalAggregation, result base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%v_%v has a distinct agg function", agg.TP(), agg.ID())
 	}
@@ -276,18 +277,19 @@ func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result base.
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func (a *skewDistinctAggRewriter) optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (a *SkewDistinctAggRewriter) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, planChanged, err := a.optimize(ctx, child, opt)
+		newChild, planChanged, err := a.Optimize(ctx, child, opt)
 		if err != nil {
 			return nil, planChanged, err
 		}
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
-	agg, ok := p.(*LogicalAggregation)
+	agg, ok := p.(*logicalop.LogicalAggregation)
 	if !ok {
 		return p, planChanged, nil
 	}
@@ -297,6 +299,7 @@ func (a *skewDistinctAggRewriter) optimize(ctx context.Context, p base.LogicalPl
 	return p, planChanged, nil
 }
 
-func (*skewDistinctAggRewriter) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*SkewDistinctAggRewriter) Name() string {
 	return "skew_distinct_agg_rewrite"
 }

@@ -348,7 +348,7 @@ func TestTikvRegionStatus(t *testing.T) {
 		"1 test test_t2 1 p_a 1 p1",
 	))
 
-	tk.MustExec("alter table test_t2 add unique p_b (b);")
+	tk.MustExec("alter table test_t2 add unique p_b (b) global")
 	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
 		"1 test test_t2 0 <nil> 1 p0",
 		"1 test test_t2 0 <nil> 1 p1",

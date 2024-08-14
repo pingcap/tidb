@@ -183,7 +183,7 @@ func (i *TemporaryTableSnapshotInterceptor) iterTable(tblID int64, snap kv.Snaps
 }
 
 func (i *TemporaryTableSnapshotInterceptor) temporaryTableInfoByID(tblID int64) (*model.TableInfo, bool) {
-	if tbl, ok := i.is.TableByID(tblID); ok {
+	if tbl, ok := i.is.TableByID(context.Background(), tblID); ok {
 		tblInfo := tbl.Meta()
 		if tblInfo.TempTableType != model.TempTableNone {
 			return tblInfo, true

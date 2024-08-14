@@ -417,6 +417,6 @@ func buildIntoAccessPath(
 	}
 
 	// 3. Build the final access path
-	ret := ds.buildPartialPathUp4MVIndex(partialPaths, false, tableFilter, ds.TableStats.HistColl)
+	ret := buildPartialPathUp4MVIndex(partialPaths, false, tableFilter, ds.TableStats.HistColl)
 	return ret
 }

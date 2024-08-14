@@ -800,9 +800,13 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
-				tableInfo, err := json.Marshal(table.Desired)
-				if err != nil {
-					return errors.Trace(err)
+				tableInfo := []byte("")
+				if cfg.TikvImporter.AddIndexBySQL {
+					// see comments in FileCheckpointsDB.Initialize
+					tableInfo, err = json.Marshal(table.Desired)
+					if err != nil {
+						return errors.Trace(err)
+					}
 				}
 				_, err = stmt.ExecContext(c, cfg.TaskID, tableName, CheckpointStatusLoaded, table.ID, tableInfo)
 				if err != nil {
@@ -933,8 +937,10 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 				return errors.NotFoundf("checkpoint for table %s", tableName)
 			}
 		}
-		if err := json.Unmarshal(rawTableInfo, &cp.TableInfo); err != nil {
-			return errors.Trace(err)
+		if len(rawTableInfo) > 0 {
+			if err := json.Unmarshal(rawTableInfo, &cp.TableInfo); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		cp.Checksum = verify.MakeKVChecksum(bytes, kvs, checksum)
 		cp.Status = CheckpointStatus(status)
@@ -1246,13 +1252,22 @@ func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config,
 		cpdb.checkpoints.Checkpoints = make(map[string]*checkpointspb.TableCheckpointModel)
 	}
 
+	var err error
 	for _, db := range dbInfo {
 		for _, table := range db.Tables {
 			tableName := common.UniqueTable(db.Name, table.Name)
 			if _, ok := cpdb.checkpoints.Checkpoints[tableName]; !ok {
-				tableInfo, err := json.Marshal(table.Desired)
-				if err != nil {
-					return errors.Trace(err)
+				var tableInfo []byte
+				if cfg.TikvImporter.AddIndexBySQL {
+					// tableInfo is quite large in most case, when importing many
+					// small tables, writing tableInfo will make checkpoint file
+					// vary large, and save checkpoint will become bottleneck, so
+					// we only store table info if we are going to add index by SQL
+					// where it's required.
+					tableInfo, err = json.Marshal(table.Desired)
+					if err != nil {
+						return errors.Trace(err)
+					}
 				}
 				cpdb.checkpoints.Checkpoints[tableName] = &checkpointspb.TableCheckpointModel{
 					Status:    uint32(CheckpointStatusLoaded),
@@ -1308,8 +1323,10 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 	}
 
 	var tableInfo *model.TableInfo
-	if err := json.Unmarshal(tableModel.TableInfo, &tableInfo); err != nil {
-		return nil, errors.Trace(err)
+	if len(tableModel.TableInfo) > 0 {
+		if err := json.Unmarshal(tableModel.TableInfo, &tableInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	cp := &TableCheckpoint{

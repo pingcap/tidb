@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -783,7 +784,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	return buffer.String()
 }
 
-func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop.FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
 		return

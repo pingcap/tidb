@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
@@ -21,16 +21,16 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
-	logicalop.BaseLogicalPlan
+	BaseLogicalPlan
 
 	Conditions []expression.Expression
 
@@ -39,7 +39,7 @@ type LogicalUnionScan struct {
 
 // Init initializes LogicalUnionScan.
 func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnionScan {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)
 	return &p
 }
 
@@ -125,7 +125,7 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalUnionScan) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPhysicalPlans4LogicalUnionScan(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan(p, prop)
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.

@@ -519,17 +519,13 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 		})
 		return 0, w.handleJobDone(d, job, t)
 	}
-	d.mu.RLock()
-	d.mu.hook.OnJobRunBefore(job)
-	d.mu.RUnlock()
+	failpoint.InjectCall("onJobRunBefore", job)
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(d, t, job)
 
-	d.mu.RLock()
-	d.mu.hook.OnJobRunAfter(job)
-	d.mu.RUnlock()
+	failpoint.InjectCall("onJobRunAfter", job)
 
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
@@ -979,7 +975,7 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, latestSchemaVersion int64
 		return nil
 	}
 
-	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
+	err = d.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if variable.EnableMDL.Load() {

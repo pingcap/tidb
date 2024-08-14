@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -58,7 +58,7 @@ type hashJoinCtxBase struct {
 	finished      atomic.Bool
 	IsNullEQ      []bool
 	buildFinished chan error
-	JoinType      plannercore.JoinType
+	JoinType      logicalop.JoinType
 	IsNullAware   bool
 	memTracker    *memory.Tracker // track memory usage.
 	diskTracker   *disk.Tracker   // track disk usage.
