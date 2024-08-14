@@ -2082,6 +2082,16 @@ func (d *Datum) ToString() (string, error) {
 	}
 }
 
+// StringWithCtx implements Explainable interface.
+func (d *Datum) StringWithCtx(ctx ParamValues, redact string) string {
+	switch d.Kind() {
+	case KindVectorFloat32:
+		return d.GetVectorFloat32().StringWithCtx(ctx, redact)
+	default:
+		return fmt.Sprintf("%v", d.GetValue())
+	}
+}
+
 // ToBytes gets the bytes representation of the datum.
 func (d *Datum) ToBytes() ([]byte, error) {
 	switch d.k {

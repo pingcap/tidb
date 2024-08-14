@@ -16,6 +16,7 @@ package types
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"strconv"
 	"unsafe"
@@ -24,6 +25,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
+
+// ParamValues is a readonly interface to return param
+type ParamValues interface {
+	// GetParamValue returns the value of the parameter by index.
+	GetParamValue(idx int) (Datum, error)
+}
 
 func init() {
 	var buf [4]byte
@@ -93,7 +100,40 @@ func (v VectorFloat32) Elements() []float32 {
 	return unsafe.Slice((*float32)(unsafe.Pointer(&v.data[4])), l)
 }
 
-// String returns a string representation of the vector, which can be parsed later.
+// StringWithCtx implements Explainable interface.
+// In EXPLAIN context, we truncate the elements to avoid too long output.
+func (v VectorFloat32) StringWithCtx(ctx ParamValues, redact string) string {
+	const (
+		maxDisplayElements = 5
+	)
+
+	truncatedElements := 0
+	elements := v.Elements()
+
+	if len(elements) > maxDisplayElements {
+		truncatedElements = len(elements) - maxDisplayElements
+		elements = elements[:maxDisplayElements]
+	}
+
+	buf := make([]byte, 0, 2+v.Len()*2)
+	buf = append(buf, '[')
+	for i, v := range elements {
+		if i > 0 {
+			buf = append(buf, ","...)
+		}
+		buf = strconv.AppendFloat(buf, float64(v), 'g', 2, 32)
+	}
+	if truncatedElements > 0 {
+		buf = append(buf, fmt.Sprintf(",(%d more)...", truncatedElements)...)
+	}
+	buf = append(buf, ']')
+
+	// buf is not used elsewhere, so it's safe to just cast to String
+	return unsafe.String(unsafe.SliceData(buf), len(buf))
+}
+
+// String implements the fmt.Stringer interface.
+// It returns a string representation of the vector which can be parsed later.
 func (v VectorFloat32) String() string {
 	elements := v.Elements()
 
