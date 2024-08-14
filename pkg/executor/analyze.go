@@ -100,16 +100,16 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 
 	// Get the min number of goroutines for parallel execution.
-	concurrency, err := getBuildStatsConcurrency(e.Ctx())
+	buildStatsConcurrency, err := getBuildStatsConcurrency(e.Ctx())
 	if err != nil {
 		return err
 	}
-	concurrency = min(len(tasks), concurrency)
+	buildStatsConcurrency = min(len(tasks), buildStatsConcurrency)
 
 	// Start workers with channel to collect results.
-	taskCh := make(chan *analyzeTask, concurrency)
+	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
-	for i := 0; i < concurrency; i++ {
+	for i := 0; i < buildStatsConcurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
@@ -118,7 +118,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return e.handleResultsError(concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
+		return e.handleResultsError(buildStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec)
@@ -423,6 +423,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
+	// Only if all the analyze workers exit can we close the saveResultsCh.
 	for panicCnt < buildStatsConcurrency {
 		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			close(saveResultsCh)
