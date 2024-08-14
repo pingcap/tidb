@@ -579,7 +579,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)
-	jobCtx.delUnSynced(job.ID)
+	jobCtx.removeUnSynced(job.ID)
 
 	failpoint.InjectCall("onJobUpdated", job)
 	return nil

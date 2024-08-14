@@ -281,7 +281,7 @@ func (w *unSyncedJobTracker) isUnSynced(jobID int64) bool {
 	return ok
 }
 
-func (w *unSyncedJobTracker) delUnSynced(jobID int64) {
+func (w *unSyncedJobTracker) removeUnSynced(jobID int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.unSyncedJobs, jobID)
