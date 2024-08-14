@@ -2244,7 +2244,9 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
-		columns = append(columns, &colColumn.Column)
+		// fix the liner warning.
+		tmp := colColumn
+		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
 	if la.StatsInfo().RowCount != 0 {
