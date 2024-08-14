@@ -415,6 +415,9 @@ func TestGetCorrectResult(t *testing.T) {
 	require.NoError(t, err)
 	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers"))
 
+	hardLimitBytesNum := int64(6000000)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
+
 	finished := atomic.Bool{}
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -430,9 +433,6 @@ func TestGetCorrectResult(t *testing.T) {
 		}
 		wg.Done()
 	}()
-
-	hardLimitBytesNum := int64(6000000)
-	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
 
 	aggExec := buildHashAggExecutor(t, ctx, dataSource)
 	for i := 0; i < 5; i++ {

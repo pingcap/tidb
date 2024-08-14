@@ -109,8 +109,6 @@ type MutateContext interface {
 	AllocatorContext
 	// GetExprCtx returns the context to build or evaluate expressions
 	GetExprCtx() exprctx.ExprContext
-	// GetSessionVars returns the session variables.
-	GetSessionVars() *variable.SessionVars
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn

@@ -61,7 +61,8 @@ func updateRecord(
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
 
-	sc := sctx.GetSessionVars().StmtCtx
+	sessVars := sctx.GetSessionVars()
+	sc := sessVars.StmtCtx
 	changed, handleChanged := false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
@@ -130,11 +131,11 @@ func updateRecord(
 	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
-		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
+		if sessVars.ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
 		keySet := lockRowKey
-		if sctx.GetSessionVars().LockUnchangedKeys {
+		if sessVars.LockUnchangedKeys {
 			keySet |= lockUniqueKeys
 		}
 		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, keySet)
@@ -161,6 +162,7 @@ func updateRecord(
 		}
 	}
 
+	pessimisticLazyCheck := getPessimisticLazyCheckMode(sessVars)
 	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
 		// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
@@ -179,7 +181,7 @@ func updateRecord(
 				return false, err
 			}
 
-			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx), dupKeyMode)
+			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck)
 			if err != nil {
 				return false, err
 			}
@@ -187,32 +189,32 @@ func updateRecord(
 			return true, nil
 		}(); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
-				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
+				ec := sc.ErrCtx()
 				return false, ec.HandleError(err)
 			}
 			return updated, err
 		}
 	} else {
 		var opts []table.UpdateRecordOption
-		if sctx.GetSessionVars().InTxn() || sc.InHandleForeignKeyTrigger || sc.ForeignKeyTriggerCtx.HasFKCascades {
+		if sessVars.InTxn() || sc.InHandleForeignKeyTrigger || sc.ForeignKeyTriggerCtx.HasFKCascades {
 			// If txn is auto commit and index is untouched, no need to write index value.
 			// If InHandleForeignKeyTrigger or ForeignKeyTriggerCtx.HasFKCascades is true indicate we may have
 			// foreign key cascade need to handle later, then we still need to write index value,
 			// otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
-			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode}
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck}
 		} else {
-			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode, table.SkipWriteUntouchedIndices}
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck, table.SkipWriteUntouchedIndices}
 		}
 
 		// Update record to new value and update index.
 		if err := t.UpdateRecord(sctx.GetTableCtx(), h, oldData, newData, modified, opts...); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
-				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
+				ec := sc.ErrCtx()
 				return false, ec.HandleError(err)
 			}
 			return false, err
 		}
-		if sctx.GetSessionVars().LockUnchangedKeys {
+		if sessVars.LockUnchangedKeys {
 			// Lock unique keys when handle unchanged
 			if _, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockUniqueKeys); err != nil {
 				return false, err

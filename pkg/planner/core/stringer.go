@@ -71,7 +71,7 @@ func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int
 		}
 	case *DataSource:
 		strs = append(strs, "{"+x.FDs().String()+"}")
-	case *LogicalApply:
+	case *logicalop.LogicalApply:
 		strs = append(strs, "{"+x.FDs().String()+"}")
 	case *logicalop.LogicalJoin:
 		strs = append(strs, "{"+x.FDs().String()+"}")
@@ -160,7 +160,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.RightJoinKeys[i].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *LogicalApply, *PhysicalApply:
+	case *logicalop.LogicalApply, *PhysicalApply:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

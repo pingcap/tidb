@@ -271,7 +271,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			}
 		case *logicalop.LogicalJoin:
 			c.collectPredicateColumnsForJoin(x)
-		case *LogicalApply:
+		case *logicalop.LogicalApply:
 			c.collectPredicateColumnsForJoin(&x.LogicalJoin)
 			// Assume statistics of correlated columns are needed.
 			// Correlated columns can be found in LogicalApply.Children()[0].Schema(). Since we already visit LogicalApply.Children()[0],
