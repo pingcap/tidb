@@ -489,6 +489,124 @@ func TestTiFlashSystemTableWithTiFlashV640(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
+func TestColumnTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbl1(col_1 int primary key, col_2 int, col_4 int);")
+	tk.MustExec("create table tbl2(col_1 int primary key, col_2 int, col_3 int);")
+	tk.MustExec("create view view1 as select min(col_1), col_2, max(col_4) as max4 from tbl1 group by col_2;")
+
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = 'test';").Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_1",
+			"test|tbl1|col_2",
+			"test|tbl1|col_4",
+			"test|tbl2|col_1",
+			"test|tbl2|col_2",
+			"test|tbl2|col_3",
+			"test|view1|min(col_1)",
+			"test|view1|col_2",
+			"test|view1|max4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_NAME = 'view1' or TABLE_NAME = 'tbl1'`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_1",
+			"test|tbl1|col_2",
+			"test|tbl1|col_4",
+			"test|view1|min(col_1)",
+			"test|view1|col_2",
+			"test|view1|max4"))
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where COLUMN_NAME = \"col_2\";").Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_2",
+			"test|tbl2|col_2",
+			"test|view1|col_2"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tbl2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl2|col_1",
+			"test|tbl2|col_2",
+			"test|tbl2|col_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and COLUMN_NAME = 'col_4'`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_NAME = 'view1' and COLUMN_NAME like 'm%%';`).Check(
+		testkit.RowsWithSep("|",
+			"test|view1|min(col_1)",
+			"test|view1|max4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tbl1' and COLUMN_NAME = 'col_2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_2"))
+	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
+		testkit.RowsWithSep("|", "4923"))
+}
+
+func TestIndexUsageTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table idt1(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_3(col_1, col_2));")
+	tk.MustExec("create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));")
+
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3",
+			"test|idt2|idx_1",
+			"test|idt2|idx_2",
+			"test|idt2|idx_4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1'`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3"))
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3'").Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_2",
+			"test|idt2|idx_2"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_1';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_4';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt2|idx_4"))
+	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
+		testkit.RowsWithSep("|", "72"))
+
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt3';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where INDEX_NAME = 'IDX_5';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt0';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test1' and INDEX_NAME = 'idx_2';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_3';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_4';`).Check(testkit.Rows())
+}
+
 // https://github.com/pingcap/tidb/issues/32459.
 func TestJoinSystemTableContainsView(t *testing.T) {
 	store := testkit.CreateMockStore(t)

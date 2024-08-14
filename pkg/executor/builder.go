@@ -2332,7 +2332,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 				retriever: &hugeMemTableRetriever{
 					table:              v.Table,
 					columns:            v.Columns,
-					extractor:          v.Extractor.(*plannercore.ColumnsTableExtractor),
+					extractor:          v.Extractor.(*plannercore.InfoSchemaColumnsExtractor),
 					viewSchemaMap:      make(map[int64]*expression.Schema),
 					viewOutputNamesMap: make(map[int64]types.NameSlice),
 				},
