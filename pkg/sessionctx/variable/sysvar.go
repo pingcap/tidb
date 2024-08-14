@@ -2632,7 +2632,9 @@ var defaultSysVars = []*SysVar{
 		Name:     TiDBAnalyzePartitionConcurrency,
 		Value:    strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
 		Type:     TypeInt,
-		MinValue: 1, SetSession: func(s *SessionVars, val string) error {
+		MinValue: 1,
+		MaxValue: 128,
+		SetSession: func(s *SessionVars, val string) error {
 			s.AnalyzePartitionConcurrency = int(TidbOptInt64(val, DefTiDBAnalyzePartitionConcurrency))
 			return nil
 		},
