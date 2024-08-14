@@ -431,7 +431,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			} else {
-				logutil.BgLogger().Error("save analyze results failed", zap.Error(err))
+				logutil.BgLogger().Error("receive error when saving analyze results", zap.Error(err))
 			}
 			finishJobWithLog(statsHandle, results.Job, err)
 			continue
