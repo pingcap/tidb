@@ -17,6 +17,7 @@ package internal
 import (
 	"context"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -163,12 +164,16 @@ func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableInfo {
 	colID, err := GenGlobalID(store)
 	require.NoError(t, err)
-	colInfo := &model.ColumnInfo{
-		ID:        colID,
-		Name:      model.NewCIStr("a"),
-		Offset:    0,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		State:     model.StatePublic,
+
+	cols := make([]*model.ColumnInfo, 10)
+	for i := 0; i < 10; i++ {
+		cols[i] = &model.ColumnInfo{
+			ID:        colID,
+			Name:      model.NewCIStr("a" + strconv.Itoa(i)),
+			Offset:    i,
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			State:     model.StatePublic,
+		}
 	}
 
 	tblID, err := GenGlobalID(store)
@@ -177,7 +182,7 @@ func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableI
 	return &model.TableInfo{
 		ID:      tblID,
 		Name:    model.NewCIStr(tblName),
-		Columns: []*model.ColumnInfo{colInfo},
+		Columns: cols,
 		State:   model.StatePublic,
 	}
 }
