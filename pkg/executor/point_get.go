@@ -248,6 +248,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 func (e *PointGetExecutor) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer e.Ctx().GetSessionVars().StmtCtx.SyncExecDetails.MergeTikvCPUTime(e.stats.SnapshotRuntimeStats.timeDetail.ProcessTime.Seconds())
 	}
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)

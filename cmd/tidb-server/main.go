@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	sessionprofile "github.com/pingcap/tidb/pkg/util/session-profile"
 	"io/fs"
 	"os"
 	"runtime"
@@ -336,6 +337,7 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL()
+	sessionprofile.SetupProcessProfiling(svr)
 	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
@@ -968,6 +970,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	disk.CleanUp()
 	closeStmtSummary()
 	topsql.Close()
+	sessionprofile.Close()
 	cgmon.StopCgroupMonitor()
 }
 

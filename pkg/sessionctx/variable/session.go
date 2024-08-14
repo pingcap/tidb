@@ -798,6 +798,9 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
+	// SqlID is the unique id of sql
+	SqlID atomic.Uint64
+
 	// PlanID is the unique id of logical and physical plan.
 	PlanID atomic.Int32
 
@@ -1157,6 +1160,9 @@ type SessionVars struct {
 
 	// DurationCompile is the duration of compiling AST to execution plan of the last query.
 	DurationCompile time.Duration
+
+	// DurationTiDBCpu is the duration of profiling the current session cpu consumed time.
+	DurationTiDBCpu uint64
 
 	// RewritePhaseInfo records all information about the rewriting phase.
 	RewritePhaseInfo
@@ -1872,6 +1878,11 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
+}
+
+// AllocNewSqlID alloc new ID
+func (s *SessionVars) AllocNewSqlID() uint64 {
+	return s.SqlID.Add(1)
 }
 
 // GetTotalCostDuration returns the total cost duration of the last statement in the current session.

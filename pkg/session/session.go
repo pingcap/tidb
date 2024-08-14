@@ -1639,7 +1639,10 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 			// Reset the goroutine label when internal sql execute finish.
 			// Specifically reset in ExecRestrictedStmt function.
 			s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
-			topsql.AttachAndRegisterSQLInfo(ctx, normalized, digest, s.sessionVars.InRestrictedSQL)
+			ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalized, digest, s.sessionVars.InRestrictedSQL)
+
+			//sqlId := s.sessionVars.SqlID.Load()
+			//ctx = session_profile.AttachAndRegisterProcessInfo(ctx, s.sessionVars.ConnectionID, sqlId)
 		}
 	}
 	return stmts[0], nil
@@ -2032,6 +2035,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if topsqlstate.TopSQLEnabled() {
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
 		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
+		//sqlId := s.sessionVars.SqlID.Load()
+		//ctx = session_profile.AttachAndRegisterProcessInfo(ctx, s.sessionVars.ConnectionID, sqlId)
 	}
 	if sessVars.InPlanReplayer {
 		sessVars.StmtCtx.EnableOptimizerDebugTrace = true

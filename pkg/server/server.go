@@ -855,6 +855,26 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	return rs
 }
 
+func (s *Server) UpdateProcessCpuTime(id uint64, sqlId uint64, cpuTimeInSeconds float64) {
+	s.rwlock.RLock()
+	conn, ok := s.clients[id]
+	s.rwlock.RUnlock()
+	if !ok || conn.ctx.GetSessionVars().SqlID.Load() != sqlId {
+		logutil.BgLogger().Info("ConnIdOrSqlID Not match", zap.Bool("ConnID Match", ok))
+		if ok {
+			logutil.BgLogger().Info("SqlIDValue: ", zap.Uint64("SqlID", conn.ctx.GetSessionVars().SqlID.Load()))
+		}
+		return
+	}
+	vars := conn.ctx.GetSessionVars()
+	if vars != nil {
+		sc := vars.StmtCtx
+		if sc != nil {
+			vars.StmtCtx.SyncExecDetails.MergeTidbCPUTime(cpuTimeInSeconds)
+		}
+	}
+}
+
 // GetProcessInfo implements the SessionManager interface.
 func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()

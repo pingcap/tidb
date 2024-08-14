@@ -523,6 +523,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		sql = prepared.sql
 	}
 	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute, 0)
+	logutil.BgLogger().Info("Fetch", zap.Uint64("ConnID", cc.connectionID), zap.Uint64("SQLID", cc.ctx.GetSessionVars().SqlID.Load()), zap.String("CurrentProcessList", cc.ctx.ShowProcess().String()))
 	rs := stmt.GetResultSet()
 
 	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))

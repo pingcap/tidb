@@ -36,13 +36,16 @@ import (
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	DetailsNeedP90
-	CommitDetail     *util.CommitDetails
-	LockKeysDetail   *util.LockKeysDetails
-	ScanDetail       *util.ScanDetail
-	CopTime          time.Duration
-	BackoffTime      time.Duration
-	LockKeysDuration time.Duration
-	RequestCount     int
+	CommitDetail      *util.CommitDetails
+	LockKeysDetail    *util.LockKeysDetails
+	ScanDetail        *util.ScanDetail
+	CopTime           time.Duration
+	BackoffTime       time.Duration
+	LockKeysDuration  time.Duration
+	TidbCPUSeconds    float64
+	TikvCPUSeconds    float64
+	TiflashCPUSeconds float64
+	RequestCount      int
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
@@ -398,6 +401,7 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 		s.execDetails.RequestCount++
 		s.mergeScanDetail(details.ScanDetail)
 		s.mergeTimeDetail(details.TimeDetail)
+		s.MergeTikvCPUTime(details.TimeDetail.ProcessTime.Seconds())
 		detail := &DetailsNeedP90{
 			BackoffSleep:  details.BackoffSleep,
 			BackoffTimes:  details.BackoffTimes,
@@ -427,10 +431,25 @@ func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 	s.execDetails.ScanDetail.Merge(scanDetail)
 }
 
-// MergeTimeDetail merges time details into self.
+// mergeTimeDetail merges time details into self.
 func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
 	s.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
 	s.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
+}
+
+// MergeTikvCPUTime merges tikvCPU time into self.
+func (s *SyncExecDetails) MergeTikvCPUTime(t float64) {
+	s.execDetails.TikvCPUSeconds += t
+}
+
+// MergeTidbCPUTime merges tikvCPU time into self.
+func (s *SyncExecDetails) MergeTidbCPUTime(t float64) {
+	s.execDetails.TidbCPUSeconds += t
+}
+
+// MergeTiflashCPUTime merges tiflashCPU time into self.
+func (s *SyncExecDetails) MergeTiflashCPUTime(t float64) {
+	s.execDetails.TiflashCPUSeconds += t
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

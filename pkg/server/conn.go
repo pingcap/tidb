@@ -42,6 +42,7 @@ import (
 	"encoding/binary"
 	goerr "errors"
 	"fmt"
+	session_profile "github.com/pingcap/tidb/pkg/util/session-profile"
 	"io"
 	"net"
 	"os/user"
@@ -1309,8 +1310,19 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
+	sqlID := cc.ctx.GetSessionVars().AllocNewSqlID()
 	if topsqlstate.TopSQLEnabled() {
-		defer pprof.SetGoroutineLabels(ctx)
+		rawCtx := ctx
+		defer func() {
+			logutil.BgLogger().Info("EnterDispatchDefer", zap.Uint64("ConnID", cc.connectionID), zap.Uint64("sqlID", sqlID))
+			pprof.ForLabels(rawCtx, func(key string, value string) bool {
+				logutil.BgLogger().Info("Defered labels: ", zap.String("key", key), zap.String("value", value))
+				return true
+			})
+			pprof.SetGoroutineLabels(rawCtx)
+		}()
+
+		ctx = session_profile.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
@@ -1350,6 +1362,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	vars := cc.ctx.GetSessionVars()
 	// reset killed for each request
 	vars.SQLKiller.Reset()
+	if sc := vars.StmtCtx; sc != nil {
+		sc.SyncExecDetails.Reset()
+	}
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
@@ -1363,6 +1378,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
 	}
 
+	logutil.BgLogger().Info("DispatchCmdInfo", zap.Uint64("ConnID", cc.connectionID), zap.Uint64("SqlID", sqlID), zap.Int8("", int8(cmd)), zap.String("SQL", dataStr))
 	switch cmd {
 	case mysql.ComQuit:
 		return io.EOF

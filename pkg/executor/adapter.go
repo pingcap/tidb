@@ -1690,6 +1690,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
+	if !sessVars.InRestrictedSQL {
+		logutil.BgLogger().Info("Debug Usage")
+	}
 	slowLog := sessVars.SlowLogFormat(slowItems)
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
@@ -2124,6 +2127,9 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 		return ctx
 	}
 	topsql.RegisterPlan(normalizedPlan, planDigest)
+
+	//sqlId := vars.SqlID.Load()
+	//ctx = session_profile.AttachAndRegisterProcessInfo(ctx, vars.ConnectionID, sqlId)
 	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 }
 
