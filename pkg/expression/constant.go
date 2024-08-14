@@ -156,8 +156,22 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 		return c.Value.StringWithCtx(ctx, redact)
 	}
 	if redact == perrors.RedactLogDisable {
+		if c.Value.Kind() == types.KindString || c.Value.Kind() == types.KindBytes {
+			str := c.Value.GetString()
+			if len(str) > 64 {
+				str = fmt.Sprintf("%s(len:%d)", str[:64], len(str))
+			}
+			return str
+		}
 		return fmt.Sprintf("%v", c.Value.GetValue())
 	} else if redact == perrors.RedactLogMarker {
+		if c.Value.Kind() == types.KindString || c.Value.Kind() == types.KindBytes {
+			str := c.Value.GetString()
+			if len(str) > 64 {
+				str = fmt.Sprintf("<%s(len:%d)>", str[:64], len(str))
+			}
+			return str
+		}
 		return fmt.Sprintf("‹%v›", c.Value.GetValue())
 	}
 	return "?"

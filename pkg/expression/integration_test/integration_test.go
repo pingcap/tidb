@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/assert"
@@ -132,6 +133,86 @@ func TestVectorConstantExplain(t *testing.T) {
 		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
 		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
+
+	// Prepare a large Vector string
+	vb := strings.Builder{}
+	vb.WriteString("[")
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			vb.WriteString(",")
+		}
+		vb.WriteString("100")
+	}
+	vb.WriteString("]")
+
+	tk.MustExec("set session tidb_redact_log=off")
+	stmtID, _, _, err := tk.Session().PrepareStmt("SELECT VEC_COSINE_DISTANCE(c, ?) FROM t")
+	require.Nil(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, expression.Args2Expressions4Test(vb.String()))
+	require.NoError(t, err)
+
+	p, ok := tk.Session().GetSessionVars().StmtCtx.GetPlan().(base.Plan)
+	require.True(t, ok)
+
+	flat := plannercore.FlattenPhysicalPlan(p, true)
+	encodedPlanTree := plannercore.EncodeFlatPlan(flat)
+	planTree, err := plancodec.DecodePlan(encodedPlanTree)
+	require.NoError(t, err)
+	require.Equal(t, strings.Join([]string{
+		"	id                 	task     	estRows	operator info                                                                                                                   	actRows	execution info  	memory 	disk",
+		"	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100(len:401), vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A",
+		"	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                            	0      	time:0s, loops:0	0 Bytes	N/A",
+		"	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                         	0      	                	N/A    	N/A",
+	}, "\n"), planTree)
+
+	// No need to check result at all.
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
+
+	tk.MustExec("set session tidb_redact_log=marker")
+	stmtID, _, _, err = tk.Session().PrepareStmt("SELECT VEC_COSINE_DISTANCE(c, ?) FROM t")
+	require.Nil(t, err)
+	rs, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, expression.Args2Expressions4Test(vb.String()))
+	require.NoError(t, err)
+
+	p, ok = tk.Session().GetSessionVars().StmtCtx.GetPlan().(base.Plan)
+	require.True(t, ok)
+
+	flat = plannercore.FlattenPhysicalPlan(p, true)
+	encodedPlanTree = plannercore.EncodeFlatPlan(flat)
+	planTree, err = plancodec.DecodePlan(encodedPlanTree)
+	require.NoError(t, err)
+	require.Equal(t, strings.Join([]string{
+		"	id                 	task     	estRows	operator info                                                                                                                     	actRows	execution info  	memory 	disk",
+		"	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast(<[100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100(len:401)>, vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A",
+		"	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                              	0      	time:0s, loops:0	0 Bytes	N/A",
+		"	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                           	0      	                	N/A    	N/A",
+	}, "\n"), planTree)
+
+	// No need to check result at all.
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
+
+	tk.MustExec("set session tidb_redact_log=on")
+	stmtID, _, _, err = tk.Session().PrepareStmt("SELECT VEC_COSINE_DISTANCE(c, ?) FROM t")
+	require.Nil(t, err)
+	rs, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, expression.Args2Expressions4Test(vb.String()))
+	require.NoError(t, err)
+
+	p, ok = tk.Session().GetSessionVars().StmtCtx.GetPlan().(base.Plan)
+	require.True(t, ok)
+
+	flat = plannercore.FlattenPhysicalPlan(p, true)
+	encodedPlanTree = plannercore.EncodeFlatPlan(flat)
+	planTree, err = plancodec.DecodePlan(encodedPlanTree)
+	require.NoError(t, err)
+	require.Equal(t, strings.Join([]string{
+		"	id                 	task     	estRows	operator info                                           	actRows	execution info  	memory 	disk",
+		"	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast(?, vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A",
+		"	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                    	0      	time:0s, loops:0	0 Bytes	N/A",
+		"	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                 	0      	                	N/A    	N/A",
+	}, "\n"), planTree)
+
+	// No need to check result at all.
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
 
 func TestFixedVector(t *testing.T) {
