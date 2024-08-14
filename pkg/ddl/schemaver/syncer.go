@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncer
+package schemaver
 
 import (
 	"context"
@@ -57,58 +57,13 @@ var (
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 )
 
-// Watcher is responsible for watching the etcd path related operations.
-type Watcher interface {
-	// WatchChan returns the chan for watching etcd path.
-	WatchChan() clientv3.WatchChan
-	// Watch watches the etcd path.
-	Watch(ctx context.Context, etcdCli *clientv3.Client, path string)
-	// Rewatch rewatches the etcd path.
-	Rewatch(ctx context.Context, etcdCli *clientv3.Client, path string)
-}
-
-type watcher struct {
-	sync.RWMutex
-	wCh clientv3.WatchChan
-}
-
-// WatchChan implements SyncerWatch.WatchChan interface.
-func (w *watcher) WatchChan() clientv3.WatchChan {
-	w.RLock()
-	defer w.RUnlock()
-	return w.wCh
-}
-
-// Watch implements SyncerWatch.Watch interface.
-func (w *watcher) Watch(ctx context.Context, etcdCli *clientv3.Client, path string) {
-	w.Lock()
-	w.wCh = etcdCli.Watch(ctx, path)
-	w.Unlock()
-}
-
-// Rewatch implements SyncerWatch.Rewatch interface.
-func (w *watcher) Rewatch(ctx context.Context, etcdCli *clientv3.Client, path string) {
-	startTime := time.Now()
-	// Make sure the wCh doesn't receive the information of 'close' before we finish the rewatch.
-	w.Lock()
-	w.wCh = nil
-	w.Unlock()
-
-	go func() {
-		defer func() {
-			metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerRewatch, metrics.RetLabel(nil)).Observe(time.Since(startTime).Seconds())
-		}()
-		wCh := etcdCli.Watch(ctx, path)
-
-		w.Lock()
-		w.wCh = wCh
-		w.Unlock()
-		logutil.DDLLogger().Info("syncer rewatch global info finished")
-	}()
-}
-
-// SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
-type SchemaSyncer interface {
+// Syncer is used to synchronize schema version between the DDL owner and follower.
+// DDL owner and follower only depends on a subset of the methods of Syncer.
+// DDL owner will use this interface to update the global schema version, and wait
+// all followers to update schema to the target version.
+// followers use it to receive version change events, reload schema and update their
+// version.
+type Syncer interface {
 	// Init sets the global schema version path to etcd if it isn't exist,
 	// then watch this path, and initializes the self schema version to etcd.
 	Init(ctx context.Context) error
@@ -130,7 +85,7 @@ type SchemaSyncer interface {
 	OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error
 	// SyncJobSchemaVerLoop syncs the schema versions on all TiDB nodes for DDL jobs.
 	SyncJobSchemaVerLoop(ctx context.Context)
-	// Close ends SchemaSyncer.
+	// Close ends Syncer.
 	Close()
 }
 
@@ -210,11 +165,12 @@ func (v *nodeVersions) getMatchFn() func(map[string]int64) bool {
 	return v.onceMatchFn
 }
 
-type schemaVersionSyncer struct {
+// etcdSyncer is a Syncer based on etcd. used for TiKV store.
+type etcdSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
 	session           unsafe.Pointer
-	globalVerWatcher  watcher
+	globalVerWatcher  util.Watcher
 	ddlID             string
 
 	mu               sync.RWMutex
@@ -222,11 +178,12 @@ type schemaVersionSyncer struct {
 	jobNodeVerPrefix string
 }
 
-// NewSchemaSyncer creates a new SchemaSyncer.
-func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
-	return &schemaVersionSyncer{
+// NewEtcdSyncer creates a new Syncer.
+func NewEtcdSyncer(etcdCli *clientv3.Client, id string) Syncer {
+	return &etcdSyncer{
 		etcdCli:           etcdCli,
 		selfSchemaVerPath: fmt.Sprintf("%s/%s", util.DDLAllSchemaVersions, id),
+		globalVerWatcher:  util.NewWatcher(),
 		ddlID:             id,
 
 		jobNodeVersions:  make(map[int64]*nodeVersions),
@@ -234,8 +191,8 @@ func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	}
 }
 
-// Init implements SchemaSyncer.Init interface.
-func (s *schemaVersionSyncer) Init(ctx context.Context) error {
+// Init implements Syncer.Init interface.
+func (s *etcdSyncer) Init(ctx context.Context) error {
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -263,16 +220,16 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-func (s *schemaVersionSyncer) loadSession() *concurrency.Session {
+func (s *etcdSyncer) loadSession() *concurrency.Session {
 	return (*concurrency.Session)(atomic.LoadPointer(&s.session))
 }
 
-func (s *schemaVersionSyncer) storeSession(session *concurrency.Session) {
+func (s *etcdSyncer) storeSession(session *concurrency.Session) {
 	atomic.StorePointer(&s.session, (unsafe.Pointer)(session))
 }
 
-// Done implements SchemaSyncer.Done interface.
-func (s *schemaVersionSyncer) Done() <-chan struct{} {
+// Done implements Syncer.Done interface.
+func (s *etcdSyncer) Done() <-chan struct{} {
 	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
 		if val.(bool) {
 			err := s.loadSession().Close()
@@ -283,8 +240,8 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 	return s.loadSession().Done()
 }
 
-// Restart implements SchemaSyncer.Restart interface.
-func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
+// Restart implements Syncer.Restart interface.
+func (s *etcdSyncer) Restart(ctx context.Context) error {
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -307,18 +264,18 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
-func (s *schemaVersionSyncer) GlobalVersionCh() clientv3.WatchChan {
+// GlobalVersionCh implements Syncer.GlobalVersionCh interface.
+func (s *etcdSyncer) GlobalVersionCh() clientv3.WatchChan {
 	return s.globalVerWatcher.WatchChan()
 }
 
-// WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
-func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context) {
+// WatchGlobalSchemaVer implements Syncer.WatchGlobalSchemaVer interface.
+func (s *etcdSyncer) WatchGlobalSchemaVer(ctx context.Context) {
 	s.globalVerWatcher.Rewatch(ctx, s.etcdCli, util.DDLGlobalSchemaVersion)
 }
 
-// UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
-func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version int64) error {
+// UpdateSelfVersion implements Syncer.UpdateSelfVersion interface.
+func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version int64) error {
 	startTime := time.Now()
 	ver := strconv.FormatInt(version, 10)
 	var err error
@@ -336,8 +293,8 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 	return errors.Trace(err)
 }
 
-// OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
-func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
+// OwnerUpdateGlobalVersion implements Syncer.OwnerUpdateGlobalVersion interface.
+func (s *etcdSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
 	startTime := time.Now()
 	ver := strconv.FormatInt(version, 10)
 	// TODO: If the version is larger than the original global version, we need set the version.
@@ -348,7 +305,7 @@ func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, vers
 }
 
 // removeSelfVersionPath remove the self path from etcd.
-func (s *schemaVersionSyncer) removeSelfVersionPath() error {
+func (s *etcdSyncer) removeSelfVersionPath() error {
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -359,8 +316,8 @@ func (s *schemaVersionSyncer) removeSelfVersionPath() error {
 	return errors.Trace(err)
 }
 
-// OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
+// OwnerCheckAllVersions implements Syncer.OwnerCheckAllVersions interface.
+func (s *etcdSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
 	startTime := time.Now()
 	if !variable.EnableMDL.Load() {
 		time.Sleep(CheckVersFirstWaitTime)
@@ -478,8 +435,8 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 	}
 }
 
-// SyncJobSchemaVerLoop implements SchemaSyncer.SyncJobSchemaVerLoop interface.
-func (s *schemaVersionSyncer) SyncJobSchemaVerLoop(ctx context.Context) {
+// SyncJobSchemaVerLoop implements Syncer.SyncJobSchemaVerLoop interface.
+func (s *etcdSyncer) SyncJobSchemaVerLoop(ctx context.Context) {
 	for {
 		s.syncJobSchemaVer(ctx)
 		logutil.DDLLogger().Info("schema version sync loop interrupted, retrying...")
@@ -491,7 +448,7 @@ func (s *schemaVersionSyncer) SyncJobSchemaVerLoop(ctx context.Context) {
 	}
 }
 
-func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
+func (s *etcdSyncer) syncJobSchemaVer(ctx context.Context) {
 	resp, err := s.etcdCli.Get(ctx, s.jobNodeVerPrefix, clientv3.WithPrefix())
 	if err != nil {
 		logutil.DDLLogger().Info("get all job versions failed", zap.Error(err))
@@ -543,7 +500,7 @@ func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
 	}
 }
 
-func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType) {
+func (s *etcdSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType) {
 	jobID, tidbID, schemaVer, valid := decodeJobVersionEvent(kv, tp, s.jobNodeVerPrefix)
 	if !valid {
 		logutil.DDLLogger().Error("invalid job version kv", zap.Stringer("kv", kv), zap.Stringer("type", tp))
@@ -570,7 +527,7 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 	}
 }
 
-func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(map[string]int64) bool) *nodeVersions {
+func (s *etcdSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(map[string]int64) bool) *nodeVersions {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -621,7 +578,7 @@ func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, in
 	return true
 }
 
-func (s *schemaVersionSyncer) Close() {
+func (s *etcdSyncer) Close() {
 	err := s.removeSelfVersionPath()
 	if err != nil {
 		logutil.DDLLogger().Error("remove self version path failed", zap.Error(err))

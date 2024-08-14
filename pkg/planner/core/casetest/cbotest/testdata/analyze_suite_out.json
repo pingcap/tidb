@@ -17,7 +17,7 @@
       {
         "SQL": "explain format = 'hint' select * from t1, t2 where t1.a = t2.a",
         "Plan": [
-          "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
+          "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
         ]
       }
     ]

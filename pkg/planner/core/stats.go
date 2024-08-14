@@ -42,10 +42,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func (p *basePhysicalPlan) StatsCount() float64 {
-	return p.StatsInfo().RowCount
-}
-
 // RecursiveDeriveStats4Test is a exporter just for test.
 func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
 	return p.RecursiveDeriveStats(nil)

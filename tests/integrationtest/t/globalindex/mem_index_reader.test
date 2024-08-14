@@ -5,7 +5,7 @@ drop table if exists t;
 CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
-  UNIQUE KEY `idx1` (`b`)
+  UNIQUE KEY `idx1` (`b`) GLOBAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
 
@@ -35,7 +35,7 @@ drop table if exists t;
 CREATE TABLE `t` (
   `a` year(4) primary key CLUSTERED,
   `b` int(11) DEFAULT NULL,
-  UNIQUE KEY `idx1` (`b`)
+  UNIQUE KEY `idx1` (`b`) GLOBAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
 

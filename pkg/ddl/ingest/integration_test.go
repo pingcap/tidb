@@ -87,7 +87,7 @@ func TestIngestError(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = 0")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b int);")
 	for i := 0; i < 4; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))

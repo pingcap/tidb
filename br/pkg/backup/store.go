@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -57,12 +58,73 @@ func (r ResponseAndStore) GetStoreID() uint64 {
 	return r.StoreID
 }
 
+// timeoutRecv cancel the context if `Refresh()` is not called within the specified time `timeout`.
+type timeoutRecv struct {
+	wg        sync.WaitGroup
+	parentCtx context.Context
+	cancel    context.CancelCauseFunc
+
+	refresh chan struct{}
+}
+
+// Refresh the timeout ticker
+func (trecv *timeoutRecv) Refresh() {
+	select {
+	case <-trecv.parentCtx.Done():
+	case trecv.refresh <- struct{}{}:
+	}
+}
+
+// Stop the timeout ticker
+func (trecv *timeoutRecv) Stop() {
+	close(trecv.refresh)
+	trecv.wg.Wait()
+}
+
+var TimeoutOneResponse = time.Hour
+
+func (trecv *timeoutRecv) loop(timeout time.Duration) {
+	defer trecv.wg.Done()
+	ticker := time.NewTicker(timeout)
+	defer ticker.Stop()
+	for {
+		ticker.Reset(timeout)
+		select {
+		case <-trecv.parentCtx.Done():
+			return
+		case _, ok := <-trecv.refresh:
+			if !ok {
+				return
+			}
+		case <-ticker.C:
+			log.Warn("receive a backup response timeout")
+			trecv.cancel(errors.Errorf("receive a backup response timeout"))
+		}
+	}
+}
+
+func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Context, *timeoutRecv) {
+	cctx, cancel := context.WithCancelCause(ctx)
+	trecv := &timeoutRecv{
+		parentCtx: ctx,
+		cancel:    cancel,
+		refresh:   make(chan struct{}),
+	}
+	trecv.wg.Add(1)
+	go trecv.loop(timeout)
+	return cctx, trecv
+}
+
 func doSendBackup(
-	ctx context.Context,
+	pctx context.Context,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
+	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
+	// terminate the backup if it does not receive any new response for a long time.
+	ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse)
+	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
@@ -107,6 +169,7 @@ func doSendBackup(
 
 	for {
 		resp, err := bCli.Recv()
+		timerecv.Refresh()
 		if err != nil {
 			if errors.Cause(err) == io.EOF { // nolint:errorlint
 				logutil.CL(ctx).Debug("backup streaming finish",

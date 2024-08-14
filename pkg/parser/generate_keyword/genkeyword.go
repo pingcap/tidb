@@ -76,8 +76,6 @@ var keywordRe *regexp.Regexp
 // example data:
 //
 //	add               "ADD"
-//
-// Note that all keywords except `TiDB_CURRENT_TSO` are fully uppercase.
 func parseLine(line string) string {
 	if keywordRe == nil {
 		keywordRe = regexp.MustCompile(`^\s+\w+\s+"(\w+)"$`)

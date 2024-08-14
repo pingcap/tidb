@@ -71,6 +71,7 @@ var (
 	_ AggFunc = (*maxMin4Float64)(nil)
 	_ AggFunc = (*maxMin4Decimal)(nil)
 	_ AggFunc = (*maxMin4String)(nil)
+	_ AggFunc = (*maxMin4Time)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
 	_ AggFunc = (*maxMin4Enum)(nil)

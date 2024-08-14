@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -164,7 +164,7 @@ func (s *jobScheduler) start() {
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
 	s.wg.RunWithLog(s.scheduleLoop)
 	s.wg.RunWithLog(func() {
-		s.schemaSyncer.SyncJobSchemaVerLoop(s.schCtx)
+		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})
 }
 
@@ -190,7 +190,7 @@ func hasSysDB(job *model.Job) bool {
 }
 
 func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
-	if s.stateSyncer.IsUpgradingState() {
+	if s.serverStateSyncer.IsUpgradingState() {
 		if job.IsPaused() {
 			return false, nil
 		}
@@ -321,11 +321,11 @@ func (s *jobScheduler) schedule() error {
 // TODO make it run in a separate routine.
 func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	select {
-	case _, ok := <-s.stateSyncer.WatchChan():
+	case _, ok := <-s.serverStateSyncer.WatchChan():
 		if !ok {
-			// TODO stateSyncer should only be started when we are the owner, and use
+			// TODO serverStateSyncer should only be started when we are the owner, and use
 			// the context of scheduler, will refactor it later.
-			s.stateSyncer.Rewatch(s.ddlCtx.ctx)
+			s.serverStateSyncer.Rewatch(s.ddlCtx.ctx)
 		}
 	default:
 		if !needUpdate {
@@ -333,17 +333,17 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 		}
 	}
 
-	oldState := s.stateSyncer.IsUpgradingState()
-	stateInfo, err := s.stateSyncer.GetGlobalState(s.schCtx)
+	oldState := s.serverStateSyncer.IsUpgradingState()
+	stateInfo, err := s.serverStateSyncer.GetGlobalState(s.schCtx)
 	if err != nil {
 		logutil.DDLLogger().Warn("get global state failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	logutil.DDLLogger().Info("get global state and global state change",
-		zap.Bool("oldState", oldState), zap.Bool("currState", s.stateSyncer.IsUpgradingState()))
+		zap.Bool("oldState", oldState), zap.Bool("currState", s.serverStateSyncer.IsUpgradingState()))
 
 	ownerOp := owner.OpNone
-	if stateInfo.State == syncer.StateUpgrading {
+	if stateInfo.State == serverstate.StateUpgrading {
 		ownerOp = owner.OpSyncUpgradingState
 	}
 	err = s.ownerManager.SetOwnerOpValue(s.schCtx, ownerOp)

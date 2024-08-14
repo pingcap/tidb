@@ -324,11 +324,11 @@ func TestCheckIndex(t *testing.T) {
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
-	_, err = tb.AddRecord(ctx.GetTableCtx(), recordVal1)
-	require.NoError(t, err)
-	_, err = tb.AddRecord(ctx.GetTableCtx(), recordVal2)
-	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	_, err = tb.AddRecord(ctx.GetTableCtx(), txn, recordVal1)
+	require.NoError(t, err)
+	_, err = tb.AddRecord(ctx.GetTableCtx(), txn, recordVal2)
 	require.NoError(t, err)
 	require.NoError(t, txn.Commit(context.Background()))
 
@@ -1940,6 +1940,17 @@ func TestLowResolutionTSORead(t *testing.T) {
 	require.Error(t, err)
 	err = tk.ExecToErr("select * from low_resolution_tso for update")
 	require.Error(t, err)
+}
+
+func TestLowResolutionTSOReadScope(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	require.False(t, tk1.Session().GetSessionVars().UseLowResolutionTSO())
+
+	tk1.MustExec("set global tidb_low_resolution_tso = 'on'")
+	tk2 := testkit.NewTestKit(t, store)
+	require.True(t, tk2.Session().GetSessionVars().UseLowResolutionTSO())
 }
 
 func TestAdapterStatement(t *testing.T) {

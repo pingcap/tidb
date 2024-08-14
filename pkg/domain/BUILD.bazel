@@ -61,6 +61,8 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle",
+        "//pkg/statistics/handle/autoanalyze",
+        "//pkg/statistics/handle/initstats",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/util",
         "//pkg/store/helper",

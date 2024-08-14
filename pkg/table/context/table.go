@@ -17,7 +17,6 @@ package context
 import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -109,13 +108,6 @@ type MutateContext interface {
 	AllocatorContext
 	// GetExprCtx returns the context to build or evaluate expressions
 	GetExprCtx() exprctx.ExprContext
-	// GetSessionVars returns the session variables.
-	GetSessionVars() *variable.SessionVars
-	// Txn returns the current transaction which is created before executing a statement.
-	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
-	// If the active parameter is true, call this function will wait for the pending txn
-	// to become valid.
-	Txn(active bool) (kv.Transaction, error)
 	// GetDomainInfoSchema returns the latest information schema in domain
 	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// ConnectionID returns the id of the current connection.

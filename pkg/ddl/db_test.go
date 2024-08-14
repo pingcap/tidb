@@ -613,7 +613,7 @@ func TestSnapshotVersion(t *testing.T) {
 
 	dd := dom.DDL()
 	ddl.DisableTiFlashPoll(dd)
-	require.Equal(t, dbTestLease, dd.GetLease())
+	require.Equal(t, dbTestLease, dom.GetSchemaLease())
 
 	snapTS := oracle.GoTimeToTS(time.Now())
 	tk.MustExec("create database test2")
@@ -673,7 +673,7 @@ func TestSchemaValidator(t *testing.T) {
 
 	dd := dom.DDL()
 	ddl.DisableTiFlashPoll(dd)
-	require.Equal(t, dbTestLease, dd.GetLease())
+	require.Equal(t, dbTestLease, dom.GetSchemaLease())
 
 	tk.MustExec("create table test.t(a int)")
 
