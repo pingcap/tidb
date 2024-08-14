@@ -118,7 +118,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
+		return e.handleResultsError(concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec)
@@ -368,7 +368,6 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
 func (e *AnalyzeExec) handleResultsError(
-	ctx context.Context,
 	concurrency int,
 	needGlobalStats bool,
 	globalStatsMap globalStatsMap,
