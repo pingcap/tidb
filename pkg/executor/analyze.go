@@ -368,7 +368,7 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
 func (e *AnalyzeExec) handleResultsError(
-	concurrency int,
+	buildStatsConcurrency int,
 	needGlobalStats bool,
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
@@ -384,29 +384,36 @@ func (e *AnalyzeExec) handleResultsError(
 			}
 		}
 	}()
-	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
-	// The concurrency of saving partition-level stats should not exceed the total number of tasks.
-	partitionStatsConcurrency = min(taskNum, partitionStatsConcurrency)
-	if partitionStatsConcurrency > 1 {
-		logutil.BgLogger().Info("save analyze results concurrently", zap.Int("concurrency", concurrency))
-		return e.handleResultsErrorWithConcurrency(concurrency, needGlobalStats, globalStatsMap, resultsCh)
+	saveStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
+	// The buildStatsConcurrency of saving partition-level stats should not exceed the total number of tasks.
+	saveStatsConcurrency = min(taskNum, saveStatsConcurrency)
+	if saveStatsConcurrency > 1 {
+		logutil.BgLogger().Info("save analyze results concurrently",
+			zap.Int("buildStatsConcurrency", buildStatsConcurrency),
+			zap.Int("saveStatsConcurrency", saveStatsConcurrency),
+		)
+		return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, saveStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh)
 	}
-	logutil.BgLogger().Info("save analyze results in single-thread", zap.Int("concurrency", concurrency))
+	logutil.BgLogger().Info("save analyze results in single-thread",
+		zap.Int("buildStatsConcurrency", buildStatsConcurrency),
+		zap.Int("saveStatsConcurrency", saveStatsConcurrency),
+	)
 	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
-	return e.handleResultsErrorWithConcurrency(concurrency, needGlobalStats, globalStatsMap, resultsCh)
+	return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, saveStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh)
 }
 
 func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
-	statsConcurrency int,
+	buildStatsConcurrency int,
+	saveStatsConcurrency int,
 	needGlobalStats bool,
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
 ) error {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	wg := util.NewWaitGroupPool(e.gp)
-	saveResultsCh := make(chan *statistics.AnalyzeResults, statsConcurrency)
-	errCh := make(chan error, statsConcurrency)
-	for i := 0; i < statsConcurrency; i++ {
+	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
+	errCh := make(chan error, saveStatsConcurrency)
+	for i := 0; i < saveStatsConcurrency; i++ {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
@@ -416,7 +423,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
-	for panicCnt < statsConcurrency {
+	for panicCnt < buildStatsConcurrency {
 		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			close(saveResultsCh)
 			return err
