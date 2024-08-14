@@ -74,7 +74,7 @@ func createTable(jobCtx *jobContext, t *meta.Meta, job *model.Job, fkCheck bool)
 		return tbInfo, errors.Trace(err)
 	}
 
-	retryable, err := checkTableForeignKeyValidInOwner(jobCtx, t, job, tbInfo, fkCheck)
+	retryable, err := checkTableForeignKeyValidInOwner(jobCtx, job, tbInfo, fkCheck)
 	if err != nil {
 		if !retryable {
 			job.State = model.JobStateCancelled

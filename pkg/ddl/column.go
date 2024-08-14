@@ -249,7 +249,7 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
-	if err = checkDropColumnWithForeignKeyConstraintInOwner(jobCtx.infoCache, t, job, tblInfo, colName.L); err != nil {
+	if err = checkDropColumnWithForeignKeyConstraintInOwner(jobCtx.infoCache, job, tblInfo, colName.L); err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 	if err = checkDropColumnWithTTLConfig(tblInfo, colName.L); err != nil {
