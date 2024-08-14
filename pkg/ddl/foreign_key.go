@@ -399,7 +399,7 @@ func checkTableHasForeignKeyReferred(is infoschema.InfoSchema, schema, tbl strin
 	return nil
 }
 
-func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job) error {
+func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, job *model.Job) error {
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
@@ -422,7 +422,7 @@ func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache,
 	return nil
 }
 
-func checkTruncateTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkCheck bool) error {
+func checkTruncateTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, job *model.Job, tblInfo *model.TableInfo, fkCheck bool) error {
 	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, []ast.Ident{{Name: tblInfo.Name, Schema: model.NewCIStr(job.SchemaName)}}, fkCheck)
 	if err != nil {
 		return err

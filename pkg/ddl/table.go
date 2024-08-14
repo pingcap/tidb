@@ -69,7 +69,7 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 	case model.StatePublic:
 		// public -> write only
 		if job.Type == model.ActionDropTable {
-			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, t, job)
+			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job)
 			if err != nil {
 				return ver, err
 			}
@@ -444,7 +444,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 	}
 	// Copy the old tableInfo for later usage.
 	oldTblInfo := tblInfo.Clone()
-	err = checkTruncateTableHasForeignKeyReferredInOwner(jobCtx.infoCache, t, job, tblInfo, fkCheck)
+	err = checkTruncateTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, tblInfo, fkCheck)
 	if err != nil {
 		return ver, err
 	}
