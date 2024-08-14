@@ -23,6 +23,7 @@ import (
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -166,7 +167,9 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalTableScan) TP() string {
-	if p.isChildOfIndexLookUp {
+	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+		return plancodec.TypeMemTableScan
+	} else if p.isChildOfIndexLookUp {
 		return plancodec.TypeTableRowIDScan
 	} else if p.isFullScan() {
 		return plancodec.TypeTableFullScan
