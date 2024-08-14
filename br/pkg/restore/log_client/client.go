@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -182,7 +183,6 @@ func (rc *LogClient) RestoreCompactedSsts(
 	}
 	batchSize := 8
 	splitRanges := make([]rtree.Range, 0, batchSize)
-	restoreFiles := make([]sstfiles.SstFilesInfo, 0, batchSize)
 	regionMap := make(map[uint64]*compactMeta)
 	// read unorder files
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
@@ -205,63 +205,72 @@ func (rc *LogClient) RestoreCompactedSsts(
 			}
 			regionMap[i.Meta.RegionId] = &c
 		}
+		// translate min key to raw key
+		_, rawMinKey, err := codec.DecodeBytes(i.Meta.MinKey, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		regionMap[i.Meta.RegionId].Append(sstfiles.SstFilesInfo{
 			TableID:      i.Meta.TableId,
 			Files:        i.SstOutputs,
 			RewriteRules: rewriteRules,
-		}, i.Meta.MinKey)
+		}, rawMinKey)
 	}
 
 	eg, eCtx := errgroup.WithContext(ctx)
+	// split every cnt regions
+	cnt := 0
 	for regionId, regionCompactMeta := range regionMap {
-		var regionSplitKey []byte
-		var minKeyIndex int
-		for i, minKey := range regionCompactMeta.regionMinKeys {
-			if len(regionSplitKey) == 0 || bytes.Compare(minKey, regionSplitKey) < 0 {
-				regionSplitKey = minKey
-				minKeyIndex = i
+		cnt += 1
+		if cnt >= batchSize {
+			var regionSplitKey []byte
+			var minKeyIndex int
+			for i, minKey := range regionCompactMeta.regionMinKeys {
+				if len(regionSplitKey) == 0 || bytes.Compare(minKey, regionSplitKey) < 0 {
+					regionSplitKey = minKey
+					minKeyIndex = i
+				}
 			}
-		}
-		log.Info("min split key for region",
-			zap.Uint64("region_id", regionId),
-			zap.ByteString("split_key", regionSplitKey),
-			zap.Int("index", minKeyIndex))
+			log.Info("min split key for region",
+				zap.Uint64("region_id", regionId),
+				logutil.Key("split_key", regionSplitKey),
+				zap.Int("index", minKeyIndex))
 
-		// build split ranges
-		tmpRng := rtree.Range{
-			StartKey: []byte(regionSplitKey),
-			// ignored this field, because we use start key to split region.
-			EndKey: []byte(regionSplitKey),
+			// build split ranges
+			tmpRng := rtree.Range{
+				StartKey: []byte(regionSplitKey),
+				// ignored this field, because we use start key to split region.
+				EndKey: []byte(regionSplitKey),
+			}
+			// only one range in the region should split
+			rg, err := restoreutils.RewriteRange(&tmpRng, regionCompactMeta.files[minKeyIndex].RewriteRules)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			splitRanges = append(splitRanges, *rg)
+			cnt = 0
 		}
-		// only one range in the region should split
-		rg, err := restoreutils.RewriteRange(&tmpRng, regionCompactMeta.files[minKeyIndex].RewriteRules)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// TODO implement update ch
-		splitRanges = append(splitRanges, *rg)
-		restoreFiles = append(restoreFiles, regionCompactMeta.files...)
 
-		if len(splitRanges) >= batchSize {
+		if len(splitRanges) > 0 {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				// TODO implement update ch
 				err := rc.restorer.SplitRanges(eCtx, splitRanges, nil)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				return rc.restorer.RestoreFiles(eCtx, restoreFiles, nil)
+				return rc.restorer.RestoreFiles(eCtx, regionCompactMeta.files, nil)
 			})
 			// reset for next batch
 			splitRanges = nil
-			restoreFiles = nil
+		} else {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				// restore rest files
+				return rc.restorer.RestoreFiles(eCtx, regionCompactMeta.files, nil)
+			})
 		}
 	}
-	if len(restoreFiles) > 0 {
-		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-			// restore rest files
-			return rc.restorer.RestoreFiles(eCtx, restoreFiles, nil)
-		})
-	}
+
 	return eg.Wait()
 }
 

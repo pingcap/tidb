@@ -381,7 +381,7 @@ func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) (*rtree.Range, er
 	}
 	rg.StartKey, rule = replacePrefix(rg.StartKey, rewriteRules)
 	if rule == nil {
-		log.Warn("cannot find rewrite rule", logutil.Key("key", rg.StartKey))
+		log.Warn("cannot find rewrite rule", logutil.Key("start key", rg.StartKey))
 	} else {
 		log.Debug(
 			"rewrite start key",
@@ -390,7 +390,7 @@ func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) (*rtree.Range, er
 	oldKey := rg.EndKey
 	rg.EndKey, rule = replacePrefix(rg.EndKey, rewriteRules)
 	if rule == nil {
-		log.Warn("cannot find rewrite rule", logutil.Key("key", rg.EndKey))
+		log.Warn("cannot find rewrite rule", logutil.Key("end key", rg.EndKey))
 	} else {
 		log.Debug(
 			"rewrite end key",
