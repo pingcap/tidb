@@ -2224,12 +2224,13 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func GetHashJoin(la *LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
+func GetHashJoin(la *logicalop.LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
 	return getHashJoin(&la.LogicalJoin, prop, 1, false)
 }
 
-// ExhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
-func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
+func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalApply)
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
@@ -2243,7 +2244,9 @@ func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.Physical
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
-		columns = append(columns, &colColumn.Column)
+		// fix the liner warning.
+		tmp := colColumn
+		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
 	if la.StatsInfo().RowCount != 0 {

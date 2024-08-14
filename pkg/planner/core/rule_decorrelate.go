@@ -124,7 +124,7 @@ func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) 
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	if apply, ok := p.(*LogicalApply); ok {
+	if apply, ok := p.(*logicalop.LogicalApply); ok {
 		outerPlan := apply.Children()[0]
 		innerPlan := apply.Children()[1]
 		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
@@ -393,7 +393,7 @@ func (*DecorrelateSolver) Name() string {
 	return "decorrelate"
 }
 
-func appendApplySimplifiedTraceStep(p *LogicalApply, j *logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
+func appendApplySimplifiedTraceStep(p *logicalop.LogicalApply, j *logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v simplified into %v_%v", plancodec.TypeApply, p.ID(), plancodec.TypeJoin, j.ID())
 	}
@@ -433,7 +433,7 @@ func appendRemoveLimitTraceStep(limit *logicalop.LogicalLimit, opt *optimizetrac
 	opt.AppendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
 
-func appendRemoveProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveProjTraceStep(p *logicalop.LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", proj.TP(), proj.ID())
 	}
@@ -443,7 +443,7 @@ func appendRemoveProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjectio
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendMoveProjTraceStep(p *logicalop.LogicalApply, np base.LogicalPlan, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is moved as %v_%v's parent", proj.TP(), proj.ID(), np.TP(), np.ID())
 	}
@@ -463,7 +463,7 @@ func appendRemoveSortTraceStep(sort *logicalop.LogicalSort, opt *optimizetrace.L
 	opt.AppendStepToCurrent(sort.ID(), sort.TP(), reason, action)
 }
 
-func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+func appendPullUpAggTraceStep(p *logicalop.LogicalApply, np base.LogicalPlan, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v pulled up as %v_%v's parent, and %v_%v's join type becomes %v",
 			agg.TP(), agg.ID(), np.TP(), np.ID(), p.TP(), p.ID(), p.JoinType.String())
@@ -475,7 +475,7 @@ func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *logical
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAddProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAddProjTraceStep(p *logicalop.LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is added as %v_%v's parent", proj.TP(), proj.ID(), p.TP(), p.ID())
 	}
@@ -485,7 +485,7 @@ func appendAddProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, 
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *logicalop.LogicalAggregation, sel *logicalop.LogicalSelection,
+func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *logicalop.LogicalApply, agg *logicalop.LogicalAggregation, sel *logicalop.LogicalSelection,
 	appendedGroupByCols *expression.Schema, appendedAggFuncs []*aggregation.AggFuncDesc,
 	eqCondWithCorCol []*expression.ScalarFunction, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := outerPlan.SCtx().GetExprCtx().GetEvalCtx()

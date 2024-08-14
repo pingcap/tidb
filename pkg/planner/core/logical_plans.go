@@ -24,7 +24,7 @@ var (
 	_ base.LogicalPlan = &logicalop.LogicalAggregation{}
 	_ base.LogicalPlan = &logicalop.LogicalProjection{}
 	_ base.LogicalPlan = &logicalop.LogicalSelection{}
-	_ base.LogicalPlan = &LogicalApply{}
+	_ base.LogicalPlan = &logicalop.LogicalApply{}
 	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
 	_ base.LogicalPlan = &logicalop.LogicalTableDual{}
 	_ base.LogicalPlan = &DataSource{}

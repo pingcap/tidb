@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "base_logical_plan.go",
         "logical_aggregation.go",
+        "logical_apply.go",
         "logical_cte_table.go",
         "logical_join.go",
         "logical_limit.go",
@@ -43,6 +44,8 @@ go_library(
         "//pkg/planner/funcdep",
         "//pkg/planner/property",
         "//pkg/planner/util",
+        "//pkg/planner/util/coreusage",
+        "//pkg/planner/util/fixcontrol",
         "//pkg/planner/util/optimizetrace",
         "//pkg/planner/util/optimizetrace/logicaltrace",
         "//pkg/planner/util/utilfuncp",

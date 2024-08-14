@@ -77,7 +77,7 @@ const (
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p base.LogicalPlan) Operand {
 	switch p.(type) {
-	case *plannercore.LogicalApply:
+	case *logicalop.LogicalApply:
 		return OperandApply
 	case *logicalop.LogicalJoin:
 		return OperandJoin
