@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -532,16 +532,18 @@ var _ InfoSchema = &infoschemaV2{}
 type infoschemaV2 struct {
 	*infoSchema // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
 	r           autoid.Requirement
+	factory     func() (pools.Resource, error)
 	ts          uint64
 	*Data
 }
 
 // NewInfoSchemaV2 create infoschemaV2.
-func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
+func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) infoschemaV2 {
 	return infoschemaV2{
 		infoSchema: newInfoSchema(),
 		Data:       infoData,
 		r:          r,
+		factory:    factory,
 	}
 }
 
@@ -586,11 +588,11 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 	return &tmp
 }
 
-func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
-	return is.tableByID(id, false)
+func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
+	return is.tableByID(ctx, id, true)
 }
 
-func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok bool) {
+func (is *infoschemaV2) tableByID(ctx context.Context, id int64, noRefill bool) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
 	}
@@ -627,7 +629,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(context.Background(), is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := is.loadTableInfo(ctx, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil || ret == nil {
 		return nil, false
 	}
@@ -708,7 +710,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(ctx, is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := is.loadTableInfo(ctx, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -725,7 +727,7 @@ func (is *infoschemaV2) TableInfoByName(schema, table model.CIStr) (*model.Table
 
 // TableInfoByID implements InfoSchema.TableInfoByID
 func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(context.Background(), id)
 	return getTableInfo(tbl), ok
 }
 
@@ -793,33 +795,34 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model
 		return nil, nil // something wrong?
 	}
 
-retry:
-	dbInfo, ok := is.SchemaByName(schema)
-	if !ok {
+	// Ascend is much more difficult than Descend.
+	// So the data is taken out first and then dedup in Descend order.
+	var tableItems []tableItem
+	is.byName.Ascend(tableItem{dbName: schema.L}, func(item tableItem) bool {
+		if item.dbName != schema.L {
+			return false
+		}
+		if is.infoSchema.schemaMetaVersion >= item.schemaVersion {
+			tableItems = append(tableItems, item)
+		}
+		return true
+	})
+	if len(tableItems) == 0 {
 		return nil, nil
 	}
-	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
-	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
-	// the meta region leader is slow.
-	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-	m := meta.NewSnapshotMeta(snapshot)
-	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			return nil, nil
-		}
-		// Flashback statement could cause such kind of error.
-		// In theory that error should be handled in the lower layer, like client-go.
-		// But it's not done, so we retry here.
-		if strings.Contains(err.Error(), "in flashback progress") {
-			select {
-			case <-time.After(200 * time.Millisecond):
-			case <-ctx.Done():
-				return nil, ctx.Err()
+	tblInfos := make([]*model.TableNameInfo, 0, len(tableItems))
+	var curr *tableItem
+	for i := len(tableItems) - 1; i >= 0; i-- {
+		item := &tableItems[i]
+		if curr == nil || curr.tableName != tableItems[i].tableName {
+			curr = item
+			if !item.tomb {
+				tblInfos = append(tblInfos, &model.TableNameInfo{
+					ID:   item.tableID,
+					Name: model.NewCIStr(item.tableName),
+				})
 			}
-			goto retry
 		}
-		return nil, errors.Trace(err)
 	}
 	return tblInfos, nil
 }
@@ -933,7 +936,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 		return nil, nil, nil
 	}
 
-	tbl, ok := is.TableByID(pi.tableID)
+	tbl, ok := is.TableByID(context.Background(), pi.tableID)
 	if !ok {
 		// something wrong?
 		return nil, nil, nil
@@ -1005,10 +1008,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	return is.SchemaByName(model.NewCIStr(name))
 }
 
-func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
-	if ctx == nil {
-		ctx = nil
-	}
+func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
 	failpoint.Inject("mockLoadTableInfoError", func(_ failpoint.Value) {
 		failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
@@ -1016,7 +1016,7 @@ func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tb
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:
-		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
+		snapshot := is.r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
@@ -1046,9 +1046,8 @@ func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tb
 
 		ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 		ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
-		allocs := autoid.NewAllocatorsFromTblInfo(r, dbID, tblInfo)
-		// TODO: handle cached table!!!
-		ret, err := tables.TableFromMeta(allocs, tblInfo)
+		allocs := autoid.NewAllocatorsFromTblInfo(is.r, dbID, tblInfo)
+		ret, err := tableFromMeta(allocs, is.factory, tblInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1193,7 +1192,7 @@ func allocByID(b *Builder, id int64) (autoid.Allocators, bool) {
 	} else {
 		is = b.infoSchema
 	}
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(context.Background(), id)
 	if !ok {
 		return autoid.Allocators{}, false
 	}
@@ -1255,7 +1254,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
 	}
 
-	table, ok := b.infoschemaV2.TableByID(tableID)
+	table, ok := b.infoschemaV2.TableByID(context.Background(), tableID)
 	if !ok {
 		return nil
 	}

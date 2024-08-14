@@ -294,7 +294,7 @@ func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo
 	return is.SchemaByID(tableInfo.DBID)
 }
 
-func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
+func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return nil, false
 	}
@@ -309,7 +309,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 
 // TableInfoByID implements InfoSchema.TableInfoByID
 func (is *infoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(stdctx.Background(), id)
 	return getTableInfo(tbl), ok
 }
 
@@ -810,7 +810,7 @@ func (ts *SessionExtendedInfoSchema) TableInfoByName(schema, table model.CIStr) 
 
 // TableInfoByID implements InfoSchema.TableInfoByID
 func (ts *SessionExtendedInfoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
-	tbl, ok := ts.TableByID(id)
+	tbl, ok := ts.TableByID(stdctx.Background(), id)
 	return getTableInfo(tbl), ok
 }
 
@@ -823,7 +823,7 @@ func (ts *SessionExtendedInfoSchema) FindTableInfoByPartitionID(
 }
 
 // TableByID implements InfoSchema.TableByID
-func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
+func (ts *SessionExtendedInfoSchema) TableByID(ctx stdctx.Context, id int64) (table.Table, bool) {
 	if !tableIDIsValid(id) {
 		return nil, false
 	}
@@ -840,7 +840,7 @@ func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
 		}
 	}
 
-	return ts.InfoSchema.TableByID(id)
+	return ts.InfoSchema.TableByID(ctx, id)
 }
 
 // SchemaByID implements InfoSchema.SchemaByID, it returns a stale DBInfo even if it's dropped.
@@ -892,7 +892,7 @@ func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionEx
 // If the id is a partition id, the corresponding table.Table and PartitionDefinition will be returned.
 // If the id is not found in the InfoSchema, nil will be returned for both return values.
 func FindTableByTblOrPartID(is InfoSchema, id int64) (table.Table, *model.PartitionDefinition) {
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.TableByID(stdctx.Background(), id)
 	if ok {
 		return tbl, nil
 	}

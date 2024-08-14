@@ -30,13 +30,11 @@ type BuilderV3 struct {
 }
 
 // NewBuilderV3 ...
-func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *BuilderV3 {
+func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, _ bool) *BuilderV3 {
 	v3 := &BuilderV3{
-		builderV1: NewBuilder(r, factory, infoData),
-		builderV2: NewBuilder(r, factory, infoData),
+		builderV1: NewBuilder(r, factory, infoData, false),
+		builderV2: NewBuilder(r, factory, infoData, true),
 	}
-	v3.builderV1.enableV2 = false
-	v3.builderV2.enableV2 = true
 	return v3
 }
 
@@ -45,8 +43,8 @@ func (b *BuilderV3) InitWithOldInfoSchema(oldSchema InfoSchema) (*BuilderV3, err
 	oldSchemaV1 := oldSchema.(*InfoschemaV3).infoV1
 	oldSchemaV2 := oldSchema.(*InfoschemaV3).infoV2
 
-	_, err1 := b.builderV1.InitWithOldInfoSchema(oldSchemaV1)
-	_, err2 := b.builderV2.InitWithOldInfoSchema(oldSchemaV2)
+	err1 := b.builderV1.InitWithOldInfoSchema(oldSchemaV1)
+	err2 := b.builderV2.InitWithOldInfoSchema(oldSchemaV2)
 	if !errors.ErrorEqual(err1, err2) {
 		panic("err1 != err2")
 	}
@@ -58,8 +56,8 @@ func (b *BuilderV3) InitWithOldInfoSchema(oldSchema InfoSchema) (*BuilderV3, err
 
 // InitWithDBInfos ...
 func (b *BuilderV3) InitWithDBInfos(dbInfosFull []*model.DBInfo, dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*BuilderV3, error) {
-	_, err1 := b.builderV1.InitWithDBInfos(dbInfosFull, policies, resourceGroups, schemaVersion)
-	_, err2 := b.builderV2.InitWithDBInfos(dbInfos, policies, resourceGroups, schemaVersion)
+	err1 := b.builderV1.InitWithDBInfos(dbInfosFull, policies, resourceGroups, schemaVersion)
+	err2 := b.builderV2.InitWithDBInfos(dbInfos, policies, resourceGroups, schemaVersion)
 	if !errors.ErrorEqual(err1, err2) {
 		panic("err1 != err2")
 	}

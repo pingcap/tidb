@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -46,7 +47,7 @@ type RUStatsWriter struct {
 	RMClient  pd.ResourceManagerClient
 	InfoCache *infoschema.InfoCache
 	store     kv.Storage
-	sessPool  *sessionPool
+	sessPool  util.SessionPool
 	// current time, cache it here to make unit test easier.
 	StartTime time.Time
 }

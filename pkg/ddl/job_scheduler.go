@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -58,7 +58,6 @@ var (
 	// is a new DDL job.
 	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
-	localWorkerWaitingDuration  = 10 * time.Millisecond
 	schedulerLoopRetryInterval  = time.Second
 )
 
@@ -77,8 +76,6 @@ func (t jobType) String() string {
 		return "general"
 	case jobTypeReorg:
 		return "reorg"
-	case jobTypeLocal:
-		return "local"
 	}
 	return "unknown job type: " + strconv.Itoa(int(t))
 }
@@ -86,7 +83,6 @@ func (t jobType) String() string {
 const (
 	jobTypeGeneral jobType = iota
 	jobTypeReorg
-	jobTypeLocal
 )
 
 type ownerListener struct {
@@ -168,7 +164,7 @@ func (s *jobScheduler) start() {
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
 	s.wg.RunWithLog(s.scheduleLoop)
 	s.wg.RunWithLog(func() {
-		s.schemaSyncer.SyncJobSchemaVerLoop(s.schCtx)
+		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})
 }
 
@@ -194,7 +190,7 @@ func hasSysDB(job *model.Job) bool {
 }
 
 func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
-	if s.stateSyncer.IsUpgradingState() {
+	if s.serverStateSyncer.IsUpgradingState() {
 		if job.IsPaused() {
 			return false, nil
 		}
@@ -244,21 +240,6 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 	}
 
 	return true, nil
-}
-
-// startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
-func (d *ddl) startLocalWorkerLoop() {
-	for {
-		select {
-		case <-d.ctx.Done():
-			return
-		case jobW, ok := <-d.localJobCh:
-			if !ok {
-				return
-			}
-			d.delivery2LocalWorker(d.localWorkerPool, jobW)
-		}
-	}
 }
 
 func (s *jobScheduler) scheduleLoop() {
@@ -340,11 +321,11 @@ func (s *jobScheduler) schedule() error {
 // TODO make it run in a separate routine.
 func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	select {
-	case _, ok := <-s.stateSyncer.WatchChan():
+	case _, ok := <-s.serverStateSyncer.WatchChan():
 		if !ok {
-			// TODO stateSyncer should only be started when we are the owner, and use
+			// TODO serverStateSyncer should only be started when we are the owner, and use
 			// the context of scheduler, will refactor it later.
-			s.stateSyncer.Rewatch(s.ddlCtx.ctx)
+			s.serverStateSyncer.Rewatch(s.ddlCtx.ctx)
 		}
 	default:
 		if !needUpdate {
@@ -352,17 +333,17 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 		}
 	}
 
-	oldState := s.stateSyncer.IsUpgradingState()
-	stateInfo, err := s.stateSyncer.GetGlobalState(s.schCtx)
+	oldState := s.serverStateSyncer.IsUpgradingState()
+	stateInfo, err := s.serverStateSyncer.GetGlobalState(s.schCtx)
 	if err != nil {
 		logutil.DDLLogger().Warn("get global state failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	logutil.DDLLogger().Info("get global state and global state change",
-		zap.Bool("oldState", oldState), zap.Bool("currState", s.stateSyncer.IsUpgradingState()))
+		zap.Bool("oldState", oldState), zap.Bool("currState", s.serverStateSyncer.IsUpgradingState()))
 
 	ownerOp := owner.OpNone
-	if stateInfo.State == syncer.StateUpgrading {
+	if stateInfo.State == serverstate.StateUpgrading {
 		ownerOp = owner.OpSyncUpgradingState
 	}
 	err = s.ownerManager.SetOwnerOpValue(s.schCtx, ownerOp)
@@ -464,51 +445,6 @@ func (s *jobScheduler) mustReloadSchemas() {
 		case <-time.After(schedulerLoopRetryInterval):
 		}
 	}
-}
-
-// delivery2LocalWorker runs the DDL job of v2 in local.
-// send the result to the error channels in the task.
-// delivery2Localworker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2LocalWorker(pool *workerPool, jobW *JobWrapper) {
-	job := jobW.Job
-	wk, err := pool.get()
-	if err != nil {
-		jobW.NotifyResult(err)
-		return
-	}
-	for wk == nil {
-		select {
-		case <-d.ctx.Done():
-			return
-		case <-time.After(localWorkerWaitingDuration):
-		}
-		wk, err = pool.get()
-		if err != nil {
-			jobW.NotifyResult(err)
-			return
-		}
-	}
-	d.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-		defer func() {
-			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
-		}()
-
-		for i := int64(0); i < variable.GetDDLErrorCountLimit(); i++ {
-			err = wk.HandleLocalDDLJob(d.ddlCtx, job)
-			// since local the job is not inserted into the ddl job queue, we need to add retry logic here.
-			if err == nil || !isRetryableError(err) {
-				break
-			}
-			logutil.DDLLogger().Info("handle local ddl job", zap.Int64("retry times", i), zap.Error(err))
-			time.Sleep(time.Second)
-		}
-		pool.put(wk)
-		if err != nil {
-			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
-		}
-		jobW.NotifyResult(err)
-	})
 }
 
 // deliveryJob deliver the job to the worker to run it asynchronously.

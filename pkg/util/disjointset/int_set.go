@@ -40,6 +40,7 @@ func (m *SimpleIntSet) FindRoot(a int) int {
 	if a == m.parent[a] {
 		return a
 	}
+	// Path compression, which leads the time complexity to the inverse Ackermann function.
 	m.parent[a] = m.FindRoot(m.parent[a])
 	return m.parent[a]
 }

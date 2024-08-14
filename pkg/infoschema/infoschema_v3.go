@@ -211,9 +211,9 @@ func tableInfoResultEqual(t1, t2 []tableInfoResult) bool {
 	return true
 }
 
-func (is *InfoschemaV3) TableByID(id int64) (val table.Table, ok bool) {
-	tbl1, ok1 := is.infoV1.TableByID(id)
-	tbl2, ok2 := is.infoV2.TableByID(id)
+func (is *InfoschemaV3) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
+	tbl1, ok1 := is.infoV1.TableByID(ctx, id)
+	tbl2, ok2 := is.infoV2.TableByID(ctx, id)
 	if ok1 != ok2 {
 		panic("inconsistent infoschema 1")
 	}

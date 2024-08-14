@@ -32,7 +32,6 @@ type Options struct {
 	Store        kv.Storage
 	AutoIDClient *autoid.ClientDiscover
 	InfoCache    *infoschema.InfoCache
-	Hook         Callback
 	Lease        time.Duration
 	SchemaLoader SchemaLoader
 }
@@ -62,13 +61,6 @@ func WithInfoCache(ic *infoschema.InfoCache) Option {
 func WithAutoIDClient(cli *autoid.ClientDiscover) Option {
 	return func(options *Options) {
 		options.AutoIDClient = cli
-	}
-}
-
-// WithHook specifies the `Callback` of DDL used to notify the outer module when events are triggered
-func WithHook(callback Callback) Option {
-	return func(options *Options) {
-		options.Hook = callback
 	}
 }
 

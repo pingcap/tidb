@@ -21,23 +21,21 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -86,7 +84,6 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 10
-	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -168,8 +165,6 @@ type DDL interface {
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
 	Start(ctxPool *pools.ResourcePool) error
-	// GetLease returns current schema lease time.
-	GetLease() time.Duration
 	// Stats returns the DDL statistics.
 	Stats(vars *variable.SessionVars) (map[string]any, error)
 	// GetScope gets the status variables scope.
@@ -179,9 +174,9 @@ type DDL interface {
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
-	SchemaSyncer() syncer.SchemaSyncer
+	SchemaSyncer() schemaver.Syncer
 	// StateSyncer gets the cluster state syncer.
-	StateSyncer() syncer.StateSyncer
+	StateSyncer() serverstate.Syncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -190,10 +185,6 @@ type DDL interface {
 	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
-	// GetHook gets the hook. It's exported for testing.
-	GetHook() Callback
-	// SetHook sets the hook.
-	SetHook(h Callback)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 }
@@ -253,16 +244,12 @@ type ddl struct {
 	sessPool          *sess.Pool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
-	// used in the concurrency ddl.
-	localWorkerPool *workerPool
 	// get notification if any DDL job submitted or finished.
 	ddlJobNotifyCh    chan struct{}
 	sysTblMgr         systable.Manager
 	minJobIDRefresher *systable.MinJobIDRefresher
 
-	// localJobCh is used to delivery job in local TiDB nodes.
-	localJobCh chan *JobWrapper
-	// globalIDLocal locks global id to reduce write conflict.
+	// globalIDLock locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
 	executor     *executor
 }
@@ -329,13 +316,13 @@ func (w *waitSchemaSyncedController) clearOnceMap() {
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	uuid         string
-	store        kv.Storage
-	ownerManager owner.Manager
-	schemaSyncer syncer.SchemaSyncer
-	stateSyncer  syncer.StateSyncer
+	ctx               context.Context
+	cancel            context.CancelFunc
+	uuid              string
+	store             kv.Storage
+	ownerManager      owner.Manager
+	schemaVerSyncer   schemaver.Syncer
+	serverStateSyncer serverstate.Syncer
 	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
 	// jobID -> chan struct{}
 	ddlJobDoneChMap generic.SyncMap[int64, chan struct{}]
@@ -360,16 +347,11 @@ type ddlCtx struct {
 		// jobCtxMap maps job ID to job's ctx.
 		jobCtxMap map[int64]*JobContext
 	}
-
-	// hook may be modified.
-	mu hookStruct
 }
 
-// TODO remove it after we remove hook.
-type hookStruct struct {
-	sync.RWMutex
-	// see newDefaultCallBack for its value in normal flow.
-	hook Callback
+// SchemaLoader is used to avoid import loop, the only impl is domain currently.
+type SchemaLoader interface {
+	Reload() error
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -550,10 +532,6 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
-func (dc *ddlCtx) initJobDoneCh(jobID int64) {
-	dc.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
-}
-
 func (dc *ddlCtx) notifyJobDone(jobID int64) {
 	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
 		// broadcast done event as we might merge multiple jobs into one when fast
@@ -582,6 +560,8 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
+// TODO this is called after ddl started, will cause panic if related DDL are executed
+// in between.
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
 	d.executor.statsHandle = h
@@ -592,14 +572,6 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 // give up notify and log it.
 func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
 	if d.ddlEventCh != nil {
-		if d.lease == 0 {
-			// If lease is 0, it's always used in test.
-			select {
-			case d.ddlEventCh <- e:
-			default:
-			}
-			return
-		}
 		for i := 0; i < 10; i++ {
 			select {
 			case d.ddlEventCh <- e:
@@ -619,28 +591,26 @@ func NewDDL(ctx context.Context, options ...Option) (DDL, Executor) {
 }
 
 func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
-	opt := &Options{
-		Hook: &BaseCallback{},
-	}
+	opt := &Options{}
 	for _, o := range options {
 		o(opt)
 	}
 
 	id := uuid.New().String()
 	var manager owner.Manager
-	var schemaSyncer syncer.SchemaSyncer
-	var stateSyncer syncer.StateSyncer
+	var schemaVerSyncer schemaver.Syncer
+	var serverStateSyncer serverstate.Syncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
-		// So we use mockOwnerManager and MockSchemaSyncer.
+		// So we use mockOwnerManager and memSyncer.
 		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
-		schemaSyncer = NewMockSchemaSyncer()
-		stateSyncer = NewMockStateSyncer()
+		schemaVerSyncer = schemaver.NewMemSyncer()
+		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
-		stateSyncer = syncer.NewStateSyncer(etcdCli, util.ServerGlobalState)
+		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
+		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -659,8 +629,8 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		lease:                      opt.Lease,
 		ddlJobDoneChMap:            generic.NewSyncMap[int64, chan struct{}](10),
 		ownerManager:               manager,
-		schemaSyncer:               schemaSyncer,
-		stateSyncer:                stateSyncer,
+		schemaVerSyncer:            schemaVerSyncer,
+		serverStateSyncer:          serverStateSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -671,7 +641,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
-	ddlCtx.mu.hook = opt.Hook
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.schemaVersionManager = newSchemaVersionManager()
@@ -681,7 +650,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		limitJobCh:        make(chan *JobWrapper, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobNotifyCh:    make(chan struct{}, 100),
-		localJobCh:        make(chan *JobWrapper, 1),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -713,7 +681,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ownerManager:    d.ownerManager,
 		ddlJobDoneChMap: &d.ddlJobDoneChMap,
 		ddlJobNotifyCh:  d.ddlJobNotifyCh,
-		mu:              &d.mu,
 		globalIDLock:    &d.globalIDLock,
 	}
 	d.executor = e
@@ -744,33 +711,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
-func (d *ddl) prepareLocalModeWorkers() {
-	var idAllocator atomic.Uint64
-	workerFactory := func(tp workerType) func() (pools.Resource, error) {
-		return func() (pools.Resource, error) {
-			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx)
-			sessForJob, err := d.sessPool.Get()
-			if err != nil {
-				return nil, err
-			}
-			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = sess.NewSession(sessForJob)
-			wk.seqAllocator = &idAllocator
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
-			return wk, nil
-		}
-	}
-	// local worker count at least 2 at most 10.
-	localCnt := min(max(runtime.GOMAXPROCS(0)/4, 2), localWorkerCnt)
-	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localCnt, localCnt, 0), jobTypeLocal)
-	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return()
-		}
-	})
-	d.wg.Run(d.startLocalWorkerLoop)
-}
-
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
@@ -780,7 +720,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.sysTblMgr = systable.NewManager(d.sessPool)
 	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
 	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobsV1)
+		d.limitDDLJobs()
 	})
 	d.wg.Run(func() {
 		d.minJobIDRefresher.Start(d.ctx)
@@ -788,15 +728,13 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
-	if err := d.stateSyncer.Init(d.ctx); err != nil {
+	if err := d.serverStateSyncer.Init(d.ctx); err != nil {
 		logutil.DDLLogger().Warn("start DDL init state syncer failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	d.ownerManager.SetListener(&ownerListener{
 		ddl: d,
 	})
-
-	d.prepareLocalModeWorkers()
 
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
@@ -891,10 +829,7 @@ func (d *ddl) close() {
 	d.cancel()
 	d.wg.Wait()
 	d.ownerManager.Cancel()
-	d.schemaSyncer.Close()
-	if d.localWorkerPool != nil {
-		d.localWorkerPool.close()
-	}
+	d.schemaVerSyncer.Close()
 
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -909,20 +844,14 @@ func (d *ddl) close() {
 	logutil.DDLLogger().Info("DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
-// GetLease implements DDL.GetLease interface.
-func (d *ddl) GetLease() time.Duration {
-	lease := d.lease
-	return lease
-}
-
 // SchemaSyncer implements DDL.SchemaSyncer interface.
-func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
-	return d.schemaSyncer
+func (d *ddl) SchemaSyncer() schemaver.Syncer {
+	return d.schemaVerSyncer
 }
 
 // StateSyncer implements DDL.StateSyncer interface.
-func (d *ddl) StateSyncer() syncer.StateSyncer {
-	return d.stateSyncer
+func (d *ddl) StateSyncer() serverstate.Syncer {
+	return d.serverStateSyncer
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
@@ -938,22 +867,6 @@ func (d *ddl) GetID() string {
 // SetBinlogClient implements DDL.SetBinlogClient interface.
 func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
 	d.binlogCli = binlogCli
-}
-
-// GetHook implements DDL.GetHook interface.
-func (d *ddl) GetHook() Callback {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	return d.mu.hook
-}
-
-// SetHook set the customized hook.
-func (d *ddl) SetHook(h Callback) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.hook = h
 }
 
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
@@ -981,7 +894,7 @@ func (d *ddl) startCleanDeadTableLock() {
 				continue
 			}
 			for se, tables := range deadLockTables {
-				err := d.CleanDeadTableLock(tables, se)
+				err := d.cleanDeadTableLock(tables, se)
 				if err != nil {
 					logutil.DDLLogger().Info("clean dead table lock failed.", zap.Error(err))
 				}
@@ -990,6 +903,32 @@ func (d *ddl) startCleanDeadTableLock() {
 			return
 		}
 	}
+}
+
+// cleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &LockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []any{arg},
+	}
+
+	ctx, err := d.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.Put(ctx)
+	err = d.executor.DoDDLJob(ctx, job)
+	return errors.Trace(err)
 }
 
 // SwitchMDL enables MDL or disable MDL.
@@ -1067,9 +1006,19 @@ type RecoverSchemaInfo struct {
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
 	if variable.EnableMDL.Load() {
-		// If metadata lock is enabled. The transaction of DDL must begin after prewrite of the async commit transaction,
-		// then the commit ts of DDL must be greater than the async commit transaction. In this case, the corresponding schema of the async commit transaction
-		// is correct. But if metadata lock is disabled, we can't ensure that the corresponding schema of the async commit transaction isn't change.
+		// If metadata lock is enabled. The transaction of DDL must begin after
+		// pre-write of the async commit transaction, then the commit ts of DDL
+		// must be greater than the async commit transaction. In this case, the
+		// corresponding schema of the async commit transaction is correct.
+		// suppose we're adding index:
+		// - schema state -> StateWriteOnly with version V
+		// - some txn T started using async commit and version V,
+		//   and T do pre-write before or after V+1
+		// - schema state -> StateWriteReorganization with version V+1
+		// - T commit finish, with TS
+		// - 'wait schema synced' finish
+		// - schema state -> Done with version V+2, commit-ts of this
+		//   transaction must > TS, so it's safe for T to commit.
 		return
 	}
 	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit

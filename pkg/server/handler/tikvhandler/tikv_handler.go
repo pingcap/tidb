@@ -32,6 +32,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -196,14 +197,7 @@ func NewProfileHandler(tool *handler.TikvHandlerTool) *ProfileHandler {
 
 // DDLHookHandler is the handler for use pre-defined ddl callback.
 // It's convenient to provide some APIs for integration tests.
-type DDLHookHandler struct {
-	store kv.Storage
-}
-
-// NewDDLHookHandler creates a new DDLHookHandler.
-func NewDDLHookHandler(store kv.Storage) *DDLHookHandler {
-	return &DDLHookHandler{store}
-}
+type DDLHookHandler struct{}
 
 // ValueHandler is the handler for get value.
 type ValueHandler struct {
@@ -717,7 +711,7 @@ func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	uniqueIDMap := make(map[int64]struct{})
 	handleJobAndTableInfo := func(_ *model.Job, tblInfo *model.TableInfo) (bool, error) {
 		// Avoid duplicate table ID info.
-		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
+		if _, ok := currentSchema.TableByID(context.Background(), tblInfo.ID); ok {
 			return false, nil
 		}
 		if _, ok := uniqueIDMap[tblInfo.ID]; ok {
@@ -1073,7 +1067,7 @@ func getTableByIDStr(schema infoschema.InfoSchema, tableID string) (*model.Table
 	if tid < 0 {
 		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
 	}
-	if data, ok := schema.TableByID(int64(tid)); ok {
+	if data, ok := schema.TableByID(context.Background(), int64(tid)); ok {
 		return data.Meta(), nil
 	}
 	// The tid maybe a partition ID of the partition-table.
@@ -1866,7 +1860,7 @@ func (h DBTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo := DBTableInfo{
 		SchemaVersion: schema.SchemaMetaVersion(),
 	}
-	tbl, ok := schema.TableByID(int64(physicalID))
+	tbl, ok := schema.TableByID(context.Background(), int64(physicalID))
 	if ok {
 		dbTblInfo.TableInfo = tbl.Meta()
 		dbInfo, ok := infoschema.SchemaByTable(schema, dbTblInfo.TableInfo)
@@ -1996,26 +1990,35 @@ func (h *TestHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 }
 
 // ServeHTTP handles request of resigning ddl owner.
-func (h DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
 		return
 	}
 
-	dom, err := session.GetDomain(h.store)
-	if err != nil {
-		log.Error("failed to get session domain", zap.Error(err))
-		handler.WriteError(w, err)
+	hook := req.FormValue("ddl_hook")
+	switch hook {
+	case "ctc_hook":
+		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+			log.Info("on job run before", zap.String("job", job.String()))
+			// Only block the ctc type ddl here.
+			if job.Type != model.ActionModifyColumn {
+				return
+			}
+			switch job.SchemaState {
+			case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+				log.Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
+				time.Sleep(500 * time.Millisecond)
+			}
+		})
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+	case "default_hook":
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	}
 
-	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
-	if err != nil {
-		log.Error("failed to get customized hook", zap.Error(err))
-		handler.WriteError(w, err)
-	}
-	callback := newCallbackFunc(dom)
-
-	dom.DDL().SetHook(callback)
 	handler.WriteData(w, "success!")
 
 	ctx := req.Context()

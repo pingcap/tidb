@@ -15,7 +15,9 @@
 package util
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strconv"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -74,7 +77,7 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	se, err := pool.Get()
 	if err != nil {
 		return err
@@ -181,7 +184,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func GetCurrentPruneMode(pool SessionPool) (mode string, err error) {
+func GetCurrentPruneMode(pool util.SessionPool) (mode string, err error) {
 	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil
@@ -255,6 +258,13 @@ type JSONTable struct {
 	ModifyCount       int64                  `json:"modify_count"`
 	Version           uint64                 `json:"version"`
 	IsHistoricalStats bool                   `json:"is_historical_stats"`
+}
+
+// Sort is used to sort the object in the JSONTable. it is used for testing to avoid flaky test.
+func (j *JSONTable) Sort() {
+	slices.SortFunc(j.PredicateColumns, func(a, b *JSONPredicateColumn) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 }
 
 // JSONExtendedStats is used for dumping extended statistics.
