@@ -328,8 +328,11 @@ func main() {
 
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func() {
+		logutil.BgLogger().Info("got signal to exit")
 		svr.Close()
+		logutil.BgLogger().Info("after closing the server")
 		cleanup(svr, storage, dom)
+		logutil.BgLogger().Info("after cleanup")
 		cpuprofile.StopCPUProfiler()
 		resourcemanager.InstanceResourceManager.Stop()
 		executor.Stop()

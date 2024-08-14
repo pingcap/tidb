@@ -1029,6 +1029,18 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	case <-time.After(cancelWait):
 		logger.Warn("some sessions do not quit in cancel wait time")
 	}
+
+	// Set the duration to wait in seconds
+	waitTime := 15
+
+	logutil.BgLogger().Info(fmt.Sprintf("Waiting for %d seconds...", waitTime))
+
+	for i := waitTime; i > 0; i-- {
+		logger.Info(fmt.Sprintf("Remaining time: %d seconds", i))
+		time.Sleep(time.Second)
+	}
+
+	logutil.BgLogger().Info("Time's up!")
 }
 
 // ServerID implements SessionManager interface.
