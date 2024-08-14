@@ -844,7 +844,7 @@ var defaultSysVars = []*SysVar{
 			if err != nil {
 				return err
 			}
-			VarTiDBSuperReadOnly.Store(on)
+			GetSysVar(TiDBSuperReadOnly).SetGlobal(context.Background(), s, "ON")
 		}
 		RestrictedReadOnly.Store(on)
 		return nil
