@@ -96,14 +96,14 @@ func (l *ownerListener) OnBecomeOwner() {
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
 	sysTblMgr := systable.NewManager(l.ddl.sessPool)
 	l.scheduler = &jobScheduler{
-		schCtx:               ctx,
-		cancel:               cancelFunc,
-		runningJobs:          newRunningJobs(),
-		sysTblMgr:            sysTblMgr,
-		schemaLoader:         l.ddl.schemaLoader,
-		minJobIDRefresher:    l.ddl.minJobIDRefresher,
-		unSyncedJobTracker:   newUnSyncedJobTracker(),
-		schemaVersionManager: newSchemaVersionManager(l.ddl.store),
+		schCtx:            ctx,
+		cancel:            cancelFunc,
+		runningJobs:       newRunningJobs(),
+		sysTblMgr:         sysTblMgr,
+		schemaLoader:      l.ddl.schemaLoader,
+		minJobIDRefresher: l.ddl.minJobIDRefresher,
+		unSyncedTracker:   newUnSyncedJobTracker(),
+		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -131,8 +131,8 @@ type jobScheduler struct {
 	sysTblMgr         systable.Manager
 	schemaLoader      SchemaLoader
 	minJobIDRefresher *systable.MinJobIDRefresher
-	*unSyncedJobTracker
-	*schemaVersionManager
+	unSyncedTracker   *unSyncedJobTracker
+	schemaVerMgr      *schemaVersionManager
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -514,10 +514,11 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 func (s *jobScheduler) getJobRunCtx() *jobContext {
 	return &jobContext{
 		ctx:                  s.schCtx,
-		unSyncedJobTracker:   s.unSyncedJobTracker,
-		schemaVersionManager: s.schemaVersionManager,
+		unSyncedJobTracker:   s.unSyncedTracker,
+		schemaVersionManager: s.schemaVerMgr,
 		infoCache:            s.infoCache,
 		autoidCli:            s.autoidCli,
+		store:                s.store,
 
 		oldDDLCtx: s.ddlCtx,
 	}
@@ -533,7 +534,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// if owner not change, we need try to sync when it's un-synced.
 	// if owner changed, we need to try sync it if the job is not started by
 	// current owner.
-	if s.isUnSynced(job.ID) || !job.NotStarted() && !s.maybeAlreadyRunOnce(job.ID) {
+	if jobCtx.isUnSynced(job.ID) || !job.NotStarted() && !jobCtx.maybeAlreadyRunOnce(job.ID) {
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
@@ -553,7 +554,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				return err
 			}
 		}
-		s.setAlreadyRunOnce(job.ID)
+		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
 	schemaVer, err := wk.transitOneJobStep(s.ddlCtx, jobCtx, job)
@@ -578,7 +579,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)
-	s.delUnSynced(job.ID)
+	jobCtx.delUnSynced(job.ID)
 
 	failpoint.InjectCall("onJobUpdated", job)
 	return nil

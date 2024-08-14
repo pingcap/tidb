@@ -85,6 +85,7 @@ type jobContext struct {
 	*schemaVersionManager
 	infoCache *infoschema.InfoCache
 	autoidCli *autoid.ClientDiscover
+	store     kv.Storage
 
 	// TODO reorg part of code couple this struct so much, remove it later.
 	oldDDLCtx *ddlCtx
