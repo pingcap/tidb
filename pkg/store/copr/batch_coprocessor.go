@@ -294,6 +294,10 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 // The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
 // If balanceWithContinuity is true, the second balance strategy is enable.
 func balanceBatchCopTask(aliveStores []*tikv.Store, originalTasks []*batchCopTask, balanceWithContinuity bool, balanceContinuousRegionCount int64, allRegionInfos []RegionInfo) []*batchCopTask {
+	if len(originalTasks) == 0 {
+		log.Info("Batch cop task balancer got an empty task set.")
+		return originalTasks
+	}
 	storeTaskMap := make(map[uint64]*batchCopTask)
 	// storeCandidateRegionMap stores all the possible store->region map. Its content is
 	// store id -> region signature -> region info. We can see it as store id -> region lists.
