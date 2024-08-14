@@ -513,8 +513,13 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 
 func (s *jobScheduler) getJobRunCtx() *jobRunContext {
 	return &jobRunContext{
+		ctx:                  s.schCtx,
 		unSyncedJobTracker:   s.unSyncedJobTracker,
 		schemaVersionManager: s.schemaVersionManager,
+		infoCache:            s.infoCache,
+		autoidCli:            s.autoidCli,
+
+		oldDDLCtx: s.ddlCtx,
 	}
 }
 

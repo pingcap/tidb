@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/table"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -181,8 +180,6 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
-	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
@@ -337,7 +334,7 @@ type ddlCtx struct {
 	jobCtx struct {
 		sync.RWMutex
 		// jobCtxMap maps job ID to job's ctx.
-		jobCtxMap map[int64]*JobContext
+		jobCtxMap map[int64]*ReorgContext
 	}
 }
 
@@ -417,7 +414,7 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
-		ctx = NewJobContext()
+		ctx = NewReorgContext()
 		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
 	ctx.setDDLLabelForTopSQL(jobQuery)
@@ -428,7 +425,7 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
-		ctx = NewJobContext()
+		ctx = NewReorgContext()
 		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
 	ctx.setDDLLabelForDiagnosis(jobType)
@@ -450,14 +447,14 @@ func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	delete(dc.jobCtx.jobCtxMap, job.ID)
 }
 
-func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobContext {
+func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *ReorgContext {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
-	var ctx *JobContext
+	var ctx *ReorgContext
 	if jobContext, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
 		ctx = jobContext
 	} else {
-		ctx = NewJobContext()
+		ctx = NewReorgContext()
 	}
 	if reorgMeta != nil && len(ctx.resourceGroupName) == 0 {
 		ctx.resourceGroupName = reorgMeta.ResourceGroupName
@@ -571,11 +568,12 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
-	if d.ddlEventCh != nil {
+func asyncNotifyEvent(jobCtx *jobRunContext, e *statsutil.DDLEvent) {
+	ch := jobCtx.oldDDLCtx.ddlEventCh
+	if ch != nil {
 		for i := 0; i < 10; i++ {
 			select {
-			case d.ddlEventCh <- e:
+			case ch <- e:
 				return
 			default:
 				time.Sleep(time.Microsecond * 10)
@@ -640,7 +638,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		schemaLoader:      opt.SchemaLoader,
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
-	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
+	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*ReorgContext)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 
