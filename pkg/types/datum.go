@@ -927,7 +927,7 @@ func (d *Datum) compareMysqlTime(ctx Context, time Time) (int, error) {
 	}
 }
 
-func (d *Datum) compareVectorFloat32(ctx Context, vec VectorFloat32) (int, error) {
+func (d *Datum) compareVectorFloat32(_ Context, vec VectorFloat32) (int, error) {
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -2084,12 +2084,7 @@ func (d *Datum) ToString() (string, error) {
 
 // StringWithCtx implements Explainable interface.
 func (d *Datum) StringWithCtx(ctx ParamValues, redact string) string {
-	switch d.Kind() {
-	case KindVectorFloat32:
-		return d.GetVectorFloat32().StringWithCtx(ctx, redact)
-	default:
-		return fmt.Sprintf("%v", d.GetValue())
-	}
+	return d.GetVectorFloat32().StringWithCtx(ctx, redact)
 }
 
 // ToBytes gets the bytes representation of the datum.

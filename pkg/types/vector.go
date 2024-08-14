@@ -103,6 +103,11 @@ func (v VectorFloat32) Elements() []float32 {
 // StringWithCtx implements Explainable interface.
 // In EXPLAIN context, we truncate the elements to avoid too long output.
 func (v VectorFloat32) StringWithCtx(ctx ParamValues, redact string) string {
+	return v.StringWithRedact(ctx, redact)
+}
+
+// StringWithRedact parse vector into string with redact mode.
+func (v VectorFloat32) StringWithRedact(ctx ParamValues, redact string) string {
 	const (
 		maxDisplayElements = 5
 	)
@@ -116,18 +121,33 @@ func (v VectorFloat32) StringWithCtx(ctx ParamValues, redact string) string {
 	}
 
 	buf := make([]byte, 0, 2+v.Len()*2)
-	buf = append(buf, '[')
-	for i, v := range elements {
-		if i > 0 {
-			buf = append(buf, ","...)
+	if redact == errors.RedactLogDisable {
+		buf = append(buf, '[')
+		for i, v := range elements {
+			if i > 0 {
+				buf = append(buf, ","...)
+			}
+			buf = strconv.AppendFloat(buf, float64(v), 'g', 2, 32)
 		}
-		buf = strconv.AppendFloat(buf, float64(v), 'g', 2, 32)
+		if truncatedElements > 0 {
+			buf = append(buf, fmt.Sprintf(",(%d more)...", truncatedElements)...)
+		}
+		buf = append(buf, ']')
+	} else if redact == errors.RedactLogMarker {
+		buf = append(buf, '<', '[')
+		for i, v := range elements {
+			if i > 0 {
+				buf = append(buf, ","...)
+			}
+			buf = strconv.AppendFloat(buf, float64(v), 'g', 2, 32)
+		}
+		if truncatedElements > 0 {
+			buf = append(buf, fmt.Sprintf(",(%d more)...", truncatedElements)...)
+		}
+		buf = append(buf, ']', '>')
+	} else {
+		buf = append(buf, '?')
 	}
-	if truncatedElements > 0 {
-		buf = append(buf, fmt.Sprintf(",(%d more)...", truncatedElements)...)
-	}
-	buf = append(buf, ']')
-
 	// buf is not used elsewhere, so it's safe to just cast to String
 	return unsafe.String(unsafe.SliceData(buf), len(buf))
 }
