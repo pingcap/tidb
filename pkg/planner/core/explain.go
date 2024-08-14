@@ -189,6 +189,10 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
+	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+		return ""
+	}
+
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
