@@ -529,7 +529,7 @@ func (*ImplUnionAll) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	logicalUnion := expr.ExprNode.(*plannercore.LogicalUnionAll)
+	logicalUnion := expr.ExprNode.(*logicalop.LogicalUnionAll)
 	chReqProps := make([]*property.PhysicalProperty, len(expr.Children))
 	for i := range expr.Children {
 		chReqProps[i] = &property.PhysicalProperty{ExpectedCnt: reqProp.ExpectedCnt}

@@ -162,7 +162,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.
 	c.addPredicateColumnsFromExpressions(exprs)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *LogicalUnionAll) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logicalop.LogicalUnionAll) {
 	// statistics of the ith column of UnionAll come from statistics of the ith column of each child.
 	schemas := make([]*expression.Schema, 0, len(p.Children()))
 	relatedCols := make([]*expression.Column, 0, len(p.Children()))
@@ -289,9 +289,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for _, item := range x.ByItems {
 				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
 			}
-		case *LogicalUnionAll:
+		case *logicalop.LogicalUnionAll:
 			c.collectPredicateColumnsForUnionAll(x)
-		case *LogicalPartitionUnionAll:
+		case *logicalop.LogicalPartitionUnionAll:
 			c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 		case *LogicalCTE:
 			// Visit seedPartLogicalPlan and recursivePartLogicalPlan first.

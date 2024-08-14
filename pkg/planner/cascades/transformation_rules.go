@@ -826,7 +826,7 @@ func (r *PushLimitDownUnionAll) Match(expr *memo.ExprIter) bool {
 // It will transform `Limit->UnionAll->X` to `Limit->UnionAll->Limit->X`.
 func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
-	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalUnionAll)
 	unionAllSchema := old.Children[0].Group.Prop.Schema
 
 	newLimit := logicalop.LogicalLimit{
@@ -1086,7 +1086,7 @@ func NewRulePushSelDownUnionAll() Transformation {
 // It will transform `Selection->UnionAll->x` to `UnionAll->Selection->x`.
 func (*PushSelDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
-	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalUnionAll)
 	childGroups := old.Children[0].GetExpr().Children
 
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
@@ -1365,7 +1365,7 @@ func (r *PushTopNDownUnionAll) Match(expr *memo.ExprIter) bool {
 // It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
 func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
-	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalUnionAll)
 
 	newTopN := logicalop.LogicalTopN{
 		Count:   topN.Count + topN.Offset,
