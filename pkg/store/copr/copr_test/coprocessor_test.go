@@ -45,7 +45,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	req := &kv.Request{
 		Tp:          kv.ReqTypeDAG,
 		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, copr.CopSmallTaskRow}),
-		Concurrency: 15,
+		Concurrency: 1,
 	}
 	it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
@@ -59,7 +59,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	req = &kv.Request{
 		Tp:          kv.ReqTypeDAG,
 		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
-		Concurrency: 15,
+		Concurrency: 1,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
@@ -74,7 +74,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	req = &kv.Request{
 		Tp:          kv.ReqTypeDAG,
 		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{10}),
-		Concurrency: 15,
+		Concurrency: 1,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
