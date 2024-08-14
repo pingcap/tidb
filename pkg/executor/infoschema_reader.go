@@ -3691,7 +3691,7 @@ func (e *memtableRetriever) setDataForClusterIndexUsage(ctx context.Context, sct
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaIndexUsageExtractor)
 	if ok && extractor.SkipRequest {
 		return nil
 	}
