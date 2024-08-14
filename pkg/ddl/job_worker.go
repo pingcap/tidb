@@ -75,6 +75,12 @@ func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
 	atomic.StoreInt64(&WaitTimeWhenErrorOccurred, int64(dur))
 }
 
+// TODO merge below JobContext into this one.
+type jobRunContext struct {
+	*unSyncedJobTracker
+	*schemaVersionManager
+}
+
 type workerType byte
 
 const (
@@ -487,7 +493,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 //
 // The first return value is the schema version after running the job. If it's
 // non-zero, caller should wait for other nodes to catch up.
-func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
+func (w *worker) transitOneJobStep(d *ddlCtx, jobCtx *jobRunContext, job *model.Job) (int64, error) {
 	var (
 		err error
 	)
@@ -528,13 +534,13 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	failpoint.InjectCall("onJobRunAfter", job)
 
 	if job.IsCancelled() {
-		defer d.unlockSchemaVersion(job.ID)
+		defer jobCtx.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
 		return 0, w.handleJobDone(d, job, t)
 	}
 
 	if err = w.checkBeforeCommit(); err != nil {
-		d.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 
@@ -554,24 +560,24 @@ func (w *worker) transitOneJobStep(d *ddlCtx, job *model.Job) (int64, error) {
 	err = w.registerMDLInfo(job, schemaVer)
 	if err != nil {
 		w.sess.Rollback()
-		d.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 	err = w.updateDDLJob(job, updateRawArgs)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
-		d.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.ctx)
-	d.unlockSchemaVersion(job.ID)
+	jobCtx.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
 	}
-	w.registerSync(job)
+	jobCtx.addUnSynced(job.ID)
 
 	// If error is non-retryable, we can ignore the sleep.
 	if runJobErr != nil && errorIsRetryable(runJobErr, job) {
