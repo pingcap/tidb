@@ -60,7 +60,6 @@ const (
 	writeRowsMaxRetryTimes = 3
 	// To limit memory usage for prepared statements.
 	prepStmtCacheSize uint = 100
-	cachePrepStmts    bool = true
 )
 
 type tidbRow struct {
