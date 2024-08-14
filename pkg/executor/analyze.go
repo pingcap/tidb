@@ -388,53 +388,29 @@ func (e *AnalyzeExec) handleResultsError(
 	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
 	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
 	partitionStatsConcurrency = min(taskNum, partitionStatsConcurrency)
-	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
-	// If there is no extra session we can use, we will save analyze results in single-thread.
-	dom := domain.GetDomain(e.Ctx())
 	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if partitionStatsConcurrency > 1 {
-		// FIXME: Since we don't use it either to save analysis results or to store job history, it has no effect. Please remove this :(
-		subSctxs := dom.FetchAnalyzeExec(partitionStatsConcurrency)
-		warningMessage := "Insufficient sessions to save analyze results. Consider increasing the 'analyze-partition-concurrency-quota' configuration to improve analyze performance. " +
-			"This value should typically be greater than or equal to the 'tidb_analyze_partition_concurrency' variable."
-		if len(subSctxs) < partitionStatsConcurrency {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(warningMessage))
-			logutil.BgLogger().Warn(
-				warningMessage,
-				zap.Int("sessionCount", len(subSctxs)),
-				zap.Int("needSessionCount", partitionStatsConcurrency),
-			)
-		}
-		if len(subSctxs) > 0 {
-			sessionCount := len(subSctxs)
-			logutil.BgLogger().Info("use multiple sessions to save analyze results", zap.Int("sessionCount", sessionCount))
-			defer func() {
-				dom.ReleaseAnalyzeExec(subSctxs)
-			}()
-			return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
-		}
+		logutil.BgLogger().Info("save analyze results concurrently", zap.Int("concurrency", concurrency))
+		return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
 	}
-	logutil.BgLogger().Info("use single session to save analyze results")
+	logutil.BgLogger().Info("save analyze results in single-thread", zap.Int("concurrency", concurrency))
 	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
-	subSctxs := []sessionctx.Context{e.Ctx()}
-	return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, subSctxs, globalStatsMap, resultsCh)
+	return e.handleResultsErrorWithConcurrency(internalCtx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
 }
 
 func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	ctx context.Context,
 	statsConcurrency int,
 	needGlobalStats bool,
-	subSctxs []sessionctx.Context,
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
 ) error {
-	partitionStatsConcurrency := len(subSctxs)
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	wg := util.NewWaitGroupPool(e.gp)
-	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
-	errCh := make(chan error, partitionStatsConcurrency)
-	for i := 0; i < partitionStatsConcurrency; i++ {
-		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().SQLKiller)
+	saveResultsCh := make(chan *statistics.AnalyzeResults, statsConcurrency)
+	errCh := make(chan error, statsConcurrency)
+	for i := 0; i < statsConcurrency; i++ {
+		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
 			worker.run(ctx1, statsHandle, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
