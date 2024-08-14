@@ -176,7 +176,6 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	} else {
 		ctx = context.TODO()
 	}
-	vars := sctx.GetSessionVars()
 	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
@@ -323,8 +322,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if needPresumeNotExists {
 					flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 				}
-				if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() &&
-					!vars.InRestrictedSQL && vars.ConnectionID > 0 {
+				if opt.PessimisticLazyDupKeyCheck() == table.DupKeyCheckInPrewrite && txn.IsPessimistic() {
 					flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				err = txn.GetMemBuffer().SetWithFlags(key, val, flags...)

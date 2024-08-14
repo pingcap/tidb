@@ -121,8 +121,9 @@ type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more b
 
 // commonMutateOpt is the common options for mutating a table.
 type commonMutateOpt struct {
-	ctx         context.Context
-	dupKeyCheck DupKeyCheckMode
+	ctx                        context.Context
+	dupKeyCheck                DupKeyCheckMode
+	pessimisticLazyDupKeyCheck PessimisticLazyDupKeyCheckMode
 }
 
 // Ctx returns the go context in the option
@@ -133,6 +134,11 @@ func (opt *commonMutateOpt) Ctx() context.Context {
 // DupKeyCheck returns the DupKeyCheckMode in the option
 func (opt *commonMutateOpt) DupKeyCheck() DupKeyCheckMode {
 	return opt.dupKeyCheck
+}
+
+// PessimisticLazyDupKeyCheck returns the PessimisticLazyDupKeyCheckMode in the option
+func (opt *commonMutateOpt) PessimisticLazyDupKeyCheck() PessimisticLazyDupKeyCheckMode {
+	return opt.pessimisticLazyDupKeyCheck
 }
 
 // AddRecordOpt contains the options will be used when adding a record.
@@ -294,6 +300,35 @@ func (m DupKeyCheckMode) applyUpdateRecordOpt(opt *UpdateRecordOpt) {
 // ApplyCreateIdxOpt implements the CreateIdxOption interface.
 func (m DupKeyCheckMode) applyCreateIdxOpt(opt *CreateIdxOpt) {
 	opt.dupKeyCheck = m
+}
+
+// PessimisticLazyDupKeyCheckMode only takes effect for pessimistic transaction
+// when `DupKeyCheckMode` is set to `DupKeyCheckLazy`.
+// It indicates how to check the duplicated key in store.
+type PessimisticLazyDupKeyCheckMode uint8
+
+const (
+	// DupKeyCheckInAcquireLock indicates to check the duplicated key when acquiring the pessimistic lock.
+	DupKeyCheckInAcquireLock PessimisticLazyDupKeyCheckMode = iota
+	// DupKeyCheckInPrewrite indicates to check the duplicated key in the prewrite step when committing.
+	// Please notice that if it is used, the duplicated key error may not be returned immediately after each statement,
+	// because the duplicated key is not checked when acquiring the pessimistic lock.
+	DupKeyCheckInPrewrite
+)
+
+// applyAddRecordOpt implements the AddRecordOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyAddRecordOpt(opt *AddRecordOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
+}
+
+// applyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
+}
+
+// applyCreateIdxOpt implements the CreateIdxOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
 }
 
 type columnAPI interface {
