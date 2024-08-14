@@ -511,8 +511,8 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx() *jobRunContext {
-	return &jobRunContext{
+func (s *jobScheduler) getJobRunCtx() *jobContext {
+	return &jobContext{
 		ctx:                  s.schCtx,
 		unSyncedJobTracker:   s.unSyncedJobTracker,
 		schemaVersionManager: s.schemaVersionManager,
@@ -525,7 +525,7 @@ func (s *jobScheduler) getJobRunCtx() *jobRunContext {
 
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
-func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobRunContext, job *model.Job) error {
+func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, job *model.Job) error {
 	failpoint.InjectCall("beforeRunOneJobStep")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it

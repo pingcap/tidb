@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func onLockTables(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onLockTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	arg := &LockTablesArg{}
 	if err := job.DecodeArgs(arg); err != nil {
 		// Invalid arguments, cancel this job.
@@ -167,7 +167,7 @@ func checkTableLocked(tbInfo *model.TableInfo, lockTp model.TableLockType, sessi
 }
 
 // unlockTables uses unlock a batch of table lock one by one.
-func unlockTables(jobCtx *jobRunContext, t *meta.Meta, job *model.Job, arg *LockTablesArg) (ver int64, err error) {
+func unlockTables(jobCtx *jobContext, t *meta.Meta, job *model.Job, arg *LockTablesArg) (ver int64, err error) {
 	if arg.IndexOfUnlock >= len(arg.UnlockTables) {
 		return ver, nil
 	}
@@ -222,7 +222,7 @@ func unlockTable(tbInfo *model.TableInfo, arg *LockTablesArg) (needUpdateTableIn
 	return true
 }
 
-func onUnlockTables(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onUnlockTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	arg := &LockTablesArg{}
 	if err := job.DecodeArgs(arg); err != nil {
 		// Invalid arguments, cancel this job.

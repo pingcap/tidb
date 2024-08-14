@@ -34,7 +34,7 @@ import (
 // DefaultTTLJobInterval is the default value for ttl job interval.
 const DefaultTTLJobInterval = "1h"
 
-func onTTLInfoRemove(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onTTLInfoRemove(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -49,7 +49,7 @@ func onTTLInfoRemove(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver i
 	return ver, nil
 }
 
-func onTTLInfoChange(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// at least one for them is not nil
 	var ttlInfo *model.TTLInfo
 	var ttlInfoEnable *bool

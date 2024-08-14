@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
-func onCreateSequence(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
@@ -231,7 +231,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 	return false, 0, nil
 }
 
-func onAlterSequence(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		sequenceOpts []*ast.SequenceOption

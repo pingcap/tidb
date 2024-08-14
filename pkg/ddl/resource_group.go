@@ -42,7 +42,7 @@ const (
 	alreadyExists = "already exists"
 )
 
-func onCreateResourceGroup(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	groupInfo := &model.ResourceGroupInfo{}
 	if err := job.DecodeArgs(groupInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -91,7 +91,7 @@ func onCreateResourceGroup(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) 
 	}
 }
 
-func onAlterResourceGroup(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	alterGroupInfo := &model.ResourceGroupInfo{}
 	if err := job.DecodeArgs(alterGroupInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -146,7 +146,7 @@ func checkResourceGroupExist(t *meta.Meta, job *model.Job, groupID int64) (*mode
 	return nil, err
 }
 
-func onDropResourceGroup(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	groupInfo, err := checkResourceGroupExist(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)

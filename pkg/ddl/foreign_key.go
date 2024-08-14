@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-func (w *worker) onCreateForeignKey(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -91,7 +91,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobRunContext, t *meta.Meta, job *mo
 	return ver, nil
 }
 
-func onDropForeignKey(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -107,7 +107,7 @@ func onDropForeignKey(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver 
 	return dropForeignKey(jobCtx, t, job, tblInfo, fkName)
 }
 
-func dropForeignKey(jobCtx *jobRunContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkName model.CIStr) (ver int64, err error) {
+func dropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkName model.CIStr) (ver int64, err error) {
 	var fkInfo *model.FKInfo
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Name.L == fkName.L {
@@ -206,7 +206,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 	return checkTableForeignKey(referTblInfo, tbInfo, fk)
 }
 
-func checkTableForeignKeyValidInOwner(jobCtx *jobRunContext, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
+func checkTableForeignKeyValidInOwner(jobCtx *jobContext, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (retryable bool, _ error) {
 	if !variable.EnableForeignKey.Load() {
 		return false, nil
 	}
@@ -604,7 +604,7 @@ func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoS
 	return nil
 }
 
-func checkDatabaseHasForeignKeyReferredInOwner(jobCtx *jobRunContext, job *model.Job) error {
+func checkDatabaseHasForeignKeyReferredInOwner(jobCtx *jobContext, job *model.Job) error {
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}

@@ -425,7 +425,7 @@ func ValidateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	return false, nil
 }
 
-func onRenameIndex(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRenameIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, to, err := checkRenameIndex(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
@@ -465,7 +465,7 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName model.CIStr,
 	return false, nil
 }
 
-func onAlterIndexVisibility(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterIndexVisibility(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
@@ -504,7 +504,7 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	return nullCols, nil
 }
 
-func checkPrimaryKeyNotNull(jobCtx *jobRunContext, w *worker, t *meta.Meta, job *model.Job,
+func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, t *meta.Meta, job *model.Job,
 	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (warnings []string, err error) {
 	if !indexInfo.Primary {
 		return nil, nil
@@ -590,7 +590,7 @@ func decodeAddIndexArgs(job *model.Job) (
 	return
 }
 
-func (w *worker) onCreateIndex(jobCtx *jobRunContext, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
+func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropIndex(jobCtx, t, job)
@@ -872,7 +872,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
 }
 
-func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobRunContext, t *meta.Meta, job *model.Job,
+func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, t, job, tbl, allIndexInfos)
@@ -890,7 +890,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobRunContext, t *m
 
 func doReorgWorkForCreateIndex(
 	w *worker,
-	jobCtx *jobRunContext,
+	jobCtx *jobContext,
 	t *meta.Meta,
 	job *model.Job,
 	tbl table.Table,
@@ -961,7 +961,7 @@ func doReorgWorkForCreateIndex(
 	}
 }
 
-func runIngestReorgJobDist(w *worker, jobCtx *jobRunContext, t *meta.Meta, job *model.Job,
+func runIngestReorgJobDist(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, t, job, tbl, allIndexInfos, false)
 	if err != nil {
@@ -975,7 +975,7 @@ func runIngestReorgJobDist(w *worker, jobCtx *jobRunContext, t *meta.Meta, job *
 	return true, ver, nil
 }
 
-func runIngestReorgJob(w *worker, jobCtx *jobRunContext, t *meta.Meta, job *model.Job,
+func runIngestReorgJob(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, t, job, tbl, allIndexInfos, false)
 	if err != nil {
@@ -1011,7 +1011,7 @@ func errorIsRetryable(err error, job *model.Job) bool {
 
 func runReorgJobAndHandleErr(
 	w *worker,
-	jobCtx *jobRunContext,
+	jobCtx *jobContext,
 	t *meta.Meta,
 	job *model.Job,
 	tbl table.Table,
@@ -1086,7 +1086,7 @@ func runReorgJobAndHandleErr(
 	return true, ver, nil
 }
 
-func onDropIndex(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, allIndexInfos, ifExists, err := checkDropIndex(jobCtx.infoCache, t, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {

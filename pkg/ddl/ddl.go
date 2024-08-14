@@ -349,7 +349,7 @@ type SchemaLoader interface {
 // using memory lock to make sure this right now, as we are using optimistic
 // transaction here, and there will be many write conflict if we allow those
 // transactions run in parallel. we can change this to lock TiKV key inside the
-// transaction later
+// transaction later.
 type schemaVersionManager struct {
 	schemaVersionMu sync.Mutex
 	// lockOwner stores the job ID that is holding the lock.
@@ -568,7 +568,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobRunContext, e *statsutil.DDLEvent) {
+func asyncNotifyEvent(jobCtx *jobContext, e *statsutil.DDLEvent) {
 	ch := jobCtx.oldDDLCtx.ddlEventCh
 	if ch != nil {
 		for i := 0; i < 10; i++ {

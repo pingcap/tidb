@@ -53,7 +53,7 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobRunContext, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
+func createTable(jobCtx *jobContext, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo := job.Args[0].(*model.TableInfo)
 
@@ -148,7 +148,7 @@ func createTable(jobCtx *jobRunContext, t *meta.Meta, job *model.Job, fkCheck bo
 	}
 }
 
-func onCreateTable(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(ver, errors.New("mock do job error"))
@@ -188,7 +188,7 @@ func onCreateTable(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int
 	return ver, errors.Trace(err)
 }
 
-func createTableWithForeignKeys(jobCtx *jobRunContext, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
+func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
 	switch tbInfo.State {
 	case model.StateNone, model.StatePublic:
 		// create table in non-public or public state. The function `createTable` will always reset
@@ -224,7 +224,7 @@ func createTableWithForeignKeys(jobCtx *jobRunContext, t *meta.Meta, job *model.
 	return ver, errors.Trace(err)
 }
 
-func onCreateTables(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (int64, error) {
+func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 
 	var args []*model.TableInfo
@@ -290,7 +290,7 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 	return t.CreateTableOrView(schemaID, tbInfo)
 }
 
-func onCreateView(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	var orReplace bool

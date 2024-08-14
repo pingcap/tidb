@@ -77,19 +77,20 @@ func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
 	atomic.StoreInt64(&WaitTimeWhenErrorOccurred, int64(dur))
 }
 
-// TODO merge below ReorgContext into this one.
-type jobRunContext struct {
+// jobContext is the context for execution of a DDL job.
+type jobContext struct {
+	// below fields are shared by all DDL jobs
 	ctx context.Context
 	*unSyncedJobTracker
 	*schemaVersionManager
 	infoCache *infoschema.InfoCache
 	autoidCli *autoid.ClientDiscover
 
-	// remove it
+	// TODO reorg part of code couple this struct so much, remove it later.
 	oldDDLCtx *ddlCtx
 }
 
-func (c *jobRunContext) getAutoIDRequirement() autoid.Requirement {
+func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
 	return &asAutoIDRequirement{
 		store:     c.store,
 		autoidCli: c.autoidCli,
@@ -509,7 +510,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 //
 // The first return value is the schema version after running the job. If it's
 // non-zero, caller should wait for other nodes to catch up.
-func (w *worker) transitOneJobStep(d *ddlCtx, jobCtx *jobRunContext, job *model.Job) (int64, error) {
+func (w *worker) transitOneJobStep(d *ddlCtx, jobCtx *jobContext, job *model.Job) (int64, error) {
 	var (
 		err error
 	)
@@ -760,7 +761,7 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 // synchronized. So JobStateSynced *step* is added to make sure there is
 // waitSchemaChanged to wait for all nodes to catch up JobStateDone.
 func (w *worker) runOneJobStep(
-	jobCtx *jobRunContext,
+	jobCtx *jobContext,
 	t *meta.Meta,
 	job *model.Job,
 ) (ver int64, updateRawArgs bool, err error) {

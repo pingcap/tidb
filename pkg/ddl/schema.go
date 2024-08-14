@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
-func onCreateSchema(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
@@ -85,7 +85,7 @@ func checkSchemaNotExists(infoCache *infoschema.InfoCache, schemaID int64, dbInf
 	return nil
 }
 
-func onModifySchemaCharsetAndCollate(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
 	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
 		job.State = model.JobStateCancelled
@@ -115,7 +115,7 @@ func onModifySchemaCharsetAndCollate(jobCtx *jobRunContext, t *meta.Meta, job *m
 	return ver, nil
 }
 
-func onModifySchemaDefaultPlacement(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var placementPolicyRef *model.PolicyRefInfo
 	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
 		job.State = model.JobStateCancelled
@@ -151,7 +151,7 @@ func onModifySchemaDefaultPlacement(jobCtx *jobRunContext, t *meta.Meta, job *mo
 	return ver, nil
 }
 
-func onDropSchema(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -227,7 +227,7 @@ func onDropSchema(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int6
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) onRecoverSchema(jobCtx *jobRunContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
 		recoverSchemaInfo      *RecoverSchemaInfo
 		recoverSchemaCheckFlag int64

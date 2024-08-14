@@ -489,7 +489,7 @@ type reorgInfo struct {
 
 	StartKey      kv.Key
 	EndKey        kv.Key
-	jobCtx        *jobRunContext
+	jobCtx        *jobContext
 	first         bool
 	mergingTmpIdx bool
 	// PhysicalTableID is used for partitioned table.
@@ -709,7 +709,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(ctx *ReorgContext, jobCtx *jobRunContext, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo,
+func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo,
 	tbl table.Table, elements []*meta.Element, mergingTmpIdx bool) (*reorgInfo, error) {
 	var (
 		element *meta.Element
@@ -814,7 +814,7 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobRunContext, rh *reorgHandler, jo
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *ReorgContext, jobCtx *jobRunContext, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
