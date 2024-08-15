@@ -22,10 +22,10 @@ pd-heartbeat-tick-interval = "1s"
 [cdc]
 hibernate-regions-compatible=false
 
-[security]
-ca-path = "/tmp/lightning_test/certs/ca.pem"
-cert-path = "/tmp/lightning_test/certs/tikv.pem"
-key-path = "/tmp/lightning_test/certs/tikv.key"
+#[security]
+#ca-path = "/tmp/lightning_test/certs/ca.pem"
+#cert-path = "/tmp/lightning_test/certs/tikv.pem"
+#key-path = "/tmp/lightning_test/certs/tikv.key"
 
 [security.encryption]
 data-encryption-method = "aes256-ctr"
