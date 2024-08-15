@@ -160,9 +160,9 @@ func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
 	defer s.mu.Unlock()
 	if e, ok := s.items[key]; ok {
 		if rand.Intn(2) == 0 {
-			s.removeEntry(e)
-			s.hook.onMiss()
-			return value, false
+			//s.removeEntry(e)
+			//s.hook.onMiss()
+			//return value, false
 		}
 		e.visited = true
 		s.hook.onHit()
