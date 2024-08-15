@@ -45,7 +45,6 @@ func genConfig(
 	resourceGroup string,
 	concurrency int,
 ) (*local.BackendConfig, error) {
-	tidbCfg := tidb.GetGlobalConfig()
 	cfg := &local.BackendConfig{
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
