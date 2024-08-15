@@ -576,8 +576,8 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	var (
-		showInfos  = make([]*showInfo, 0)
 		tableNames = make([]string, 0)
+		showInfos  []*showInfo
 		err        error
 	)
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
