@@ -441,6 +441,7 @@ type BackendConfig struct {
 	// default true.
 	DisableAutomaticCompactions bool
 	BlockSize                   int
+	// trigger lightning CI
 }
 
 // NewBackendConfig creates a new BackendConfig.
