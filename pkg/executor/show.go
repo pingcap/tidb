@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -495,6 +494,77 @@ func (*ShowExec) fetchShowOpenTables() error {
 	return nil
 }
 
+// showInfo represents the result of `SHOW TABLES`.
+type showInfo struct {
+	Name model.CIStr
+	// only used for show full tables
+	TableType string
+}
+
+// getTableType returns the type of the table.
+func getTableType(tb *model.TableInfo) string {
+	switch {
+	case tb.IsView():
+		return "VIEW"
+	case tb.IsSequence():
+		return "SEQUENCE"
+	case util.IsSystemView(tb.Name.L):
+		return "SYSTEM VIEW"
+	default:
+		return "BASE TABLE"
+	}
+}
+
+// fromTableNameInfo converts TableNameInfo to showInfo.
+func fromTableNameInfo(tbInfo *model.TableNameInfo) *showInfo {
+	return &showInfo{Name: tbInfo.Name}
+}
+
+// fromTableInfo converts TableInfo to showInfo.
+func fromTableInfo(tbInfo *model.TableInfo) *showInfo {
+	return &showInfo{Name: tbInfo.Name, TableType: getTableType(tbInfo)}
+}
+
+// fetchShowInfoByName fetches the show info for `SHOW <FULL> TABLES like 'xxx'`
+func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*showInfo, error) {
+	tb, err := e.is.TableByName(ctx, e.DBName, model.NewCIStr(name))
+	if err != nil {
+		// do nothing if table not exists
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil, nil
+		}
+		return nil, errors.Trace(err)
+	}
+	return []*showInfo{{Name: tb.Meta().Name, TableType: getTableType(tb.Meta())}}, nil
+}
+
+// fetchShowSimpleTables fetches the table info for `SHOW TABLE`.
+func (e *ShowExec) fetchShowSimpleTables(ctx context.Context) ([]*showInfo, error) {
+	tb, err := e.is.SchemaSimpleTableInfos(ctx, e.DBName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	showInfos := make([]*showInfo, 0, len(tb))
+	for _, v := range tb {
+		// TODO: consider add type info to TableNameInfo
+		showInfos = append(showInfos, &showInfo{Name: v.Name})
+	}
+	return showInfos, nil
+}
+
+// fetchShowFullTables fetches the table info for `SHOW FULL TABLES`.
+func (e *ShowExec) fetchShowFullTables(ctx context.Context) ([]*showInfo, error) {
+	tb, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	showInfos := make([]*showInfo, 0, len(tb))
+	for _, v := range tb {
+		showInfos = append(showInfos, &showInfo{Name: v.Name, TableType: getTableType(v)})
+	}
+	return showInfos, nil
+}
+
 func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
@@ -505,6 +575,11 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 	if !e.is.SchemaExists(e.DBName) {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
+	var (
+		showInfos  = make([]*showInfo, 0)
+		tableNames = make([]string, 0)
+		err        error
+	)
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	var (
 		tableTypes        = make(map[string]string)
@@ -517,55 +592,29 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
-	schemaTables := make([]*model.TableTypeInfo, 0)
-
-	// prefilter for table names
 	if fieldFilter != "" {
-		tb, err := e.is.TableByName(ctx, e.DBName, model.NewCIStr(fieldFilter))
-		if err != nil {
-			// do nothing if table not exists
-			if !infoschema.ErrTableNotExists.Equal(err) {
-				return errors.Trace(err)
-			}
-		} else {
-			schemaTables = append(schemaTables, model.NewTableTypeInfo(tb.Meta()))
-		}
+		showInfos, err = e.fetchShowInfoByName(ctx, fieldFilter)
+	} else if e.Full {
+		showInfos, err = e.fetchShowFullTables(ctx)
 	} else {
-		txn, err := e.Ctx().Txn(true)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		meta := meta.NewMeta(txn)
-		db, ok := e.is.SchemaByName(e.DBName)
-		if !ok {
-			return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
-		}
-
-		schemaTables, err = meta.ListTableTypes(db.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		showInfos, err = e.fetchShowSimpleTables(ctx)
 	}
-
-	tableNames := make([]string, 0, len(schemaTables))
-	for _, v := range schemaTables {
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, v := range showInfos {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask) {
 			continue
-		}
-		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name.L) {
+		} else if fieldFilter != "" && v.Name.L != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name.L) {
 			continue
 		}
 		tableNames = append(tableNames, v.Name.O)
-		if v.Type == model.TableView {
-			tableTypes[v.Name.O] = "VIEW"
-		} else if v.Type == model.TableSequence {
-			tableTypes[v.Name.O] = "SEQUENCE"
-		} else if util.IsSystemView(e.DBName.L) {
-			tableTypes[v.Name.O] = "SYSTEM VIEW"
-		} else {
-			tableTypes[v.Name.O] = "BASE TABLE"
+		if e.Full {
+			tableTypes[v.Name.O] = v.TableType
 		}
 	}
 	slices.Sort(tableNames)
