@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -83,9 +84,14 @@ type jobContext struct {
 	ctx context.Context
 	*unSyncedJobTracker
 	*schemaVersionManager
-	infoCache *infoschema.InfoCache
-	autoidCli *autoid.ClientDiscover
-	store     kv.Storage
+	infoCache       *infoschema.InfoCache
+	autoidCli       *autoid.ClientDiscover
+	store           kv.Storage
+	schemaVerSyncer schemaver.Syncer
+	binlogCli       *pumpcli.PumpsClient
+
+	// per job fields
+	notifyCh chan struct{}
 
 	// TODO reorg part of code couple this struct so much, remove it later.
 	oldDDLCtx *ddlCtx
@@ -95,6 +101,14 @@ func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
 	return &asAutoIDRequirement{
 		store:     c.store,
 		autoidCli: c.autoidCli,
+	}
+}
+
+func (c *jobContext) notifyDone() {
+	if c.notifyCh != nil {
+		// broadcast done event as we might merge multiple jobs into one when fast
+		// create table is enabled.
+		close(c.notifyCh)
 	}
 }
 
@@ -456,7 +470,7 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 }
 
-func (w *worker) handleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
+func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, t *meta.Meta) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
@@ -471,7 +485,7 @@ func (w *worker) handleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 	cleanupDDLReorgHandles(job, w.sess)
-	d.notifyJobDone(job.ID)
+	jobCtx.notifyDone()
 	return nil
 }
 
@@ -511,7 +525,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 //
 // The first return value is the schema version after running the job. If it's
 // non-zero, caller should wait for other nodes to catch up.
-func (w *worker) transitOneJobStep(d *ddlCtx, jobCtx *jobContext, job *model.Job) (int64, error) {
+func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var (
 		err error
 	)
@@ -541,7 +555,7 @@ func (w *worker) transitOneJobStep(d *ddlCtx, jobCtx *jobContext, job *model.Job
 				}
 			}
 		})
-		return 0, w.handleJobDone(d, job, t)
+		return 0, w.handleJobDone(jobCtx, job, t)
 	}
 	failpoint.InjectCall("onJobRunBefore", job)
 
@@ -554,7 +568,7 @@ func (w *worker) transitOneJobStep(d *ddlCtx, jobCtx *jobContext, job *model.Job
 	if job.IsCancelled() {
 		defer jobCtx.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
-		return 0, w.handleJobDone(d, job, t)
+		return 0, w.handleJobDone(jobCtx, job, t)
 	}
 
 	if err = w.checkBeforeCommit(); err != nil {
@@ -587,7 +601,7 @@ func (w *worker) transitOneJobStep(d *ddlCtx, jobCtx *jobContext, job *model.Job
 		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	writeBinlog(d.binlogCli, txn, job)
+	writeBinlog(jobCtx.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.ctx)
@@ -760,7 +774,7 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 // example, if job becomes JobStateDone in runOneJobStep, we cannot return to
 // user that the job is finished because other nodes in cluster may not be
 // synchronized. So JobStateSynced *step* is added to make sure there is
-// waitSchemaChanged to wait for all nodes to catch up JobStateDone.
+// updateGlobalVersionAndWaitSynced to wait for all nodes to catch up JobStateDone.
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
 	t *meta.Meta,
@@ -981,25 +995,21 @@ func toTError(err error) *terror.Error {
 	return dbterror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
 }
 
-// waitSchemaChanged waits for the completion of updating all servers' schema or MDL synced. In order to make sure that happens,
-// we wait at most 2 * lease time(sessionTTL, 90 seconds).
-func waitSchemaChanged(ctx context.Context, d *ddlCtx, latestSchemaVersion int64, job *model.Job) error {
+// updateGlobalVersionAndWaitSynced update global schema version to notify all TiDBs
+// to reload info schema, and waits for all servers' schema or MDL synced.
+func updateGlobalVersionAndWaitSynced(jobCtx *jobContext, latestSchemaVersion int64, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
 
-	timeStart := time.Now()
 	var err error
-	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
-	}()
 
 	if latestSchemaVersion == 0 {
 		logutil.DDLLogger().Info("schema version doesn't change", zap.Int64("jobID", job.ID))
 		return nil
 	}
 
-	err = d.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
+	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(jobCtx.ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if variable.EnableMDL.Load() {
@@ -1012,13 +1022,7 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, latestSchemaVersion int64
 		}
 	}
 
-	return checkAllVersions(ctx, d, job, latestSchemaVersion, timeStart)
-}
-
-// waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
-func waitSchemaSyncedForMDL(ctx context.Context, d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
-	timeStart := time.Now()
-	return checkAllVersions(ctx, d, job, latestSchemaVersion, timeStart)
+	return waitVersionSynced(jobCtx, job, latestSchemaVersion)
 }
 
 func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {

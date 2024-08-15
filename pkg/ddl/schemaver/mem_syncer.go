@@ -101,8 +101,8 @@ func (s *MemSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) error {
 	return nil
 }
 
-// OwnerCheckAllVersions implements Syncer.OwnerCheckAllVersions interface.
-func (s *MemSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
+// WaitVersionSynced implements Syncer.WaitVersionSynced interface.
+func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error {
 	ticker := time.NewTicker(checkVersionsInterval)
 	defer ticker.Stop()
 

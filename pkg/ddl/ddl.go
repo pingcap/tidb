@@ -233,22 +233,18 @@ func (t *JobWrapper) NotifyResult(err error) {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
-	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
-	limitJobCh chan *JobWrapper
+	m  sync.RWMutex
+	wg tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 
 	*ddlCtx
 	sessPool          *sess.Pool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
-	// get notification if any DDL job submitted or finished.
-	ddlJobNotifyCh    chan struct{}
 	sysTblMgr         systable.Manager
 	minJobIDRefresher *systable.MinJobIDRefresher
 
-	// globalIDLock locks global id to reduce write conflict.
-	globalIDLock sync.Mutex
 	executor     *executor
+	jobSubmitter *jobSubmitter
 }
 
 // unSyncedJobTracker is to track whether changes of a DDL job are synced to all
@@ -315,18 +311,16 @@ type ddlCtx struct {
 	ownerManager      owner.Manager
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
-	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
-	// jobID -> chan struct{}
-	ddlJobDoneChMap generic.SyncMap[int64, chan struct{}]
-	ddlEventCh      chan<- *statsutil.DDLEvent
-	lease           time.Duration        // lease is schema lease, default 45s, see config.Lease.
-	binlogCli       *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoCache       *infoschema.InfoCache
-	statsHandle     *handle.Handle
-	tableLockCkr    util.DeadTableLockChecker
-	etcdCli         *clientv3.Client
-	autoidCli       *autoid.ClientDiscover
-	schemaLoader    SchemaLoader
+
+	ddlEventCh   chan<- *statsutil.DDLEvent
+	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
+	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoCache    *infoschema.InfoCache
+	statsHandle  *handle.Handle
+	tableLockCkr util.DeadTableLockChecker
+	etcdCli      *clientv3.Client
+	autoidCli    *autoid.ClientDiscover
+	schemaLoader SchemaLoader
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
@@ -530,14 +524,6 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
-func (dc *ddlCtx) notifyJobDone(jobID int64) {
-	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
-		// broadcast done event as we might merge multiple jobs into one when fast
-		// create table is enabled.
-		close(ch)
-	}
-}
-
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d any) {
 	if dd, ok := d.(*ddl); ok {
@@ -626,7 +612,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		uuid:              id,
 		store:             opt.Store,
 		lease:             opt.Lease,
-		ddlJobDoneChMap:   generic.NewSyncMap[int64, chan struct{}](10),
 		ownerManager:      manager,
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
@@ -644,9 +629,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
-		limitJobCh:        make(chan *JobWrapper, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
-		ddlJobNotifyCh:    make(chan struct{}, 100),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -665,20 +648,34 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchMDL = d.SwitchMDL
 
+	ddlJobDoneChMap := generic.NewSyncMap[int64, chan struct{}](10)
+	limitJobCh := make(chan *JobWrapper, batchAddingJobs)
+	var globalIDLock sync.Mutex
+
+	submitter := &jobSubmitter{
+		ctx:               d.ctx,
+		etcdCli:           d.etcdCli,
+		ownerManager:      d.ownerManager,
+		store:             d.store,
+		serverStateSyncer: d.serverStateSyncer,
+		ddlJobDoneChMap:   &ddlJobDoneChMap,
+
+		limitJobCh:     limitJobCh,
+		ddlJobNotifyCh: make(chan struct{}, 100),
+		globalIDLock:   &globalIDLock,
+	}
+	d.jobSubmitter = submitter
+
 	e := &executor{
 		ctx:             d.ctx,
 		uuid:            d.uuid,
 		store:           d.store,
-		etcdCli:         d.etcdCli,
 		autoidCli:       d.autoidCli,
 		infoCache:       d.infoCache,
-		limitJobCh:      d.limitJobCh,
-		schemaLoader:    d.schemaLoader,
+		limitJobCh:      limitJobCh,
 		lease:           d.lease,
-		ownerManager:    d.ownerManager,
-		ddlJobDoneChMap: &d.ddlJobDoneChMap,
-		ddlJobNotifyCh:  d.ddlJobNotifyCh,
-		globalIDLock:    &d.globalIDLock,
+		ddlJobDoneChMap: &ddlJobDoneChMap,
+		globalIDLock:    &globalIDLock,
 	}
 	d.executor = e
 
@@ -713,11 +710,12 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
-	d.executor.sessPool = d.sessPool
-	d.sysTblMgr = systable.NewManager(d.sessPool)
+	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
+	d.jobSubmitter.sysTblMgr = systable.NewManager(d.sessPool)
 	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
+	d.jobSubmitter.minJobIDRefresher = d.minJobIDRefresher
 	d.wg.Run(func() {
-		d.limitDDLJobs()
+		d.jobSubmitter.submitLoop()
 	})
 	d.wg.Run(func() {
 		d.minJobIDRefresher.Start(d.ctx)
@@ -730,7 +728,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		return errors.Trace(err)
 	}
 	d.ownerManager.SetListener(&ownerListener{
-		ddl: d,
+		ddl:          d,
+		jobSubmitter: d.jobSubmitter,
+		ddlExecutor:  d.executor,
 	})
 
 	if config.TableLockEnabled() {

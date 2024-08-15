@@ -79,10 +79,9 @@ type Syncer interface {
 	Done() <-chan struct{}
 	// Restart restarts the syncer when it's on longer being refreshed.
 	Restart(ctx context.Context) error
-	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
-	// the latest schema version. (exclude the isolated TiDB)
-	// It returns until all servers' versions are equal to the latest version.
-	OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error
+	// WaitVersionSynced wait until all servers' current schema version are equal
+	// or greater than latestVer.
+	WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error
 	// SyncJobSchemaVerLoop syncs the schema versions on all TiDB nodes for DDL jobs.
 	SyncJobSchemaVerLoop(ctx context.Context)
 	// Close ends Syncer.
@@ -316,8 +315,8 @@ func (s *etcdSyncer) removeSelfVersionPath() error {
 	return errors.Trace(err)
 }
 
-// OwnerCheckAllVersions implements Syncer.OwnerCheckAllVersions interface.
-func (s *etcdSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
+// WaitVersionSynced implements Syncer.WaitVersionSynced interface.
+func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error {
 	startTime := time.Now()
 	if !variable.EnableMDL.Load() {
 		time.Sleep(CheckVersFirstWaitTime)
