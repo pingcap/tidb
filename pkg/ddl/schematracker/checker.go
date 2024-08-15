@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/table"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 )
 
@@ -528,11 +527,6 @@ func (d *Checker) OwnerManager() owner.Manager {
 // GetID implements the DDL interface.
 func (d *Checker) GetID() string {
 	return d.realDDL.GetID()
-}
-
-// GetTableMaxHandle implements the DDL interface.
-func (d *Checker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
-	return d.realDDL.GetTableMaxHandle(ctx, startTS, tbl)
 }
 
 // SetBinlogClient implements the DDL interface.
