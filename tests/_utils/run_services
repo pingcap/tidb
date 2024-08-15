@@ -193,7 +193,7 @@ start_services_impl() {
     stop_services || true
     cleanup_data || true
 
-    RUN_TIFLASH=true
+    RUN_TIFLASH=false
 
     while [[ $# -gt 0 ]]
     do
