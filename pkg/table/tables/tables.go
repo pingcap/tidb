@@ -440,24 +440,19 @@ func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *TableCommon) UpdateRecord(ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
+func (t *TableCommon) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
 	opt := table.NewUpdateRecordOpt(opts...)
-	return t.updateRecord(ctx, h, oldData, newData, touched, opt)
+	return t.updateRecord(ctx, txn, h, oldData, newData, touched, opt)
 }
 
-func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool, opt *table.UpdateRecordOpt) error {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
+func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction, h kv.Handle, oldData, newData []types.Datum, touched []bool, opt *table.UpdateRecordOpt) error {
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable, sizeLimit, ok := addTemporaryTable(sctx, m); ok {
-			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
+			if err := checkTempTableSize(tmpTable, sizeLimit); err != nil {
 				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
@@ -483,6 +478,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldDat
 
 	for _, col := range t.Columns {
 		var value types.Datum
+		var err error
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
@@ -527,12 +523,12 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, h kv.Handle, oldDat
 	// check data constraint
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err = table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err := table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
 			return err
 		}
 	}
 	// rebuild index
-	err = t.rebuildUpdateRecordIndices(sctx, txn, h, touched, oldData, newData, opt)
+	err := t.rebuildUpdateRecordIndices(sctx, txn, h, touched, oldData, newData, opt)
 	if err != nil {
 		return err
 	}
@@ -736,17 +732,13 @@ func checkTempTableSize(tmpTable tbctx.TemporaryTableHandler, sizeLimit int64) e
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (t *TableCommon) AddRecord(sctx table.MutateContext, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	// TODO: optimize the allocation (and calculation) of opt.
 	opt := table.NewAddRecordOpt(opts...)
-	return t.addRecord(sctx, r, opt)
+	return t.addRecord(sctx, txn, r, opt)
 }
 
-func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *table.AddRecordOpt) (recordID kv.Handle, err error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
+func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r []types.Datum, opt *table.AddRecordOpt) (recordID kv.Handle, err error) {
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable, sizeLimit, ok := addTemporaryTable(sctx, m); ok {
 			if err = checkTempTableSize(tmpTable, sizeLimit); err != nil {
@@ -833,7 +825,6 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	sessVars := sctx.GetSessionVars()
 	for _, col := range t.Columns {
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
@@ -918,8 +909,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, r []types.Datum, opt *
 	var flags []kv.FlagsOp
 	if setPresume {
 		flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
-		if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic && sessVars.InTxn() &&
-			!sctx.InRestrictedSQL() && sctx.ConnectionID() > 0 {
+		if opt.PessimisticLazyDupKeyCheck() == table.DupKeyCheckInPrewrite && txn.IsPessimistic() {
 			flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 		}
 	}
@@ -1178,17 +1168,12 @@ func GetChangingColVal(ctx exprctx.BuildContext, cols []*table.Column, col *tabl
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
+func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	err = t.removeRowData(ctx, h)
+	err := t.removeRowData(ctx, txn, h)
 	if err != nil {
 		return err
 	}
@@ -1215,7 +1200,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		}
 		r = append(r, value)
 	}
-	err = t.removeRowIndices(ctx, h, r)
+	err = t.removeRowIndices(ctx, txn, h, r)
 	if err != nil {
 		return err
 	}
@@ -1355,13 +1340,8 @@ func writeSequenceUpdateValueBinlog(sctx sessionctx.Context, db, sequence string
 	return err
 }
 
-func (t *TableCommon) removeRowData(ctx table.MutateContext, h kv.Handle) error {
+func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction, h kv.Handle) (err error) {
 	// Remove row data.
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
 	key := t.RecordKey(h)
 	failpoint.Inject("removeRecordForceAssertNotExist", func() {
 		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
@@ -1386,11 +1366,7 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, h kv.Handle) error 
 }
 
 // removeRowIndices removes all the indices of a row.
-func (t *TableCommon) removeRowIndices(ctx table.MutateContext, h kv.Handle, rec []types.Datum) error {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return err
-	}
+func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum) error {
 	for _, v := range t.deletableIndices() {
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue

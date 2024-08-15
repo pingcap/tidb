@@ -1571,7 +1571,7 @@ func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.
 	}
 }
 
-func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAll) error {
+func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.LogicalUnionAll) error {
 	unionCols := make([]*expression.Column, 0, u.Children()[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.Children()[0].Schema().Len())
 
@@ -1894,7 +1894,7 @@ func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []base.LogicalP
 	if len(subPlan) == 0 {
 		return nil, nil
 	}
-	u := LogicalUnionAll{}.Init(b.ctx, b.getSelectOffset())
+	u := logicalop.LogicalUnionAll{}.Init(b.ctx, b.getSelectOffset())
 	u.SetChildren(subPlan...)
 	err := b.buildProjection4Union(ctx, u)
 	return u, err
@@ -1921,7 +1921,7 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p base.LogicalPlan, byItems
 
 func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p base.LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int,
 	projExprs []expression.Expression, oldLen int, hasDistinct bool) (*logicalop.LogicalSort, error) {
-	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+	if _, isUnion := p.(*logicalop.LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
 		b.curClause = orderByClause
@@ -4814,7 +4814,9 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		case infoschema.TableTiKVRegionPeers:
 			p.Extractor = &TikvRegionPeersExtractor{}
 		case infoschema.TableColumns:
-			p.Extractor = &ColumnsTableExtractor{}
+			ex := &InfoSchemaColumnsExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
 		case infoschema.TableTables:
 			ex := &InfoSchemaTablesExtractor{}
 			ex.initExtractableColNames(upTbl)
@@ -4831,12 +4833,24 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			ex := &InfoSchemaSchemataExtractor{}
 			ex.initExtractableColNames(upTbl)
 			p.Extractor = ex
-		case infoschema.TableReferConst,
-			infoschema.TableSequences,
-			infoschema.TableCheckConstraints,
-			infoschema.TableTiDBCheckConstraints,
-			infoschema.TableTiDBIndexUsage:
-			ex := &InfoSchemaBaseExtractor{}
+		case infoschema.TableSequences:
+			ex := &InfoSchemaSequenceExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableTiDBIndexUsage:
+			ex := &InfoSchemaIndexUsageExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableCheckConstraints:
+			ex := &InfoSchemaCheckConstraintsExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableTiDBCheckConstraints:
+			ex := &InfoSchemaTiDBCheckConstraintsExtractor{}
+			ex.initExtractableColNames(upTbl)
+			p.Extractor = ex
+		case infoschema.TableReferConst:
+			ex := &InfoSchemaReferConstExtractor{}
 			ex.initExtractableColNames(upTbl)
 			p.Extractor = ex
 		case infoschema.TableTiDBIndexes:
@@ -5063,7 +5077,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp logicalop.JoinType, markNoDecorrelate bool) base.LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate | flagConvertOuterToInnerJoin
-	ap := LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
+	ap := logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len()))
 	copy(ap.OutputNames(), outerPlan.OutputNames())
@@ -5092,7 +5106,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan base.LogicalPlan, cond
 	}
 
 	setIsInApplyForCTE(innerPlan, join.Schema())
-	ap := &LogicalApply{LogicalJoin: *join, NoDecorrelate: markNoDecorrelate}
+	ap := &logicalop.LogicalApply{LogicalJoin: *join, NoDecorrelate: markNoDecorrelate}
 	ap.SetTP(plancodec.TypeApply)
 	ap.SetSelf(ap)
 	return ap, nil

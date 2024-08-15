@@ -1367,9 +1367,9 @@ func (e *InsertValues) removeRow(
 	}
 
 	if ph, ok := handle.(kv.PartitionHandle); ok {
-		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), ph.Handle, oldRow)
+		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), txn, ph.Handle, oldRow)
 	} else {
-		err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+		err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), txn, handle, oldRow)
 	}
 	if err != nil {
 		return false, err
@@ -1412,10 +1412,15 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
 ) (err error) {
 	vars := e.Ctx().GetSessionVars()
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return err
+	}
+	pessimisticLazyCheck := getPessimisticLazyCheckMode(vars)
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), dupKeyCheck)
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), dupKeyCheck, pessimisticLazyCheck)
 	} else {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), dupKeyCheck)
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), dupKeyCheck, pessimisticLazyCheck)
 	}
 	if err != nil {
 		return err

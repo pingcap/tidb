@@ -165,7 +165,7 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	}
 	proj, isProj := p.(*logicalop.LogicalProjection)
 	childFlag := canEliminate
-	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+	if _, isUnion := p.(*logicalop.LogicalUnionAll); isUnion {
 		childFlag = false
 	} else if _, isAgg := p.(*logicalop.LogicalAggregation); isAgg || isProj {
 		childFlag = true
@@ -180,7 +180,7 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	switch x := p.(type) {
 	case *logicalop.LogicalJoin:
 		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
-	case *LogicalApply:
+	case *logicalop.LogicalApply:
 		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
 	default:
 		for _, dst := range p.Schema().Columns {

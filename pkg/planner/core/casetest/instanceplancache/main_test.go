@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 )
@@ -53,7 +54,7 @@ func randomItems(items ...string) []string {
 }
 
 func randomIntVal() string {
-	switch rand.Intn(4) {
+	switch rand.Intn(5) {
 	case 0: // null
 		return "null"
 	case 1: // 0/positive/negative
@@ -70,17 +71,70 @@ func randomIntVal() string {
 	}
 }
 
+func randomVarcharVal() string {
+	switch rand.Intn(4) {
+	case 0:
+		return "null"
+	case 1:
+		return "''"
+	case 2:
+		return randomItem(fmt.Sprintf("'%v'", rand.Intn(1000)), fmt.Sprintf("'-%v'", rand.Intn(1000)))
+	default:
+		str := "weoiruklmdsSDFjfDSFpqru23h#@$@#r90ds8a90dhfksdjfl#@!@#~$@#^BFDSAFDS=========+_+-21KLEJSDKLX;FJP;ipo][1"
+		start := rand.Intn(len(str))
+		end := start + rand.Intn(len(str)-start)
+		return fmt.Sprintf("'%v'", str[start:end])
+	}
+}
+
+func randomFloat() string {
+	switch rand.Intn(4) {
+	case 0:
+		return "null"
+	case 1:
+		return randomItem("0", "0.000000000", "0000.000", "-0", "-0.000000000", "-0000.000",
+			"1", "1.000000000", "0001.000", "-1", "-1.000000000", "-0001.000",
+			"0.00001", "0.000000001", "0000.0000000001", "-0.00001", "-0.000000001", "-0000.0000000001")
+	case 2:
+		return randomItem("1.234", "1.23456789", "1.234567890123456789", "-1.234", "-1.23456789", "-1.234567890123456789",
+			"1234.567", "1234.567890123456789", "1234.567890123456789123456789", "-1234.567", "-1234.567890123456789", "-1234.567890123456789123456789",
+			"0.00001", "0.000000001", "0000.0000000001", "-0.00001", "-0.000000001", "-0000.0000000001")
+	default:
+		return randomItem(fmt.Sprintf("%v", rand.Float32()), fmt.Sprintf("-%v", rand.Float32()),
+			fmt.Sprintf("%v", rand.Float64()), fmt.Sprintf("-%v", rand.Float64()))
+	}
+}
+
+func randomDatetime() string {
+	switch rand.Intn(3) {
+	case 0:
+		return "null"
+	case 1:
+		return randomItem("'2024-01-01 00:00:00'", "'2024-01-01 00:00:00.000000'", "'2024-01-01 00:00:00.000000000'",
+			"'2024-01-01 00:00:00.000000000+08:00'", "'2024-01-01 00:00:00.000000000+08:00'")
+	default:
+		t := time.Now().Add(time.Duration(rand.Intn(100000)) * time.Second)
+		return fmt.Sprintf("'%v'", t.Format("2006-01-02 15:04:05.000000000"))
+	}
+}
+
 func prepareTableData(t string, rows int, colTypes []string) []string {
 	colValues := make([][]string, len(colTypes))
 	for i, colType := range colTypes {
 		colValues[i] = make([]string, 0, rows)
-		switch colType {
-		case typeInt:
-			for j := 0; j < rows; j++ {
+		for j := 0; j < rows; j++ {
+			switch colType {
+			case typeInt:
 				colValues[i] = append(colValues[i], randomIntVal())
+			case typeVarchar:
+				colValues[i] = append(colValues[i], randomVarcharVal())
+			case typeFloat, typeDouble, typeDecimal:
+				colValues[i] = append(colValues[i], randomFloat())
+			case typeDatetime:
+				colValues[i] = append(colValues[i], randomDatetime())
+			default:
+				panic("not implemented")
 			}
-		default:
-			panic("not implemented")
 		}
 	}
 	var inserts []string
@@ -102,7 +156,7 @@ func prepareTables(n int) []string {
 		colNames := []string{"c0", "c1", "c2", "c3", "c4", "c5"}
 		var colTypes []string
 		for j := 0; j < nCols; j++ {
-			colType := randomItem(typeInt)
+			colType := randomItem(typeInt, typeVarchar, typeFloat, typeDouble, typeDatetime)
 			colTypes = append(colTypes, colType)
 			cols = append(cols, fmt.Sprintf("c%d %v", j, colType))
 		}
@@ -229,8 +283,16 @@ func prepareStmts(q string, nTables, n int) *testCase {
 
 func genRandomValues(numVals int) (vals []string) {
 	for i := 0; i < numVals; i++ {
-		// TODO: support more types
-		vals = append(vals, randomIntVal())
+		switch rand.Intn(4) {
+		case 0:
+			vals = append(vals, randomIntVal())
+		case 1:
+			vals = append(vals, randomVarcharVal())
+		case 2:
+			vals = append(vals, randomFloat())
+		case 3:
+			vals = append(vals, randomDatetime())
+		}
 	}
 	return
 }

@@ -162,13 +162,13 @@ type backfillCtx struct {
 	schemaName    string
 	table         table.Table
 	batchCnt      int
-	jobContext    *JobContext
+	jobContext    *ReorgContext
 	metricCounter prometheus.Counter
 }
 
 func newBackfillCtx(id int, rInfo *reorgInfo,
-	schemaName string, tbl table.Table, jobCtx *JobContext, label string, isDistributed bool) (*backfillCtx, error) {
-	sessCtx, err := newSessCtx(rInfo.d.store, rInfo.ReorgMeta)
+	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool) (*backfillCtx, error) {
+	sessCtx, err := newSessCtx(rInfo.jobCtx.store, rInfo.ReorgMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
 		id:         id,
-		ddlCtx:     rInfo.d,
+		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
 		sessCtx:    sessCtx,
 		warnings:   sessCtx.GetSessionVars().StmtCtx.WarnHandler,
 		exprCtx:    exprCtx,
@@ -570,7 +570,7 @@ func getActualEndKey(
 	// backfill worker can't catch up, we shrink the end key to the actual written key for now.
 	jobCtx := reorgInfo.NewJobContext()
 
-	actualEndKey, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, t.RecordPrefix(), rangeStart, rangeEnd)
+	actualEndKey, err := GetRangeEndKey(jobCtx, reorgInfo.jobCtx.store, job.Priority, t.RecordPrefix(), rangeStart, rangeEnd)
 	if err != nil {
 		logutil.DDLLogger().Info("get backfill range task, get reverse key failed", zap.Error(err))
 		return rangeEnd
@@ -976,7 +976,7 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, version uint64,
+func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyPrefix kv.Key, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
 	isRecord := tablecodec.IsRecordKey(keyPrefix.Next())
 	var firstKey kv.Key
@@ -1041,7 +1041,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 }
 
 // GetRangeEndKey gets the actual end key for the range of [startKey, endKey).
-func GetRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
+func GetRangeEndKey(ctx *ReorgContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
 	snap := store.GetSnapshot(kv.MaxVersion)
 	snap.SetOption(kv.Priority, priority)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
