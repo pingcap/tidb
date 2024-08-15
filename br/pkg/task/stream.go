@@ -1428,12 +1428,18 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
+
+	compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
+
+	sstFileCount, regionCompactedMap, err := client.CollectCompactedSsts(ctx, rewriteRules, compactionIter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount+sstFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		// TODO consider checkpoint
-
-		compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
-		err = client.RestoreCompactedSsts(ctx, rewriteRules, compactionIter)
+		err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, p.Inc)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1532,6 +1538,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetConcurrencyPerStore(uint(cfg.ConcurrencyPerStore.Value))
 	client.InitClients(ctx, u)
 
 	err = client.SetRawKVBatchClient(ctx, cfg.PD, cfg.TLS.ToKVSecurity())

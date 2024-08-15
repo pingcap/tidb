@@ -50,7 +50,7 @@ type FileRestorer interface {
 	// After spliting, it also scatters the fresh regions.
 	SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error
 
-	// RestoreSSTFiles import the files to the TiKV.
+	// RestoreFiles import the files to the TiKV.
 	RestoreFiles(ctx context.Context, files []SstFilesInfo, updateCh glue.Progress) error
 
 	// Close release the resources.

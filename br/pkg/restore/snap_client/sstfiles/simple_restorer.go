@@ -19,6 +19,7 @@ package sstfiles
 
 import (
 	"context"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/log"
@@ -28,24 +29,28 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 type SimpleFileRestorer struct {
-	workerPool   *tidbutil.WorkerPool
-	splitter     split.SplitClient
-	fileImporter *SnapFileImporter
+	useStartKeySplit bool
+	workerPool       *tidbutil.WorkerPool
+	splitter         split.SplitClient
+	fileImporter     *SnapFileImporter
 }
 
 func NewSimpleFileRestorer(
+	useStartKeySplit bool,
 	fileImporter *SnapFileImporter,
 	splitter split.SplitClient,
 	workerPool *tidbutil.WorkerPool,
 ) FileRestorer {
 	return &SimpleFileRestorer{
-		fileImporter: fileImporter,
-		splitter:     splitter,
-		workerPool:   workerPool,
+		useStartKeySplit: useStartKeySplit,
+		fileImporter:     fileImporter,
+		splitter:         splitter,
+		workerPool:       workerPool,
 	}
 }
 
@@ -65,7 +70,11 @@ func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Ran
 		})
 		s.splitter.ApplyOptions(splitClientOpt)
 	}
-	splitter := utils.NewRegionSplitter(s.splitter)
+	opts := make([]utils.SplitOption, 0, 1)
+	if s.useStartKeySplit {
+		opts = append(opts, &utils.UseStartKeyOption{})
+	}
+	splitter := utils.NewRegionSplitter(s.splitter, opts...)
 	return splitter.ExecuteSplit(ctx, ranges)
 }
 
@@ -77,11 +86,15 @@ func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesI
 	for _, file := range files {
 		fileReplica := file
 		r.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
+			func() (restoreErr error) {
+				fileStart := time.Now()
 				defer func() {
-					log.Info("import sst files done", logutil.Files(fileReplica.Files))
-					if updateCh != nil {
-						updateCh.Inc()
+					if restoreErr == nil {
+						log.Info("import sst files done", logutil.Files(fileReplica.Files),
+							zap.Duration("take", time.Since(fileStart)))
+						if updateCh != nil {
+							updateCh.Inc()
+						}
 					}
 				}()
 				return r.fileImporter.ImportSSTFiles(ectx, fileReplica.Files, fileReplica.RewriteRules)
