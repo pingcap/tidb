@@ -1291,7 +1291,7 @@ func (local *Backend) generateJobForRange(
 	var cancelRegionPause func()
 	if local.PausePDSchedulerScope == config.PausePdSchedulerScopeInAction {
 		// stop region schedule before region scan
-		err, cancelRegionPause = local.StopRegionScheduling(ctx, []common.Range{{Start: startKey, End: endKey}})
+		cancelRegionPause, err = local.StopRegionScheduling(ctx, []common.Range{{Start: startKey, End: endKey}})
 		if err != nil {
 			cancelRegionPause()
 			return nil, errors.Trace(err)
@@ -1533,7 +1533,7 @@ func (local *Backend) ImportEngine(
 
 	if len(regionRanges) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		log.FromContext(ctx).Info("pause pd scheduler of table scope")
-		err, cancel := local.StopRegionScheduling(ctx, regionRanges)
+		cancel, err := local.StopRegionScheduling(ctx, regionRanges)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1578,7 +1578,8 @@ func (local *Backend) ImportEngine(
 	return err
 }
 
-func (local *Backend) StopRegionScheduling(ctx context.Context, ranges []common.Range) (error, func()) {
+// Pause region scheduling in PD for specific ranges
+func (local *Backend) StopRegionScheduling(ctx context.Context, ranges []common.Range) (func(), error) {
 	subCtx, cancel := context.WithCancel(ctx)
 	var startKey, endKey []byte
 	if len(ranges[0].Start) > 0 {
@@ -1589,12 +1590,12 @@ func (local *Backend) StopRegionScheduling(ctx context.Context, ranges []common.
 	}
 	done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
 	if err != nil {
-		return errors.Trace(err), cancel
+		return cancel, errors.Trace(err)
 	}
-	return nil, func() {
+	return func() {
 		cancel()
 		<-done
-	}
+	}, nil
 }
 
 // expose these variables to unit test.

@@ -91,6 +91,7 @@ func (j jobStageTp) String() string {
 	return string(j)
 }
 
+// function to cancel region pause for specific ranges
 type CancelRegionPauseFunc func()
 
 // regionJob is dedicated to import the data in [keyRange.start, keyRange.end)
