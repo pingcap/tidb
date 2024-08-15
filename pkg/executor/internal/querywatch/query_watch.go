@@ -22,13 +22,14 @@ import (
 	"github.com/pingcap/errors"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -37,7 +38,7 @@ import (
 // setWatchOption is used to set the QuarantineRecord with specific QueryWatchOption ast node.
 func setWatchOption(ctx context.Context,
 	sctx, newSctx sessionctx.Context,
-	record *resourcegroup.QuarantineRecord,
+	record *runaway.QuarantineRecord,
 	op *ast.QueryWatchOption,
 ) error {
 	switch op.Tp {
@@ -116,11 +117,12 @@ func setWatchOption(ctx context.Context,
 }
 
 // fromQueryWatchOptionList is used to create a QuarantineRecord with some QueryWatchOption ast nodes.
-func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context, optionList []*ast.QueryWatchOption) (*resourcegroup.QuarantineRecord, error) {
-	record := &resourcegroup.QuarantineRecord{
-		Source:    resourcegroup.ManualSource,
+func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context,
+	optionList []*ast.QueryWatchOption) (*runaway.QuarantineRecord, error) {
+	record := &runaway.QuarantineRecord{
+		Source:    runaway.ManualSource,
 		StartTime: time.Now(),
-		EndTime:   resourcegroup.NullTime,
+		EndTime:   runaway.NullTime,
 	}
 	for _, op := range optionList {
 		if err := setWatchOption(ctx, sctx, newSctx, record, op); err != nil {
@@ -133,7 +135,7 @@ func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Cont
 // validateWatchRecord follows several designs:
 //  1. If no resource group is set, the default resource group is used
 //  2. If no action is specified, the action of the resource group is used. If no, an error message displayed.
-func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclient.ResourceGroupsController) error {
+func validateWatchRecord(record *runaway.QuarantineRecord, client *rmclient.ResourceGroupsController) error {
 	if len(record.ResourceGroupName) == 0 {
 		record.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	}
@@ -182,7 +184,7 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err := validateWatchRecord(record, do.ResourceGroupsController()); err != nil {
 		return err
 	}
-	id, err := do.AddRunawayWatch(record)
+	id, err := do.RunawayManager().AddRunawayWatch(record)
 	if err != nil {
 		return err
 	}
@@ -193,6 +195,6 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 // ExecDropQueryWatch is use to exec DropQueryWatchStmt.
 func ExecDropQueryWatch(sctx sessionctx.Context, id int64) error {
 	do := domain.GetDomain(sctx)
-	err := do.RemoveRunawayWatch(id)
+	err := do.RunawayManager().RemoveRunawayWatch(id)
 	return err
 }

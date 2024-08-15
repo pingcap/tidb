@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -216,7 +217,7 @@ func (r *RUStatsWriter) persistLatestRUStats(stats *meta.RUStats) error {
 func (r *RUStatsWriter) isLatestDataInserted(lastEndTime time.Time) (bool, error) {
 	end := lastEndTime.Format(time.DateTime)
 	start := lastEndTime.Add(-ruStatsInterval).Format(time.DateTime)
-	rows, sqlErr := execRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []any{start, end})
+	rows, sqlErr := runaway.ExecRCRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []any{start, end})
 	if sqlErr != nil {
 		return false, errors.Trace(sqlErr)
 	}
@@ -229,7 +230,7 @@ func (r *RUStatsWriter) insertRUStats(stats *meta.RUStats) error {
 		return nil
 	}
 
-	_, err := execRestrictedSQL(r.sessPool, sql, nil)
+	_, err := runaway.ExecRCRestrictedSQL(r.sessPool, sql, nil)
 	return err
 }
 
@@ -237,7 +238,7 @@ func (r *RUStatsWriter) insertRUStats(stats *meta.RUStats) error {
 func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
 	gcEndDate := lastEndTime.Add(-ruStatsGCDuration).Format(time.DateTime)
 	countSQL := fmt.Sprintf("SELECT count(*) FROM mysql.request_unit_by_group where end_time <= '%s'", gcEndDate)
-	rows, err := execRestrictedSQL(r.sessPool, countSQL, nil)
+	rows, err := runaway.ExecRCRestrictedSQL(r.sessPool, countSQL, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -246,7 +247,7 @@ func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
 	loopCount := (totalCount + gcBatchSize - 1) / gcBatchSize
 	for i := int64(0); i < loopCount; i++ {
 		sql := fmt.Sprintf("DELETE FROM mysql.request_unit_by_group where end_time <= '%s' order by end_time limit %d", gcEndDate, gcBatchSize)
-		_, err = execRestrictedSQL(r.sessPool, sql, nil)
+		_, err = runaway.ExecRCRestrictedSQL(r.sessPool, sql, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

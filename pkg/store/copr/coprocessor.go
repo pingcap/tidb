@@ -37,11 +37,11 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
@@ -693,7 +693,7 @@ type copIterator struct {
 	storeBatchedNum         atomic.Uint64
 	storeBatchedFallbackNum atomic.Uint64
 
-	runawayChecker  *resourcegroup.RunawayChecker
+	runawayChecker  resourcegroup.RunawayChecker
 	unconsumedStats *unconsumedCopRuntimeStats
 }
 
@@ -1266,14 +1266,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
-		failpoint.Inject("sleepCoprAfterReq", func(v failpoint.Value) {
-			//nolint:durationcheck
-			value := v.(int)
-			time.Sleep(time.Millisecond * time.Duration(value))
-			if value > 50 {
-				err = errors.Errorf("Coprocessor task terminated due to exceeding the deadline")
-			}
-		})
 		err = worker.req.RunawayChecker.CheckCopRespError(err)
 	}
 	if err != nil {

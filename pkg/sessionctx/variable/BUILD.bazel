@@ -20,7 +20,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/domain/resourcegroup",
         "//pkg/errno",
         "//pkg/keyspace",
         "//pkg/kv",
@@ -34,6 +33,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/planner/util/fixcontrol",
         "//pkg/privilege/privileges/ldap",
+        "//pkg/resourcegroup",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
         "//pkg/tidb-binlog/pump_client",

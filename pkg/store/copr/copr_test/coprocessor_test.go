@@ -24,8 +24,8 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -260,13 +260,13 @@ func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 	ranges := copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
 	require.NoError(t, err)
-	manager := resourcegroup.NewRunawayManager(resourceCtl, "mock://test")
+	manager := runaway.NewRunawayManager(resourceCtl, "mock://test", nil, nil, nil, nil)
 	defer manager.Stop()
 
 	sql := "select * from t"
 	group1 := "rg1"
 	checker := manager.DeriveChecker(group1, sql, "", "", time.Now())
-	manager.AddWatch(&resourcegroup.QuarantineRecord{
+	manager.AddWatch(&runaway.QuarantineRecord{
 		ID:                1,
 		ResourceGroupName: group1,
 		Watch:             rmpb.RunawayWatchType_Exact,
