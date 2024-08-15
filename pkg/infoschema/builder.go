@@ -885,14 +885,14 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.initBundleInfoBuilder()
 
-	b.initMisc(dbInfos, policies, resourceGroups)
-
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, tableFromMeta, schemaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+
+	b.initMisc(dbInfos, policies, resourceGroups)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
