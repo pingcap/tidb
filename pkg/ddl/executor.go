@@ -417,7 +417,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 	cnt := uint32(0)
 	dbs := is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
 	for _, db := range dbs {
-		if util.IsMemOrSysDB(db.DBName) {
+		if util.IsMemOrSysDB(db.DBName.L) {
 			continue
 		}
 		for _, tbl := range db.TableInfos {

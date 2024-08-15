@@ -2581,7 +2581,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 	rs := e.is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.DBName, tbl.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.DBName.L, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			var progress float64

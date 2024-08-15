@@ -351,14 +351,14 @@ func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema model.CI
 }
 
 type tableInfoResult struct {
-	DBName     string
+	DBName     model.CIStr
 	TableInfos []*model.TableInfo
 }
 
 func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
 	ret := make([]tableInfoResult, 0, 10)
 	for _, dbName := range is.AllSchemaNames() {
-		res := tableInfoResult{DBName: dbName.O}
+		res := tableInfoResult{DBName: dbName}
 		tblInfos, err := is.SchemaTableInfos(stdctx.Background(), dbName)
 		terror.Log(err)
 		for _, tblInfo := range tblInfos {
