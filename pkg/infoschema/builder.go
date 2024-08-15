@@ -892,6 +892,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		}
 	}
 
+	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
 	b.initMisc(dbInfos, policies, resourceGroups)
 
 	err := b.initVirtualTables(schemaVersion)
