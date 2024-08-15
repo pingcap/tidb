@@ -49,10 +49,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// jobSubmitter collects the DDL jobs and submits them to job tables in batch.
+// JobSubmitter collects the DDL jobs and submits them to job tables in batch.
 // when fast-create is enabled, it will merge the create-table jobs to a single
 // batch create-table job.
-type jobSubmitter struct {
+// export for testing.
+type JobSubmitter struct {
 	ctx               context.Context
 	etcdCli           *clientv3.Client
 	ownerManager      owner.Manager
@@ -71,7 +72,7 @@ type jobSubmitter struct {
 	globalIDLock   *sync.Mutex
 }
 
-func (s *jobSubmitter) submitLoop() {
+func (s *JobSubmitter) submitLoop() {
 	defer util.Recover(metrics.LabelDDL, "submitLoop", nil, true)
 
 	jobWs := make([]*JobWrapper, 0, batchAddingJobs)
@@ -95,7 +96,7 @@ func (s *jobSubmitter) submitLoop() {
 }
 
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
-func (s *jobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
+func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 	startTime := time.Now()
 	var (
 		err   error
@@ -268,7 +269,7 @@ func mergeCreateTableJobsOfSameSchema(jobWs []*JobWrapper) (*model.Job, error) {
 }
 
 // addBatchDDLJobs2Table gets global job IDs and puts the DDL jobs in the DDL job table.
-func (s *jobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
+func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	var err error
 
 	if len(jobWs) == 0 {
@@ -348,21 +349,18 @@ func (s *jobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ddlSe := sess.NewSession(se)
-	if err = GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
+	if err = s.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
 		return errors.Trace(err)
-	}
-	for _, jobW := range jobWs {
-		s.initJobDoneCh(jobW.ID)
 	}
 
 	return nil
 }
 
-func (s *jobSubmitter) initJobDoneCh(jobID int64) {
+func (s *JobSubmitter) initJobDoneCh(jobID int64) {
 	s.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
 }
 
-func (s *jobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
+func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// lock to reduce conflict
 	s.globalIDLock.Lock()
@@ -406,7 +404,7 @@ func (s *jobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	})
 }
 
-func (*jobSubmitter) checkFlashbackJobInQueue(t *meta.Meta) error {
+func (*JobSubmitter) checkFlashbackJobInQueue(t *meta.Meta) error {
 	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -424,7 +422,8 @@ func (*jobSubmitter) checkFlashbackJobInQueue(t *meta.Meta) error {
 // as we want to make sure DDL jobs are inserted in id order, then we can query from
 // a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
 // so this function has side effect, it will set table/db/job id of 'jobs'.
-func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+	savedJobIDs := make([]int64, len(jobWs))
 	count := getRequiredGIDCount(jobWs)
 	return genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
@@ -434,6 +433,19 @@ func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobW
 		})
 		assignGIDsForJobs(jobWs, ids)
 		injectModifyJobArgFailPoint(jobWs)
+		// job scheduler will start run them after txn commit, we want to make sure
+		// the channel exists before the jobs are submitted.
+		for i, jobW := range jobWs {
+			if savedJobIDs[i] > 0 {
+				// in case of retry
+				s.ddlJobDoneChMap.Delete(savedJobIDs[i])
+			}
+			s.ddlJobDoneChMap.Store(jobW.ID, make(chan struct{}, 1))
+			savedJobIDs[i] = jobW.ID
+		}
+		failpoint.Inject("mockGenGIDRetryableError", func() {
+			failpoint.Return(kv.ErrTxnRetryable)
+		})
 		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
 	})
 }
@@ -553,6 +565,7 @@ func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int,
 		if resErr != nil && kv.IsTxnRetryableError(resErr) {
 			logutil.DDLLogger().Warn("insert job meet retryable error", zap.Error(resErr))
 			kv.BackOff(i)
+			failpoint.InjectCall("onGenGIDRetry")
 			continue
 		}
 		break
@@ -665,7 +678,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	return nil
 }
 
-func (s *jobSubmitter) notifyNewJobSubmitted() {
+func (s *JobSubmitter) notifyNewJobSubmitted() {
 	if s.ownerManager.IsOwner() {
 		asyncNotify(s.ddlJobNotifyCh)
 		return
@@ -673,7 +686,7 @@ func (s *jobSubmitter) notifyNewJobSubmitted() {
 	s.notifyNewJobByEtcd()
 }
 
-func (s *jobSubmitter) notifyNewJobByEtcd() {
+func (s *JobSubmitter) notifyNewJobByEtcd() {
 	if s.etcdCli == nil {
 		return
 	}

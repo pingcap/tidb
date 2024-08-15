@@ -90,7 +90,7 @@ const (
 
 type ownerListener struct {
 	ddl          *ddl
-	jobSubmitter *jobSubmitter
+	jobSubmitter *JobSubmitter
 	ddlExecutor  *executor
 
 	scheduler *jobScheduler

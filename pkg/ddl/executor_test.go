@@ -302,13 +302,14 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 		tks[i] = testkit.NewTestKit(t, store)
 	}
 	var wg util.WaitGroupWrapper
+	submitter := ddl.NewJobSubmitterForTest()
 	for i := 0; i < threads; i++ {
 		idx := i
 		wg.Run(func() {
 			kit := tks[idx]
 			ddlSe := sess.NewSession(kit.Session())
 			for j := 0; j < iterations; j++ {
-				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
+				require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
 			}
 		})
 	}
@@ -430,11 +431,12 @@ func TestCombinedIDAllocation(t *testing.T) {
 		},
 	}
 
+	submitter := ddl.NewJobSubmitterForTest()
 	t.Run("process one by one", func(t *testing.T) {
 		tk.MustExec("delete from mysql.tidb_ddl_job")
 		for _, c := range cases {
 			currentGlobalID := getGlobalID(ctx, t, store)
-			require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
+			require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store))
 		}
 		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
@@ -452,7 +454,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			jobWs = append(jobWs, c.jobW)
 		}
 		currentGlobalID := getGlobalID(ctx, t, store)
-		require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
+		require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
 		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(ctx, t, store))
 
 		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
@@ -469,7 +471,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			if !c.jobW.IDAllocated {
 				allocIDCaseCount++
 				allocatedIDCount += c.requiredIDCount
-				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
+				require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			}
 		}
 		require.EqualValues(t, 6, allocIDCaseCount)
@@ -542,13 +544,14 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 	}}
 	counters := make([]atomic.Int64, thread+1)
 	var wg util.WaitGroupWrapper
+	submitter := ddl.NewJobSubmitterForTest()
 	for i := 0; i < thread; i++ {
 		index := i
 		wg.Run(func() {
 			kit := testkit.NewTestKit(t, store)
 			ddlSe := sess.NewSession(kit.Session())
 			for i := 0; i < iterationPerThread; i++ {
-				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
+				require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
 
 				counters[0].Add(1)
 				counters[index+1].Add(1)

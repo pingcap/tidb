@@ -244,7 +244,7 @@ type ddl struct {
 	minJobIDRefresher *systable.MinJobIDRefresher
 
 	executor     *executor
-	jobSubmitter *jobSubmitter
+	jobSubmitter *JobSubmitter
 }
 
 // unSyncedJobTracker is to track whether changes of a DDL job are synced to all
@@ -652,7 +652,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	limitJobCh := make(chan *JobWrapper, batchAddingJobs)
 	var globalIDLock sync.Mutex
 
-	submitter := &jobSubmitter{
+	submitter := &JobSubmitter{
 		ctx:               d.ctx,
 		etcdCli:           d.etcdCli,
 		ownerManager:      d.ownerManager,

@@ -94,7 +94,7 @@ var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckCon
 
 // Executor is the interface for executing DDL statements.
 // it's mostly called by SQL executor.
-// DDL statements are converted into DDL jobs, jobSubmitter will submit the jobs
+// DDL statements are converted into DDL jobs, JobSubmitter will submit the jobs
 // to DDL job table. Then jobScheduler will schedule them to run on workers
 // asynchronously in parallel. Executor will wait them to finish.
 type Executor interface {
