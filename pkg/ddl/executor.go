@@ -940,6 +940,47 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 	return nil
 }
 
+// checkGlobalIndex check if the index is allowed to have global index
+func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+	pi := tblInfo.GetPartitionInfo()
+	isPartitioned := pi != nil && pi.Type != model.PartitionTypeNone
+	if indexInfo.Global {
+		if !isPartitioned {
+			// Makes no sense with LOCAL/GLOBAL index for non-partitioned tables, since we don't support
+			// partitioning an index differently from the table partitioning.
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
+		}
+		if !ctx.GetSessionVars().EnableGlobalIndex {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption when tidb_enable_global_index is disabled")
+		}
+		// TODO: remove limitation
+		if !indexInfo.Unique {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption on non-unique index")
+		}
+		// TODO: remove limitation
+		// check that not all partitioned columns are included.
+		inAllPartitionColumns, err := checkPartitionKeysConstraint(pi, indexInfo.Columns, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if inAllPartitionColumns {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index including all columns in the partitioning expression")
+		}
+	}
+	return nil
+}
+
+// checkGlobalIndexes check if global index is supported.
+func checkGlobalIndexes(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	for _, indexInfo := range tblInfo.Indices {
+		err := checkGlobalIndex(ctx, tblInfo, indexInfo)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *executor) assignPartitionIDs(defs []model.PartitionDefinition) error {
 	genIDs, err := e.genGlobalIDs(len(defs))
 	if err != nil {
@@ -1048,7 +1089,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(ctx, tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -4650,6 +4691,19 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
+	globalIndex := false
+	if indexOption != nil && indexOption.Global {
+		globalIndex = true
+	}
+	if globalIndex {
+		if tblInfo.GetPartitionInfo() == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
+		}
+		if !unique {
+			// TODO: remove this limitation
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
+		}
+	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
 		if err != nil {
@@ -4660,9 +4714,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 			// index columns does not contain all partition columns, must set global
-			if indexOption == nil || !indexOption.Global {
+			if !globalIndex {
 				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
 			}
+		} else if globalIndex {
+			// TODO: remove this restriction
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
