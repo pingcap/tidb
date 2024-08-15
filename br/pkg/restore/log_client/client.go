@@ -79,6 +79,7 @@ const maxSplitKeysOnce = 10240
 
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
+const compactedSSTBatchSize = 16
 
 type LogClient struct {
 	restorer            sstfiles.FileRestorer
@@ -153,38 +154,31 @@ func (rc *LogClient) Close() {
 	log.Info("Restore client closed")
 }
 
-type compactedItem struct {
+type CompactedItem struct {
 	files         []sstfiles.SstFilesInfo
 	regionMinKeys [][]byte
 }
 
-func (c *compactedItem) Append(file sstfiles.SstFilesInfo, key []byte) {
+func (c *CompactedItem) Append(file sstfiles.SstFilesInfo, key []byte) {
 	c.files = append(c.files, file)
 	c.regionMinKeys = append(c.regionMinKeys, key)
 }
 
-func (c *compactedItem) Size() int {
+func (c *CompactedItem) Size() int {
 	return len(c.files)
 }
 
-func (rc *LogClient) RestoreCompactedSsts(
+func (rc *LogClient) CollectCompactedSsts(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
-	importModeSwitcher *restore.ImportModeSwitcher,
-) error {
-	// need to enter import mode before restore SST files
-	// it will set to noral mode whatever
-	importModeSwitcher.SwitchToImportMode(ctx)
-	defer importModeSwitcher.SwitchToNormalMode(ctx)
-
-	batchSize := 16
-	splitRanges := make([]rtree.Range, 0, batchSize)
-	regionCompactedMap := make(map[uint64]*compactedItem)
+) (int, map[uint64]*CompactedItem, error) {
+	totalSSTCount := 0
+	regionCompactedMap := make(map[uint64]*CompactedItem)
 	// read unorder files
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
-			return r.Err
+			return 0, nil, r.Err
 		}
 		i := r.Item
 		rewriteRules, ok := rules[i.Meta.TableId]
@@ -194,19 +188,20 @@ func (rc *LogClient) RestoreCompactedSsts(
 		}
 
 		if _, ok := regionCompactedMap[i.Meta.RegionId]; !ok {
-			c := compactedItem{
-				files: make([]sstfiles.SstFilesInfo, 0, batchSize),
+			c := CompactedItem{
+				files: make([]sstfiles.SstFilesInfo, 0, compactedSSTBatchSize),
 				// TODO When log backup supports record region range, use it to split ranges.
 				// currently, we use the min key of the record key and rewrite it to split ranges.
-				regionMinKeys: make([][]byte, 0, batchSize),
+				regionMinKeys: make([][]byte, 0, compactedSSTBatchSize),
 			}
 			regionCompactedMap[i.Meta.RegionId] = &c
 		}
 		// translate min key to raw key
 		_, rawMinKey, err := codec.DecodeBytes(i.Meta.MinKey, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, nil, errors.Trace(err)
 		}
+		totalSSTCount += len(i.SstOutputs)
 
 		regionCompactedMap[i.Meta.RegionId].Append(sstfiles.SstFilesInfo{
 			TableID:      i.Meta.TableId,
@@ -214,16 +209,31 @@ func (rc *LogClient) RestoreCompactedSsts(
 			RewriteRules: rewriteRules,
 		}, rawMinKey)
 	}
+	return totalSSTCount, regionCompactedMap, nil
+}
+
+func (rc *LogClient) RestoreCompactedSsts(
+	ctx context.Context,
+	regionCompactedMap map[uint64]*CompactedItem,
+	importModeSwitcher *restore.ImportModeSwitcher,
+	onProgress func(),
+) error {
+	// need to enter import mode before restore SST files
+	// it will set to noral mode whatever
+	importModeSwitcher.SwitchToImportMode(ctx)
+	defer importModeSwitcher.SwitchToNormalMode(ctx)
+
+	splitRanges := make([]rtree.Range, 0, compactedSSTBatchSize)
 
 	eg, eCtx := errgroup.WithContext(ctx)
 	// split every cnt regions
 	cnt := 0
-	for regionId, compactedItems := range regionCompactedMap {
+	for regionId, CompactedItems := range regionCompactedMap {
 		cnt += 1
-		if cnt >= batchSize {
+		if cnt >= compactedSSTBatchSize {
 			var regionSplitKey []byte
 			var splitKeyIndex int
-			for i, minKey := range compactedItems.regionMinKeys {
+			for i, minKey := range CompactedItems.regionMinKeys {
 				if len(regionSplitKey) == 0 || bytes.Compare(minKey, regionSplitKey) < 0 {
 					regionSplitKey = minKey
 					splitKeyIndex = i
@@ -241,7 +251,7 @@ func (rc *LogClient) RestoreCompactedSsts(
 				EndKey: []byte(regionSplitKey),
 			}
 			// only one range in the region should split
-			rg, err := restoreutils.RewriteRange(&tmpRng, compactedItems.files[splitKeyIndex].RewriteRules)
+			rg, err := restoreutils.RewriteRange(&tmpRng, CompactedItems.files[splitKeyIndex].RewriteRules)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -251,19 +261,20 @@ func (rc *LogClient) RestoreCompactedSsts(
 
 		if len(splitRanges) > 0 {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				// TODO implement update ch
+				defer onProgress()
 				err := rc.restorer.SplitRanges(eCtx, splitRanges, nil)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				return rc.restorer.RestoreFiles(eCtx, compactedItems.files, nil)
+				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, nil)
 			})
 			// reset for next batch
 			splitRanges = nil
 		} else {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				defer onProgress()
 				// restore rest files
-				return rc.restorer.RestoreFiles(eCtx, compactedItems.files, nil)
+				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, nil)
 			})
 		}
 	}
