@@ -579,6 +579,8 @@ const (
 	// 	- max-pending-peer-count = math.MaxInt32
 	// see br/pkg/pdutil/pd.go for more detail.
 	PausePDSchedulerScopeGlobal PausePDSchedulerScope = "global"
+	// PausePdSchedulerScopeInAction only pause the key range that is currently being imported
+	PausePdSchedulerScopeInAction PausePDSchedulerScope = "region-in-action"
 )
 
 // DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
@@ -1136,7 +1138,7 @@ func (t *TikvImporter) adjust() error {
 
 	t.PausePDSchedulerScope = PausePDSchedulerScope(strings.ToLower(string(t.PausePDSchedulerScope)))
 	switch t.PausePDSchedulerScope {
-	case PausePDSchedulerScopeTable, PausePDSchedulerScopeGlobal:
+	case PausePDSchedulerScopeTable, PausePDSchedulerScopeGlobal, PausePdSchedulerScopeInAction:
 	default:
 		return common.ErrInvalidConfig.GenWithStack("pause-pd-scheduler-scope is invalid, allowed value include: table, global")
 	}
