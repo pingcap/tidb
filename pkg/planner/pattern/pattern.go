@@ -95,7 +95,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandDataSource
 	case *logicalop.LogicalUnionScan:
 		return OperandUnionScan
-	case *plannercore.LogicalUnionAll:
+	case *logicalop.LogicalUnionAll:
 		return OperandUnionAll
 	case *logicalop.LogicalSort:
 		return OperandSort

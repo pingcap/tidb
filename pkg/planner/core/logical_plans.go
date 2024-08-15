@@ -31,7 +31,8 @@ var (
 	_ base.LogicalPlan = &TiKVSingleGather{}
 	_ base.LogicalPlan = &LogicalTableScan{}
 	_ base.LogicalPlan = &LogicalIndexScan{}
-	_ base.LogicalPlan = &LogicalUnionAll{}
+	_ base.LogicalPlan = &logicalop.LogicalUnionAll{}
+	_ base.LogicalPlan = &logicalop.LogicalPartitionUnionAll{}
 	_ base.LogicalPlan = &logicalop.LogicalSort{}
 	_ base.LogicalPlan = &logicalop.LogicalLock{}
 	_ base.LogicalPlan = &logicalop.LogicalLimit{}
