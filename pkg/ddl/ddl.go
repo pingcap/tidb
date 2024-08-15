@@ -711,8 +711,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
-	d.jobSubmitter.sysTblMgr = systable.NewManager(d.sessPool)
+	d.sysTblMgr = systable.NewManager(d.sessPool)
 	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
+	d.jobSubmitter.sysTblMgr = d.sysTblMgr
 	d.jobSubmitter.minJobIDRefresher = d.minJobIDRefresher
 	d.wg.Run(func() {
 		d.jobSubmitter.submitLoop()
