@@ -156,4 +156,7 @@ func TestIssue55344(t *testing.T) {
 
 	// Should not be panic
 	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE 0 ORDER BY -646041453 ASC;")
+
+	tk.MustExec("delete from mysql.opt_rule_blacklist;")
+	tk.MustExec("ADMIN reload opt_rule_blacklist;")
 }

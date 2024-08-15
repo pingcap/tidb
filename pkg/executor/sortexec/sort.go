@@ -271,7 +271,11 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 
-		e.buildKeyColumns()
+		err = e.buildKeyColumns()
+		if err != nil {
+			e.closeChannels()
+			return err
+		}
 		err = e.fetchChunks(ctx)
 		if err != nil {
 			return err
@@ -784,16 +788,18 @@ func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
 	return nil
 }
 
-func (e *SortExec) buildKeyColumns() {
+func (e *SortExec) buildKeyColumns() error {
 	e.keyColumns = make([]int, 0, len(e.ByItems))
 	for _, by := range e.ByItems {
-		col, ok := by.Expr.(*expression.Column)
-		if !ok {
-			// Variable `by` may be constant
-			continue
+		switch col := by.Expr.(type) {
+		case *expression.Column:
+			e.keyColumns = append(e.keyColumns, col.Index)
+		case *expression.Constant:
+		default:
+			return errors.NewNoStackError("Get unexpected expression")
 		}
-		e.keyColumns = append(e.keyColumns, col.Index)
 	}
+	return nil
 }
 
 func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {
