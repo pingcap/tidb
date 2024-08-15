@@ -3755,6 +3755,11 @@ func TestGlobalIndexExplicitOption(t *testing.T) {
 	tk.MustContainErrMsg(`alter table t add unique index idxErr (b) global`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 	tk.MustContainErrMsg(`create index idxErr on t (b) global`, "[ddl:8200]Unsupported Global IndexOption on non-unique index")
 	tk.MustContainErrMsg(`create unique index idxErr on t (b) global`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustContainErrMsg(`alter table t add index idxErr (b) global`, "[ddl:8200]Unsupported Global Index on non-partitioned table")
+	tk.MustContainErrMsg(`alter table t add unique index idxErr (b) global`, "[ddl:8200]Unsupported Global Index on non-partitioned table")
+	tk.MustContainErrMsg(`create index idxErr on t (b) global`, "[ddl:8200]Unsupported Global Index on non-partitioned table")
+	tk.MustContainErrMsg(`create unique index idxErr on t (b) global`, "[ddl:8200]Unsupported Global Index on non-partitioned table")
 	tk.MustExec(`drop table t`)
 
 	tk.MustExec("set tidb_enable_global_index=ON")
