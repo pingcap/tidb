@@ -356,10 +356,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	return nil
 }
 
-func (s *JobSubmitter) initJobDoneCh(jobID int64) {
-	s.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
-}
-
 func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// lock to reduce conflict
