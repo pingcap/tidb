@@ -1512,6 +1512,22 @@ func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldTy
 		(conEvalType == types.ETReal || conEvalType == types.ETDecimal || conEvalType == types.ETInt)
 }
 
+// Judge if it will be null after a const value is casted to the duration type
+func castToDurationIsNull(ctx BuildContext, arg Expression) (bool, error) {
+	fc := &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, types.NewFieldType(mysql.TypeDuration)}
+	f, err := fc.getFunction(ctx, []Expression{arg})
+	if err != nil {
+		return false, err
+	}
+
+	_, isNull, err := f.evalDuration(ctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return false, err
+	}
+
+	return isNull, nil
+}
+
 // Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
 // needs to decide to whether to skip the refining or skip plan-cache for safety.
 // For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
@@ -1584,6 +1600,28 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	// We should remove the mutable constant for correctness, because its value may be changed.
 	if err := RemoveMutableConst(ctx, args); err != nil {
 		return nil, err
+	}
+
+	if c.op == opcode.NullEQ && arg0IsCon && arg0.DeferredExpr == nil && !arg1IsCon && arg1Type.GetType() == mysql.TypeDuration {
+		isNull, err := castToDurationIsNull(ctx, arg0)
+		if err != nil {
+			return nil, err
+		}
+
+		if isNull {
+			return []Expression{NewZero(), NewOne()}, nil
+		}
+	}
+
+	if c.op == opcode.NullEQ && arg1IsCon && arg1.DeferredExpr == nil && !arg0IsCon && arg0Type.GetType() == mysql.TypeDuration {
+		isNull, err := castToDurationIsNull(ctx, arg1)
+		if err != nil {
+			return nil, err
+		}
+
+		if isNull {
+			return []Expression{NewZero(), NewOne()}, nil
+		}
 	}
 
 	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1Type) {
