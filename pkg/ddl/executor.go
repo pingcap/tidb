@@ -4691,7 +4691,11 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
+	globalIndex := false
 	if indexOption != nil && indexOption.Global {
+		globalIndex = true
+	}
+	if globalIndex {
 		if tblInfo.GetPartitionInfo() == nil {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
 		}
@@ -4710,8 +4714,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 			// index columns does not contain all partition columns, must set global
-			if indexOption == nil || !indexOption.Global {
+			if !globalIndex {
 				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
+			}
+		} else {
+			// TODO: remove this restriction
+			if globalIndex {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
 			}
 		}
 	}
