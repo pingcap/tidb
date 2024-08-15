@@ -4717,11 +4717,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			if !globalIndex {
 				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
 			}
-		} else {
+		} else if globalIndex {
 			// TODO: remove this restriction
-			if globalIndex {
-				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
-			}
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
