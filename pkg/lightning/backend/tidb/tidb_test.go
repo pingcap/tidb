@@ -913,42 +913,21 @@ func TestLogicalImportBatchPrepStmt(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 
-	query1 := "INSERT INTO `foo`.`bar`(`a`) VALUES (?),(?),(?),(?),(?)"
-	query2 := "INSERT INTO `foo`.`bar`(`a`) VALUES (?),(?),(?),(?)"
-	query3 := "INSERT INTO `foo`.`bar`(`a`) VALUES (?)"
-
+	// seems sqlmock does not support prepared once and execute multiple times,
+	// so we have to increase the batch size and batch rows to test first batch only
 	// Expect the query to be prepared
-	stmt1 := s.mockDB.ExpectPrepare(query1)
+	stmt := s.mockDB.ExpectPrepare("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?),(?)\\E")
 	// Set the expectation for the query execution with specific arguments
-	stmt1.ExpectExec().
-		WithArgs(1, 2, 4, 8, 16).
-		WillReturnResult(sqlmock.NewResult(5, 5)) // Simulate an insert with 5 rows affected
-	stmt1.ExpectExec().
-		WithArgs(32, 64, 128, 256, 512).
-		WillReturnResult(sqlmock.NewResult(5, 5)) // Simulate an insert with 5 rows affected
-	// Expect the query to be prepared
-	stmt2 := s.mockDB.ExpectPrepare(query2)
-	// Set the expectation for the query execution with specific arguments
-	stmt2.ExpectExec().
-		WithArgs(1024, 2048, 4096, 8192).
-		WillReturnResult(sqlmock.NewResult(4, 4)) // Simulate an insert with 4 rows affected
-	stmt2.ExpectExec().
-		WithArgs(16384, 32768, 65536, 131072).
-		WillReturnResult(sqlmock.NewResult(4, 4)) // Simulate an insert with 4 rows affected
-	// Expect the query to be prepared
-	stmt3 := s.mockDB.ExpectPrepare(query3)
-	// Set the expectation for the query execution with specific arguments
-	stmt3.ExpectExec().
-		WithArgs(262144).
-		WillReturnResult(sqlmock.NewResult(1, 1)) // Simulate an insert with 1 rows affected
-
+	stmt.ExpectExec().
+		WithArgs(1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144).
+		WillReturnResult(sqlmock.NewResult(19, 19)) // Simulate an insert with 19 rows affected
 	ctx := context.Background()
 	logger := log.L()
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ErrorOnDup
-	cfg.TikvImporter.LogicalImportBatchSize = 30
-	cfg.TikvImporter.LogicalImportBatchRows = 5
+	cfg.TikvImporter.LogicalImportBatchSize = 300
+	cfg.TikvImporter.LogicalImportBatchRows = 20
 	cfg.TikvImporter.LogicalImportPrepStmt = true
 	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg, errormanager.New(nil, cfg, logger))
 	encBuilder := tidb.NewEncodingBuilder()
