@@ -1636,6 +1636,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 
 // AdjustForDDL acts like Adjust, but DDL will not use some functionalities so
 // those members are skipped in adjusting.
+// TODO(lance6716): delete it
 func (cfg *Config) AdjustForDDL() error {
 	if err := cfg.TikvImporter.adjust(); err != nil {
 		return err
