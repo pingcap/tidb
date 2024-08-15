@@ -23,7 +23,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
