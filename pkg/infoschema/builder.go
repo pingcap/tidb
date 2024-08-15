@@ -864,10 +864,6 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
-	b.initBundleInfoBuilder()
-
-	b.initMisc(dbInfos, policies, resourceGroups)
-
 	if b.enableV2 {
 		// We must not clear the historial versions like b.infoData = NewData(), because losing
 		// the historial versions would cause applyDiff get db not exist error and fail, then
@@ -887,12 +883,17 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		b.infoData.resetBeforeFullLoad(schemaVersion)
 	}
 
+	b.initBundleInfoBuilder()
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, tableFromMeta, schemaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+
+	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
+	b.initMisc(dbInfos, policies, resourceGroups)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
