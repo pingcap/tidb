@@ -153,17 +153,17 @@ func (rc *LogClient) Close() {
 	log.Info("Restore client closed")
 }
 
-type compactMeta struct {
+type compactedItem struct {
 	files         []sstfiles.SstFilesInfo
 	regionMinKeys [][]byte
 }
 
-func (c *compactMeta) Append(file sstfiles.SstFilesInfo, key []byte) {
+func (c *compactedItem) Append(file sstfiles.SstFilesInfo, key []byte) {
 	c.files = append(c.files, file)
 	c.regionMinKeys = append(c.regionMinKeys, key)
 }
 
-func (c *compactMeta) Size() int {
+func (c *compactedItem) Size() int {
 	return len(c.files)
 }
 
@@ -178,12 +178,9 @@ func (rc *LogClient) RestoreCompactedSsts(
 	importModeSwitcher.SwitchToImportMode(ctx)
 	defer importModeSwitcher.SwitchToNormalMode(ctx)
 
-	for tid, rules := range rules {
-		log.Info("Using rewrite rules.", zap.Int64("table_id", tid), zap.Stringer("rules", rules))
-	}
-	batchSize := 8
+	batchSize := 16
 	splitRanges := make([]rtree.Range, 0, batchSize)
-	regionMap := make(map[uint64]*compactMeta)
+	regionCompactedMap := make(map[uint64]*compactedItem)
 	// read unorder files
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
@@ -196,14 +193,14 @@ func (rc *LogClient) RestoreCompactedSsts(
 			continue
 		}
 
-		if _, ok := regionMap[i.Meta.RegionId]; !ok {
-			c := compactMeta{
+		if _, ok := regionCompactedMap[i.Meta.RegionId]; !ok {
+			c := compactedItem{
 				files: make([]sstfiles.SstFilesInfo, 0, batchSize),
 				// TODO When log backup supports record region range, use it to split ranges.
 				// currently, we use the min key of the record key and rewrite it to split ranges.
 				regionMinKeys: make([][]byte, 0, batchSize),
 			}
-			regionMap[i.Meta.RegionId] = &c
+			regionCompactedMap[i.Meta.RegionId] = &c
 		}
 		// translate min key to raw key
 		_, rawMinKey, err := codec.DecodeBytes(i.Meta.MinKey, nil)
@@ -211,7 +208,7 @@ func (rc *LogClient) RestoreCompactedSsts(
 			return errors.Trace(err)
 		}
 
-		regionMap[i.Meta.RegionId].Append(sstfiles.SstFilesInfo{
+		regionCompactedMap[i.Meta.RegionId].Append(sstfiles.SstFilesInfo{
 			TableID:      i.Meta.TableId,
 			Files:        i.SstOutputs,
 			RewriteRules: rewriteRules,
@@ -221,21 +218,21 @@ func (rc *LogClient) RestoreCompactedSsts(
 	eg, eCtx := errgroup.WithContext(ctx)
 	// split every cnt regions
 	cnt := 0
-	for regionId, regionCompactMeta := range regionMap {
+	for regionId, compactedItems := range regionCompactedMap {
 		cnt += 1
 		if cnt >= batchSize {
 			var regionSplitKey []byte
-			var minKeyIndex int
-			for i, minKey := range regionCompactMeta.regionMinKeys {
+			var splitKeyIndex int
+			for i, minKey := range compactedItems.regionMinKeys {
 				if len(regionSplitKey) == 0 || bytes.Compare(minKey, regionSplitKey) < 0 {
 					regionSplitKey = minKey
-					minKeyIndex = i
+					splitKeyIndex = i
 				}
 			}
-			log.Info("min split key for region",
+			log.Info("find min split key for region",
 				zap.Uint64("region_id", regionId),
 				logutil.Key("split_key", regionSplitKey),
-				zap.Int("index", minKeyIndex))
+				zap.Int("index", splitKeyIndex))
 
 			// build split ranges
 			tmpRng := rtree.Range{
@@ -244,7 +241,7 @@ func (rc *LogClient) RestoreCompactedSsts(
 				EndKey: []byte(regionSplitKey),
 			}
 			// only one range in the region should split
-			rg, err := restoreutils.RewriteRange(&tmpRng, regionCompactMeta.files[minKeyIndex].RewriteRules)
+			rg, err := restoreutils.RewriteRange(&tmpRng, compactedItems.files[splitKeyIndex].RewriteRules)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -259,14 +256,14 @@ func (rc *LogClient) RestoreCompactedSsts(
 				if err != nil {
 					return errors.Trace(err)
 				}
-				return rc.restorer.RestoreFiles(eCtx, regionCompactMeta.files, nil)
+				return rc.restorer.RestoreFiles(eCtx, compactedItems.files, nil)
 			})
 			// reset for next batch
 			splitRanges = nil
 		} else {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				// restore rest files
-				return rc.restorer.RestoreFiles(eCtx, regionCompactMeta.files, nil)
+				return rc.restorer.RestoreFiles(eCtx, compactedItems.files, nil)
 			})
 		}
 	}

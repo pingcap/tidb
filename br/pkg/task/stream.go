@@ -1428,11 +1428,12 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
+
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		// TODO consider checkpoint
-
-		compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
 		err = client.RestoreCompactedSsts(ctx, rewriteRules, compactionIter, importModeSwitcher)
 		if err != nil {
 			return errors.Trace(err)

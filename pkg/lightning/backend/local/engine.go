@@ -731,10 +731,10 @@ func (e *Engine) ingestSSTLoop() {
 				pendingMetas = append(pendingMetas, m)
 				totalSize += m.totalSize
 				if totalSize >= e.config.CompactThreshold {
-					compactMetas := pendingMetas
+					compactedItems := pendingMetas
 					pendingMetas = make([]*sstMeta, 0, len(pendingMetas))
 					totalSize = 0
-					compactAndIngestSSTs(compactMetas)
+					compactAndIngestSSTs(compactedItems)
 				}
 			}
 		}
