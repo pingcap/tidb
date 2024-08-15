@@ -3751,6 +3751,10 @@ func TestGlobalIndexExplicitOption(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3`)
 	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3 update indexes (a global)`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`alter table t add index idxErr (b) global`, "[ddl:8200]Unsupported Global IndexOption on non-unique index")
+	tk.MustContainErrMsg(`alter table t add unique index idxErr (b) global`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`create index idxErr on t (b) global`, "[ddl:8200]Unsupported Global IndexOption on non-unique index")
+	tk.MustContainErrMsg(`create unique index idxErr on t (b) global`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 	tk.MustExec(`drop table t`)
 
 	tk.MustExec("set tidb_enable_global_index=ON")
@@ -3775,4 +3779,10 @@ func TestGlobalIndexExplicitOption(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3`)
 	tk.MustContainErrMsg(`alter table t partition by hash(b) partitions 3`, "[ddl:8264]Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption")
 	tk.MustExec(`alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL)`)
+	tk.MustContainErrMsg(`alter table t add index idxErr (b) global`, "[ddl:8200]Unsupported Global IndexOption on non-unique index")
+	tk.MustExec(`alter table t add unique index idxOK (a) global`)
+	tk.MustContainErrMsg(`alter table t add unique index idxErr (b) global`, "[ddl:8200]Unsupported Global IndexOption on index including all columns in the partitioning expression")
+	tk.MustContainErrMsg(`create index idxErr on t (b) global`, "[ddl:8200]Unsupported Global IndexOption on non-unique index")
+	tk.MustExec(`create unique index idxOK2 on t (a) global`)
+	tk.MustContainErrMsg(`create unique index idxErr on t (b) global`, "[ddl:8200]Unsupported Global IndexOption on index including all columns in the partitioning expression")
 }
