@@ -3741,6 +3741,10 @@ func TestGlobalIndexExplicitOption(t *testing.T) {
 	defer func() {
 		tk.MustExec("set tidb_enable_global_index=default")
 	}()
+	tk.MustContainErrMsg(`create table t (a int, b int, unique index idx(a) global)`, "[ddl:8200]Unsupported Global Index on non-partitioned table")
+	tk.MustContainErrMsg(`create table t (a int, b int, index idx(a) global)`, "[ddl:8200]Unsupported Global Index on non-partitioned table")
+	tk.MustContainErrMsg(`create table t (a int, b int, unique index idx(a) global) partition by hash(b) partitions 3`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	tk.MustContainErrMsg(`create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3`, "[ddl:8200]Unsupported GLOBAL IndexOption when tidb_enable_global_index is disabled")
 	tk.MustContainErrMsg(`create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3`, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 
 	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3`, "[ddl:1503]A PRIMARY KEY must include all columns in the table's partitioning function")
@@ -3750,6 +3754,9 @@ func TestGlobalIndexExplicitOption(t *testing.T) {
 	tk.MustExec(`drop table t`)
 
 	tk.MustExec("set tidb_enable_global_index=ON")
+	tk.MustContainErrMsg(`create table t (a int, b int, unique index idx(a) global)`, "[ddl:8200]Unsupported Global Index on non-partitioned table")
+	tk.MustContainErrMsg(`create table t (a int, b int, index idx(a) global)`, "[ddl:8200]Unsupported Global Index on non-partitioned table")
+	tk.MustContainErrMsg(`create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3`, "[ddl:8200]Unsupported GLOBAL IndexOption on non-unique index")
 	tk.MustExec(`create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3`)
 	tk.MustExec(`drop table t`)
 	tk.MustContainErrMsg(`create table t (a int key global, b int) partition by hash(b) partitions 3`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
