@@ -1578,7 +1578,7 @@ func (local *Backend) ImportEngine(
 	return err
 }
 
-// Pause region scheduling in PD for specific ranges
+// StopRegionScheduling pauses region scheduling in PD for specific ranges
 func (local *Backend) StopRegionScheduling(ctx context.Context, ranges []common.Range) (func(), error) {
 	subCtx, cancel := context.WithCancel(ctx)
 	var startKey, endKey []byte
