@@ -795,6 +795,7 @@ func (e *SortExec) buildKeyColumns() error {
 		case *expression.Column:
 			e.keyColumns = append(e.keyColumns, col.Index)
 		case *expression.Constant:
+			// Ignore constant as constant can not affect the sorted result
 		default:
 			return errors.NewNoStackError("Get unexpected expression")
 		}
