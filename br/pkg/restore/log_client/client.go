@@ -262,6 +262,7 @@ func (rc *LogClient) RestoreCompactedSsts(
 		if len(splitRanges) > 0 {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				defer onProgress()
+				// TODO unify the onProcess and updateCh
 				err := rc.restorer.SplitRanges(eCtx, splitRanges, nil)
 				if err != nil {
 					return errors.Trace(err)
