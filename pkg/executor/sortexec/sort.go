@@ -101,6 +101,7 @@ type SortExec struct {
 func (e *SortExec) closeChannels() {
 	close(e.Parallel.resultChannel)
 	close(e.Parallel.chunkChannel)
+	close(e.Parallel.closeSync)
 }
 
 // Close implements the Executor Close interface.
