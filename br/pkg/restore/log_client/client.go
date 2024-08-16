@@ -261,21 +261,18 @@ func (rc *LogClient) RestoreCompactedSsts(
 
 		if len(splitRanges) > 0 {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				defer onProgress()
 				// TODO unify the onProcess and updateCh
-				err := rc.restorer.SplitRanges(eCtx, splitRanges, nil)
+				err := rc.restorer.SplitRanges(eCtx, splitRanges, onProgress)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, nil)
+				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, onProgress)
 			})
 			// reset for next batch
 			splitRanges = nil
 		} else {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				defer onProgress()
-				// restore rest files
-				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, nil)
+				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, onProgress)
 			})
 		}
 	}

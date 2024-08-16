@@ -24,7 +24,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
@@ -41,7 +40,7 @@ type fakeRestorer struct {
 	tableIDIsInsequence bool
 }
 
-func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
+func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, onProgress func()) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -58,7 +57,7 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, up
 	return nil
 }
 
-func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, files []sstfiles.SstFilesInfo, updateCh glue.Progress) error {
+func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, files []sstfiles.SstFilesInfo, onProgress func()) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

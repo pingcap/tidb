@@ -19,7 +19,6 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 )
@@ -48,10 +47,10 @@ func NewEmptyRuleFilesInfo(files []*backuppb.File) []SstFilesInfo {
 type FileRestorer interface {
 	// SplitRanges split regions implicated by the ranges and rewrite rules.
 	// After spliting, it also scatters the fresh regions.
-	SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error
+	SplitRanges(ctx context.Context, ranges []rtree.Range, onProgress func()) error
 
 	// RestoreFiles import the files to the TiKV.
-	RestoreFiles(ctx context.Context, files []SstFilesInfo, updateCh glue.Progress) error
+	RestoreFiles(ctx context.Context, files []SstFilesInfo, onProgress func()) error
 
 	// Close release the resources.
 	Close() error

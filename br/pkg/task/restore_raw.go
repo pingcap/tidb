@@ -145,8 +145,9 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		int64(len(ranges)+len(files)),
 		!cfg.LogProgress)
 
+	onProgress := func() { updateCh.Inc() }
 	// RawKV restore does not need to rewrite keys.
-	err = client.GetRestorer().SplitRanges(ctx, ranges, updateCh)
+	err = client.GetRestorer().SplitRanges(ctx, ranges, onProgress)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -158,7 +159,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 
-	err = client.RestoreRaw(ctx, cfg.StartKey, cfg.EndKey, updateCh, sstfiles.NewEmptyRuleFilesInfo(files))
+	err = client.RestoreRaw(ctx, cfg.StartKey, cfg.EndKey, onProgress, sstfiles.NewEmptyRuleFilesInfo(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
