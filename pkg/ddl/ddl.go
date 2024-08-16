@@ -157,6 +157,9 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
+	// GetPumpClient is used to get the pump client.
+	// It's exported for testing.
+	GetPumpClient = binloginfo.GetPumpsClient
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -180,8 +183,6 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
-	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 }
@@ -615,7 +616,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ownerManager:      manager,
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
-		binlogCli:         binloginfo.GetPumpsClient(),
+		binlogCli:         GetPumpClient(),
 		infoCache:         opt.InfoCache,
 		tableLockCkr:      deadLockCkr,
 		etcdCli:           opt.EtcdCli,
@@ -860,11 +861,6 @@ func (d *ddl) OwnerManager() owner.Manager {
 // GetID implements DDL.GetID interface.
 func (d *ddl) GetID() string {
 	return d.uuid
-}
-
-// SetBinlogClient implements DDL.SetBinlogClient interface.
-func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
-	d.binlogCli = binlogCli
 }
 
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {

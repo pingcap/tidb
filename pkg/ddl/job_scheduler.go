@@ -527,7 +527,6 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 }
 
 func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
-	// as we will notify the executor job done by close the channel,
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	return &jobContext{
 		ctx:                  s.schCtx,

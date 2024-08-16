@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 )
 
 var (
@@ -527,11 +526,6 @@ func (d *Checker) OwnerManager() owner.Manager {
 // GetID implements the DDL interface.
 func (d *Checker) GetID() string {
 	return d.realDDL.GetID()
-}
-
-// SetBinlogClient implements the DDL interface.
-func (d *Checker) SetBinlogClient(client *pumpcli.PumpsClient) {
-	d.realDDL.SetBinlogClient(client)
 }
 
 // DoDDLJob implements the DDL interface.
