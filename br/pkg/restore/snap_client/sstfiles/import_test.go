@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package snapclient_test
+package sstfiles_test
 
 import (
 	"context"

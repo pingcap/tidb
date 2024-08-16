@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	tidallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
+	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -94,16 +95,6 @@ type TableWithRange struct {
 	Range []rtree.Range
 }
 
-type TableIDWithFiles struct {
-	TableID int64
-
-	Files []*backuppb.File
-	// RewriteRules is the rewrite rules for the specify table.
-	// because these rules belongs to the *one table*.
-	// we can hold them here.
-	RewriteRules *restoreutils.RewriteRules
-}
-
 // BatchSender is the abstract of how the batcher send a batch.
 type BatchSender interface {
 	// PutSink sets the sink of this sender, user to this interface promise
@@ -114,24 +105,8 @@ type BatchSender interface {
 	Close()
 }
 
-// TiKVRestorer is the minimal methods required for restoring.
-// It contains the primitive APIs extract from `restore.Client`, so some of arguments may seem redundant.
-// Maybe TODO: make a better abstraction?
-type TiKVRestorer interface {
-	// SplitRanges split regions implicated by the ranges and rewrite rules.
-	// After spliting, it also scatters the fresh regions.
-	SplitRanges(ctx context.Context,
-		ranges []rtree.Range,
-		updateCh glue.Progress,
-		isRawKv bool) error
-	// RestoreSSTFiles import the files to the TiKV.
-	RestoreSSTFiles(ctx context.Context,
-		tableIDWithFiles []TableIDWithFiles,
-		updateCh glue.Progress) error
-}
-
 type tikvSender struct {
-	client TiKVRestorer
+	client sstfiles.FileRestorer
 
 	updateCh glue.Progress
 
@@ -157,7 +132,7 @@ func (b *tikvSender) RestoreBatch(ranges DrainResult) {
 // NewTiKVSender make a sender that send restore requests to TiKV.
 func NewTiKVSender(
 	ctx context.Context,
-	cli TiKVRestorer,
+	cli sstfiles.FileRestorer,
 	updateCh glue.Progress,
 	splitConcurrency uint,
 ) (BatchSender, error) {
@@ -263,7 +238,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
 			pool.ApplyOnErrorGroup(eg, func() error {
-				err := b.client.SplitRanges(ectx, result.Ranges, b.updateCh, false)
+				err := b.client.SplitRanges(ectx, result.Ranges, b.updateCh)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err
@@ -333,7 +308,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
 			eg.Go(func() error {
-				e := b.client.RestoreSSTFiles(ectx, files, b.updateCh)
+				e := b.client.RestoreFiles(ectx, files, b.updateCh)
 				if e != nil {
 					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()
