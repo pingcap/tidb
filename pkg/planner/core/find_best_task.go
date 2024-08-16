@@ -2814,7 +2814,7 @@ func (ts *PhysicalTableScan) getScanRowSize() float64 {
 func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
 	ts := PhysicalTableScan{
 		Table:           ds.TableInfo,
-		Columns:         slices.Clone(ds.Columns),
+		Columns:         util.CloneColInfos(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.PartitionDefIdx != nil,
