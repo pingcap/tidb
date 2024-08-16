@@ -758,15 +758,20 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 			return
 		}
 
+		// Wait for the finish of all pre-build workers
 		wg.Wait()
 
 		// Spill remaining rows
 		if e.spillHelper.isSpillTriggeredNoLock() {
-			fetcherAndWorkerSyncer.Wait()
 			err := e.spillHelper.spillRemainingRows()
 			if err != nil {
 				handleError(e.joinResultCh, &e.finished, err)
 			}
+		}
+
+		// consume remaining data in `syncCh`
+		for range syncCh {
+			fetcherAndWorkerSyncer.Done()
 		}
 	}()
 
