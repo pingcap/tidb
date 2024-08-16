@@ -502,13 +502,13 @@ type showInfo struct {
 }
 
 // getTableType returns the type of the table.
-func getTableType(tb *model.TableInfo) string {
+func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 	switch {
 	case tb.IsView():
 		return "VIEW"
 	case tb.IsSequence():
 		return "SEQUENCE"
-	case util.IsSystemView(tb.Name.L):
+	case util.IsSystemView(e.DBName.L):
 		return "SYSTEM VIEW"
 	default:
 		return "BASE TABLE"
@@ -516,13 +516,13 @@ func getTableType(tb *model.TableInfo) string {
 }
 
 // fromTableNameInfo converts TableNameInfo to showInfo.
-func fromTableNameInfo(tbInfo *model.TableNameInfo) *showInfo {
+func (e *ShowExec) fromTableNameInfo(tbInfo *model.TableNameInfo) *showInfo {
 	return &showInfo{Name: tbInfo.Name}
 }
 
 // fromTableInfo converts TableInfo to showInfo.
-func fromTableInfo(tbInfo *model.TableInfo) *showInfo {
-	return &showInfo{Name: tbInfo.Name, TableType: getTableType(tbInfo)}
+func (e *ShowExec) fromTableInfo(tbInfo *model.TableInfo) *showInfo {
+	return &showInfo{Name: tbInfo.Name, TableType: e.getTableType(tbInfo)}
 }
 
 // fetchShowInfoByName fetches the show info for `SHOW <FULL> TABLES like 'xxx'`
@@ -535,7 +535,7 @@ func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*sho
 		}
 		return nil, errors.Trace(err)
 	}
-	return []*showInfo{{Name: tb.Meta().Name, TableType: getTableType(tb.Meta())}}, nil
+	return []*showInfo{{Name: tb.Meta().Name, TableType: e.getTableType(tb.Meta())}}, nil
 }
 
 // fetchShowSimpleTables fetches the table info for `SHOW TABLE`.
@@ -560,7 +560,7 @@ func (e *ShowExec) fetchShowFullTables(ctx context.Context) ([]*showInfo, error)
 	}
 	showInfos := make([]*showInfo, 0, len(tb))
 	for _, v := range tb {
-		showInfos = append(showInfos, &showInfo{Name: v.Name, TableType: getTableType(v)})
+		showInfos = append(showInfos, &showInfo{Name: v.Name, TableType: e.getTableType(v)})
 	}
 	return showInfos, nil
 }
