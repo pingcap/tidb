@@ -426,6 +426,7 @@ type BackendConfig struct {
 	// see DisableAutomaticCompactions of pebble.Options for more details.
 	// default true.
 	DisableAutomaticCompactions bool
+	MinRegionNum                int64
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -454,6 +455,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		TaskType:                    taskType,
 		RaftKV2SwitchModeDuration:   raftKV2SwitchModeDuration,
 		DisableAutomaticCompactions: true,
+		MinRegionNum:                cfg.TikvImporter.MinRegionNum,
 	}
 }
 
@@ -1075,6 +1077,7 @@ func readAndSplitIntoRange(
 	engine common.Engine,
 	sizeLimit int64,
 	keysLimit int64,
+	minRegionNum int64,
 ) ([]common.Range, error) {
 	startKey, endKey, err := engine.GetKeyRange()
 	if err != nil {
@@ -1083,15 +1086,26 @@ func readAndSplitIntoRange(
 	if startKey == nil {
 		return nil, errors.New("could not find first pair")
 	}
+	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
+
+	if minRegionNum > 0 && engineFileTotalSize/sizeLimit < minRegionNum {
+		sizeLimit = engineFileTotalSize / minRegionNum
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalSize", engineFileTotalSize), zap.Int64("minRegionNum", minRegionNum), zap.Int64("sizeLimit", sizeLimit))
+	}
+	if minRegionNum > 0 && engineFileLength/keysLimit < minRegionNum {
+		keysLimit = engineFileLength / minRegionNum
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalCount", engineFileLength), zap.Int64("minRegionNum", minRegionNum), zap.Int64("keysLimit", keysLimit))
+	}
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
 		ranges := []common.Range{{Start: startKey, End: endKey}}
 		return ranges, nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 	ranges, err := engine.SplitRanges(startKey, endKey, sizeLimit, keysLimit, logger)
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
@@ -1509,7 +1523,7 @@ func (local *Backend) ImportEngine(
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys)
+	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys, local.MinRegionNum)
 	if err != nil {
 		return err
 	}

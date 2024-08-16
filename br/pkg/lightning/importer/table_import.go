@@ -487,6 +487,9 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		}
 		slices.SortFunc(allEngines, func(i, j engineCheckpoint) int { return cmp.Compare(i.engineID, j.engineID) })
 
+		// make sure if we have multiple engines, we won't split into MinRegionNum * len(cp.Engines) regions
+		rc.cfg.TikvImporter.MinRegionNum = rc.cfg.TikvImporter.MinRegionNum / int64(len(cp.Engines))
+
 		for _, ecp := range allEngines {
 			engineID := ecp.engineID
 			engine := ecp.checkpoint

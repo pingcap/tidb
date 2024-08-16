@@ -778,10 +778,10 @@ func dialEtcdWithCfg(
 		return nil, err
 	}
 	tlsConfig := cfg2.TLSConfig()
-
+	addrs := strings.Split(leaderAddr, ",")
 	return clientv3.New(clientv3.Config{
 		TLS:              tlsConfig,
-		Endpoints:        []string{leaderAddr},
+		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{

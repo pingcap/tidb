@@ -1611,8 +1611,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
 		etcdCli, err := clientv3.New(clientv3.Config{
-			Endpoints:        []string{rc.cfg.TiDB.PdAddr},
+			Endpoints:        addrs,
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),
 		})
