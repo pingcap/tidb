@@ -1398,6 +1398,18 @@ var defaultSysVars = []*SysVar{
 			return err
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeConcurrency, Value: strconv.Itoa(DefTiDBAutoAnalyzeConcurrency), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return string(AutoAnlayzeConcurrency.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseInt(val, 10, 64)
+			if err == nil {
+				AutoAnlayzeConcurrency.Store(int32(num))
+			}
+			return err
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
 		if EnableMDL.Load() != TiDBOptOn(val) {
 			err := SwitchMDL(TiDBOptOn(val))
