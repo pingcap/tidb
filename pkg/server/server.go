@@ -1004,9 +1004,6 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	go func() {
 		defer close(allDone)
 		for _, conn := range conns {
-			if !conn.getCtx().GetSessionVars().InTxn() {
-				continue
-			}
 			select {
 			case <-conn.quit:
 			case <-quitWaitingForConns:
