@@ -122,15 +122,6 @@ func (htc *hashTableContext) clearSegmentsInRowTable(workerID, partitionID int) 
 	}
 }
 
-func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
-	partNum := len(htc.hashTable.tables)
-	totalMemoryUsage := int64(0)
-	for i := 0; i < partNum; i++ {
-		totalMemoryUsage += htc.hashTable.getPartitionMemoryUsage(i)
-	}
-	return totalMemoryUsage
-}
-
 func (htc *hashTableContext) getAllMemoryUsageInHashTableTest() (int64, int64, string) {
 	partNum := len(htc.hashTable.tables)
 	totalMemoryUsage := int64(0)
@@ -749,20 +740,24 @@ func (e *HashJoinV2Exec) getRestoredChunkNum(restoredPartition *restorePartition
 	return chunkNum
 }
 
-func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, doneCh <-chan struct{}, wg *sync.WaitGroup) {
+func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan struct{}, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, doneCh <-chan struct{}, wg *sync.WaitGroup) {
 	defer func() {
 		close(syncCh)
 
+		// Tell workers that they can execute `appendRemainingRowLocations` function
+		close(waitForController)
+
+		hasError := false
 		if r := recover(); r != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
-			return
+			hasError = true
 		}
 
 		// Wait for the finish of all pre-build workers
 		wg.Wait()
 
 		// Spill remaining rows
-		if e.spillHelper.isSpillTriggeredNoLock() {
+		if !hasError && e.spillHelper.isSpillTriggeredNoLock() {
 			err := e.spillHelper.spillRemainingRows()
 			if err != nil {
 				handleError(e.joinResultCh, &e.finished, err)
@@ -808,11 +803,12 @@ func (e *HashJoinV2Exec) restoreAndBuild(
 	buildFetcherAndDispatcherSyncChan chan struct{},
 ) {
 	syncCh := make(chan struct{}, 1)
-	e.startPrebuildWorkersForRestore(restoredPartition, syncCh, fetcherAndWorkerSyncer, preBuildWorkerWg)
+	waitForController := make(chan struct{})
+	e.startPrebuildWorkersForRestore(restoredPartition, syncCh, waitForController, fetcherAndWorkerSyncer, preBuildWorkerWg)
 
 	chunkNum := e.getRestoredChunkNum(restoredPartition)
 
-	e.controlPrebuildWorkersForRestore(chunkNum, syncCh, fetcherAndWorkerSyncer, e.buildFetcherFinishCh, preBuildWorkerWg)
+	e.controlPrebuildWorkersForRestore(chunkNum, syncCh, waitForController, fetcherAndWorkerSyncer, e.buildFetcherFinishCh, preBuildWorkerWg)
 
 	buildFetcherAndDispatcherSyncChan <- struct{}{}
 }
@@ -1115,14 +1111,14 @@ func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetche
 	}
 }
 
-func (e *HashJoinV2Exec) startPrebuildWorkersForRestore(restoredPartition *restorePartition, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup) {
+func (e *HashJoinV2Exec) startPrebuildWorkersForRestore(restoredPartition *restorePartition, syncCh chan struct{}, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup) {
 	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
 				// log.Info(fmt.Sprintf("xzxdebug start restore prebuild worker %d", workerID))
-				e.BuildWorkers[workerID].restoreAndPrebuild(restoredPartition.buildSideChunks[workerID], syncCh, fetcherAndWorkerSyncer)
+				e.BuildWorkers[workerID].restoreAndPrebuild(restoredPartition.buildSideChunks[workerID], syncCh, waitForController, fetcherAndWorkerSyncer)
 			},
 			func(r any) {
 				// log.Info(fmt.Sprintf("xzxdebug leave restore prebuild worker %d...", workerID))

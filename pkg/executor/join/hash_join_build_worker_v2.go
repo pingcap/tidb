@@ -186,7 +186,7 @@ func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskBy
 	return nil
 }
 
-func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syncCh chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) {
+func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syncCh chan struct{}, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) {
 	// TODO add statistic
 	cost := int64(0)
 	// defer func() {
@@ -213,6 +213,9 @@ func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syn
 			handleError(hashJoinCtx.joinResultCh, &hashJoinCtx.finished, err)
 		}
 	}
+
+	// Wait for command from the controller so that we can avoid data race with the spill executed in controller
+	<-waitForController
 
 	start := time.Now()
 	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
