@@ -18,7 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	sessionprofile "github.com/pingcap/tidb/pkg/util/session-profile"
+	sessionprofile "github.com/pingcap/tidb/pkg/util/profileProcess"
 	"io/fs"
 	"os"
 	"runtime"

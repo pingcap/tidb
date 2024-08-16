@@ -855,15 +855,12 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	return rs
 }
 
-func (s *Server) UpdateProcessCpuTime(id uint64, sqlId uint64, cpuTimeInSeconds float64) {
+// UpdateProcessCpuTime updates specific process's tidb CPU time when the process is still running
+func (s *Server) UpdateProcessCpuTime(connID uint64, sqlID uint64, cpuTimeInSeconds float64) {
 	s.rwlock.RLock()
-	conn, ok := s.clients[id]
+	conn, ok := s.clients[connID]
 	s.rwlock.RUnlock()
-	if !ok || conn.ctx.GetSessionVars().SqlID.Load() != sqlId {
-		logutil.BgLogger().Info("ConnIdOrSqlID Not match", zap.Bool("ConnID Match", ok))
-		if ok {
-			logutil.BgLogger().Info("SqlIDValue: ", zap.Uint64("SqlID", conn.ctx.GetSessionVars().SqlID.Load()))
-		}
+	if !ok || conn.ctx.GetSessionVars().SqlID.Load() != sqlID {
 		return
 	}
 	vars := conn.ctx.GetSessionVars()

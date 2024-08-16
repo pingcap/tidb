@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session_profile
+package profileProcess
 
 import (
 	"context"
@@ -35,19 +35,16 @@ var (
 	updater  ProcessCpuTimeUpdater
 )
 
+// ProcessCpuTimeUpdater Introduce this interface due to the dependency cycle
 type ProcessCpuTimeUpdater interface {
 	UpdateProcessCpuTime(id uint64, sqlId uint64, cpuTimeInSeconds float64)
 }
 
-// SetupProcessProfiling sets up the process profile worker.
+// SetupProcessProfiling sets up the process cpu profile worker.
 func SetupProcessProfiling(ud ProcessCpuTimeUpdater) {
 	profiler = NewProcessCPUProfiler()
 	updater = ud
 	profiler.Start()
-}
-
-type SVGetter interface {
-	GetSessionVars()
 }
 
 // Close uses to close and release related resource.
@@ -55,7 +52,7 @@ func Close() {
 	profiler.Stop()
 }
 
-// AttachAndRegisterSQLInfo attach the sql information into Top SQL and register the SQL meta information.
+// AttachAndRegisterProcessInfo attach the ProcessInfo into Goroutine labels.
 func AttachAndRegisterProcessInfo(ctx context.Context, connId uint64, sqlId uint64) context.Context {
 	processLabel := fmt.Sprintf("%d_%d", connId, sqlId)
 	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLUID, processLabel))
@@ -64,13 +61,13 @@ func AttachAndRegisterProcessInfo(ctx context.Context, connId uint64, sqlId uint
 }
 
 const (
-	labelSQLUID = "sql_uid"
+	labelSQLUID = "sql_global_uid"
 )
 
-// SQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
+// SQLCPUTimeRecord represents a single record of how much cpu time a sql consumes in one second.
 type SQLCPUTimeRecord struct {
-	SqlID     uint64
-	CPUTimeNs int64
+	SqlGlobalUID uint64
+	total        int64
 }
 
 // ProcessCPUProfiler uses to consume cpu profile from globalCPUProfiler, then parse the Process CPU usage from the cpu profile data.
@@ -127,7 +124,7 @@ func (sp *ProcessCPUProfiler) collectSQLCPULoop() {
 		sp.doUnregister(profileConsumer)
 		ticker.Stop()
 	}()
-	defer util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
+	defer util.Recover("profileProcessCpu", "startAnalyzeProfileWorker", nil, false)
 
 	for {
 		if topsqlstate.TopSQLEnabled() {
@@ -151,12 +148,13 @@ func (sp *ProcessCPUProfiler) handleProfileData(data *cpuprofile.ProfileData) {
 		return
 	}
 
+	// TODO: maybe we can move profile.ParseData upper to globalCPUProfiler side, and provide just Parsed data for all consumers
 	p, err := profile.ParseData(data.Data.Bytes())
 	if err != nil {
 		logutil.BgLogger().Error("parse profile error", zap.Error(err))
 		return
 	}
-	sp.parseCPUProfileBySQLLabels(p)
+	sp.parseCPUProfile(p)
 }
 
 func (sp *ProcessCPUProfiler) doRegister(profileConsumer cpuprofile.ProfileConsumer) {
@@ -175,13 +173,11 @@ func (sp *ProcessCPUProfiler) doUnregister(profileConsumer cpuprofile.ProfileCon
 	cpuprofile.Unregister(profileConsumer)
 }
 
-// parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,
-// output the TopSQLCPUTimeRecord slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
-// The sql_digest label is been set by `SetSQLLabels` function after parse the SQL.
-// The plan_digest label is been set by `SetSQLAndPlanLabels` function after build the SQL plan.
-// Since `SQLCPUCollector` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
+// parseCPUProfile uses to aggregate the cpu-profile sample data by sql_global_uid labels,
+// Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
+// Since `SQLCPUCollector` only care about the cpu time that consume by (sql_global_uid), the other sample data
 // without those label will be ignore.
-func (sp *ProcessCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) {
+func (sp *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
 	sqlMap := make(map[uint64]SQLCPUTimeRecord)
 	idx := len(p.SampleType) - 1
 	// Reverse traverse sample data, since only the latest sqlID for each connection is usable
@@ -192,15 +188,15 @@ func (sp *ProcessCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) {
 			continue
 		}
 		for _, sqlUID := range sqlUIDs {
-			logutil.BgLogger().Info("ProfileInfo", zap.String("SQLUID", sqlUID))
 			keys := strings.Split(sqlUID, `_`)
 			connID, _ := strconv.ParseUint(keys[0], 10, 64)
 			sqlID, _ := strconv.ParseUint(keys[1], 10, 64)
 			if timeRecord, ok := sqlMap[connID]; ok {
-				if sqlID != sqlMap[connID].SqlID {
+				if sqlID != sqlMap[connID].SqlGlobalUID {
+					// Ignore previous sql's cpu profile data inside the same connection
 					continue
 				} else {
-					timeRecord.CPUTimeNs += s.Value[idx]
+					timeRecord.total += s.Value[idx]
 					sqlMap[connID] = timeRecord
 				}
 			} else {
@@ -209,6 +205,6 @@ func (sp *ProcessCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) {
 		}
 	}
 	for key, val := range sqlMap {
-		updater.UpdateProcessCpuTime(key, val.SqlID, float64(val.CPUTimeNs)/1e9)
+		updater.UpdateProcessCpuTime(key, val.SqlGlobalUID, float64(val.total)/1e9)
 	}
 }

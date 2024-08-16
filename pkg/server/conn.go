@@ -42,7 +42,7 @@ import (
 	"encoding/binary"
 	goerr "errors"
 	"fmt"
-	session_profile "github.com/pingcap/tidb/pkg/util/session-profile"
+	session_profile "github.com/pingcap/tidb/pkg/util/profileProcess"
 	"io"
 	"net"
 	"os/user"

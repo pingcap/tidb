@@ -19,7 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	session_profile "github.com/pingcap/tidb/pkg/util/session-profile"
+	session_profile "github.com/pingcap/tidb/pkg/util/profileProcess"
 	"math"
 	"runtime/pprof"
 	"slices"
