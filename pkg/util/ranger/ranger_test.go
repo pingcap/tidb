@@ -263,6 +263,12 @@ func TestTableRange(t *testing.T) {
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2,2] [3,3]]",
 		},
+		{
+			exprStr:     "isnull(a) and a in (1, 2, 3)",
+			accessConds: "[isnull(test.t.a) in(test.t.a, 1, 2, 3)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
 	}
 
 	ctx := context.Background()
