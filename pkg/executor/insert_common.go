@@ -673,6 +673,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		rowCntInLoadData = e.rowCount
 	}
 
+	// For INSERT INTO SELECT .. FROM statement, len(e.Lists) = 0
+	isSingleInsert := !e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt && len(e.Lists) == 1
+
 	for i, c := range tCols {
 		var err error
 		// Evaluate the generated columns later after real columns set
@@ -684,7 +687,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
-				if err = c.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &row[i], rowCntInLoadData); err != nil {
+				if err = c.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &row[i], rowCntInLoadData, isSingleInsert); err != nil {
 					return nil, err
 				}
 			}
@@ -724,7 +727,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			warnCnt += len(newWarnings)
 		}
 		// Handle the bad null error.
-		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
+		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData, isSingleInsert); err != nil {
 			return nil, err
 		}
 	}
