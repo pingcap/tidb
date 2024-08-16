@@ -257,6 +257,12 @@ func TestTableRange(t *testing.T) {
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
+		{
+			exprStr:     "isnull(a) or a in (1, 2, 3)",
+			accessConds: "[or(isnull(test.t.a), in(test.t.a, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[[1,1] [2,2] [3,3]]",
+		},
 	}
 
 	ctx := context.Background()
@@ -2231,6 +2237,13 @@ create table t(
 			accessConds: "[isnull(test.t.a)]",
 			filterConds: "[]",
 			resultStr:   "[[NULL,NULL]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "isnull(a) or a in (1,2,3,4)",
+			accessConds: "[]",
+			filterConds: "[or(isnull(test.t.a), or(or(eq(cast(test.t.a, double BINARY), 1), eq(cast(test.t.a, double BINARY), 2)), or(eq(cast(test.t.a, double BINARY), 3), eq(cast(test.t.a, double BINARY), 4))))]",
+			resultStr:   "[[NULL,+inf]]",
 		},
 		{
 			indexPos:    0,
