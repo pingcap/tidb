@@ -16,7 +16,6 @@ package allrevive
 
 import (
 	"encoding/json"
-	"fmt"
 	"go/token"
 	"os"
 
@@ -193,12 +192,12 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	for i := range results {
 		res := &results[i]
-		text := fmt.Sprintf("%s: %s", res.RuleName, res.Failure.Failure)
 		fileContent, tf, err := util.ReadFile(pass.Fset, res.Position.Start.Filename)
 		if err != nil {
 			panic(err)
 		}
-		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), res.Position.Start.Line, res.Position.Start.Column)), text)
+		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), res.Position.Start.Line, res.Position.Start.Column)),
+			"%s: %s", res.RuleName, res.Failure.Failure)
 	}
 	return nil, nil
 }
