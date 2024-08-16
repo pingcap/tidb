@@ -19,7 +19,10 @@ import (
 	"fmt"
 	"go/token"
 	"os"
+	"runtime"
+	"strings"
 
+	goversion "github.com/hashicorp/go-version"
 	"github.com/mgechev/revive/config"
 	"github.com/mgechev/revive/lint"
 	"github.com/mgechev/revive/rule"
@@ -37,7 +40,6 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func init() {
-	util.SetGoPath()
 	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }
@@ -123,15 +125,18 @@ var allRules = append([]lint.Rule{
 }, defaultRules...)
 
 func run(pass *analysis.Pass) (any, error) {
-	util.SetGoPath()
 	files := make([]string, 0, len(pass.Files))
 	for _, file := range pass.Files {
 		files = append(files, pass.Fset.PositionFor(file.Pos(), false).Filename)
 	}
 	packages := [][]string{files}
-
+	gv, err := goversion.NewVersion(strings.Replace(runtime.Version(), "go", "", -1))
+	if err != nil {
+		panic(err)
+	}
 	revive := lint.New(os.ReadFile, 1024)
 	conf := lint.Config{
+		GoVersion:             gv,
 		IgnoreGeneratedHeader: false,
 		Confidence:            0.8,
 		Severity:              "error",
