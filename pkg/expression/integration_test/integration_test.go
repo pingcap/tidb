@@ -837,7 +837,7 @@ func TestEnumIndex(t *testing.T) {
 	ops := []string{"=", "!=", ">", ">=", "<", "<="}
 	testElems := []string{"\"a\"", "\"b\"", "\"c\"", "\"d\"", "\"\"", "1", "2", "3", "4", "0", "-1"}
 	for i := 0; i < nRows; i++ {
-		cond := fmt.Sprintf("e" + ops[rand.Intn(len(ops))] + testElems[rand.Intn(len(testElems))])
+		cond := "e" + ops[rand.Intn(len(ops))] + testElems[rand.Intn(len(testElems))]
 		result := tk.MustQuery("select * from t where " + cond).Sort().Rows()
 		tk.MustQuery("select * from tidx where " + cond).Sort().Check(result)
 	}
