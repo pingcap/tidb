@@ -49,9 +49,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// JobSubmitter collects the DDL jobs and submits them to job tables in batch.
-// when fast-create is enabled, it will merge the create-table jobs to a single
-// batch create-table job.
+// JobSubmitter collects the DDL jobs and submits them to job tables in batch, it's
+// also responsible allocating IDs for the jobs. when fast-create is enabled, it
+// will merge the create-table jobs to a single batch create-table job.
 // export for testing.
 type JobSubmitter struct {
 	ctx               context.Context
@@ -446,17 +446,42 @@ func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *
 	})
 }
 
+type gidAllocator struct {
+	idx int
+	ids []int64
+}
+
+func (a *gidAllocator) next() int64 {
+	id := a.ids[a.idx]
+	a.idx++
+	return id
+}
+
+func (a *gidAllocator) assignIDsForTable(info *model.TableInfo) {
+	info.ID = a.next()
+	if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
+		a.assignIDsForPartitionInfo(partitionInfo)
+	}
+}
+
+func (a *gidAllocator) assignIDsForPartitionInfo(partitionInfo *model.PartitionInfo) {
+	for i := range partitionInfo.Definitions {
+		partitionInfo.Definitions[i].ID = a.next()
+	}
+}
+
+func idCountForTable(info *model.TableInfo) int {
+	c := 1
+	if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
+		c += len(partitionInfo.Definitions)
+	}
+	return c
+}
+
 // getRequiredGIDCount returns the count of required global IDs for the jobs. it's calculated
 // as: the count of jobs + the count of IDs for the jobs which do NOT have pre-allocated ID.
 func getRequiredGIDCount(jobWs []*JobWrapper) int {
 	count := len(jobWs)
-	idCountForTable := func(info *model.TableInfo) int {
-		c := 1
-		if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
-			c += len(partitionInfo.Definitions)
-		}
-		return c
-	}
 	for _, jobW := range jobWs {
 		if jobW.IDAllocated {
 			continue
@@ -470,8 +495,23 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 			for _, info := range infos {
 				count += idCountForTable(info)
 			}
-		case model.ActionCreateSchema:
+		case model.ActionCreateSchema, model.ActionCreateResourceGroup:
 			count++
+		case model.ActionAlterTablePartitioning:
+			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			// A new table ID would be needed for
+			// the global index, which cannot be the same as the current table id,
+			// since this table id will be removed in the final state when removing
+			// all the data with this table id.
+			count += 1 + len(pInfo.Definitions)
+		case model.ActionTruncateTablePartition:
+			count += len(jobW.Args[0].([]int64))
+		case model.ActionAddTablePartition:
+			pInfo := jobW.Args[0].(*model.PartitionInfo)
+			count += len(pInfo.Definitions)
+		case model.ActionReorganizePartition, model.ActionRemovePartitioning:
+			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			count += len(pInfo.Definitions)
 		}
 		// TODO support other type of jobs
 	}
@@ -481,44 +521,68 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 // assignGIDsForJobs should be used with getRequiredGIDCount, and len(ids) must equal
 // what getRequiredGIDCount returns.
 func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
-	idx := 0
-
-	assignIDsForTable := func(info *model.TableInfo) {
-		info.ID = ids[idx]
-		idx++
-		if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
-			for i := range partitionInfo.Definitions {
-				partitionInfo.Definitions[i].ID = ids[idx]
-				idx++
-			}
-		}
-	}
+	alloc := &gidAllocator{ids: ids}
 	for _, jobW := range jobWs {
 		switch jobW.Type {
 		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
 			info := jobW.Args[0].(*model.TableInfo)
 			if !jobW.IDAllocated {
-				assignIDsForTable(info)
+				alloc.assignIDsForTable(info)
 			}
 			jobW.TableID = info.ID
 		case model.ActionCreateTables:
 			if !jobW.IDAllocated {
 				infos := jobW.Args[0].([]*model.TableInfo)
 				for _, info := range infos {
-					assignIDsForTable(info)
+					alloc.assignIDsForTable(info)
 				}
 			}
 		case model.ActionCreateSchema:
 			dbInfo := jobW.Args[0].(*model.DBInfo)
 			if !jobW.IDAllocated {
-				dbInfo.ID = ids[idx]
-				idx++
+				dbInfo.ID = alloc.next()
 			}
 			jobW.SchemaID = dbInfo.ID
+		case model.ActionCreateResourceGroup:
+			if !jobW.IDAllocated {
+				rgInfo := jobW.Args[0].(*model.ResourceGroupInfo)
+				rgInfo.ID = alloc.next()
+			}
+		case model.ActionAlterTablePartitioning:
+			if !jobW.IDAllocated {
+				pInfo := jobW.Args[1].(*model.PartitionInfo)
+				alloc.assignIDsForPartitionInfo(pInfo)
+				pInfo.NewTableID = alloc.next()
+			}
+		case model.ActionTruncateTablePartition:
+			if !jobW.IDAllocated {
+				newIDs := make([]int64, 0, len(jobW.Args[0].([]int64)))
+				for i := range newIDs {
+					newIDs[i] = alloc.next()
+				}
+				jobW.Args[1] = newIDs
+			}
+		case model.ActionAddTablePartition:
+			if !jobW.IDAllocated {
+				pInfo := jobW.Args[0].(*model.PartitionInfo)
+				alloc.assignIDsForPartitionInfo(pInfo)
+			}
+		case model.ActionReorganizePartition:
+			if !jobW.IDAllocated {
+				pInfo := jobW.Args[1].(*model.PartitionInfo)
+				alloc.assignIDsForPartitionInfo(pInfo)
+			}
+		case model.ActionRemovePartitioning:
+			// a special partition is pInfo in this case, and we will use the ID
+			// of the partition as the new table ID.
+			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			if !jobW.IDAllocated {
+				alloc.assignIDsForPartitionInfo(pInfo)
+			}
+			pInfo.NewTableID = pInfo.Definitions[0].ID
 		}
 		// TODO support other type of jobs
-		jobW.ID = ids[idx]
-		idx++
+		jobW.ID = alloc.next()
 	}
 }
 

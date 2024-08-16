@@ -982,17 +982,6 @@ func checkGlobalIndexes(ctx sessionctx.Context, tblInfo *model.TableInfo) error 
 	return nil
 }
 
-func (e *executor) assignPartitionIDs(defs []model.PartitionDefinition) error {
-	genIDs, err := e.genGlobalIDs(len(defs))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for i := range defs {
-		defs[i].ID = genIDs[i]
-	}
-	return nil
-}
-
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	is := e.infoCache.GetLatest()
@@ -2310,9 +2299,6 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 			return errors.Trace(err)
 		}
 	}
-	if err := e.assignPartitionIDs(partInfo.Definitions); err != nil {
-		return errors.Trace(err)
-	}
 
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
@@ -2481,19 +2467,6 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
-	if err = e.assignPartitionIDs(newPartInfo.Definitions); err != nil {
-		return errors.Trace(err)
-	}
-	// A new table ID would be needed for
-	// the global index, which cannot be the same as the current table id,
-	// since this table id will be removed in the final state when removing
-	// all the data with this table id.
-	var newID []int64
-	newID, err = e.genGlobalIDs(1)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newPartInfo.NewTableID = newID[0]
 	newPartInfo.DDLType = piOld.Type
 
 	job := &model.Job{
@@ -2549,9 +2522,6 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	}
 	partInfo, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), meta, spec)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = e.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
@@ -2618,14 +2588,10 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = e.assignPartitionIDs(partInfo.Definitions); err != nil {
-		return errors.Trace(err)
-	}
 	// TODO: check where the default placement comes from (i.e. table level)
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
 		return errors.Trace(err)
 	}
-	partInfo.NewTableID = partInfo.Definitions[0].ID
 
 	job := &model.Job{
 		SchemaID:       schema.ID,
@@ -2830,20 +2796,17 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		pids = append(pids, pi.Definitions[i].ID)
 	}
 
-	genIDs, err := e.genGlobalIDs(len(pids))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	job := &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        meta.ID,
-		SchemaName:     schema.Name.L,
-		SchemaState:    model.StatePublic,
-		TableName:      t.Meta().Name.L,
-		Type:           model.ActionTruncateTablePartition,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{pids, genIDs},
+		SchemaID:    schema.ID,
+		TableID:     meta.ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionTruncateTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		// the second item is the new partition IDs, we add a placeholder here,
+		// job submitter will fill it.
+		Args:           []any{pids, nil},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
@@ -5816,11 +5779,6 @@ func (e *executor) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateReso
 	}
 
 	logutil.DDLLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
-	groupIDs, err := e.genGlobalIDs(1)
-	if err != nil {
-		return err
-	}
-	groupInfo.ID = groupIDs[0]
 
 	job := &model.Job{
 		SchemaName:     groupName.L,
