@@ -614,5 +614,4 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	tk.MustExec("insert into t1 values(2, null), (3, 3)")
 	tk.MustExec("update t1 set col1 = null where id = 3")
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|"))
-
 }
