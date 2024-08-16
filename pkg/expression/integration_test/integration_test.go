@@ -128,7 +128,7 @@ func TestVectorConstantExplain(t *testing.T) {
 	))
 	tk.MustExec("set session tidb_redact_log=marker")
 	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
-		"Projection_3 10000.00 root  vec_cosine_distance(test.t.c, <[1,2,3,4,5,(6 more)...]>)->Column#3",
+		"Projection_3 10000.00 root  vec_cosine_distance(test.t.c, ‹[1,2,3,4,5,(6 more)...]›)->Column#3",
 		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
 		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))

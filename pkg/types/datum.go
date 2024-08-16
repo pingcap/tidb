@@ -2082,9 +2082,14 @@ func (d *Datum) ToString() (string, error) {
 	}
 }
 
-// StringWithCtx implements Explainable interface.
-func (d *Datum) StringWithCtx(ctx ParamValues, redact string) string {
-	return d.GetVectorFloat32().StringWithCtx(ctx, redact)
+// StringTruncate truncate long string.
+func (d *Datum) StringTruncate() string {
+	switch d.k {
+	case KindVectorFloat32:
+		return d.GetVectorFloat32().StringTruncate()
+	default:
+		return fmt.Sprintf("%v", d.GetValue())
+	}
 }
 
 // ToBytes gets the bytes representation of the datum.

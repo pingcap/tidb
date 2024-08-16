@@ -152,13 +152,10 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
-	if c.Value.Kind() == types.KindVectorFloat32 {
-		return c.Value.StringWithCtx(ctx, redact)
-	}
 	if redact == perrors.RedactLogDisable {
-		return fmt.Sprintf("%v", c.Value.GetValue())
+		return fmt.Sprintf("%v", c.Value.StringTruncate())
 	} else if redact == perrors.RedactLogMarker {
-		return fmt.Sprintf("‹%v›", c.Value.GetValue())
+		return fmt.Sprintf("‹%v›", c.Value.StringTruncate())
 	}
 	return "?"
 }
