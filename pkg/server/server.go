@@ -856,6 +856,7 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 }
 
 // UpdateProcessCpuTime updates specific process's tidb CPU time when the process is still running
+// It implements ProcessCpuTimeUpdater interface
 func (s *Server) UpdateProcessCpuTime(connID uint64, sqlID uint64, cpuTimeInSeconds float64) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[connID]
