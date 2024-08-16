@@ -19,7 +19,6 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	session_profile "github.com/pingcap/tidb/pkg/util/profileProcess"
 	"math"
 	"runtime/pprof"
 	"slices"
@@ -1915,8 +1914,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
 			sc.IsSQLRegistered.Store(true)
 			goCtx = topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
-			sqlId := vars.SqlID.Load()
-			session_profile.AttachAndRegisterProcessInfo(goCtx, vars.ConnectionID, sqlId)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {

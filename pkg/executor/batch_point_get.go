@@ -17,6 +17,9 @@ package executor
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sync/atomic"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -37,8 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"slices"
-	"sync/atomic"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
