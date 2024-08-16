@@ -1260,9 +1260,10 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	if !ok {
 		return nil
 	}
+	tblInfo := table.Meta()
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, table.Meta())
+	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 
 	if pi := table.Meta().GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
@@ -1273,10 +1274,11 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	b.infoData.remove(tableItem{
 		dbName:        dbInfo.Name.L,
 		dbID:          dbInfo.ID,
-		tableName:     table.Meta().Name.L,
-		tableID:       table.Meta().ID,
+		tableName:     tblInfo.Name.L,
+		tableID:       tblInfo.ID,
 		schemaVersion: diff.Version,
 	})
+	affected = appendAffectedIDs(affected, tblInfo)
 
 	return affected
 }
