@@ -30,7 +30,7 @@ pd-server --join "https://$PD_ADDR" \
   --config $PD_CONFIG &
 
 # strange that new PD can't join too quickly
-sleep 10
+sleep 20
 
 echo "will start pd3"
 pd-server --join "https://$PD_ADDR" \
