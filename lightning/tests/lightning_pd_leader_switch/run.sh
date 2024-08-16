@@ -27,7 +27,7 @@ pd-server --join "https://$PD_ADDR" \
   --log-file "$TEST_DIR/pd2.log" \
   --data-dir "$TEST_DIR/pd2" \
   --name pd2 \
-  --config $PD_CONFIG > "$TEST_DIR/pd2.stdout" 2> "$TEST_DIR/pd2.stderr" &
+  --config $PD_CONFIG &
 
 # strange that new PD can't join too quickly
 sleep 20
@@ -39,13 +39,13 @@ pd-server --join "https://$PD_ADDR" \
   --log-file "$TEST_DIR/pd3.log" \
   --data-dir "$TEST_DIR/pd3" \
   --name pd3 \
-  --config $PD_CONFIG > "$TEST_DIR/pd3.stdout" 2> "$TEST_DIR/pd3.stderr" &
+  --config $PD_CONFIG &
 
 # restart TiDB to let TiDB load new PD nodes
 killall tidb-server
 # wait for TiDB to exit to release file lock
 sleep 5
-start_tidb
+PD_ADDR="${PD_ADDR},${PD_ADDR}2,${PD_ADDR}3" start_tidb
 
 export GO_FAILPOINTS='github.com/pingcap/tidb/lightning/pkg/importer/beforeRun=sleep(60000)'
 run_lightning --backend local --enable-checkpoint=0 --pd-urls '127.0.0.1:9999,127.0.0.1:2379' &
