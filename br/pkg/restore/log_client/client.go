@@ -79,7 +79,14 @@ const maxSplitKeysOnce = 10240
 
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
-const compactedSSTBatchSize = 16
+
+// CompactedSSTSplitBatchSize specifies the count of compacted sst files that the log client split keys.
+// particularly we select 1 region start key as split key every 16 regions.
+const CompactedSSTSplitBatchSize = 16
+
+func GetCompactedSSTSplitBatchSize() int {
+	return CompactedSSTSplitBatchSize
+}
 
 type LogClient struct {
 	restorer            sstfiles.FileRestorer
@@ -173,7 +180,7 @@ func (rc *LogClient) CollectCompactedSsts(
 	rules map[int64]*restoreutils.RewriteRules,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
 ) (int, map[uint64]*CompactedItem, error) {
-	totalSSTCount := 0
+	sstFileCount := 0
 	regionCompactedMap := make(map[uint64]*CompactedItem)
 	// read unorder files
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
@@ -189,10 +196,10 @@ func (rc *LogClient) CollectCompactedSsts(
 
 		if _, ok := regionCompactedMap[i.Meta.RegionId]; !ok {
 			c := CompactedItem{
-				files: make([]sstfiles.SstFilesInfo, 0, compactedSSTBatchSize),
+				files: make([]sstfiles.SstFilesInfo, 0, CompactedSSTSplitBatchSize),
 				// TODO When log backup supports record region range, use it to split ranges.
 				// currently, we use the min key of the record key and rewrite it to split ranges.
-				regionMinKeys: make([][]byte, 0, compactedSSTBatchSize),
+				regionMinKeys: make([][]byte, 0, CompactedSSTSplitBatchSize),
 			}
 			regionCompactedMap[i.Meta.RegionId] = &c
 		}
@@ -201,7 +208,7 @@ func (rc *LogClient) CollectCompactedSsts(
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		totalSSTCount += len(i.SstOutputs)
+		sstFileCount += len(i.SstOutputs)
 
 		regionCompactedMap[i.Meta.RegionId].Append(sstfiles.SstFilesInfo{
 			TableID:      i.Meta.TableId,
@@ -209,7 +216,7 @@ func (rc *LogClient) CollectCompactedSsts(
 			RewriteRules: rewriteRules,
 		}, rawMinKey)
 	}
-	return totalSSTCount, regionCompactedMap, nil
+	return sstFileCount, regionCompactedMap, nil
 }
 
 func (rc *LogClient) RestoreCompactedSsts(
@@ -223,14 +230,14 @@ func (rc *LogClient) RestoreCompactedSsts(
 	importModeSwitcher.SwitchToImportMode(ctx)
 	defer importModeSwitcher.SwitchToNormalMode(ctx)
 
-	splitRanges := make([]rtree.Range, 0, compactedSSTBatchSize)
+	splitRanges := make([]rtree.Range, 0, CompactedSSTSplitBatchSize)
 
 	eg, eCtx := errgroup.WithContext(ctx)
-	// split every cnt regions
+	// select split keys every `CompactedSSTSplitBatchSize` regions
 	cnt := 0
 	for regionId, CompactedItems := range regionCompactedMap {
 		cnt += 1
-		if cnt >= compactedSSTBatchSize {
+		if cnt >= CompactedSSTSplitBatchSize {
 			var regionSplitKey []byte
 			var splitKeyIndex int
 			for i, minKey := range CompactedItems.regionMinKeys {

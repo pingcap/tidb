@@ -1435,6 +1435,8 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// total split ranges count
+	sstFileCount += sstFileCount / logclient.CompactedSSTSplitBatchSize
 
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount+sstFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
