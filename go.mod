@@ -93,8 +93,13 @@ require (
 	github.com/prometheus/common v0.46.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/robfig/cron/v3 v3.0.1
+<<<<<<< HEAD
 	github.com/sasha-s/go-deadlock v0.2.0
 	github.com/shirou/gopsutil/v3 v3.23.5
+=======
+	github.com/sasha-s/go-deadlock v0.3.5
+	github.com/shirou/gopsutil/v3 v3.24.4
+>>>>>>> 6d403d4a4e1 (*: fix flaky deadlock with go1.23 (#55479))
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.7.0
@@ -251,7 +256,11 @@ require (
 	github.com/ncw/directio v1.0.5 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
+<<<<<<< HEAD
 	github.com/petermattis/goid v0.0.0-20211229010228-4d14c490ee36 // indirect
+=======
+	github.com/petermattis/goid v0.0.0-20240813172612-4fcff4a6cae7 // indirect
+>>>>>>> 6d403d4a4e1 (*: fix flaky deadlock with go1.23 (#55479))
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pkg/browser v0.0.0-20210115035449-ce105d075bb4 // indirect
