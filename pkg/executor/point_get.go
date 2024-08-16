@@ -17,9 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strconv"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -45,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"sort"
+	"strconv"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {
@@ -247,8 +246,14 @@ func (e *PointGetExecutor) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.stats != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
-		defer e.Ctx().GetSessionVars().StmtCtx.SyncExecDetails.MergeTikvCPUTime(e.stats.SnapshotRuntimeStats.timeDetail.ProcessTime.Seconds())
+		defer func() {
+			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
+			if timeDetail != nil {
+				sc.SyncExecDetails.MergeTikvCPUTime(timeDetail.ProcessTime.Seconds())
+			}
+		}()
 	}
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)

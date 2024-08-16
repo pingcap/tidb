@@ -17,9 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"slices"
-	"sync/atomic"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -40,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"slices"
+	"sync/atomic"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
@@ -163,8 +162,16 @@ func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *ca
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
+			if timeDetail != nil {
+				sc.SyncExecDetails.MergeTikvCPUTime(timeDetail.ProcessTime.Seconds())
+			}
+		}()
 	}
+
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
