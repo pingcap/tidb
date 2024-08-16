@@ -607,6 +607,9 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	err := tk.ExecToErr("insert into t1 values(1, null)")
 	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
 
+	err = tk.ExecToErr("insert into t1 set id = 1, col1 = null")
+	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
+
 	tk.MustExec("insert into t1 select * from t2")
 	tk.MustExec("insert into t1 values(2, null), (3, 3)")
 	tk.MustExec("update t1 set col1 = null where id = 3")
