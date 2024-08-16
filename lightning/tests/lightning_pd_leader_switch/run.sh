@@ -27,7 +27,7 @@ pd-server --join "https://$PD_ADDR" \
   --log-file "$TEST_DIR/pd2.log" \
   --data-dir "$TEST_DIR/pd2" \
   --name pd2 \
-  --config $PD_CONFIG &
+  --config $PD_CONFIG > "$TEST_DIR/pd2.stdout" 2> "$TEST_DIR/pd2.stderr" &
 
 # strange that new PD can't join too quickly
 sleep 20
@@ -39,7 +39,7 @@ pd-server --join "https://$PD_ADDR" \
   --log-file "$TEST_DIR/pd3.log" \
   --data-dir "$TEST_DIR/pd3" \
   --name pd3 \
-  --config $PD_CONFIG &
+  --config $PD_CONFIG > "$TEST_DIR/pd3.stdout" 2> "$TEST_DIR/pd3.stderr" &
 
 # restart TiDB to let TiDB load new PD nodes
 killall tidb-server
@@ -51,7 +51,7 @@ export GO_FAILPOINTS='github.com/pingcap/tidb/lightning/pkg/importer/beforeRun=s
 run_lightning --backend local --enable-checkpoint=0 --pd-urls '127.0.0.1:9999,127.0.0.1:2379' &
 lightning_pid=$!
 # in many libraries, etcd client's auto-sync-interval is 30s, so we need to wait at least 30s before kill PD leader
-sleep 45
+sleep 50
 kill $(cat $TEST_DIR/pd_pid.txt)
 
 # Check that everything is correctly imported
