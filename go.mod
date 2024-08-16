@@ -67,6 +67,7 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
+<<<<<<< HEAD
 	github.com/pingcap/badger v1.5.1-0.20220314162537-ab58fbf40580
 	github.com/pingcap/errors v0.11.5-0.20220729040631-518f63d66278
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
@@ -82,6 +83,25 @@ require (
 	github.com/prometheus/common v0.37.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/shirou/gopsutil/v3 v3.22.9
+=======
+	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
+	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
+	github.com/pingcap/failpoint v0.0.0-20240527053858-9b3b6e34194a
+	github.com/pingcap/fn v1.0.0
+	github.com/pingcap/kvproto v0.0.0-20240716095229-5f7ffec83ea7
+	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
+	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
+	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
+	github.com/pingcap/tipb v0.0.0-20240703084358-e46e4632bd2b
+	github.com/prometheus/client_golang v1.19.1
+	github.com/prometheus/client_model v0.6.1
+	github.com/prometheus/common v0.55.0
+	github.com/prometheus/prometheus v0.50.1
+	github.com/qri-io/jsonschema v0.2.1
+	github.com/robfig/cron/v3 v3.0.1
+	github.com/sasha-s/go-deadlock v0.3.5
+	github.com/shirou/gopsutil/v3 v3.24.4
+>>>>>>> 6d403d4a4e1 (*: fix flaky deadlock with go1.23 (#55479))
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.6.1
@@ -209,6 +229,10 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
+<<<<<<< HEAD
+=======
+	github.com/petermattis/goid v0.0.0-20240813172612-4fcff4a6cae7 // indirect
+>>>>>>> 6d403d4a4e1 (*: fix flaky deadlock with go1.23 (#55479))
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
