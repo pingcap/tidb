@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"go/token"
 	"os"
-	"runtime"
-	"strings"
 
 	goversion "github.com/hashicorp/go-version"
 	"github.com/mgechev/revive/config"
@@ -99,7 +97,7 @@ func run(pass *analysis.Pass) (any, error) {
 		files = append(files, pass.Fset.PositionFor(file.Pos(), false).Filename)
 	}
 	packages := [][]string{files}
-	gv, err := goversion.NewVersion(strings.Replace(runtime.Version(), "go", "", -1))
+	gv, err := goversion.NewVersion("1.21")
 	if err != nil {
 		panic(err)
 	}
