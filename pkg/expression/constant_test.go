@@ -21,11 +21,7 @@ import (
 	"testing"
 	"time"
 
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/errors"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -189,11 +185,7 @@ func TestConstantPropagation(t *testing.T) {
 			newConds := solver.PropagateConstant(ctx, conds)
 			var result []string
 			for _, v := range newConds {
-<<<<<<< HEAD
-				result = append(result, v.String())
-=======
-				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+				result = append(result, v.StringWithCtx( errors.RedactLogDisable))
 			}
 			sort.Strings(result)
 			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)

@@ -141,22 +141,18 @@ func (d *ParamMarker) GetUserVar() types.Datum {
 	return sessionVars.PlanCacheParams.GetParamValue(d.order)
 }
 
-<<<<<<< HEAD
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
-=======
+	return c.StringWithCtx(perrors.RedactLogDisable)
+}
+
 // StringWithCtx implements Expression interface.
-func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+func (c *Constant) StringWithCtx(redact string) string {
 	if c.ParamMarker != nil {
 		dt := c.ParamMarker.GetUserVar()
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
-<<<<<<< HEAD
 		return c.DeferredExpr.String()
-=======
-		return c.DeferredExpr.StringWithCtx(ctx, redact)
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	}
 	if redact == perrors.RedactLogDisable {
 		return fmt.Sprintf("%v", c.Value.GetValue())
