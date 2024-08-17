@@ -1118,6 +1118,7 @@ type TikvImporter struct {
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
+	MinRegionNum          int64                 `toml:"min-region-num" json:"min-region-num"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1508,6 +1509,7 @@ func NewConfig() *Config {
 			DuplicateResolution:     NoneOnDup,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 			BlockSize:               DefaultBlockSize,
+			MinRegionNum:            0,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
 			LogicalImportPrepStmt:   defaultLogicalImportPrepStmt,
