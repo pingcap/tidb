@@ -1042,7 +1042,7 @@ func IsTableInfoMustLoad(json []byte) bool {
 }
 
 // NameExtractRegexp is exported for testing.
-const NameExtractRegexp = `"L":"([^"\\]*(?:\\.[^"\\]*)*)"}`
+const NameExtractRegexp = `"O":"([^"\\]*(?:\\.[^"\\]*)*)",`
 
 // Unescape is exported for testing.
 func Unescape(s string) string {
@@ -1179,7 +1179,7 @@ func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 	if !ok {
 		return nil, errors.New("name field not found in JSON")
 	}
-	// 6 tokens; {, O, ..., L, ..., }
+	// 6 tokens; {, O, ..., L, ..., }, the data looks like this {123,"O","t","L","t",125}
 	if len(nameTokens) != 6 {
 		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
 	}
