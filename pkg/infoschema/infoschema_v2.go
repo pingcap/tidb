@@ -1274,7 +1274,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	b.infoData.remove(tableItem{
 		dbName:        dbInfo.Name,
 		dbID:          dbInfo.ID,
-		tableName:     tblInfo.Name.L,
+		tableName:     tblInfo.Name,
 		tableID:       tblInfo.ID,
 		schemaVersion: diff.Version,
 	})
