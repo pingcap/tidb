@@ -217,8 +217,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiDBIndexUsage:
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
-			dbs := getAllSchemas()
-			err = e.setDataFromClusterIndexUsage(ctx, sctx, dbs)
+			err = e.setDataFromClusterIndexUsage(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3674,65 +3673,6 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 	return nil
 }
 
-func (e *memtableRetriever) setDataForClusterIndexUsage(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
-	dom := domain.GetDomain(sctx)
-	rows := make([][]types.Datum, 0, 100)
-	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaBaseExtractor)
-	if ok && extractor.SkipRequest {
-		return nil
-	}
-
-	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
-			continue
-		}
-		tables, err := dom.InfoSchema().SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tbl := range tables {
-			if ok && extractor.Filter("table_name", tbl.Name.L) {
-				continue
-			}
-			allowed := checker == nil || checker.RequestVerification(
-				sctx.GetSessionVars().ActiveRoles,
-				schema.L, tbl.Name.L, "", mysql.AllPrivMask)
-			if !allowed {
-				continue
-			}
-
-			for _, idx := range tbl.Indices {
-				if ok && extractor.Filter("index_name", idx.Name.L) {
-					continue
-				}
-				row := make([]types.Datum, 0, 14)
-				usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
-				row = append(row, types.NewStringDatum(schema.O))
-				row = append(row, types.NewStringDatum(tbl.Name.O))
-				row = append(row, types.NewStringDatum(idx.Name.O))
-				row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
-				row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
-				row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))
-				for _, percentage := range usage.PercentageAccess {
-					row = append(row, types.NewIntDatum(int64(percentage)))
-				}
-				lastUsedAt := types.Datum{}
-				lastUsedAt.SetNull()
-				if !usage.LastUsedAt.IsZero() {
-					t := types.NewTime(types.FromGoTime(usage.LastUsedAt), mysql.TypeTimestamp, 0)
-					lastUsedAt = types.NewTimeDatum(t)
-				}
-				row = append(row, lastUsedAt)
-				rows = append(rows, row)
-			}
-		}
-	}
-
-	e.rows = rows
-	return nil
-}
-
 func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sessionctx.Context) error {
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
@@ -3788,9 +3728,8 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 	return nil
 }
 
-// Currently, ClusterIndexUsage will not be be pushed down, so just use the previous logic
-func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sctx sessionctx.Context, schemas []model.CIStr) error {
-	err := e.setDataForClusterIndexUsage(ctx, sctx, schemas)
+func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sctx sessionctx.Context) error {
+	err := e.setDataFromIndexUsage(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
