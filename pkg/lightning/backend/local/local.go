@@ -447,6 +447,7 @@ type BackendConfig struct {
 	// default true.
 	DisableAutomaticCompactions bool
 	BlockSize                   int
+	MinRegionNum                int64
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -476,6 +477,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		TaskType:                    taskType,
 		RaftKV2SwitchModeDuration:   raftKV2SwitchModeDuration,
 		DisableAutomaticCompactions: true,
+		MinRegionNum:                cfg.TikvImporter.MinRegionNum,
 	}
 }
 
@@ -843,6 +845,7 @@ func getRegionSplitKeys(
 	engine common.Engine,
 	sizeLimit int64,
 	keysLimit int64,
+	minRegionNum int64,
 ) ([][]byte, error) {
 	startKey, endKey, err := engine.GetKeyRange()
 	if err != nil {
@@ -851,14 +854,25 @@ func getRegionSplitKeys(
 	if startKey == nil {
 		return nil, errors.New("could not find first pair")
 	}
+	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
+
+	if minRegionNum > 0 && engineFileTotalSize/sizeLimit < minRegionNum {
+		sizeLimit = engineFileTotalSize / minRegionNum
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalSize", engineFileTotalSize), zap.Int64("minRegionNum", minRegionNum), zap.Int64("sizeLimit", sizeLimit))
+	}
+	if minRegionNum > 0 && engineFileLength/keysLimit < minRegionNum {
+		keysLimit = engineFileLength / minRegionNum
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalCount", engineFileLength), zap.Int64("minRegionNum", minRegionNum), zap.Int64("keysLimit", keysLimit))
+	}
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
 		return [][]byte{startKey, endKey}, nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 	keys, err := engine.GetRegionSplitKeys()
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize),
@@ -1301,7 +1315,7 @@ func (local *Backend) ImportEngine(
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys)
+	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys, local.MinRegionNum)
 	if err != nil {
 		return err
 	}
