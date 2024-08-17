@@ -999,7 +999,9 @@ func TestLogicalImportBatchPrepStmt(t *testing.T) {
 
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
