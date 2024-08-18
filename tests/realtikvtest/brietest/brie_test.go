@@ -71,6 +71,7 @@ func TestShowBackupQueryRedact(t *testing.T) {
 
 	executor.ResetGlobalBRIEQueueForTest()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/block-on-brie", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/block-on-brie")
 	ch := make(chan any)
 	go func() {
 		tk := testkit.NewTestKit(t, tk.Session().GetStore())
