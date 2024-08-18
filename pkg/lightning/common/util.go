@@ -54,7 +54,6 @@ const (
 
 	// DefaultMaxIdleConns is the default value for sql.DB's MaxIdleConns.
 	defaultMaxIdleConns = 128
-	defaultMaxOpenConns = 128
 )
 
 // MySQLConnectParam records the parameters needed to connect to a MySQL database.
@@ -149,7 +148,6 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	// The actual number of alive connections is controlled by the region concurrency
 	// The setting is required to avoid frequent connection creation and close
 	db.SetMaxIdleConns(defaultMaxIdleConns)
-	db.SetMaxOpenConns(defaultMaxOpenConns)
 	return db, nil
 }
 
