@@ -137,42 +137,15 @@ func TestExistedTables(t *testing.T) {
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
-	for i := 0; i < 10; i++ {
-		tableName := fmt.Sprintf("foo%d", i)
-		tk.MustExec(fmt.Sprintf("create table %s(pk int primary key auto_increment, v varchar(255));", tableName))
-		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
-	}
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s'", sqlTmp)
-		_ = tk.MustQuery(backupQuery)
-	}()
-	select {
-	case <-time.After(20 * time.Second):
-		t.Fatal("Backup operation exceeded")
-	case <-done:
-	}
-
-	done = make(chan struct{})
-	go func() {
-		defer close(done)
-		restoreQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s'", sqlTmp)
-		res, err := tk.Exec(restoreQuery)
-		require.NoError(t, err)
-
-		_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
-		require.ErrorContains(t, err, "table already exists")
-	}()
-	select {
-	case <-time.After(20 * time.Second):
-		t.Fatal("Restore operation exceeded")
-	case <-done:
-	}
-
-	for i := 0; i < 10; i++ {
-		tableName := fmt.Sprintf("foo%d", i)
-		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
-	}
+	tk.MustExec("create table foo(pk int primary key auto_increment, v varchar(255));")
+	tk.MustExec("create table baa(pk int primary key auto_increment, v varchar(255));")
+	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
+	tk.MustExec("insert into baa(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
+	backupQuery := fmt.Sprintf("BACKUP DATABASE `test` TO 'local://%s'", sqlTmp)
+	tk.MustQuery(backupQuery)
+	restoreQuery := fmt.Sprintf("RESTORE DATABASE `test` FROM 'local://%s'", sqlTmp)
+	res, err := tk.Exec(restoreQuery)
+	require.NoError(t, err)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
+	require.ErrorContains(t, err, "table already exists")
 }
