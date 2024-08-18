@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gmysql "github.com/go-sql-driver/mysql"
@@ -334,7 +335,8 @@ type tidbBackend struct {
 	maxChunkSize uint64
 	maxChunkRows int
 	// implement stmtCache to improve performance, especially when the downstream is TiDB
-	stmtCache *kvcache.SimpleLRUCache
+	stmtCache      *kvcache.SimpleLRUCache
+	stmtCacheMutex sync.RWMutex
 	// Indicate if the CachePrepStmts should be enabled or not
 	cachePrepStmts bool
 }
@@ -383,6 +385,7 @@ func NewTiDBBackend(
 		maxChunkSize:   uint64(cfg.TikvImporter.LogicalImportBatchSize),
 		maxChunkRows:   cfg.TikvImporter.LogicalImportBatchRows,
 		stmtCache:      stmtCache,
+		stmtCacheMutex: sync.RWMutex{},
 		cachePrepStmts: cfg.TikvImporter.LogicalImportPrepStmt,
 	}
 }
@@ -825,13 +828,17 @@ stmtLoop:
 			query := stmtTask.stmt
 			if be.cachePrepStmts {
 				var prepStmt *sql.Stmt
-				// how to impletement the interface kvcache.Key interface for string query?
 				key := &stmtKey{query: query}
-				if stmt, ok := be.stmtCache.Get(key); ok {
+				be.stmtCacheMutex.RLock()
+				stmt, ok := be.stmtCache.Get(key)
+				be.stmtCacheMutex.RUnlock()
+				if ok {
 					prepStmt = stmt.(*sql.Stmt)
 				} else if stmt, err := be.db.Prepare(query); err == nil {
 					prepStmt = stmt
+					be.stmtCacheMutex.Lock()
 					be.stmtCache.Put(key, stmt)
+					be.stmtCacheMutex.Unlock()
 				} else {
 					return errors.Trace(err)
 				}
