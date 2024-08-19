@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"strconv"
 	"strings"
 
@@ -1048,9 +1047,6 @@ func getRuntimeInfoStr(ctx base.PlanContext, p base.Plan, runtimeStatsColl *exec
 	actRows = "0"
 	memoryInfo = "N/A"
 	diskInfo = "N/A"
-	if !ctx.GetSessionVars().InRestrictedSQL {
-		logutil.BgLogger().Info("Debug Usage")
-	}
 	if rootStats != nil {
 		actRows = strconv.FormatInt(rootStats.GetActRows(), 10)
 		analyzeInfo = rootStats.String()

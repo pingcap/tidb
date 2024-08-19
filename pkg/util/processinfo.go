@@ -115,13 +115,12 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []any {
 		info,
 		pi.StmtCtx.GetExecDetails().TidbCPUSeconds,
 		pi.StmtCtx.GetExecDetails().TikvCPUSeconds,
-		pi.StmtCtx.GetExecDetails().TiflashCPUSeconds,
 	}
 }
 
 func (pi *ProcessInfo) String() string {
 	rows := pi.ToRowForShow(false)
-	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v, tidbCPU:%v, tikvCPU:%v, tiflashCPU:%v}", rows...)
+	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v, tidbCPU:%v, tikvCPU:%v}", rows...)
 }
 
 func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {

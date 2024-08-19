@@ -96,7 +96,7 @@ func (sp *ProcessCPUProfiler) Start() {
 	sp.ctx, sp.cancel = context.WithCancel(context.Background())
 	sp.wg.Add(1)
 	go sp.collectSQLCPULoop()
-	logutil.BgLogger().Info("sql cpu collector started")
+	logutil.BgLogger().Info("ProcessCPUProfiler sql cpu collector started")
 }
 
 // Stop uses to stop the SQLCPUCollector.
@@ -111,7 +111,7 @@ func (sp *ProcessCPUProfiler) Stop() {
 	}
 
 	sp.wg.Wait()
-	logutil.BgLogger().Info("sql cpu collector stopped")
+	logutil.BgLogger().Info("ProcessCPUProfiler sql cpu collector stopped")
 }
 
 var defCollectTickerInterval = time.Second

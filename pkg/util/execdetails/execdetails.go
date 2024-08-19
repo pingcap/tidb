@@ -36,16 +36,15 @@ import (
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	DetailsNeedP90
-	CommitDetail      *util.CommitDetails
-	LockKeysDetail    *util.LockKeysDetails
-	ScanDetail        *util.ScanDetail
-	CopTime           time.Duration
-	BackoffTime       time.Duration
-	LockKeysDuration  time.Duration
-	TidbCPUSeconds    float64
-	TikvCPUSeconds    float64
-	TiflashCPUSeconds float64
-	RequestCount      int
+	CommitDetail     *util.CommitDetails
+	LockKeysDetail   *util.LockKeysDetails
+	ScanDetail       *util.ScanDetail
+	CopTime          time.Duration
+	BackoffTime      time.Duration
+	LockKeysDuration time.Duration
+	TidbCPUSeconds   float64
+	TikvCPUSeconds   float64
+	RequestCount     int
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
@@ -461,11 +460,6 @@ func (s *SyncExecDetails) MergeTikvCPUTime(t float64) {
 // MergeTidbCPUTime merges tikvCPU time into self.
 func (s *SyncExecDetails) MergeTidbCPUTime(t float64) {
 	s.execDetails.TidbCPUSeconds += t
-}
-
-// MergeTiflashCPUTime merges tiflashCPU time into self.
-func (s *SyncExecDetails) MergeTiflashCPUTime(t float64) {
-	s.execDetails.TiflashCPUSeconds += t
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

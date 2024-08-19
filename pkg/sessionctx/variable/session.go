@@ -1161,9 +1161,6 @@ type SessionVars struct {
 	// DurationCompile is the duration of compiling AST to execution plan of the last query.
 	DurationCompile time.Duration
 
-	// DurationTiDBCpu is the duration of profiling the current session cpu consumed time.
-	DurationTiDBCpu uint64
-
 	// RewritePhaseInfo records all information about the rewriting phase.
 	RewritePhaseInfo
 
