@@ -1260,8 +1260,6 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	}
 	tblInfo := table.Meta()
 
-	affected = appendAffectedIDs(affected, table.Meta())
-
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 
