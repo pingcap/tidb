@@ -142,6 +142,9 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	s.latestSchemaVer = currVer
 	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
+	logutil.BgLogger().Info("lance test schemaValidator.Update",
+		zap.Any("leaseGrantTS", leaseGrantTS),
+		zap.Any("leaseExpire", leaseExpire))
 	s.latestSchemaExpire = leaseExpire
 	metrics.LeaseExpireTime.Set(float64(leaseExpire.Unix()))
 

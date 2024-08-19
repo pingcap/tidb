@@ -742,6 +742,8 @@ func (do *Domain) Reload() error {
 	}
 
 	version := ver.Ver
+	logutil.BgLogger().Info("lance test version TS",
+		zap.Any("version", version))
 	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version, false)
 	if err != nil {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
