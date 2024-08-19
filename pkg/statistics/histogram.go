@@ -976,6 +976,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
+	lowerVal := hg.GetLower(0).GetInt64()
+	upperVal := hg.GetUpper(hg.Len() - 1).GetInt64()
 	histWidth := histR - histL
 	if histWidth <= 0 {
 		return 0
@@ -983,7 +985,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, rowCount float64
+	var leftPercent, rightPercent, rowCount, upperBound, sampleOutOfRange float64
 	if debugTrace {
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx,
@@ -1030,12 +1032,17 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	rowCount = totalPercent * hg.NotNullCount()
 
-	// Upper & lower bound logic.
-	upperBound := rowCount
 	if histNDV > 0 {
 		upperBound = hg.NotNullCount() / float64(histNDV)
+		// Calculate any out-of-range portion attributed to sampling of the original histogram buckets
+		if upperVal > lowerVal && float64(histNDV) > histWidth && totalPercent > 0 {
+			sampleOutOfRange = (float64(histNDV) - histWidth)
+			if leftPercent == 0 || rightPercent == 0 {
+				sampleOutOfRange *= 0.5
+			}
+			rowCount += sampleOutOfRange
+		}
 	}
 
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
@@ -1044,20 +1051,15 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
 		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, upperBound)
+		return math.Max(rowCount, upperBound)
 	}
 
-	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
-	// Assume at least 1/NDV is returned
-	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
-		rowCount = upperBound
-	} else if rowCount < upperBound {
-		// Adjust by increaseFactor if our estimate is low
-		rowCount *= increaseFactor
-	}
+	rowCount += totalPercent * math.Min(float64(modifyCount), hg.NotNullCount())
 
-	// Use modifyCount as a final bound
-	return min(rowCount, float64(modifyCount))
+	// Adjust by increaseFactor if our estimate is low
+	rowCount *= increaseFactor
+
+	return rowCount
 }
 
 // Copy deep copies the histogram.
