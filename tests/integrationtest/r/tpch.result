@@ -710,7 +710,7 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	estRows	task	access object	operator info
-Projection	0.00	root		tpch.partsupp.ps_partkey, Column#35->Column#58
+Projection	0.00	root		tpch50.partsupp.ps_partkey, Column#35->Column#58
 └─TableDual	0.00	root		rows:0
 /*
 Q12 Shipping Modes and Order Priority Query
@@ -1279,6 +1279,6 @@ cntrycode;
 id	estRows	task	access object	operator info
 Sort	1.00	root		Column#31
 └─Projection	1.00	root		Column#31, Column#32, Column#33
-  └─HashAgg	1.00	root		group by:Column#37, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
-    └─Projection	0.00	root		tpch.customer.c_acctbal->Column#35, substring(tpch.customer.c_phone, 1, 2)->Column#36, substring(tpch.customer.c_phone, 1, 2)->Column#37
+  └─HashAgg	1.00	root		group by:Column#36, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
+    └─Projection	0.00	root		tpch50.customer.c_acctbal->Column#35, substring(tpch50.customer.c_phone, 1, 2)->Column#36
       └─TableDual	0.00	root		rows:0
