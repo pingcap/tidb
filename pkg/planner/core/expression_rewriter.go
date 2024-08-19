@@ -1445,19 +1445,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
-		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
-			var value *expression.Constant
-			value, er.err = expression.ParamMarkerExpression(planCtx.builder.ctx, v, false)
-			if er.err != nil {
-				return
-			}
-			initConstantRepertoire(er.sctx.GetEvalCtx(), value)
-			er.adjustUTF8MB4Collation(value.RetType)
-			if er.err != nil {
-				return
-			}
-			er.ctxStackAppend(value, types.EmptyName)
-		})
+		er.toParamMarker(v)
 	case *ast.VariableExpr:
 		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
 			er.rewriteVariable(planCtx, v)
@@ -2405,6 +2393,20 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 		RetType: types.NewFieldType(mysql.TypeString),
 	}
 	er.ctxStackAppend(val, types.EmptyName)
+}
+
+func (er *expressionRewriter) toParamMarker(v *driver.ParamMarkerExpr) {
+	var value *expression.Constant
+	value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
+	if er.err != nil {
+		return
+	}
+	initConstantRepertoire(er.sctx.GetEvalCtx(), value)
+	er.adjustUTF8MB4Collation(value.RetType)
+	if er.err != nil {
+		return
+	}
+	er.ctxStackAppend(value, types.EmptyName)
 }
 
 func (er *expressionRewriter) clause() clauseCode {

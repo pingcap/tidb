@@ -205,6 +205,11 @@ func (ctx *StaticExprContext) GetEvalCtx() exprctx.EvalContext {
 	return ctx.evalCtx
 }
 
+// GetStaticEvalCtx returns the inner `StaticEvalContext`.
+func (ctx *StaticExprContext) GetStaticEvalCtx() *StaticEvalContext {
+	return ctx.evalCtx
+}
+
 // GetCharsetInfo implements the `ExprContext.GetCharsetInfo`.
 func (ctx *StaticExprContext) GetCharsetInfo() (string, string) {
 	return ctx.charset, ctx.collation

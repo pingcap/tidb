@@ -1015,7 +1015,7 @@ func newBatchPointGetPlan(
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
 				var err error
-				con, err = expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx.GetExprCtx(), x, true)
 				if err != nil {
 					return nil
 				}
@@ -1130,7 +1130,7 @@ func newBatchPointGetPlan(
 					values[permIndex] = innerX.Datum
 					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
 				case *driver.ParamMarkerExpr:
-					con, err := expression.ParamMarkerExpression(ctx, innerX, true)
+					con, err := expression.ParamMarkerExpression(ctx.GetExprCtx(), innerX, true)
 					if err != nil {
 						return nil
 					}
@@ -1169,7 +1169,7 @@ func newBatchPointGetPlan(
 			if len(whereColNames) != 1 {
 				return nil
 			}
-			con, err := expression.ParamMarkerExpression(ctx, x, true)
+			con, err := expression.ParamMarkerExpression(ctx.GetExprCtx(), x, true)
 			if err != nil {
 				return nil
 			}
@@ -1311,7 +1311,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
-		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
+		count, offset, err := extractLimitCountOffset(ctx.GetExprCtx(), selStmt.Limit)
 		if err != nil || count == 0 || offset > 0 {
 			return nil
 		}
@@ -1349,7 +1349,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 	}
 
 	pairs := make([]nameValuePair, 0, 4)
-	pairs, isTableDual := getNameValuePairs(ctx, tbl, tblAlias, pairs, selStmt.Where)
+	pairs, isTableDual := getNameValuePairs(ctx.GetExprCtx(), tbl, tblAlias, pairs, selStmt.Where)
 	if pairs == nil && !isTableDual {
 		return nil
 	}
@@ -1648,9 +1648,9 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 }
 
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
-func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
+func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
 	pairs []nameValuePair, isTableDual bool) {
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	evalCtx := ctx.GetEvalCtx()
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok {
 		return nil, false
@@ -1682,7 +1682,7 @@ func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+				d, err = con.Eval(evalCtx, chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1696,7 +1696,7 @@ func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+				d, err = con.Eval(evalCtx, chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1735,7 +1735,7 @@ func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model
 		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
 		}
-		dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
+		dVal, err := d.ConvertTo(evalCtx.TypeCtx(), &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
 				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), true
@@ -1746,7 +1746,7 @@ func getNameValuePairs(ctx base.PlanContext, tbl *model.TableInfo, tblName model
 			}
 		}
 		// The converted result must be same as original datum.
-		cmp, err := dVal.Compare(stmtCtx.TypeCtx(), &d, collate.GetCollator(col.GetCollate()))
+		cmp, err := dVal.Compare(evalCtx.TypeCtx(), &d, collate.GetCollator(col.GetCollate()))
 		if err != nil || cmp != 0 {
 			return nil, false
 		}
