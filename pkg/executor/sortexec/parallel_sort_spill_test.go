@@ -166,7 +166,7 @@ func TestIssue55344(t *testing.T) {
 	// Test correctness
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1(c int);")
-	valueNum := 100
+	valueNum := 100 // TODO change to 1000
 	insertedValues := make([]int, 0, valueNum)
 	for i := 0; i < valueNum; i++ {
 		insertedValues = append(insertedValues, rand.Intn(10000))
