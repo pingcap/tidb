@@ -107,7 +107,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 			zap.Stringer("job", job),
 		)
 		wg.Run(func() {
-			err = job.Analyze(
+			err := job.Analyze(
 				r.statsHandle,
 				r.sysProcTracker,
 			)
