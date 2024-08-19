@@ -17,12 +17,12 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
