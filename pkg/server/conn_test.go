@@ -784,22 +784,39 @@ func TestShutDown(t *testing.T) {
 	cc = &clientConn{server: srv}
 	cc.SetCtx(tc)
 
-	// test in txn
-	srv.clients[dom.NextConnID()] = cc
-	cc.getCtx().GetSessionVars().SetInTxn(true)
+	waitMap := [][]bool{
+		// Reading, Not Reading
+		{false, true}, // Not InTxn
+		{true, true},  // InTxn
+	}
+	for idx, waitMap := range waitMap {
+		inTxn := idx > 0
+		for idx, shouldWait := range waitMap {
+			reading := idx == 0
+			if inTxn {
+				cc.getCtx().GetSessionVars().SetInTxn(true)
+			} else {
+				cc.getCtx().GetSessionVars().SetInTxn(false)
+			}
+			if reading {
+				cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
+			} else {
+				cc.CompareAndSwapStatus(cc.getStatus(), connStatusDispatching)
+			}
 
-	waitTime := 100 * time.Millisecond
-	begin := time.Now()
-	srv.DrainClients(waitTime, waitTime)
-	require.Greater(t, time.Since(begin), waitTime)
+			srv.clients[dom.NextConnID()] = cc
 
-	// test not in txn
-	srv.clients[dom.NextConnID()] = cc
-	cc.getCtx().GetSessionVars().SetInTxn(false)
+			waitTime := 100 * time.Millisecond
+			begin := time.Now()
+			srv.DrainClients(waitTime, waitTime)
 
-	begin = time.Now()
-	srv.DrainClients(waitTime, waitTime)
-	require.Less(t, time.Since(begin), waitTime)
+			if shouldWait {
+				require.Greater(t, time.Since(begin), waitTime)
+			} else {
+				require.Less(t, time.Since(begin), waitTime)
+			}
+		}
+	}
 }
 
 type snapshotCache interface {
