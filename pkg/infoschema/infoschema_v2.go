@@ -42,9 +42,9 @@ import (
 
 // tableItem is the btree item sorted by name or by id.
 type tableItem struct {
-	dbName        string
+	dbName        model.CIStr
 	dbID          int64
-	tableName     string
+	tableName     model.CIStr
 	tableID       int64
 	schemaVersion int64
 	tomb          bool
@@ -59,7 +59,7 @@ type schemaItem struct {
 type schemaIDName struct {
 	schemaVersion int64
 	id            int64
-	name          string
+	name          model.CIStr
 	tomb          bool
 }
 
@@ -123,7 +123,7 @@ type Data struct {
 }
 
 type tableInfoItem struct {
-	dbName        string
+	dbName        model.CIStr
 	tableID       int64
 	schemaVersion int64
 	tableInfo     *model.TableInfo
@@ -228,7 +228,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	dbInfo.Deprecated.Tables = nil
-	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name.O})
+	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name})
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
@@ -248,7 +248,7 @@ func (isd *Data) remove(item tableItem) {
 func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
 	isd.schemaMap.Set(item)
-	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name.O, tomb: true})
+	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
 }
 
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
@@ -463,17 +463,17 @@ func compareByID(a, b tableItem) bool {
 }
 
 func compareByName(a, b tableItem) bool {
-	if a.dbName < b.dbName {
+	if a.dbName.L < b.dbName.L {
 		return true
 	}
-	if a.dbName > b.dbName {
+	if a.dbName.L > b.dbName.L {
 		return false
 	}
 
-	if a.tableName < b.tableName {
+	if a.tableName.L < b.tableName.L {
 		return true
 	}
-	if a.tableName > b.tableName {
+	if a.tableName.L > b.tableName.L {
 		return false
 	}
 
@@ -481,10 +481,10 @@ func compareByName(a, b tableItem) bool {
 }
 
 func compareTableInfoItem(a, b tableInfoItem) bool {
-	if a.dbName < b.dbName {
+	if a.dbName.L < b.dbName.L {
 		return true
 	}
-	if a.dbName > b.dbName {
+	if a.dbName.L > b.dbName.L {
 		return false
 	}
 
@@ -611,9 +611,9 @@ func (is *infoschemaV2) tableByID(ctx context.Context, id int64, noRefill bool) 
 	}
 
 	if isTableVirtual(id) {
-		if raw, exist := is.Data.specials.Load(itm.dbName); exist {
+		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
 			schTbls := raw.(*schemaTables)
-			val, ok = schTbls.tables[itm.tableName]
+			val, ok = schTbls.tables[itm.tableName.L]
 			return
 		}
 		return nil, false
@@ -648,7 +648,7 @@ func IsSpecialDB(dbName string) bool {
 }
 
 // EvictTable is exported for testing only.
-func (is *infoschemaV2) EvictTable(schema, tbl string) {
+func (is *infoschemaV2) EvictTable(schema, tbl model.CIStr) {
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
@@ -666,7 +666,7 @@ type tableByNameHelper struct {
 }
 
 func (h *tableByNameHelper) onItem(item tableItem) bool {
-	if item.dbName != h.end.dbName || item.tableName != h.end.tableName {
+	if item.dbName.L != h.end.dbName.L || item.tableName.L != h.end.tableName.L {
 		h.found = false
 		return false
 	}
@@ -694,7 +694,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	start := time.Now()
 
 	var h tableByNameHelper
-	h.end = tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}
+	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
 	h.schemaVersion = is.infoSchema.schemaMetaVersion
 	is.byName.Descend(h.end, h.onItem)
 
@@ -800,8 +800,8 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model
 	// Ascend is much more difficult than Descend.
 	// So the data is taken out first and then dedup in Descend order.
 	var tableItems []tableItem
-	is.byName.Ascend(tableItem{dbName: schema.L}, func(item tableItem) bool {
-		if item.dbName != schema.L {
+	is.byName.Ascend(tableItem{dbName: schema}, func(item tableItem) bool {
+		if item.dbName.L != schema.L {
 			return false
 		}
 		if is.infoSchema.schemaMetaVersion >= item.schemaVersion {
@@ -821,7 +821,7 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model
 			if !item.tomb {
 				tblInfos = append(tblInfos, &model.TableNameInfo{
 					ID:   item.tableID,
-					Name: model.NewCIStr(item.tableName),
+					Name: item.tableName,
 				})
 			}
 		}
@@ -986,7 +986,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return st.dbInfo, true
 	}
 	var ok bool
-	var name string
+	var name model.CIStr
 	is.Data.schemaID2Name.Descend(schemaIDName{
 		id:            id,
 		schemaVersion: math.MaxInt64,
@@ -1007,7 +1007,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	if !ok {
 		return nil, false
 	}
-	return is.SchemaByName(model.NewCIStr(name))
+	return is.SchemaByName(name)
 }
 
 func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
@@ -1272,9 +1272,9 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	}
 
 	b.infoData.remove(tableItem{
-		dbName:        dbInfo.Name.L,
+		dbName:        dbInfo.Name,
 		dbID:          dbInfo.ID,
-		tableName:     tblInfo.Name.L,
+		tableName:     tblInfo.Name,
 		tableID:       tblInfo.ID,
 		schemaVersion: diff.Version,
 	})
@@ -1439,10 +1439,10 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFi
 		}
 
 		if currDB == "" {
-			currDB = item.dbName
+			currDB = item.dbName.L
 			res = tableInfoResult{DBName: item.dbName}
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
-		} else if currDB == item.dbName {
+		} else if currDB == item.dbName.L {
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
 		} else {
 			ret = append(ret, res)
