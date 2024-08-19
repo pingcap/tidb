@@ -178,7 +178,7 @@ func TestIssue55344(t *testing.T) {
 	tk.MustExec(insertSql)
 	sort.Ints(insertedValues)
 
-	result := tk.MustQuery("select c from t1 order by c;")
+	result := tk.MustQuery("select c from t1 order by c, -646041453;")
 
 	sort.Ints(insertedValues)
 	expectValue := fmt.Sprintf("%d", insertedValues[0])
