@@ -120,7 +120,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 			}
 		})
 		cnt++
-		if cnt >= int(variable.AutoAnlayzeConcurrency.Load()) {
+		if cnt >= int(variable.AutoAnalyzeConcurrency.Load()) {
 			break
 		}
 	}

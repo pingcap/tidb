@@ -1400,12 +1400,12 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeConcurrency, Value: strconv.Itoa(DefTiDBAutoAnalyzeConcurrency), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return string(AutoAnlayzeConcurrency.Load()), nil
+			return string(AutoAnalyzeConcurrency.Load()), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			num, err := strconv.ParseInt(val, 10, 64)
 			if err == nil {
-				AutoAnlayzeConcurrency.Store(int32(num))
+				AutoAnalyzeConcurrency.Store(int32(num))
 			}
 			return err
 		},

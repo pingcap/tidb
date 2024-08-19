@@ -1597,7 +1597,7 @@ var (
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
-	AutoAnlayzeConcurrency            = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
+	AutoAnalyzeConcurrency            = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
