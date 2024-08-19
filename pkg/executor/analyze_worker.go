@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -72,6 +73,11 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 		results.DestroyAndPutToPool()
 		if err != nil {
 			return
+		}
+		infoSchema := sessiontxn.GetTxnManager(worker.sctx).GetTxnInfoSchema()
+		err = statsHandle.Update(ctx, infoSchema)
+		if err != nil {
+			logutil.Logger(ctx).Warn("fail to update stats cache", zap.Error(err))
 		}
 	}
 }
