@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
@@ -272,16 +271,6 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 			return nil, err
 		}
 		tsExec.PushedDownFilterConditions = conditions
-	}
-
-	if p.StoreType == kv.TiFlash {
-		for _, col := range p.Columns {
-			if col.IsVirtualGenerated() {
-				// The column may be shallow copied from info cache, so make a copy before modify it.
-				col = col.Clone()
-				col.AddFlag(mysql.GeneratedColumnFlag)
-			}
-		}
 	}
 
 	var err error

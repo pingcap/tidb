@@ -420,6 +420,9 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 		Flag:      int32(c.GetFlag()),
 		Elems:     c.GetElems(),
 	}
+	if c.IsVirtualGenerated() {
+		pc.Flag |= int32(mysql.GeneratedColumnFlag)
+	}
 	if forIndex {
 		// Use array type for read the multi-valued index.
 		pc.Tp = int32(c.FieldType.ArrayType().GetType())
