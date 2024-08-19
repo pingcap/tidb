@@ -617,6 +617,7 @@ func findTableAndSchemaByName(
 		table  *model.TableInfo
 	}
 	tableMap := make(map[int64]schemaAndTable, len(tableNames))
+	ctx = infoschema.WithRefillOption(ctx, false)
 	for _, n := range tableNames {
 		for _, s := range schemas {
 			tbl, err := is.TableByName(ctx, s, n)
