@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"math"
 	"slices"
 	"sort"
@@ -174,7 +175,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 
-	if cacheable && destBuilder.optFlag&flagPartitionProcessor > 0 {
+	if cacheable && destBuilder.optFlag&rule.FlagPartitionProcessor > 0 {
 		// dynamic prune mode is not used, could be that global statistics not yet available!
 		cacheable = false
 		reason = "static partition prune mode used"

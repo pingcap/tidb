@@ -6,6 +6,7 @@ go_library(
         "base_logical_plan.go",
         "logical_aggregation.go",
         "logical_apply.go",
+        "logical_cte.go",
         "logical_cte_table.go",
         "logical_expand.go",
         "logical_join.go",

@@ -160,7 +160,7 @@ func (pe *ProjectionEliminator) Optimize(_ context.Context, lp base.LogicalPlan,
 // eliminate eliminates the redundant projection in a logical plan.
 func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// LogicalCTE's logical optimization is independent.
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p
 	}
 	proj, isProj := p.(*logicalop.LogicalProjection)

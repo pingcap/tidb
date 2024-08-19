@@ -34,11 +34,13 @@ func init() {
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CanPushToCopImpl = canPushToCopImpl
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
+	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
 	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
 	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
 	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
 	utilfuncp.FindBestTask4LogicalTableDual = findBestTask4LogicalTableDual
 	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
+	utilfuncp.ExhaustPhysicalPlans4LogicalCTE = exhaustPhysicalPlans4LogicalCTE
 	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
 	utilfuncp.ExhaustPhysicalPlans4LogicalTopN = exhaustPhysicalPlans4LogicalTopN
 	utilfuncp.ExhaustPhysicalPlans4LogicalLock = exhaustPhysicalPlans4LogicalLock
@@ -63,6 +65,7 @@ func init() {
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.WindowIsTopN = windowIsTopN
+	utilfuncp.DoOptimize = doOptimize
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

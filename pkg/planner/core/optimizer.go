@@ -69,36 +69,6 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
-// Note: The order of flags is same as the order of optRule in the list.
-// Do not mess up the order.
-const (
-	flagGcSubstitute uint64 = 1 << iota
-	flagPrunColumns
-	flagStabilizeResults
-	flagBuildKeyInfo
-	flagDecorrelate
-	flagSemiJoinRewrite
-	flagEliminateAgg
-	flagSkewDistinctAgg
-	flagEliminateProjection
-	flagMaxMinEliminate
-	flagConstantPropagation
-	flagConvertOuterToInnerJoin
-	flagPredicatePushDown
-	flagEliminateOuterJoin
-	flagPartitionProcessor
-	flagCollectPredicateColumnsPoint
-	flagPushDownAgg
-	flagDeriveTopNFromWindow
-	flagPredicateSimplification
-	flagPushDownTopN
-	flagSyncWaitStatsLoadPoint
-	flagJoinReOrder
-	flagPrunColumnsAgain
-	flagPushDownSequence
-	flagResolveExpand
-)
-
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
 	&ColumnPruner{},
@@ -311,21 +281,21 @@ func doOptimize(
 }
 
 func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
-	// If there is something after flagPrunColumns, do flagPrunColumnsAgain.
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
+	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
+	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
+		flag |= rule.FlagPruneColumnsAgain
 	}
 	if checkStableResultMode(logic.SCtx()) {
-		flag |= flagStabilizeResults
+		flag |= rule.FlagStabilizeResults
 	}
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
+		flag &= ^rule.FlagJoinReOrder
 	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
+	flag |= rule.FlagCollectPredicateColumnsPoint
+	flag |= rule.FlagSyncWaitStatsLoadPoint
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
-		flag |= flagPartitionProcessor // apply partition pruning under static mode
+		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
 	}
 	return flag
 }

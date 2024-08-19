@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "rule",
     srcs = [
+        "logical_rules.go",
         "rule_build_key_info.go",
         "rule_constant_propagation.go",
         "rule_init.go",

@@ -2679,7 +2679,7 @@ type PhysicalCTE struct {
 
 	SeedPlan  base.PhysicalPlan
 	RecurPlan base.PhysicalPlan
-	CTE       *CTEClass
+	CTE       *logicalop.CTEClass
 	cteAsName model.CIStr
 	cteName   model.CIStr
 
