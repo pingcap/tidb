@@ -141,7 +141,7 @@ func NewPumpsClient(etcdURLs, strategy string, timeout time.Duration, securityOp
 		return nil, errors.Trace(err)
 	}
 
-	cli, err := etcd.NewClientFromCfg(ectdEndpoints, DefaultEtcdTimeout, node.DefaultRootPath, security)
+	cli, err := etcd.NewClientFromCfg(ectdEndpoints, DefaultEtcdTimeout, node.DefaultRootPath, security,"binlog2")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

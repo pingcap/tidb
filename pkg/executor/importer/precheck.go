@@ -189,5 +189,5 @@ func getEtcdClient() (*etcd.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, "", tls)
+	return etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, "", tls, "importer2")
 }
