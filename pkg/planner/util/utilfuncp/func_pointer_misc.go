@@ -161,6 +161,10 @@ var ExhaustPhysicalPlans4LogicalPartitionUnionAll func(lp base.LogicalPlan, prop
 var ExhaustPhysicalPlans4LogicalUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
+// ExhaustPhysicalPlans4LogicalExpand will be called by LogicalExpand in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalExpand func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
 // *************************************** physical op related *******************************************
 
 // GetEstimatedProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.

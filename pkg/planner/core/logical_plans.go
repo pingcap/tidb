@@ -37,7 +37,7 @@ var (
 	_ base.LogicalPlan = &logicalop.LogicalLock{}
 	_ base.LogicalPlan = &logicalop.LogicalLimit{}
 	_ base.LogicalPlan = &logicalop.LogicalWindow{}
-	_ base.LogicalPlan = &LogicalExpand{}
+	_ base.LogicalPlan = &logicalop.LogicalExpand{}
 	_ base.LogicalPlan = &logicalop.LogicalUnionScan{}
 	_ base.LogicalPlan = &logicalop.LogicalMemTable{}
 	_ base.LogicalPlan = &logicalop.LogicalShow{}

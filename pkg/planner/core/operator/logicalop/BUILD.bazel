@@ -7,6 +7,7 @@ go_library(
         "logical_aggregation.go",
         "logical_apply.go",
         "logical_cte_table.go",
+        "logical_expand.go",
         "logical_join.go",
         "logical_limit.go",
         "logical_lock.go",
