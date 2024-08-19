@@ -2458,13 +2458,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return base.InvalidTask, nil
 	}
-	if ts.StoreType == kv.TiFlash {
-		for _, col := range ts.Columns {
-			if col.IsVirtualGenerated() {
-				col.AddFlag(mysql.GeneratedColumnFlag)
-			}
-		}
-	}
+
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
 	isTiFlashPath := ts.StoreType == kv.TiFlash
@@ -2814,7 +2808,7 @@ func (ts *PhysicalTableScan) getScanRowSize() float64 {
 func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
 	ts := PhysicalTableScan{
 		Table:           ds.TableInfo,
-		Columns:         util.CloneColInfos(ds.Columns),
+		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.PartitionDefIdx != nil,
