@@ -745,7 +745,9 @@ func (w *indexIngestBaseWorker) WriteChunk(rs *IndexRecordChunk) (count int, nex
 		failpoint.Return(0, nil, errors.New("mock write local error"))
 	})
 	failpoint.Inject("writeLocalExec", func(_ failpoint.Value) {
-		OperatorCallBackForTest()
+		if rs.Done {
+			OperatorCallBackForTest()
+		}
 	})
 
 	oprStartTime := time.Now()
