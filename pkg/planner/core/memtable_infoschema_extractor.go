@@ -36,6 +36,8 @@ import (
 	"golang.org/x/exp/maps"
 )
 
+// columnName is the type for column names used by tables information_schema.
+type columnName string
 type extractableCols struct {
 	schema      columnName
 	table       columnName
@@ -81,6 +83,7 @@ type InfoSchemaBaseExtractor struct {
 	extractableColumns extractableCols
 }
 
+// ListSchemas lists related schemas from predicate.
 func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
 	ec := e.extractableColumns
 	schemas := e.getSchemaObjectNames(ec.schema)
@@ -100,6 +103,8 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.
 	return ret
 }
 
+// ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
+// If there is no error, returning schema slice and table slice are guaranteed to have the same length.
 func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
@@ -211,13 +216,6 @@ func (e *InfoSchemaBaseExtractor) filter(colName columnName, val string) bool {
 	}
 	// No need to filter records since no predicate for the column exists.
 	return false
-}
-
-// columnName is the type for column names used by tables information_schema.
-type columnName string
-
-type ColumnExtractor interface {
-	extratableColumns() extractableCols
 }
 
 // InfoSchemaIndexesExtractor is the predicate extractor for information_schema.tidb_indexes.
@@ -340,6 +338,7 @@ type InfoSchemaPartitionsExtractor struct {
 	InfoSchemaBaseExtractor
 }
 
+// NewInfoSchemaPartitionsExtractor creates a new InfoSchemaPartitionsExtractor.
 func NewInfoSchemaPartitionsExtractor() *InfoSchemaPartitionsExtractor {
 	e := &InfoSchemaPartitionsExtractor{}
 	e.extractableColumns = extractableCols{
@@ -374,10 +373,12 @@ func NewInfoSchemaStatisticsExtractor() *InfoSchemaStatisticsExtractor {
 	return e
 }
 
+// HasIndex returns true if index name is specified in predicates.
 func (e *InfoSchemaStatisticsExtractor) HasIndex(val string) bool {
 	return e.filter(_indexName, val)
 }
 
+// HasPrimaryKey returns true if primary key is specified in predicates.
 func (e *InfoSchemaStatisticsExtractor) HasPrimaryKey() bool {
 	return !e.filter(_indexName, primaryKeyName)
 }
