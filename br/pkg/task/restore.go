@@ -914,6 +914,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	} else if checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			schedulersRemovable = true
 			return errors.Trace(err)
 		}
 	}
