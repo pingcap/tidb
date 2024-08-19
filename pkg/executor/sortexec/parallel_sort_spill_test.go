@@ -15,9 +15,13 @@
 package sortexec_test
 
 import (
+	"fmt"
+	"math/rand"
+	"sort"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -149,13 +153,36 @@ func TestIssue55344(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
+	tk.MustExec("drop table if exists t0;")
 	tk.MustExec("CREATE TABLE t0(c0 BOOL);")
 	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES('predicate_push_down'),('column_prune');")
 	tk.MustExec("ADMIN reload opt_rule_blacklist;")
 
 	// Should not be panic
 	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE 0 ORDER BY -646041453 ASC;")
+
+	// Test correctness
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1(c int);")
+	valueNum := 100
+	insertedValues := make([]int, 0, valueNum)
+	for i := 0; i < valueNum; i++ {
+		insertedValues = append(insertedValues, rand.Intn(10000))
+	}
+
+	insertSql := fmt.Sprintf("INSERT INTO t1 values (%d)", insertedValues[0])
+	for i := 1; i < valueNum; i++ {
+		insertSql = fmt.Sprintf("%s, (%d)", insertSql, insertSql[i])
+	}
+	insertSql += ";"
+
+	tk.MustExec(insertSql)
+	sort.Ints(insertedValues)
+
+	result := tk.MustQuery("select c from t1 order by c;")
+	log.Info(fmt.Sprintf("xzxdebug %s", result.String())) // TODO delete it
 
 	tk.MustExec("delete from mysql.opt_rule_blacklist where name='column_prune' or name='predicate_push_down';")
 	tk.MustExec("ADMIN reload opt_rule_blacklist;")
