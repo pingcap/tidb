@@ -72,7 +72,7 @@ func TestGetDDLJobs(t *testing.T) {
 		currJobs2 = currJobs2[:0]
 		err = ddl.IterAllDDLJobs(sess, txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
-				if !job.NotStarted() {
+				if job.Started() {
 					return true, nil
 				}
 				currJobs2 = append(currJobs2, job)

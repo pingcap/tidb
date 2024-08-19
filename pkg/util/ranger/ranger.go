@@ -764,7 +764,7 @@ func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expres
 	if len(orArgs) == 1 {
 		return orArgs[0]
 	}
-	return expression.NewFunctionInternal(ctx, ast.Or, col.GetType(ctx.GetEvalCtx()), orArgs...)
+	return expression.NewFunctionInternal(ctx, ast.LogicOr, col.GetType(ctx.GetEvalCtx()), orArgs...)
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.

@@ -163,25 +163,25 @@ func updateRecord(
 	}
 
 	pessimisticLazyCheck := getPessimisticLazyCheckMode(sessVars)
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return false, err
+	}
 	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
 		// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
 		// we use the staging buffer so that we don't need to precheck the existence of handle or unique keys by sending
 		// extra kv requests, and the remove action will not take effect if there are conflicts.
 		if updated, err := func() (bool, error) {
-			txn, err := sctx.Txn(true)
-			if err != nil {
-				return false, err
-			}
 			memBuffer := txn.GetMemBuffer()
 			sh := memBuffer.Staging()
 			defer memBuffer.Cleanup(sh)
 
-			if err = t.RemoveRecord(sctx.GetTableCtx(), h, oldData); err != nil {
+			if err = t.RemoveRecord(sctx.GetTableCtx(), txn, h, oldData); err != nil {
 				return false, err
 			}
 
-			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck)
+			_, err = t.AddRecord(sctx.GetTableCtx(), txn, newData, table.IsUpdate, table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck)
 			if err != nil {
 				return false, err
 			}
@@ -207,7 +207,7 @@ func updateRecord(
 		}
 
 		// Update record to new value and update index.
-		if err := t.UpdateRecord(sctx.GetTableCtx(), h, oldData, newData, modified, opts...); err != nil {
+		if err := t.UpdateRecord(sctx.GetTableCtx(), txn, h, oldData, newData, modified, opts...); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := sc.ErrCtx()
 				return false, ec.HandleError(err)

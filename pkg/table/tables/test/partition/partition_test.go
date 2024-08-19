@@ -63,12 +63,12 @@ PARTITION BY RANGE ( id ) (
 	p0 := tbInfo.Partition.Definitions[0]
 	require.Equal(t, model.NewCIStr("p0"), p0.Name)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(1))
 	require.NoError(t, err)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
 	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	require.NoError(t, err)
 	require.Greater(t, len(val), 0)
@@ -76,11 +76,11 @@ PARTITION BY RANGE ( id ) (
 	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// Cover more code.
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(7))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(7))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(12))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(12))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(16))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(16))
 	require.NoError(t, err)
 
 	// Make the changes visible.
@@ -93,7 +93,7 @@ PARTITION BY RANGE ( id ) (
 	tk.MustQuery("select count(*) from t1 use index(id) where id > 6").Check(testkit.Rows("3"))
 
 	// Value must locates in one partition.
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(22))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(22))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 	_, err = tk.Session().Execute(context.Background(), "rollback")
 	require.NoError(t, err)
@@ -106,9 +106,11 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable2)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
 	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(22))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(22))
 	require.NoError(t, err)
 
 	createTable3 := `create table test.t3 (id int) partition by range (id)
@@ -118,13 +120,15 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable3)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
 	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(11))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(10))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(10))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(0))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(0))
 	require.NoError(t, err)
 
 	createTable4 := `create table test.t4 (a int,b int) partition by range (a+b)
@@ -134,9 +138,11 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable4)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
 	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1, 11))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(1, 11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 }
 
@@ -156,12 +162,12 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(8))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(8))
 	require.NoError(t, err)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
 	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	require.NoError(t, err)
 	require.Greater(t, len(val), 0)
@@ -169,11 +175,11 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// Cover more code.
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(-1))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(-1))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(3))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(3))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(6))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(6))
 	require.NoError(t, err)
 
 	// Make the changes visible.
@@ -193,9 +199,9 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
 		require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-		rid, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(-i))
-		require.NoError(t, err)
 		txn, err = tk.Session().Txn(true)
+		require.NoError(t, err)
+		rid, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(-i))
 		require.NoError(t, err)
 		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid.IntValue()))
 		require.NoError(t, err)

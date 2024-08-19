@@ -2060,6 +2060,14 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			base = &ex.InfoSchemaBaseExtractor
 		case *plannercore.InfoSchemaTableConstraintsExtractor:
 			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaSequenceExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaCheckConstraintsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaReferConstExtractor:
+			base = &ex.InfoSchemaBaseExtractor
+		case *plannercore.InfoSchemaTiDBCheckConstraintsExtractor:
+			base = &ex.InfoSchemaBaseExtractor
 		case *plannercore.InfoSchemaColumnsExtractor:
 			base = &ex.InfoSchemaBaseExtractor
 		default:
