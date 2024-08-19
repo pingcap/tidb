@@ -1313,15 +1313,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	sqlID := cc.ctx.GetSessionVars().AllocNewSqlID()
 	if topsqlstate.TopSQLEnabled() {
 		rawCtx := ctx
-		defer func() {
-			logutil.BgLogger().Info("EnterDispatchDefer", zap.Uint64("ConnID", cc.connectionID), zap.Uint64("sqlID", sqlID))
-			pprof.ForLabels(rawCtx, func(key string, value string) bool {
-				logutil.BgLogger().Info("Defered labels: ", zap.String("key", key), zap.String("value", value))
-				return true
-			})
-			pprof.SetGoroutineLabels(rawCtx)
-		}()
-
+		defer pprof.SetGoroutineLabels(rawCtx)
 		ctx = session_profile.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
@@ -1378,7 +1370,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
 	}
 
-	logutil.BgLogger().Info("DispatchCmdInfo", zap.Uint64("ConnID", cc.connectionID), zap.Uint64("SqlID", sqlID), zap.Int8("", int8(cmd)), zap.String("SQL", dataStr))
 	switch cmd {
 	case mysql.ComQuit:
 		return io.EOF
