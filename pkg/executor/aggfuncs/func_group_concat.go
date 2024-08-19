@@ -73,15 +73,9 @@ func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext,
 func (e *baseGroupConcat4String) handleTruncateError(tc types.Context) (err error) {
 	if atomic.CompareAndSwapInt32(e.truncated, 0, 1) {
 		if !tc.Flags().TruncateAsWarning() {
-<<<<<<< HEAD
-			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
+			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].StringWithCtx(errors.RedactLogDisable))
 		}
-		tc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].String()))
-=======
-			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
-		}
-		tc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].StringWithCtx(ctx, errors.RedactLogDisable)))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		tc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].StringWithCtx(errors.RedactLogDisable)))
 	}
 	return nil
 }
