@@ -2323,7 +2323,8 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	return nil
 }
 
-func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
+// FillOneImportJobInfo is exported for testing.
+func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	result.AppendString(1, info.Parameters.FileLocation)
@@ -2364,7 +2365,7 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		}
 		importedRowCount = int64(rows)
 	}
-	fillOneImportJobInfo(info, result, importedRowCount)
+	FillOneImportJobInfo(info, result, importedRowCount)
 	return nil
 }
 
