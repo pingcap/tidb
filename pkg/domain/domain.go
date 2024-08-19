@@ -103,6 +103,9 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/keepalive"
 )
 
 var (
@@ -1287,7 +1290,27 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
-	cli, err := etcd.CreateEtcdClient(ebd.TLSConfig(), addrs, "domain")
+	cfg := config.GetGlobalConfig()
+	etcdLogCfg := zap.NewProductionConfig()
+	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	backoffCfg := backoff.DefaultConfig
+	backoffCfg.MaxDelay = 3 * time.Second
+	cli, err := clientv3.New(clientv3.Config{
+		LogConfig:        &etcdLogCfg,
+		Endpoints:        addrs,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithConnectParams(grpc.ConnectParams{
+				Backoff: backoffCfg,
+			}),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		},
+		TLS: ebd.TLSConfig(),
+	})
 	return cli, err
 }
 

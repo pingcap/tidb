@@ -1947,7 +1947,7 @@ func getOrCreateBinlogRegistry(urls string) (*node.EtcdRegistry, bool, error) {
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil,"binlog")
+	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
