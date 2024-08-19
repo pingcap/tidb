@@ -947,7 +947,10 @@ ab
 
 ab			ab		
 ab  	ab
-ab	ab
+ab
+
+	ab
+
 select length(v), length(c) from vctt;
 length(v)	length(c)
 4	4
@@ -1713,7 +1716,7 @@ insert into t(name, b) values("chb", 3);
 Error 1062 (23000): Duplicate entry 'ch' for key 't.PRIMARY'
 insert into t(name, b) values("测试", 3);
 insert into t(name, b) values("测试", 3);
-Error 1062 (23000): Duplicate entry '�' for key 't.PRIMARY'
+Error 1062 (23000): Duplicate entry '�' for key 't.PRIMARY'
 drop table if exists t;
 create table t (i int unique key);
 insert into t values (1),(2);
@@ -1866,9 +1869,7 @@ f1	f2
 2	2
 SET sql_mode='';
 INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
-show warnings;
-Level	Code	Message
-Warning	1048	Column 'f2' cannot be null
+Error 1048 (23000): Column 'f2' cannot be null
 SELECT * FROM t1 order by f1;
 f1	f2
 1	0
