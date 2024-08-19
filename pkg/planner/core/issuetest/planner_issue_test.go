@@ -231,4 +231,14 @@ LIMIT 65122436;`).Check(testkit.Rows(
 		"  └─IndexReader_36 32.00 root  index:StreamAgg_15",
 		"    └─StreamAgg_15 32.00 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#5",
 		"      └─IndexRangeScan_32 40.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], [1531.4023068774668,1531.4023068774668], [1780.7418079754723,1780.7418079754723], [5904.959667345741,5904.959667345741], keep order:true, stats:pseudo"))
+	tk.MustExec(`CREATE TABLE tl75eff7ba (
+col_1 tinyint(1) DEFAULT '0',
+KEY idx_1 (col_1),
+UNIQUE KEY idx_2 (col_1),
+UNIQUE KEY idx_3 (col_1),
+KEY idx_4 (col_1) /*!80000 INVISIBLE */,
+UNIQUE KEY idx_5 (col_1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;`)
+	tk.MustExec(`INSERT INTO tl75eff7ba VALUES(1),(0);`)
+	tk.MustQuery(`SELECT tl75eff7ba.col_1 AS r0 FROM tl75eff7ba WHERE ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 0, 1, 1) GROUP BY tl75eff7ba.col_1 HAVING ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 1, 1, 0) LIMIT 58651509;`).Check(testkit.Rows("0", "1"))
 }
