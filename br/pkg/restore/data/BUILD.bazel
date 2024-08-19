@@ -46,7 +46,7 @@ go_test(
     deps = [
         ":data",
         "//br/pkg/conn",
-        "//br/pkg/gluetidb",
+        "//br/pkg/gluetidb/mock",
         "//br/pkg/pdutil",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/recoverdatapb",

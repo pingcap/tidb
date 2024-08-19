@@ -53,7 +53,7 @@ func (b *builtinLowerUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ReserveString(n)
-	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -165,7 +165,7 @@ func (b *builtinUpperUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ReserveString(n)
-	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -712,7 +712,7 @@ func (b *builtinConvertSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 	if err := b.args[0].VecEvalString(ctx, input, expr); err != nil {
 		return err
 	}
-	argTp, resultTp := b.args[0].GetType(), b.tp
+	argTp, resultTp := b.args[0].GetType(ctx), b.tp
 	result.ReserveString(n)
 	done := vecEvalStringConvertBinary(result, n, expr, argTp, resultTp)
 	if done {
@@ -820,7 +820,7 @@ func (b *builtinSubstringIndexSig) vecEvalString(ctx EvalContext, input *chunk.C
 		}
 
 		// when count > MaxInt64, returns whole string.
-		if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().GetFlag()) {
+		if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType(ctx).GetFlag()) {
 			result.AppendString(str)
 			continue
 		}
@@ -1525,7 +1525,7 @@ func (b *builtinFormatWithLocaleSig) vecEvalString(ctx EvalContext, input *chunk
 	}
 
 	// decimal x
-	if b.args[0].GetType().EvalType() == types.ETDecimal {
+	if b.args[0].GetType(ctx).EvalType() == types.ETDecimal {
 		xBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
@@ -2125,7 +2125,7 @@ func (b *builtinOrdSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *
 		return err
 	}
 
-	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	var x [4]byte
 	encBuf := bytes.NewBuffer(x[:])
 	result.ResizeInt64(n, false)
@@ -2706,7 +2706,7 @@ func (b *builtinFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 	dInt64s := dBuf.Int64s()
 
 	// decimal x
-	if b.args[0].GetType().EvalType() == types.ETDecimal {
+	if b.args[0].GetType(ctx).EvalType() == types.ETDecimal {
 		xBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
@@ -3070,7 +3070,7 @@ func (b *builtinTranslateBinarySig) vecEvalString(ctx EvalContext, input *chunk.
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		if !(ExprNotNull(b.args[1]) && ExprNotNull(b.args[2])) {
+		if !(ExprNotNull(ctx, b.args[1]) && ExprNotNull(ctx, b.args[2])) {
 			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}
@@ -3143,7 +3143,7 @@ func (b *builtinTranslateUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Ch
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		if !(ExprNotNull(b.args[1]) && ExprNotNull(b.args[2])) {
+		if !(ExprNotNull(ctx, b.args[1]) && ExprNotNull(ctx, b.args[2])) {
 			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}

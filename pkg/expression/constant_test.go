@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -185,7 +186,7 @@ func TestConstantPropagation(t *testing.T) {
 			newConds := solver.PropagateConstant(ctx, conds)
 			var result []string
 			for _, v := range newConds {
-				result = append(result, v.String())
+				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
 			}
 			sort.Strings(result)
 			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)
@@ -253,7 +254,7 @@ func TestConstantFolding(t *testing.T) {
 			require.True(t, ctx.IsInNullRejectCheck())
 		}
 		newConds := FoldConstant(ctx, expr)
-		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
+		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
 }
 
@@ -315,7 +316,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 	}
 	for _, tt := range tests {
 		newConds := FoldConstant(ctx, tt.condition)
-		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
+		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx, errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
 }
 
@@ -336,31 +337,31 @@ func TestDeferredParamNotNull(t *testing.T) {
 		types.NewMysqlBitDatum([]byte{1}),
 		types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 	)
-	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newIntFieldType()}
-	cstDec := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 1}, RetType: newDecimalFieldType()}
-	cstTime := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 2}, RetType: newDateFieldType()}
-	cstDuration := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 3}, RetType: newDurFieldType()}
-	cstJSON := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 4}, RetType: newJSONFieldType()}
-	cstBytes := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 6}, RetType: newBlobFieldType()}
-	cstBinary := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 5}, RetType: newBinaryLiteralFieldType()}
-	cstFloat32 := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 7}, RetType: newFloatFieldType()}
-	cstFloat64 := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 8}, RetType: newFloatFieldType()}
-	cstUint := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 9}, RetType: newIntFieldType()}
-	cstBit := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 10}, RetType: newBinaryLiteralFieldType()}
-	cstEnum := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 11}, RetType: newEnumFieldType()}
+	cstInt := &Constant{ParamMarker: &ParamMarker{order: 0}, RetType: newIntFieldType()}
+	cstDec := &Constant{ParamMarker: &ParamMarker{order: 1}, RetType: newDecimalFieldType()}
+	cstTime := &Constant{ParamMarker: &ParamMarker{order: 2}, RetType: newDateFieldType()}
+	cstDuration := &Constant{ParamMarker: &ParamMarker{order: 3}, RetType: newDurFieldType()}
+	cstJSON := &Constant{ParamMarker: &ParamMarker{order: 4}, RetType: newJSONFieldType()}
+	cstBytes := &Constant{ParamMarker: &ParamMarker{order: 6}, RetType: newBlobFieldType()}
+	cstBinary := &Constant{ParamMarker: &ParamMarker{order: 5}, RetType: newBinaryLiteralFieldType()}
+	cstFloat32 := &Constant{ParamMarker: &ParamMarker{order: 7}, RetType: newFloatFieldType()}
+	cstFloat64 := &Constant{ParamMarker: &ParamMarker{order: 8}, RetType: newFloatFieldType()}
+	cstUint := &Constant{ParamMarker: &ParamMarker{order: 9}, RetType: newIntFieldType()}
+	cstBit := &Constant{ParamMarker: &ParamMarker{order: 10}, RetType: newBinaryLiteralFieldType()}
+	cstEnum := &Constant{ParamMarker: &ParamMarker{order: 11}, RetType: newEnumFieldType()}
 
-	require.Equal(t, mysql.TypeVarString, cstJSON.GetType().GetType())
-	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType().GetType())
-	require.Equal(t, mysql.TypeLonglong, cstInt.GetType().GetType())
-	require.Equal(t, mysql.TypeLonglong, cstUint.GetType().GetType())
-	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType().GetType())
-	require.Equal(t, mysql.TypeDuration, cstDuration.GetType().GetType())
-	require.Equal(t, mysql.TypeBlob, cstBytes.GetType().GetType())
-	require.Equal(t, mysql.TypeVarString, cstBinary.GetType().GetType())
-	require.Equal(t, mysql.TypeVarString, cstBit.GetType().GetType())
-	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType().GetType())
-	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType().GetType())
-	require.Equal(t, mysql.TypeEnum, cstEnum.GetType().GetType())
+	require.Equal(t, mysql.TypeVarString, cstJSON.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeLonglong, cstInt.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeLonglong, cstUint.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeDuration, cstDuration.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeBlob, cstBytes.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeVarString, cstBinary.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeVarString, cstBit.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeEnum, cstEnum.GetType(ctx).GetType())
 
 	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -519,9 +520,9 @@ func TestVectorizedConstant(t *testing.T) {
 func TestGetTypeThreadSafe(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
-	con := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newStringFieldType()}
-	ft1 := con.GetType()
-	ft2 := con.GetType()
+	con := &Constant{ParamMarker: &ParamMarker{order: 0}, RetType: newStringFieldType()}
+	ft1 := con.GetType(ctx)
+	ft2 := con.GetType(ctx)
 	require.NotSame(t, ft1, ft2)
 }
 

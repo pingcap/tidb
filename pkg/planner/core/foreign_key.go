@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"unsafe"
 
@@ -185,8 +186,10 @@ func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 			fkChecks = append(fkChecks, fkCheck)
 		}
 	}
-	p.FKChecks = fkChecks
-	p.FKCascades = fkCascades
+	if len(fkChecks) > 0 || len(fkCascades) > 0 {
+		p.FKChecks = fkChecks
+		p.FKCascades = fkCascades
+	}
 	return nil
 }
 
@@ -253,8 +256,10 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 			fkChecks[tid] = append(fkChecks[tid], childFKChecks...)
 		}
 	}
-	updt.FKChecks = fkChecks
-	updt.FKCascades = fkCascades
+	if len(fkChecks) > 0 || len(fkCascades) > 0 {
+		updt.FKChecks = fkChecks
+		updt.FKCascades = fkCascades
+	}
 	return nil
 }
 
@@ -284,8 +289,10 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 			}
 		}
 	}
-	del.FKChecks = fkChecks
-	del.FKCascades = fkCascades
+	if len(fkChecks) > 0 || len(fkCascades) > 0 {
+		del.FKChecks = fkChecks
+		del.FKCascades = fkCascades
+	}
 	return nil
 }
 
@@ -367,7 +374,7 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 }
 
 func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSchema, referredFK *model.ReferredFKInfo, tp FKCascadeType) (*FKCheck, *FKCascade, error) {
-	childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+	childTable, err := is.TableByName(context.Background(), referredFK.ChildSchema, referredFK.ChildTable)
 	if err != nil {
 		return nil, nil, nil
 	}
@@ -407,7 +414,7 @@ func isMapContainAnyCols(colsMap map[string]struct{}, cols ...model.CIStr) bool 
 }
 
 func buildFKCheckOnModifyChildTable(ctx base.PlanContext, is infoschema.InfoSchema, fk *model.FKInfo, failedErr error) (*FKCheck, error) {
-	referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+	referTable, err := is.TableByName(context.Background(), fk.RefSchema, fk.RefTable)
 	if err != nil {
 		return nil, nil
 	}

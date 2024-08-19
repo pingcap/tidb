@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -34,7 +35,7 @@ import (
 const (
 	maxRetryCount   int           = 10
 	ruStatsInterval time.Duration = 24 * time.Hour
-	// only keep stats rows for last 3 monthes(92 days at most).
+	// only keep stats rows for last 3 months(92 days at most).
 	ruStatsGCDuration time.Duration = 92 * ruStatsInterval
 	gcBatchSize       int64         = 1000
 )
@@ -46,7 +47,7 @@ type RUStatsWriter struct {
 	RMClient  pd.ResourceManagerClient
 	InfoCache *infoschema.InfoCache
 	store     kv.Storage
-	sessPool  *sessionPool
+	sessPool  util.SessionPool
 	// current time, cache it here to make unit test easier.
 	StartTime time.Time
 }

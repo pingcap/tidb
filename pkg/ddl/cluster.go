@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -73,16 +73,16 @@ const (
 	keyRangesOffset
 )
 
-func closePDSchedule() error {
+func closePDSchedule(ctx context.Context) error {
 	closeMap := make(map[string]any)
 	for _, key := range pdScheduleKey {
 		closeMap[key] = 0
 	}
-	return infosync.SetPDScheduleConfig(context.Background(), closeMap)
+	return infosync.SetPDScheduleConfig(ctx, closeMap)
 }
 
-func savePDSchedule(job *model.Job) error {
-	retValue, err := infosync.GetPDScheduleConfig(context.Background())
+func savePDSchedule(ctx context.Context, job *model.Job) error {
+	retValue, err := infosync.GetPDScheduleConfig(ctx)
 	if err != nil {
 		return err
 	}
@@ -94,11 +94,11 @@ func savePDSchedule(job *model.Job) error {
 	return nil
 }
 
-func recoverPDSchedule(pdScheduleParam map[string]any) error {
+func recoverPDSchedule(ctx context.Context, pdScheduleParam map[string]any) error {
 	if pdScheduleParam == nil {
 		return nil
 	}
-	return infosync.SetPDScheduleConfig(context.Background(), pdScheduleParam)
+	return infosync.SetPDScheduleConfig(ctx, pdScheduleParam)
 }
 
 func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
@@ -220,24 +220,24 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 	return nil
 }
 
-func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
-	if err = ValidateFlashbackTS(d.ctx, se, flashbackTS); err != nil {
+func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
+	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
 	}
 
 	if err = gcutil.DisableGC(se); err != nil {
 		return err
 	}
-	if err = closePDSchedule(); err != nil {
+	if err = closePDSchedule(ctx); err != nil {
 		return err
 	}
-	if err = setTiDBEnableAutoAnalyze(d.ctx, se, variable.Off); err != nil {
+	if err = setTiDBEnableAutoAnalyze(ctx, se, variable.Off); err != nil {
 		return err
 	}
-	if err = setTiDBSuperReadOnly(d.ctx, se, variable.On); err != nil {
+	if err = setTiDBSuperReadOnly(ctx, se, variable.On); err != nil {
 		return err
 	}
-	if err = setTiDBTTLJobEnable(d.ctx, se, variable.Off); err != nil {
+	if err = setTiDBTTLJobEnable(ctx, se, variable.Off); err != nil {
 		return err
 	}
 
@@ -256,12 +256,12 @@ func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.M
 
 	// Check if there is an upgrade during [flashbackTS, now)
 	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
-	rows, err := sess.NewSession(se).Execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err := sess.NewSession(se).Execute(ctx, sql, "check_tidb_server_version")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history `tidb_server_version` failed, can't do flashback")
 	}
 	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%s", rows[0].GetString(0))
-	rows, err = sess.NewSession(se).Execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err = sess.NewSession(se).Execute(ctx, sql, "check_tidb_server_version")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,7 +271,7 @@ func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.M
 
 	// Check is there a DDL task at flashbackTS.
 	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
-	rows, err = sess.NewSession(se).Execute(d.ctx, sql, "check_history_job")
+	rows, err = sess.NewSession(se).Execute(ctx, sql, "check_history_job")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history ddl jobs failed, can't do flashback")
 	}
@@ -322,9 +322,9 @@ func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []i
 	return flashbackIDs
 }
 
-// GetTableDataKeyRanges get keyRanges by `flashbackIDs`.
+// getTableDataKeyRanges get keyRanges by `flashbackIDs`.
 // This func will return all flashback table data key ranges.
-func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
+func getTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 	var keyRanges []kv.KeyRange
 
 	nonFlashbackTableIDs = append(nonFlashbackTableIDs, -1)
@@ -349,11 +349,54 @@ func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 	return keyRanges
 }
 
-// GetFlashbackKeyRanges get keyRanges for flashback cluster.
+type keyRangeMayExclude struct {
+	r       kv.KeyRange
+	exclude bool
+}
+
+// appendContinuousKeyRanges merges not exclude continuous key ranges and appends
+// to given []kv.KeyRange, assuming the gap between key ranges has no data.
+//
+// Precondition: schemaKeyRanges is sorted by start key. schemaKeyRanges are
+// non-overlapping.
+func appendContinuousKeyRanges(result []kv.KeyRange, schemaKeyRanges []keyRangeMayExclude) []kv.KeyRange {
+	var (
+		continuousStart, continuousEnd kv.Key
+	)
+
+	for _, r := range schemaKeyRanges {
+		if r.exclude {
+			if continuousStart != nil {
+				result = append(result, kv.KeyRange{
+					StartKey: continuousStart,
+					EndKey:   continuousEnd,
+				})
+				continuousStart = nil
+			}
+			continue
+		}
+
+		if continuousStart == nil {
+			continuousStart = r.r.StartKey
+		}
+		continuousEnd = r.r.EndKey
+	}
+
+	if continuousStart != nil {
+		result = append(result, kv.KeyRange{
+			StartKey: continuousStart,
+			EndKey:   continuousEnd,
+		})
+	}
+	return result
+}
+
+// getFlashbackKeyRanges get keyRanges for flashback cluster.
 // It contains all non system table key ranges and meta data key ranges.
 // The time complexity is O(nlogn).
-func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
-	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
+func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
+	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemas := is.AllSchemas()
 
 	// The semantic of keyRanges(output).
 	keyRanges := make([]kv.KeyRange, 0)
@@ -366,26 +409,51 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 	}
 
 	schemaIDs := make(map[int64]struct{})
+	excludeSchemaIDs := make(map[int64]struct{})
 	for _, schema := range schemas {
-		if !filter.IsSystemSchema(schema.Name.L) {
+		if filter.IsSystemSchema(schema.Name.L) {
+			excludeSchemaIDs[schema.ID] = struct{}{}
+		} else {
 			schemaIDs[schema.ID] = struct{}{}
 		}
 	}
 	for _, schema := range snapshotSchemas {
-		if !filter.IsSystemSchema(schema.Name.L) {
+		if filter.IsSystemSchema(schema.Name.L) {
+			excludeSchemaIDs[schema.ID] = struct{}{}
+		} else {
 			schemaIDs[schema.ID] = struct{}{}
 		}
 	}
 
-	// The meta data key ranges.
+	schemaKeyRanges := make([]keyRangeMayExclude, 0, len(schemaIDs)+len(excludeSchemaIDs))
 	for schemaID := range schemaIDs {
 		metaStartKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID))
 		metaEndKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID + 1))
-		keyRanges = append(keyRanges, kv.KeyRange{
-			StartKey: metaStartKey,
-			EndKey:   metaEndKey,
+		schemaKeyRanges = append(schemaKeyRanges, keyRangeMayExclude{
+			r: kv.KeyRange{
+				StartKey: metaStartKey,
+				EndKey:   metaEndKey,
+			},
+			exclude: false,
 		})
 	}
+	for schemaID := range excludeSchemaIDs {
+		metaStartKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID))
+		metaEndKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID + 1))
+		schemaKeyRanges = append(schemaKeyRanges, keyRangeMayExclude{
+			r: kv.KeyRange{
+				StartKey: metaStartKey,
+				EndKey:   metaEndKey,
+			},
+			exclude: true,
+		})
+	}
+
+	slices.SortFunc(schemaKeyRanges, func(a, b keyRangeMayExclude) int {
+		return bytes.Compare(a.r.StartKey, b.r.StartKey)
+	})
+
+	keyRanges = appendContinuousKeyRanges(keyRanges, schemaKeyRanges)
 
 	startKey := tablecodec.EncodeMetaKeyPrefix([]byte("DBs"))
 	keyRanges = append(keyRanges, kv.KeyRange{
@@ -395,7 +463,11 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 
 	var nonFlashbackTableIDs []int64
 	for _, db := range schemas {
-		for _, table := range db.Tables {
+		tbls, err2 := is.SchemaTableInfos(ctx, db.Name)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
+		}
+		for _, table := range tbls {
 			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
 				continue
 			}
@@ -408,7 +480,7 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 		}
 	}
 
-	return append(keyRanges, GetTableDataKeyRanges(nonFlashbackTableIDs)...), nil
+	return append(keyRanges, getTableDataKeyRanges(nonFlashbackTableIDs)...), nil
 }
 
 // SendPrepareFlashbackToVersionRPC prepares regions for flashback, the purpose is to put region into flashback state which region stop write
@@ -609,12 +681,12 @@ func flashbackToVersion(
 	).RunOnRange(ctx, startKey, endKey)
 }
 
-func splitRegionsByKeyRanges(d *ddlCtx, keyRanges []kv.KeyRange) {
+func splitRegionsByKeyRanges(ctx context.Context, d *ddlCtx, keyRanges []kv.KeyRange) {
 	if s, ok := d.store.(kv.SplittableStore); ok {
 		for _, keys := range keyRanges {
 			for {
 				// tableID is useless when scatter == false
-				_, err := s.SplitRegions(d.ctx, [][]byte{keys.StartKey, keys.EndKey}, false, nil)
+				_, err := s.SplitRegions(ctx, [][]byte{keys.StartKey, keys.EndKey}, false, nil)
 				if err == nil {
 					break
 				}
@@ -664,7 +736,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
 	case model.StateNone:
-		if err = savePDSchedule(job); err != nil {
+		if err = savePDSchedule(w.ctx, job); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -696,18 +768,18 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
-		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
-		startTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		startTS, err = d.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		job.Args[startTSOffset] = startTS
-		keyRanges, err = GetFlashbackKeyRanges(sess, flashbackTS)
+		keyRanges, err = getFlashbackKeyRanges(w.ctx, sess, flashbackTS)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -722,10 +794,10 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return updateSchemaVersion(d, t, job)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
-		splitRegionsByKeyRanges(d, keyRanges)
+		splitRegionsByKeyRanges(w.ctx, d, keyRanges)
 		totalRegions.Store(0)
 		for _, r := range keyRanges {
-			if err = flashbackToVersion(d.ctx, d,
+			if err = flashbackToVersion(w.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
@@ -738,7 +810,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
-		commitTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		commitTS, err = d.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -756,7 +828,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 
 		for _, r := range keyRanges {
-			if err = flashbackToVersion(d.ctx, d,
+			if err = flashbackToVersion(w.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use same startTS as prepare phase to simulate 1PC txn.
 					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
@@ -801,7 +873,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	defer w.sessPool.Put(sess)
 
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(context.Context, kv.Transaction) error {
-		if err = recoverPDSchedule(pdScheduleValue); err != nil {
+		if err = recoverPDSchedule(w.ctx, pdScheduleValue); err != nil {
 			return err
 		}
 		if gcEnabled {

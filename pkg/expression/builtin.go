@@ -50,7 +50,7 @@ import (
 type baseBuiltinFunc struct {
 	bufAllocator columnBufferAllocator
 	args         []Expression
-	tp           *types.FieldType
+	tp           *types.FieldType `plan-cache-clone:"shallow"`
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
@@ -89,7 +89,7 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuiltinFunc) {
+func adjustNullFlagForReturnType(ctx EvalContext, funcName string, args []Expression, bf baseBuiltinFunc) {
 	if functionSetForReturnTypeAlwaysNotNull.Exist(funcName) {
 		bf.tp.AddFlag(mysql.NotNullFlag)
 	} else if functionSetForReturnTypeAlwaysNullable.Exist(funcName) {
@@ -97,7 +97,7 @@ func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuil
 	} else if functionSetForReturnTypeNotNullOnNotNull.Exist(funcName) {
 		returnNullable := false
 		for _, arg := range args {
-			if !mysql.HasNotNullFlag(arg.GetType().GetFlag()) {
+			if !mysql.HasNotNullFlag(arg.GetType(ctx).GetFlag()) {
 				returnNullable = true
 				break
 			}
@@ -131,7 +131,7 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -193,7 +193,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -218,7 +218,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -253,14 +253,14 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		// https://github.com/pingcap/tidb/issues/44196
 		// For decimal/datetime/timestamp/duration types, it is necessary to ensure that decimal are consistent with the output type,
 		// so adding a cast function here.
 		case types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
-			if !args[i].GetType().Equal(argTps[i]) {
+			if !args[i].GetType(ctx.GetEvalCtx()).Equal(argTps[i]) {
 				args[i] = BuildCastFunction(ctx, args[i], argTps[i])
 			}
 		}
@@ -279,7 +279,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -413,7 +413,9 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
-	b.ctor = from.ctor
+	if from.ctor != nil {
+		b.ctor = from.ctor.Clone()
+	}
 }
 
 func (*baseBuiltinFunc) Clone() builtinFunc {
@@ -902,6 +904,7 @@ var funcs = map[string]functionClass{
 	ast.JSONMergePreserve: &jsonMergePreserveFunctionClass{baseFunctionClass{ast.JSONMergePreserve, 2, -1}},
 	ast.JSONPretty:        &jsonPrettyFunctionClass{baseFunctionClass{ast.JSONPretty, 1, 1}},
 	ast.JSONQuote:         &jsonQuoteFunctionClass{baseFunctionClass{ast.JSONQuote, 1, 1}},
+	ast.JSONSchemaValid:   &jsonSchemaValidFunctionClass{baseFunctionClass{ast.JSONSchemaValid, 2, 2}},
 	ast.JSONSearch:        &jsonSearchFunctionClass{baseFunctionClass{ast.JSONSearch, 3, -1}},
 	ast.JSONStorageFree:   &jsonStorageFreeFunctionClass{baseFunctionClass{ast.JSONStorageFree, 1, 1}},
 	ast.JSONStorageSize:   &jsonStorageSizeFunctionClass{baseFunctionClass{ast.JSONStorageSize, 1, 1}},

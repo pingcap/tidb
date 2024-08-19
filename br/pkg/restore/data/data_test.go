@@ -8,7 +8,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recovpb "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/data"
 	"github.com/stretchr/testify/require"
@@ -89,7 +89,7 @@ func createStores() []*metapb.Store {
 func createDataSuite(t *testing.T) *testData {
 	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
-	mockGlue := &gluetidb.MockGlue{}
+	mockGlue := &gluemock.MockGlue{}
 	ctx, cancel := context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
 	mockMgr.SetPDClient(pdClient)

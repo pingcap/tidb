@@ -591,7 +591,7 @@ func TestConv(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Conv, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.Equal(t, mysql.TypeVarString, tp.GetType())
 		require.Equal(t, charset.CharsetUTF8MB4, tp.GetCharset())
 		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())

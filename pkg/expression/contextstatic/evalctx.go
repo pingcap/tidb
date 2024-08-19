@@ -75,10 +75,12 @@ type staticEvalCtxState struct {
 	currentDB                    string
 	currentTime                  *timeOnce
 	maxAllowedPacket             uint64
+	enableRedactLog              string
 	defaultWeekFormatMode        string
 	divPrecisionIncrement        int
 	requestVerificationFn        func(db, table, column string, priv mysql.PrivilegeType) bool
 	requestDynamicVerificationFn func(privName string, grantable bool) bool
+	paramList                    []types.Datum
 	props                        contextopt.OptionalEvalPropProviders
 }
 
@@ -191,6 +193,16 @@ func WithOptionalProperty(providers ...exprctx.OptionalEvalPropProvider) StaticE
 	}
 }
 
+// WithParamList sets the param list for the `StaticEvalContext`.
+func WithParamList(params *variable.PlanCacheParamList) StaticEvalCtxOption {
+	return func(s *staticEvalCtxState) {
+		s.paramList = make([]types.Datum, len(params.AllParamValues()))
+		for i, v := range params.AllParamValues() {
+			s.paramList[i] = v
+		}
+	}
+}
+
 var defaultSQLMode = func() mysql.SQLMode {
 	mode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	if err != nil {
@@ -215,6 +227,7 @@ func NewStaticEvalContext(opt ...StaticEvalCtxOption) *StaticEvalContext {
 			currentTime:           &timeOnce{},
 			sqlMode:               defaultSQLMode,
 			maxAllowedPacket:      variable.DefMaxAllowedPacket,
+			enableRedactLog:       variable.DefTiDBRedactLog,
 			defaultWeekFormatMode: variable.DefDefaultWeekFormat,
 			divPrecisionIncrement: variable.DefDivPrecisionIncrement,
 		},
@@ -305,6 +318,11 @@ func (ctx *StaticEvalContext) GetMaxAllowedPacket() uint64 {
 	return ctx.maxAllowedPacket
 }
 
+// GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
+func (ctx *StaticEvalContext) GetTiDBRedactLog() string {
+	return ctx.enableRedactLog
+}
+
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 func (ctx *StaticEvalContext) GetDefaultWeekFormatMode() string {
 	return ctx.defaultWeekFormatMode
@@ -361,4 +379,12 @@ func (ctx *StaticEvalContext) Apply(opt ...StaticEvalCtxOption) *StaticEvalConte
 	}
 
 	return newCtx
+}
+
+// GetParamValue returns the value of the parameter by index.
+func (ctx *StaticEvalContext) GetParamValue(idx int) (types.Datum, error) {
+	if idx < 0 || idx >= len(ctx.paramList) {
+		return types.Datum{}, exprctx.ErrParamIndexExceedParamCounts
+	}
+	return ctx.paramList[idx], nil
 }

@@ -97,7 +97,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				sessionVars.UnsetUserVar(name)
 			} else {
 				sessionVars.SetUserVarVal(name, value)
-				sessionVars.SetUserVarType(name, v.Expr.GetType())
+				sessionVars.SetUserVarType(name, v.Expr.GetType(sctx.GetExprCtx().GetEvalCtx()))
 			}
 			continue
 		}
@@ -326,7 +326,11 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
 		return nil
 	}
-	vars := e.Ctx().GetSessionVars()
+	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), snapshotTS)
+}
+
+func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) error {
+	vars := sctx.GetSessionVars()
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
@@ -334,12 +338,12 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	logutil.BgLogger().Info("load snapshot info schema",
 		zap.Uint64("conn", vars.ConnectionID),
 		zap.Uint64("SnapshotTS", snapshotTS))
-	dom := domain.GetDomain(e.Ctx())
+	dom := domain.GetDomain(sctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}
 
-	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.Ctx(), snapInfo)
+	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(sctx, snapInfo)
 	return nil
 }

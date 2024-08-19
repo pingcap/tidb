@@ -15,12 +15,15 @@
 package core
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -110,6 +113,18 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 			return nil, errors.Trace(err)
 		}
 		executorID = p.ExplainID().String()
+		// If p.tiflashPreAggMode is empty, means no need to consider preagg mode.
+		// For example it's the the second stage of hashagg.
+		if len(p.tiflashPreAggMode) != 0 {
+			if preAggModeVal, ok := variable.ToTiPBTiFlashPreAggMode(p.tiflashPreAggMode); !ok {
+				err = fmt.Errorf("unexpected tiflash pre agg mode: %v", p.tiflashPreAggMode)
+			} else {
+				aggExec.PreAggMode = &preAggModeVal
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return &tipb.Executor{
 		Tp:                            tipb.ExecType_TypeAggregation,
@@ -465,8 +480,6 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
-		} else if col.ID == model.ExtraPidColID {
-			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
 			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
@@ -636,28 +649,6 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
 	}, nil
-}
-
-// ToPB converts FrameBound to tipb structure.
-func (fb *FrameBound) ToPB(ctx *base.BuildPBContext) (*tipb.WindowFrameBound, error) {
-	pbBound := &tipb.WindowFrameBound{
-		Type:      tipb.WindowBoundType(fb.Type),
-		Unbounded: fb.UnBounded,
-	}
-	offset := fb.Num
-	pbBound.Offset = &offset
-
-	if fb.IsExplicitRange {
-		rangeFrame, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), fb.CalcFuncs, ctx.GetClient())
-		if err != nil {
-			return nil, err
-		}
-
-		pbBound.FrameRange = rangeFrame[0]
-		pbBound.CmpDataType = &fb.CmpDataType
-	}
-
-	return pbBound, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.

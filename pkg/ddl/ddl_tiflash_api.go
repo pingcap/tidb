@@ -441,7 +441,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	pollTiFlashContext.PollCounter++
 
 	// Start to process every table.
-	schema := d.GetInfoSchemaWithInterceptor(ctx)
+	schema := d.infoCache.GetLatest()
 	if schema == nil {
 		return errors.New("Schema is nil")
 	}
@@ -451,10 +451,9 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	var tableList = make([]TiFlashReplicaStatus, 0)
 
 	// Collect TiFlash Replica info, for every table.
-	for _, db := range schema.AllSchemaNames() {
-		tbls := schema.SchemaTables(db)
-		for _, tbl := range tbls {
-			tblInfo := tbl.Meta()
+	ch := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, v := range ch {
+		for _, tblInfo := range v.TableInfos {
 			LoadTiFlashReplicaInfo(tblInfo, &tableList)
 		}
 	}
@@ -530,7 +529,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				failpoint.Continue()
 			})
 			// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
-			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
+			if err := d.executor.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
 				if infoschema.ErrTableNotExists.Equal(err) && tb.IsPartition {
 					// May be due to blocking add partition
 					logutil.DDLLogger().Info("updating TiFlash replica status err, maybe false alarm by blocking add", zap.Error(err), zap.Int64("tableID", tb.ID), zap.Bool("isPartition", tb.IsPartition))

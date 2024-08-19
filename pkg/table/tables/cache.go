@@ -119,7 +119,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 // newCachedTable creates a new CachedTable Instance
 func newCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
-		TableCommon: *tbl,
+		TableCommon: tbl.Copy(),
 		tokenLimit:  make(chan StateRemote, 1),
 	}
 	return ret, nil
@@ -248,23 +248,19 @@ func (c *cachedTable) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 }
 
 func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTable) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.CachedTables == nil {
-		txnCtx.CachedTables = make(map[int64]any)
-	}
-	if _, ok := txnCtx.CachedTables[tid]; !ok {
-		txnCtx.CachedTables[tid] = handle
+	if s, ok := sctx.GetCachedTableSupport(); ok {
+		s.AddCachedTableHandleToTxn(tid, handle)
 	}
 }
 
 // UpdateRecord implements table.Table
-func (c *cachedTable) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (c *cachedTable) UpdateRecord(ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
 	// Prevent furthur writing when the table is already too large.
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
-	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
+	txnCtxAddCachedTable(ctx, c.Meta().ID, c)
+	return c.TableCommon.UpdateRecord(ctx, h, oldData, newData, touched, opts...)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.

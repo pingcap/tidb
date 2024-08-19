@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -36,17 +37,20 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 	tk.MustExec("use test")
 
 	testFetchRows := func(db, tb, idx string) ([]kv.Handle, [][]types.Datum) {
-		tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tb))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		idxInfo := tblInfo.FindIndexByName(idx)
-		copCtx, err := copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
+
+		sctx := tk.Session()
+		copCtx, err := ddl.NewReorgCopContext(store, ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
 		require.NoError(t, err)
+		require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 		startKey := tbl.RecordPrefix()
 		endKey := startKey.PrefixNext()
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		copChunk := ddl.FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
+		copChunk, err := FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
 		require.NoError(t, err)
 		require.NoError(t, txn.Rollback())
 
@@ -57,7 +61,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		idxDataBuf := make([]types.Datum, len(idxInfo.Columns))
 
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(handleDataBuf, idxDataBuf, row, copCtx, idxInfo.ID)
+			handle, idxDatum, err := ConvertRowToHandleAndIndexDatum(tk.Session().GetExprCtx().GetEvalCtx(), handleDataBuf, idxDataBuf, row, copCtx, idxInfo.ID)
 			require.NoError(t, err)
 			handles = append(handles, handle)
 			copiedIdxDatum := make([]types.Datum, len(idxDatum))

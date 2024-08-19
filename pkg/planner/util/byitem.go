@@ -16,7 +16,9 @@ package util
 
 import (
 	"fmt"
+	"strings"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
@@ -27,12 +29,12 @@ type ByItems struct {
 	Desc bool
 }
 
-// String implements fmt.Stringer interface.
-func (by *ByItems) String() string {
+// StringWithCtx implements expression.StringerWithCtx interface.
+func (by *ByItems) StringWithCtx(ctx expression.ParamValues, redact string) string {
 	if by.Desc {
-		return fmt.Sprintf("%s true", by.Expr)
+		return fmt.Sprintf("%s true", by.Expr.StringWithCtx(ctx, redact))
 	}
-	return by.Expr.String()
+	return by.Expr.StringWithCtx(ctx, redact)
 }
 
 // Clone makes a copy of ByItems.
@@ -56,4 +58,18 @@ func (by *ByItems) MemoryUsage() (sum int64) {
 		sum += by.Expr.MemoryUsage()
 	}
 	return sum
+}
+
+// StringifyByItemsWithCtx is used to print ByItems slice.
+func StringifyByItemsWithCtx(ctx expression.EvalContext, byItems []*ByItems) string {
+	sb := strings.Builder{}
+	sb.WriteString("[")
+	for i, item := range byItems {
+		sb.WriteString(item.StringWithCtx(ctx, perrors.RedactLogDisable))
+		if i != len(byItems)-1 {
+			sb.WriteString(" ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
 }

@@ -34,6 +34,7 @@ go_test(
     deps = [
         "//br/pkg/glue",
         "//pkg/parser/model",
+        "//pkg/session",
         "//pkg/testkit",
         "//pkg/types",
         "@com_github_stretchr_testify//require",

@@ -464,6 +464,32 @@ func TestErrCtx(t *testing.T) {
 	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 }
 
+func TestReservedRowIDAlloc(t *testing.T) {
+	var reserved stmtctx.ReservedRowIDAlloc
+	// no reserved by default
+	require.True(t, reserved.Exhausted())
+	id, ok := reserved.Consume()
+	require.False(t, ok)
+	require.Equal(t, int64(0), id)
+	// reset some ids
+	reserved.Reset(12, 15)
+	require.False(t, reserved.Exhausted())
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(13), id)
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(14), id)
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(15), id)
+	// exhausted
+	require.True(t, reserved.Exhausted())
+	id, ok = reserved.Consume()
+	require.False(t, ok)
+	require.Equal(t, int64(0), id)
+}
+
 func BenchmarkErrCtx(b *testing.B) {
 	sc := stmtctx.NewStmtCtx()
 

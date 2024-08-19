@@ -110,12 +110,13 @@ func GenRunawayQueriesStmt(records []*RunawayRecord) (string, []any) {
 type QuarantineRecord struct {
 	ID                int64
 	ResourceGroupName string
-	StartTime         time.Time
-	EndTime           time.Time
-	Watch             rmpb.RunawayWatchType
-	WatchText         string
-	Source            string
-	Action            rmpb.RunawayAction
+	// startTime and endTime are in UTC.
+	StartTime time.Time
+	EndTime   time.Time
+	Watch     rmpb.RunawayWatchType
+	WatchText string
+	Source    string
+	Action    rmpb.RunawayAction
 }
 
 // GetRecordKey is used to get the key in ttl cache.
@@ -255,7 +256,7 @@ func (rm *RunawayManager) MarkSyncerInitialized() {
 }
 
 // DeriveChecker derives a RunawayChecker from the given resource group
-func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
+func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string, startTime time.Time) *RunawayChecker {
 	group, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
 	if err != nil || group == nil {
 		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))
@@ -272,7 +273,7 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 		rm.metricsMap.Store(resourceGroupName, counter)
 	}
 	counter.Inc()
-	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
+	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest, startTime)
 }
 
 func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, ttl time.Duration, now *time.Time) {
@@ -317,7 +318,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 		rm.queryLock.Lock()
 		defer rm.queryLock.Unlock()
 		if item != nil {
-			// check the ID because of the eariler scan.
+			// check the ID because of the earlier scan.
 			if item.ID == record.ID {
 				return
 			}
@@ -327,7 +328,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 	} else {
 		if item == nil {
 			rm.queryLock.Lock()
-			// When watchlist get record, it will check whether the record is stale, so add new record if returns nil.
+			// When watchList get record, it will check whether the record is stale, so add new record if returns nil.
 			if rm.watchList.Get(key) == nil {
 				rm.watchList.Set(key, record, ttl)
 			} else {
@@ -340,7 +341,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 			defer rm.queryLock.Unlock()
 			rm.watchList.Set(key, record, ttl)
 		} else if item.ID != record.ID {
-			// check the ID because of the eariler scan.
+			// check the ID because of the earlier scan.
 			rm.staleQuarantineRecord <- record
 		}
 	}
@@ -452,6 +453,9 @@ func (rm *RunawayManager) examineWatchList(resourceGroupName string, convict str
 
 // Stop stops the watchList which is a ttlcache.
 func (rm *RunawayManager) Stop() {
+	if rm == nil {
+		return
+	}
 	if rm.watchList != nil {
 		rm.watchList.Stop()
 	}
@@ -473,7 +477,7 @@ type RunawayChecker struct {
 	watchAction   rmpb.RunawayAction
 }
 
-func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
+func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string, startTime time.Time) *RunawayChecker {
 	c := &RunawayChecker{
 		manager:           manager,
 		resourceGroupName: resourceGroupName,
@@ -485,7 +489,7 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 		markedByWatch:     false,
 	}
 	if setting != nil {
-		c.deadline = time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
+		c.deadline = startTime.Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
 	}
 	return c
 }

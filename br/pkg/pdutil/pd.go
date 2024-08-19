@@ -192,6 +192,15 @@ func NewPdController(
 	}, nil
 }
 
+func NewPdControllerWithPDClient(pdClient pd.Client, pdHTTPCli pdhttp.Client, v *semver.Version) *PdController {
+	return &PdController{
+		pdClient:         pdClient,
+		pdHTTPCli:        pdHTTPCli,
+		version:          v,
+		schedulerPauseCh: make(chan struct{}, 1),
+	}
+}
+
 func parseVersion(versionStr string) *semver.Version {
 	// we need trim space or semver will parse failed
 	v := strings.TrimSpace(versionStr)

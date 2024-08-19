@@ -780,14 +780,13 @@ Level	Code	Message
 Warning	1815	Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored
 explain format = 'brief' select /*+ inl_merge_join(t1), no_index_merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	task	access object	operator info
-IndexMergeJoin	12487.50	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
+MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t2.a
 ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
-│ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
-└─IndexReader(Probe)	12487.50	root		index:Selection
-  └─Selection	12487.50	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
-    └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)], keep order:true, stats:pseudo
+│ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
+└─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+  └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 explain format = 'brief' select /*+ inl_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	task	access object	operator info
 IndexJoin	12487.50	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
@@ -1879,31 +1878,31 @@ HashJoin	304261169.13	root		CARTESIAN inner join
 explain format = 'brief' select * from ((select /*+ leading(t5, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;
 id	estRows	task	access object	operator info
 HashJoin	2431655263674.32	root		CARTESIAN inner join
-├─HashJoin(Build)	124625374.88	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t7.b, planner__core__casetest__rule__rule_join_reorder.t6.b) eq(planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t6.a)]
-│ ├─TableReader(Build)	9980.01	root		data:Selection
-│ │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t6.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t6.b))
-│ │   └─TableFullScan	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
-│ └─HashJoin(Probe)	99800100.00	root		CARTESIAN inner join
+├─HashJoin(Build)	19511.72	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+│ ├─TableReader(Build)	9990.00	root		data:Selection
+│ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+│ │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│ └─HashJoin(Probe)	15609.38	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
 │   ├─TableReader(Build)	9990.00	root		data:Selection
-│   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t7.b))
-│   │   └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
-│   └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
-│     └─IndexFullScan	9990.00	cop[tikv]	table:t5, index:a(a)	keep order:false, stats:pseudo
-└─HashJoin(Probe)	19511.72	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-  ├─TableReader(Build)	9990.00	root		data:Selection
-  │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	15609.38	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+│   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
+│   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│   └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t8.a, planner__core__casetest__rule__rule_join_reorder.t4.a)]
+│     ├─TableReader(Build)	9990.00	root		data:Selection
+│     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.a))
+│     │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+│     └─TableReader(Probe)	9990.00	root		data:Selection
+│       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t8.a))
+│         └─TableFullScan	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
+└─HashJoin(Probe)	124625374.88	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t7.b, planner__core__casetest__rule__rule_join_reorder.t6.b) eq(planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t6.a)]
+  ├─TableReader(Build)	9980.01	root		data:Selection
+  │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t6.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t6.b))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	99800100.00	root		CARTESIAN inner join
     ├─TableReader(Build)	9990.00	root		data:Selection
-    │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
-    │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t8.a, planner__core__casetest__rule__rule_join_reorder.t4.a)]
-      ├─TableReader(Build)	9990.00	root		data:Selection
-      │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.a))
-      │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-      └─TableReader(Probe)	9990.00	root		data:Selection
-        └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t8.a))
-          └─TableFullScan	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t7.b))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+      └─IndexFullScan	9990.00	cop[tikv]	table:t5, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select * from ((select /*+ leading(t6, t8, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;
 id	estRows	task	access object	operator info
 HashJoin	304261169.13	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4581,7 +4580,7 @@ create table t6(a int, b int, key(a));
 create table t7(a int, b int, key(a));
 create table t8(a int, b int, key(a));
 insert into t3 values(1, 1), (2, 2), (3, 3);
-analyze table t3;
+analyze table t3 all columns;
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]

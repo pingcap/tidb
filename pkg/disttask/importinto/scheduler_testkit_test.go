@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -169,7 +170,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 func TestSchedulerExtGlobalSort(t *testing.T) {
 	// Domain start scheduler manager automatically, we need to disable it as
 	// we test import task management in this case.
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -290,7 +291,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	}
 
 	// to merge-sort stage
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -326,7 +327,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	}
 
 	// to write-and-ingest stage
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)")
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)

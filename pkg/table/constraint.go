@@ -233,12 +233,12 @@ func hasSpecifiedCol(cols []model.CIStr, col model.CIStr) bool {
 }
 
 // IfCheckConstraintExprBoolType checks whether the check expression is bool type
-func IfCheckConstraintExprBoolType(info *model.ConstraintInfo, tableInfo *model.TableInfo) error {
+func IfCheckConstraintExprBoolType(ctx expression.EvalContext, info *model.ConstraintInfo, tableInfo *model.TableInfo) error {
 	cons, err := ToConstraint(info, tableInfo)
 	if err != nil {
 		return err
 	}
-	if !mysql.HasIsBooleanFlag(cons.ConstraintExpr.GetType().GetFlag()) {
+	if !mysql.HasIsBooleanFlag(cons.ConstraintExpr.GetType(ctx).GetFlag()) {
 		return dbterror.ErrNonBooleanExprForCheckConstraint.GenWithStackByArgs(cons.Name)
 	}
 	return nil

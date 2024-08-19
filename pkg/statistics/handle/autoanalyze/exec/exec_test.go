@@ -15,6 +15,7 @@
 package exec_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -45,7 +46,7 @@ func TestExecAutoAnalyzes(t *testing.T) {
 
 	// Check the result of analyze.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)

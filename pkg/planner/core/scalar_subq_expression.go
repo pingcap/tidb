@@ -151,7 +151,7 @@ func (*ScalarSubQueryExpr) EvalJSON(_ expression.EvalContext, _ chunk.Row) (val 
 }
 
 // GetType implements the Expression interface.
-func (s *ScalarSubQueryExpr) GetType() *types.FieldType {
+func (s *ScalarSubQueryExpr) GetType(_ expression.EvalContext) *types.FieldType {
 	return s.RetType
 }
 
@@ -254,21 +254,6 @@ func (s *ScalarSubQueryExpr) String() string {
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "ScalarQueryCol#%d", s.scalarSubqueryColID)
 	return builder.String()
-}
-
-// MarshalJSON implements the goJSON.Marshaler interface.
-func (s *ScalarSubQueryExpr) MarshalJSON() ([]byte, error) {
-	if s.evalErr != nil {
-		return nil, s.evalErr
-	}
-	if s.evaled {
-		return s.Constant.MarshalJSON()
-	}
-	err := s.selfEvaluate()
-	if err != nil {
-		return nil, err
-	}
-	return s.Constant.MarshalJSON()
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.

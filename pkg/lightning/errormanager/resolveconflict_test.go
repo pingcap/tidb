@@ -118,20 +118,19 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(7),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data6)
+	_, err = encoder.AddRecord(data6)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data7)
+	_, err = encoder.AddRecord(data7)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -170,6 +169,8 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
 	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(1, data2RowKey, "PRIMARY", data2RowValue, data1RowKey).
@@ -319,16 +320,15 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -354,6 +354,8 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
 	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(1, data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
@@ -486,16 +488,15 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -535,6 +536,8 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
 	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(1, data4NonclusteredKey, "uni_b", data4NonclusteredValue, data4RowKey).
@@ -691,16 +694,15 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -741,6 +743,8 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
 	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(1, data4NonclusteredKey, "uni_b", data4NonclusteredValue, data4RowKey).

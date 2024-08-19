@@ -72,6 +72,8 @@ type UpdateExec struct {
 	fkChecks map[int64][]*FKCheckExec
 	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
 	fkCascades map[int64][]*FKCascadeExec
+
+	IgnoreError bool
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
@@ -124,6 +126,7 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 	}
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
+	var totalMemDelta int64
 	for i, content := range e.tblColPosInfos {
 		if !e.multiUpdateOnSameTable[content.TblID] {
 			// No need to merge if not multi-updated
@@ -165,17 +168,22 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 
 		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
 		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
-		e.memTracker.Consume(memDelta)
+		totalMemDelta += memDelta
 	}
+	e.memTracker.Consume(totalMemDelta)
 	return nil
 }
 
-func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newData []types.Datum) error {
+func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newData []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
 	defer trace.StartRegion(ctx, "UpdateExec").End()
 	bAssignFlag := make([]bool, len(e.assignFlag))
 	for i, flag := range e.assignFlag {
 		bAssignFlag[i] = flag >= 0
 	}
+
+	var totalMemDelta int64
+	defer func() { e.memTracker.Consume(totalMemDelta) }()
+
 	for i, content := range e.tblColPosInfos {
 		if !e.tableUpdatable[i] {
 			// If there's nothing to update, we can just skip current row
@@ -199,14 +207,14 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		// Update row
 		fkChecks := e.fkChecks[content.TblID]
 		fkCascades := e.fkCascades[content.TblID]
-		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades)
+		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades, dupKeyCheck)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
 			if !exist {
 				memDelta += int64(handle.ExtraMemSize())
 			}
-			e.memTracker.Consume(memDelta)
+			totalMemDelta += memDelta
 			continue
 		}
 
@@ -267,6 +275,13 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	}
 	memUsageOfChk := int64(0)
 	totalNumRows := 0
+
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return 0, err
+	}
+
+	dupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreError)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		err := exec.Next(ctx, e.Children(0), chk)
@@ -280,14 +295,12 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
 		if e.collectRuntimeStatsEnabled() {
-			txn, err := e.Ctx().Txn(true)
-			if err == nil && txn.GetSnapshot() != nil {
-				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			if snap := txn.GetSnapshot(); snap != nil {
+				snap.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		txn, err := e.Ctx().Txn(true)
 		// pipelined dml may already flush in background, don't touch it to avoid race.
-		if err == nil && !txn.IsPipelined() {
+		if !txn.IsPipelined() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
 			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 			if sc.KvExecCounter != nil {
@@ -323,7 +336,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				}
 			}
 			// write to table
-			if err := e.exec(ctx, e.Children(0).Schema(), datumRow, newRow); err != nil {
+			if err := e.exec(ctx, e.Children(0).Schema(), datumRow, newRow, dupKeyCheck); err != nil {
 				return 0, err
 			}
 		}
@@ -333,7 +346,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func (*UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
+func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -345,7 +358,10 @@ func (*UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
 	if types.ErrOverflow.Equal(err) {
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
-
+	if types.ErrTruncatedWrongVal.Equal(err) && col != nil && col.ColumnInfo != nil && col.ColumnInfo.GetType() == mysql.TypeTimestamp {
+		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+		return errors.AddStack(ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err))
+	}
 	return err
 }
 
@@ -358,7 +374,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		}
 		con := assign.Expr.(*expression.Constant)
 		val, err := con.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), emptyRow)
-		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -366,7 +382,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -393,7 +409,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -414,7 +430,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 			continue
 		}
 		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
-		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -422,7 +438,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -567,4 +583,41 @@ func (e *UpdateExec) GetFKCascades() []*FKCascadeExec {
 // HasFKCascades implements WithForeignKeyTrigger interface.
 func (e *UpdateExec) HasFKCascades() bool {
 	return len(e.fkCascades) > 0
+}
+
+// optimizeDupKeyCheckForUpdate trys to optimize the DupKeyCheckMode for an update statement.
+// If the DupKeyCheckMode of the current statement can be optimized, it will return `DupKeyCheckLazy` to avoid the
+// redundant requests to TiKV, otherwise, `DupKeyCheckInPlace` will be returned.
+// The second argument `ignoreNeedsCheckInPlace` is true if `IGNORE` keyword is used in the update statement.
+func optimizeDupKeyCheckForUpdate(txn kv.Transaction, ignoreNeedsCheckInPlace bool) table.DupKeyCheckMode {
+	if txn.IsPipelined() {
+		// It means `@@tidb_dml_type='bulk'` which indicates to insert rows in "bulk" mode.
+		// At this time, `DupKeyCheckLazy` should be used to improve the performance.
+		// If "bulk" mode and IGNORE keyword are used together, "bulk" is prior, see:
+		// https://github.com/pingcap/tidb/issues/55187#issuecomment-2268356459
+		return table.DupKeyCheckLazy
+	}
+
+	if ignoreNeedsCheckInPlace {
+		// For `UPDATE IGNORE ...` and `INSERT IGNORE ... ON DUPLICATE KEY UPDATE ...` statements,
+		// `DupKeyCheckInPlace` should be used to make sure the executor can get the error
+		// immediately and ignore it then.
+		return table.DupKeyCheckInPlace
+	}
+
+	if txn.IsPessimistic() {
+		// We can just check duplicated key lazily without keys in storage for the below cases:
+		// - `txn.Pipelined()` is true.
+		//    It means the user is using `@@tidb_dml_type="bulk"` to insert rows in bulk mode.
+		//    DupKeyCheckLazy should be used to improve the performance.
+		// - The current transaction is pessimistic.
+		//   The duplicate key check can be postponed to the lock stage.
+		// Please notice that for optimistic transaction, it always returns `DupKeyCheckInPlace` even if
+		// `tidb_constraint_check_in_place` is `OFF`.
+		// That is because `tidb_constraint_check_in_place` is only designed for insert cases, see comments in issue:
+		// https://github.com/pingcap/tidb/issues/54492#issuecomment-2229941881
+		return table.DupKeyCheckLazy
+	}
+
+	return table.DupKeyCheckInPlace
 }

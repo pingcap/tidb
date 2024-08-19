@@ -21,6 +21,9 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// Note: appending the new adding method to the last, for the convenience of easy
+// locating in other implementor from other package.
+
 // AccessObject represents what is accessed by an operator.
 // It corresponds to the "access object" column in an EXPLAIN statement result.
 type AccessObject interface {

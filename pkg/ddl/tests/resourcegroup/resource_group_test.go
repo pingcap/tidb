@@ -17,6 +17,7 @@ package resourcegrouptest_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	mysql "github.com/pingcap/tidb/pkg/errno"
@@ -32,26 +32,24 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResourceGroupBasic(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	re := require.New(t)
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var groupID atomic.Int64
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		// job.SchemaID will be assigned when the group is created.
 		if (job.SchemaName == "x" || job.SchemaName == "y") && job.Type == model.ActionCreateResourceGroup && job.SchemaID != 0 {
 			groupID.Store(job.SchemaID)
 			return
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("set global tidb_enable_resource_control = 'off'")
 	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
@@ -92,11 +90,13 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("set global tidb_enable_resource_control = off")
 	tk.MustGetErrCode("alter resource group x RU_PER_SEC=2000 ", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("alter resource group x RU_PER_SEC=unlimited ", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustGetErrCode("drop resource group x ", mysql.ErrResourceGroupSupportDisabled)
 
 	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 
 	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupExists)
+	tk.MustGetErrCode("create resource group x RU_PER_SEC=UNLIMITED ", mysql.ErrResourceGroupExists)
 
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION DRYRUN WATCH SIMILAR DURATION '10m0s')")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -107,16 +107,27 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(model.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
-	tk.MustExec("alter resource group x QUERY_LIMIT=(EXEC_ELAPSED='20s' ACTION DRYRUN WATCH SIMILAR)")
+	tk.MustExec("alter resource group x QUERY_LIMIT=(EXEC_ELAPSED='20s' ACTION DRYRUN WATCH SIMILAR) BURSTABLE=FALSE")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RURate)
-	re.Equal(int64(-1), g.BurstLimit)
+	re.Equal(int64(2000), g.BurstLimit)
 	re.Equal(uint64(time.Second*20/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
 	re.Equal(model.RunawayActionDryRun, g.Runaway.Action)
 	re.Equal(model.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(0), g.Runaway.WatchDurationMs)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM NO EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
+
+	tk.MustExec("alter resource group x RU_PER_SEC= unlimited QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION DRYRUN WATCH SIMILAR DURATION '10m0s')")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(math.MaxInt32), g.RURate)
+	re.Equal(int64(-1), g.BurstLimit)
+	re.Equal(uint64(time.Second*15/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
+	re.Equal(model.RunawayActionDryRun, g.Runaway.Action)
+	re.Equal(model.WatchSimilar, g.Runaway.WatchType)
+	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
+
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x UNLIMITED MEDIUM YES EXEC_ELAPSED='15s', ACTION=DRYRUN, WATCH=SIMILAR DURATION='10m0s' <nil>"))
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")

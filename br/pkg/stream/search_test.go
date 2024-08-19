@@ -121,7 +121,7 @@ func fakeDataFile(t *testing.T, s storage.ExternalStorage) (defaultCFDataFile, w
 	defaultCFCheckSum := sha256.Sum256(defaultCFBuf.Bytes())
 	defaultCFDataFile = &backuppb.DataFileInfo{
 		Path:   defaultCFFile,
-		Cf:     defaultCFName,
+		Cf:     DefaultCF,
 		Sha256: defaultCFCheckSum[:],
 	}
 
@@ -135,7 +135,7 @@ func fakeDataFile(t *testing.T, s storage.ExternalStorage) (defaultCFDataFile, w
 	writeCFCheckSum := sha256.Sum256(writeCFBuf.Bytes())
 	writeCFDataFile = &backuppb.DataFileInfo{
 		Path:   writeCFFile,
-		Cf:     writeCFName,
+		Cf:     WriteCF,
 		Sha256: writeCFCheckSum[:],
 	}
 
@@ -178,7 +178,7 @@ func TestMergeCFEntries(t *testing.T) {
 			Key:        hex.EncodeToString([]byte(defaultCF.key)),
 			EncodedKey: encodedKey,
 			StartTs:    uint64(defaultCF.startTs),
-			CFName:     defaultCFName,
+			CFName:     DefaultCF,
 			Value:      defaultCF.val,
 		}
 	}
@@ -189,7 +189,7 @@ func TestMergeCFEntries(t *testing.T) {
 			EncodedKey: encodedKey,
 			StartTs:    uint64(writeCF.startTs),
 			CommitTs:   uint64(writeCF.commitTS),
-			CFName:     writeCFName,
+			CFName:     WriteCF,
 			Value:      writeCF.val,
 		}
 	}

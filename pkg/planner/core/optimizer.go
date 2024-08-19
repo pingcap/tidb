@@ -39,8 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -81,6 +81,7 @@ const (
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagConstantPropagation
+	flagConvertOuterToInnerJoin
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
@@ -96,31 +97,32 @@ const (
 	flagResolveExpand
 )
 
-var optRuleList = []logicalOptRule{
-	&gcSubstituter{},
-	&columnPruner{},
-	&resultReorder{},
-	&buildKeySolver{},
-	&decorrelateSolver{},
-	&semiJoinRewriter{},
-	&aggregationEliminator{},
-	&skewDistinctAggRewriter{},
-	&projectionEliminator{},
-	&maxMinEliminator{},
-	&constantPropagationSolver{},
-	&ppdSolver{},
-	&outerJoinEliminator{},
-	&partitionProcessor{},
-	&collectPredicateColumnsPoint{},
-	&aggregationPushDownSolver{},
-	&deriveTopNFromWindow{},
-	&predicateSimplification{},
-	&pushDownTopNOptimizer{},
-	&syncWaitStatsLoadPoint{},
-	&joinReOrderSolver{},
-	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-	&pushDownSequenceSolver{},
-	&resolveExpand{},
+var optRuleList = []base.LogicalOptRule{
+	&GcSubstituter{},
+	&ColumnPruner{},
+	&ResultReorder{},
+	&rule.BuildKeySolver{},
+	&DecorrelateSolver{},
+	&SemiJoinRewriter{},
+	&AggregationEliminator{},
+	&SkewDistinctAggRewriter{},
+	&ProjectionEliminator{},
+	&MaxMinEliminator{},
+	&ConstantPropagationSolver{},
+	&ConvertOuterToInnerJoin{},
+	&PPDSolver{},
+	&OuterJoinEliminator{},
+	&PartitionProcessor{},
+	&CollectPredicateColumnsPoint{},
+	&AggregationPushDownSolver{},
+	&DeriveTopNFromWindow{},
+	&PredicateSimplification{},
+	&PushDownTopNOptimizer{},
+	&SyncWaitStatsLoadPoint{},
+	&JoinReOrderSolver{},
+	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&PushDownSequenceSolver{},
+	&ResolveExpand{},
 }
 
 // Interaction Rule List
@@ -128,20 +130,7 @@ var optRuleList = []logicalOptRule{
 1. The related rule has been trigger and changed the plan
 2. The interaction rule is enabled
 */
-var optInteractionRuleList = map[logicalOptRule]logicalOptRule{}
-
-// logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
-type logicalOptRule interface {
-	/* Return Parameters:
-	1. base.LogicalPlan: The optimized base.LogicalPlan after rule is applied
-	2. bool: Used to judge whether the plan is changed or not by logical rule.
-		 If the plan is changed, it will return true.
-		 The default value is false. It means that no interaction rule will be triggered.
-	3. error: If there is error during the rule optimizer, it will be thrown
-	*/
-	optimize(context.Context, base.LogicalPlan, *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error)
-	name() string
-}
+var optInteractionRuleList = map[base.LogicalOptRule]base.LogicalOptRule{}
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (base.Plan, error) {
@@ -162,9 +151,16 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
 		if v.privilege == mysql.ExtendedPriv {
-			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPriv, v.dynamicWithGrant) {
+			hasPriv := false
+			for _, priv := range v.dynamicPrivs {
+				hasPriv = hasPriv || pm.RequestDynamicVerification(activeRoles, priv, v.dynamicWithGrant)
+				if hasPriv {
+					break
+				}
+			}
+			if !hasPriv {
 				if v.err == nil {
-					return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPriv)
+					return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPrivs)
 				}
 				return v.err
 			}
@@ -181,7 +177,7 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 // VisitInfo4PrivCheck generates privilege check infos because privilege check of local temporary tables is different
 // with normal tables. `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent
 // statements do not need any privileges.
-func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
+func VisitInfo4PrivCheck(ctx context.Context, is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
 	if node == nil {
 		return vs
 	}
@@ -203,7 +199,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 				}
 			} else {
 				// `CREATE TABLE LIKE tmp` or `CREATE TABLE FROM SELECT tmp` in the future.
-				if needCheckTmpTablePriv(is, v) {
+				if needCheckTmpTablePriv(ctx, is, v) {
 					privVisitInfo = append(privVisitInfo, v)
 				}
 			}
@@ -216,7 +212,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 			privVisitInfo = make([]visitInfo, 0, len(vs))
 			if stmt.TemporaryKeyword != ast.TemporaryLocal {
 				for _, v := range vs {
-					if needCheckTmpTablePriv(is, v) {
+					if needCheckTmpTablePriv(ctx, is, v) {
 						privVisitInfo = append(privVisitInfo, v)
 					}
 				}
@@ -228,7 +224,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 	default:
 		privVisitInfo = make([]visitInfo, 0, len(vs))
 		for _, v := range vs {
-			if needCheckTmpTablePriv(is, v) {
+			if needCheckTmpTablePriv(ctx, is, v) {
 				privVisitInfo = append(privVisitInfo, v)
 			}
 		}
@@ -236,10 +232,10 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 	return
 }
 
-func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
+func needCheckTmpTablePriv(ctx context.Context, is infoschema.InfoSchema, v visitInfo) bool {
 	if v.db != "" && v.table != "" {
 		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(model.NewCIStr(v.db), model.NewCIStr(v.table))
+		tb, err := is.TableByName(ctx, model.NewCIStr(v.db), model.NewCIStr(v.table))
 		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
 		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
 			return false
@@ -946,7 +942,7 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	if apply, ok := plan.(*PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
-		_, err := SafeClone(apply.Children()[apply.InnerChildIdx])
+		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
@@ -991,7 +987,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}()
 	}
 	var err error
-	var againRuleList []logicalOptRule
+	var againRuleList []base.LogicalOptRule
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
@@ -999,9 +995,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace)
+		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		logic, planChanged, err = rule.optimize(ctx, logic, opt)
+		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -1014,8 +1010,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
-		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace)
-		logic, _, err = rule.optimize(ctx, logic, opt)
+		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
+		logic, _, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -1025,8 +1021,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	return logic, err
 }
 
-func isLogicalRuleDisabled(r logicalOptRule) bool {
-	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.name())
+func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
+	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.Name())
 	return disabled
 }
 
@@ -1171,16 +1167,6 @@ func existsCartesianProduct(p base.LogicalPlan) bool {
 
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
 var DefaultDisabledLogicalRulesList *atomic.Value
-
-func init() {
-	expression.EvalSimpleAst = evalAstExpr
-	expression.BuildSimpleExpr = buildSimpleExpr
-	expression.DecodeKeyFromString = decodeKeyFromString
-	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
-	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
-	DefaultDisabledLogicalRulesList = new(atomic.Value)
-	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
-}
 
 func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {

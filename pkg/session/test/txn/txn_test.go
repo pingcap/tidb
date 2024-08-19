@@ -89,7 +89,7 @@ func TestAutocommit(t *testing.T) {
 	tk.MustQuery("select count(*) from t where id = 1").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.autocommit").Check(testkit.Rows("1"))
 
-	// When the transaction is committed because of switching mode, the session set statement shold succeed.
+	// When the transaction is committed because of switching mode, the session set statement should succeed.
 	tk.MustExec("set autocommit = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
@@ -341,7 +341,7 @@ func TestTxnRetryErrMsg(t *testing.T) {
 }
 
 func TestSetTxnScope(t *testing.T) {
-	// Check the default value of @@tidb_enable_local_txn and @@txn_scope whitout configuring the zone label.
+	// Check the default value of @@tidb_enable_local_txn and @@txn_scope without configuring the zone label.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

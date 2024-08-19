@@ -522,7 +522,7 @@ loop:
 			continue
 		}
 		// Skip index that contains auto-increment column.
-		// Because auto colum must be defined as a key.
+		// Because auto column must be defined as a key.
 		for _, idxCol := range idxInfo.Columns {
 			flag := cols[idxCol.Offset].GetFlag()
 			if tmysql.HasAutoIncrementFlag(flag) {
@@ -695,4 +695,10 @@ func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// IsAccessDeniedNeedConfigPrivilegeError checks if err is generated from a query to TiDB which failed due to missing CONFIG privilege.
+func IsAccessDeniedNeedConfigPrivilegeError(err error) bool {
+	e, ok := err.(*mysql.MySQLError)
+	return ok && e.Number == errno.ErrSpecificAccessDenied && strings.Contains(e.Message, "CONFIG")
 }

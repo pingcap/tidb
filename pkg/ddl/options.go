@@ -32,8 +32,8 @@ type Options struct {
 	Store        kv.Storage
 	AutoIDClient *autoid.ClientDiscover
 	InfoCache    *infoschema.InfoCache
-	Hook         Callback
 	Lease        time.Duration
+	SchemaLoader SchemaLoader
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -64,16 +64,16 @@ func WithAutoIDClient(cli *autoid.ClientDiscover) Option {
 	}
 }
 
-// WithHook specifies the `Callback` of DDL used to notify the outer module when events are triggered
-func WithHook(callback Callback) Option {
-	return func(options *Options) {
-		options.Hook = callback
-	}
-}
-
 // WithLease specifies the schema lease duration
 func WithLease(lease time.Duration) Option {
 	return func(options *Options) {
 		options.Lease = lease
+	}
+}
+
+// WithSchemaLoader specifies the schema loader used to load schema from storage
+func WithSchemaLoader(loader SchemaLoader) Option {
+	return func(options *Options) {
+		options.SchemaLoader = loader
 	}
 }
