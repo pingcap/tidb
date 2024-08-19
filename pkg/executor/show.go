@@ -515,16 +515,6 @@ func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 	}
 }
 
-// fromTableNameInfo converts TableNameInfo to showInfo.
-func (*ShowExec) fromTableNameInfo(tbInfo *model.TableNameInfo) *showInfo {
-	return &showInfo{Name: tbInfo.Name}
-}
-
-// fromTableInfo converts TableInfo to showInfo.
-func (e *ShowExec) fromTableInfo(tbInfo *model.TableInfo) *showInfo {
-	return &showInfo{Name: tbInfo.Name, TableType: e.getTableType(tbInfo)}
-}
-
 // fetchShowInfoByName fetches the show info for `SHOW <FULL> TABLES like 'xxx'`
 func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*showInfo, error) {
 	tb, err := e.is.TableByName(ctx, e.DBName, model.NewCIStr(name))
