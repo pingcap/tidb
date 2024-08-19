@@ -2881,7 +2881,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
 		SampleRate:   sampleRate,
 		SketchSize:   statistics.MaxSketchSize,
-		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false),
+		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
 	if task.TblInfo != nil {
@@ -3011,7 +3011,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    MaxRegionSampleSize,
 		SketchSize:    statistics.MaxSketchSize,
-		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false),
+		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false, false),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
