@@ -84,8 +84,8 @@ func runOnFile(fileName string, r *misspell.Replacer, pass *analysis.Pass) error
 	// tool uses r.Replace by default.
 	_, diffs := r.Replace(string(fileContent))
 	for _, diff := range diffs {
-		text := fmt.Sprintf("[%s] `%s` is a misspelling of `%s`", Name, diff.Original, diff.Corrected)
-		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), diff.Line, diff.Column)), text)
+		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), diff.Line, diff.Column)),
+			"[%s] `%s` is a misspelling of `%s`", Name, diff.Original, diff.Corrected)
 	}
 	return nil
 }

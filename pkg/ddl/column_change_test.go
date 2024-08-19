@@ -121,9 +121,9 @@ func TestColumnAdd(t *testing.T) {
 			}
 			first = false
 			sess := testNewContext(store)
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			txn, err := newTxn(sess)
 			require.NoError(t, err)
-			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), types.MakeDatums(10, 10))
+			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), txn, types.MakeDatums(10, 10))
 			require.NoError(t, err)
 		}
 	})
@@ -202,15 +202,15 @@ func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle
 
 func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeOnlyTable.AddRecord(ctx.GetTableCtx(), types.MakeDatums(2, 3))
+	_, err = writeOnlyTable.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(2, 3))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -244,11 +244,11 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = writeOnlyTable.UpdateRecord(ctx.GetTableCtx(), h, types.MakeDatums(1, 2, 3), types.MakeDatums(2, 2, 3), touchedSlice(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(ctx.GetTableCtx(), txn, h, types.MakeDatums(1, 2, 3), types.MakeDatums(2, 2, 3), touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -261,11 +261,11 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 		return errors.Trace(err)
 	}
 	// DeleteOnlyTable: delete from t where c2 = 2
-	err = deleteOnlyTable.RemoveRecord(ctx.GetTableCtx(), h, types.MakeDatums(2, 2))
+	err = deleteOnlyTable.RemoveRecord(ctx.GetTableCtx(), txn, h, types.MakeDatums(2, 2))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(context.Background(), ctx)
+	_, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -285,17 +285,16 @@ func touchedSlice(t table.Table) []bool {
 }
 
 func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.Table) error {
-	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
-	err := sessiontxn.NewTxn(ctx, sctx)
+	txn, err := newTxn(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h, err := publicTable.AddRecord(sctx.GetTableCtx(), types.MakeDatums(4, 4, 4))
+	h, err := publicTable.AddRecord(sctx.GetTableCtx(), txn, types.MakeDatums(4, 4, 4))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(ctx, sctx)
+	txn, err = newTxn(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -308,11 +307,11 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 		return errors.Errorf("%v", oldRow)
 	}
 	newRow := types.MakeDatums(3, 4, oldRow[2].GetValue())
-	err = writeOnlyTable.UpdateRecord(sctx.GetTableCtx(), h, oldRow, newRow, touchedSlice(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(sctx.GetTableCtx(), txn, h, oldRow, newRow, touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(ctx, sctx)
+	_, err = newTxn(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -360,9 +359,7 @@ type historyJobArgs struct {
 }
 
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := sessiontxn.NewTxn(context.Background(), ctx)
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
+	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	ver, err := m.GetSchemaVersion()
@@ -444,4 +441,12 @@ func TestIssue40135(t *testing.T) {
 	tk.MustExec("alter table t40135 modify column a MEDIUMINT NULL DEFAULT '6243108' FIRST")
 
 	require.ErrorContains(t, checkErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+}
+
+func newTxn(ctx sessionctx.Context) (kv.Transaction, error) {
+	err := sessiontxn.NewTxn(context.Background(), ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ctx.Txn(true)
 }

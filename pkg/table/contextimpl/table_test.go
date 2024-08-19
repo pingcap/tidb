@@ -169,4 +169,7 @@ func TestMutateContextImplFields(t *testing.T) {
 	require.Equal(t, int64(333), tmpTblHandler.GetDirtySize())
 	tmpTblHandler.UpdateTxnDeltaSize(-1)
 	require.Equal(t, int64(332), tmpTblHandler.GetDirtySize())
+	exchange, ok := ctx.GetExchangePartitionDMLSupport()
+	require.True(t, ok)
+	require.Same(t, ctx.GetDomainInfoSchema(), exchange.GetInfoSchemaToCheckExchangeConstraint())
 }

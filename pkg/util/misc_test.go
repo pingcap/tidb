@@ -174,8 +174,8 @@ func TestToPB(t *testing.T) {
 	}
 	column2.SetCollate("utf8mb4_bin")
 
-	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column, false).String())
-	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false, false)[0].String())
+	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column, false, false).String())
+	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false, false, false)[0].String())
 }
 
 func TestComposeURL(t *testing.T) {

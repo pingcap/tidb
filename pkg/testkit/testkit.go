@@ -122,8 +122,8 @@ func (tk *TestKit) RefreshSession() {
 		seed := uint64(time.Now().UnixNano())
 		tk.t.Logf("RefreshSession rand seed: %d", seed)
 		rng := rand.New(rand.NewSource(int64(seed)))
-		if rng.Intn(10) >= 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
+			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
 		}
 	}
 
