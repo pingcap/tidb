@@ -313,7 +313,7 @@ func HandleAutoAnalyze(
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
 			return false
 		}
-		return r.PickOneTableAndAnalyzeByPriority()
+		return r.AnalyzeHighestPriorityTables()
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)

@@ -70,8 +70,8 @@ func NewRefresher(
 	return r
 }
 
-// PickOneTableAndAnalyzeByPriority picks one table and analyzes it by priority.
-func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
+// AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
+func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	if !r.autoAnalysisTimeWindow.isWithinTimeWindow(time.Now()) {
 		return false
 	}

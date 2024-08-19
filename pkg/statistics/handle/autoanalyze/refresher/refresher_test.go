@@ -73,13 +73,13 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	r.RebuildTableAnalysisJobQueue()
 	// No jobs are added.
 	require.Equal(t, 0, r.Jobs.Len())
-	require.False(t, r.PickOneTableAndAnalyzeByPriority())
+	require.False(t, r.AnalyzeHighestPriorityTables())
 	// Enable the auto analyze.
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 	r.RebuildTableAnalysisJobQueue()
 	// Jobs are added.
 	require.Equal(t, 1, r.Jobs.Len())
-	require.True(t, r.PickOneTableAndAnalyzeByPriority())
+	require.True(t, r.AnalyzeHighestPriorityTables())
 }
 
 func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
@@ -166,7 +166,7 @@ func TestIgnoreTinyTable(t *testing.T) {
 	require.Equal(t, 1, r.Jobs.Len(), "Only t1 is added to the job queue, because t2 is a tiny table(not enough data)")
 }
 
-func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
+func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
@@ -198,7 +198,7 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	r.RebuildTableAnalysisJobQueue()
 	require.Equal(t, 2, r.Jobs.Len())
 	// Analyze t1 first.
-	require.True(t, r.PickOneTableAndAnalyzeByPriority())
+	require.True(t, r.AnalyzeHighestPriorityTables())
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// The table is analyzed.
@@ -215,7 +215,7 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
 	require.Equal(t, int64(6), tblStats2.ModifyCount)
 	// Do one more round.
-	require.True(t, r.PickOneTableAndAnalyzeByPriority())
+	require.True(t, r.AnalyzeHighestPriorityTables())
 	// t2 is analyzed.
 	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 = handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -223,7 +223,7 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	require.Equal(t, int64(8), tblStats2.RealtimeCount)
 }
 
-func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
+func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -238,7 +238,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	r := refresher.NewRefresher(handle, sysProcTracker)
 	r.RebuildTableAnalysisJobQueue()
 	// No jobs in the queue.
-	r.PickOneTableAndAnalyzeByPriority()
+	r.AnalyzeHighestPriorityTables()
 	// The table is not analyzed.
 	is := dom.InfoSchema()
 	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -274,7 +274,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	startTime := tk.MustQuery("select now() - interval 2 second").Rows()[0][0].(string)
 	insertFailedJobForPartitionWithStartTime(tk, "test", "t1", "p0", startTime)
 
-	r.PickOneTableAndAnalyzeByPriority()
+	r.AnalyzeHighestPriorityTables()
 	// t2 is analyzed.
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
