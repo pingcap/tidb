@@ -20,6 +20,7 @@ set -eu
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 . $UTILS_DIR/run_services
 
+echo "will start pd2"
 pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}2" \
   --peer-urls "https://${PD_PEER_ADDR}2" \
@@ -31,6 +32,7 @@ pd-server --join "https://$PD_ADDR" \
 # strange that new PD can't join too quickly
 sleep 10
 
+echo "will start pd3"
 pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}3" \
   --peer-urls "https://${PD_PEER_ADDR}3" \
@@ -43,7 +45,7 @@ pd-server --join "https://$PD_ADDR" \
 killall tidb-server
 # wait for TiDB to exit to release file lock
 sleep 5
-start_tidb
+PD_ADDR="${PD_ADDR},${PD_ADDR}2,${PD_ADDR}3" start_tidb
 
 export GO_FAILPOINTS='github.com/pingcap/tidb/lightning/pkg/importer/beforeRun=sleep(60000)'
 run_lightning --backend local --enable-checkpoint=0 --pd-urls '127.0.0.1:9999,127.0.0.1:2379' &
