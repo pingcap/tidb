@@ -93,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -1356,6 +1357,14 @@ func (do *Domain) Init(
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
+	p, l, err2 := pdCli.GetTS(ctx)
+	if err2 != nil {
+		logutil.BgLogger().Error("get pd timestamp failed", zap.Error(err2))
+	} else {
+		leader := pdCli.GetLeaderURL()
+		ts := oracle.ComposeTS(p, l)
+		logutil.BgLogger().Info("get pd timestamp success", zap.Any("timestamp", ts), zap.Any("pd", leader))
+	}
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	var err error
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
