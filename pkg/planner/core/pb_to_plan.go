@@ -132,9 +132,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
 		p.Extractor = &StatementsSummaryExtractor{}
 	case infoschema.ClusterTableTiDBIndexUsage:
-		ex := &InfoSchemaIndexUsageExtractor{}
-		ex.initExtractableColNames(infoschema.TableTiDBIndexUsage)
-		p.Extractor = ex
+		p.Extractor = NewInfoSchemaTiDBIndexUsageExtractor()
 	}
 	return p, nil
 }
