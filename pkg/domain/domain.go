@@ -1391,14 +1391,14 @@ func (do *Domain) Init(
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
-	p, l, err := pdCli.GetTS(context.Background())
-	if err == nil {
+	p, l, err2 := pdCli.GetTS(context.Background())
+	if err2 == nil {
 		ts := oracle.ComposeTS(p, l)
 		logutil.BgLogger().Info("lance test init manually get TS",
 			zap.Any("ts", ts))
 	} else {
 		logutil.BgLogger().Info("lance test init manually get TS failed",
-			zap.Error(err))
+			zap.Error(err2))
 	}
 
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
