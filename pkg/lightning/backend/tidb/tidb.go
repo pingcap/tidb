@@ -373,7 +373,7 @@ func NewTiDBBackend(
 		onDuplicate = config.ErrorOnDup
 	}
 	stmtCache := kvcache.NewSimpleLRUCache(prepStmtCacheSize, 0, 0)
-	stmtCache.SetOnEvict(func(key kvcache.Key, value kvcache.Value) {
+	stmtCache.SetOnEvict(func(_ kvcache.Key, value kvcache.Value) {
 		stmt := value.(*sql.Stmt)
 		stmt.Close()
 	})
