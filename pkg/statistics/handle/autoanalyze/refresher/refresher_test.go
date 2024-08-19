@@ -223,6 +223,78 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	require.Equal(t, int64(8), tblStats2.RealtimeCount)
 }
 
+func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_auto_analyze_concurrency=2")
+	tk.MustExec("create table t1 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (14))")
+	tk.MustExec("create table t2 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (14))")
+	tk.MustExec("create table t3 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (14))")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t3 values (1, 1), (2, 2), (3, 3)")
+	handle := dom.StatsHandle()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	// Analyze those tables first.
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	// Insert more data into t1, t2, and t3, with different amounts of new data.
+	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13)")
+	tk.MustExec("insert into t2 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)")
+	tk.MustExec("insert into t3 values (4, 4), (5, 5), (6, 6), (7, 7)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	sysProcTracker := dom.SysProcTracker()
+	r := refresher.NewRefresher(handle, sysProcTracker)
+	r.RebuildTableAnalysisJobQueue()
+	require.Equal(t, 3, r.Jobs.Len())
+	// Analyze tables concurrently.
+	require.True(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	// Check if t1 and t2 are analyzed (they should be, as they have more new data).
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
+	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
+	require.Equal(t, int64(0), tblStats1.ModifyCount)
+	require.Equal(t, int64(12), tblStats1.RealtimeCount)
+
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
+	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
+	require.Equal(t, int64(0), tblStats2.ModifyCount)
+	require.Equal(t, int64(8), tblStats2.RealtimeCount)
+
+	// t3 should not be analyzed yet, as it has the least new data.
+	tbl3, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+	pid3 := tbl3.Meta().GetPartitionInfo().Definitions[1].ID
+	tblStats3 := handle.GetPartitionStats(tbl3.Meta(), pid3)
+	require.Equal(t, int64(4), tblStats3.ModifyCount)
+
+	// Do one more round to analyze t3.
+	require.True(t, r.AnalyzeHighestPriorityTables())
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	// Now t3 should be analyzed.
+	tblStats3 = handle.GetPartitionStats(tbl3.Meta(), pid3)
+	require.Equal(t, int64(0), tblStats3.ModifyCount)
+	require.Equal(t, int64(6), tblStats3.RealtimeCount)
+}
+
 func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
