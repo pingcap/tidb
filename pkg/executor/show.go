@@ -516,7 +516,7 @@ func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 }
 
 // fromTableNameInfo converts TableNameInfo to showInfo.
-func (e *ShowExec) fromTableNameInfo(tbInfo *model.TableNameInfo) *showInfo {
+func (*ShowExec) fromTableNameInfo(tbInfo *model.TableNameInfo) *showInfo {
 	return &showInfo{Name: tbInfo.Name}
 }
 
