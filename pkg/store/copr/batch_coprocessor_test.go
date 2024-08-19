@@ -16,7 +16,6 @@ package copr
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -330,23 +329,8 @@ func BenchmarkBalanceBatchCopTaskWithContinuity(b *testing.B) {
 	storeTasks := buildStoreTaskMap(storeCount)
 	regionInfos := buildRegionInfos(storeCount, regionCount, replicaNum)
 
-	benchCase := []struct {
-		shuffle bool
-	}{
-		{false},
-		{true},
-	}
-	for _, c := range benchCase {
-		b.Run(fmt.Sprint("Shuffle: ", c.shuffle), func(b *testing.B) {
-			b.StopTimer()
-			for i := 0; i < b.N; i++ {
-				if c.shuffle {
-					rand.Shuffle(len(regionInfos), func(i, j int) { regionInfos[i], regionInfos[j] = regionInfos[j], regionInfos[i] })
-				}
-				b.StartTimer()
-				_, _ = balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
-				b.StopTimer()
-			}
-		})
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
 	}
 }
