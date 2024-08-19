@@ -323,7 +323,7 @@ func (e *InfoSchemaTableConstraintsExtractor) HasConstraintSchema(name string) b
 	return !e.filter(_constraintSchema, name)
 }
 
-// HasConstraintSchema returns true if constraint schema is specified in predicates.
+// HasConstraint returns true if constraint is specified in predicates.
 func (e *InfoSchemaTableConstraintsExtractor) HasConstraint(name string) bool {
 	return !e.filter(_constraintName, name)
 }
