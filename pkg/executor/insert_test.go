@@ -598,11 +598,12 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set session sql_mode = ''")
-
 	tk.MustExec("create table t1 (id int primary key, col1 varchar(10) not null default '')")
 	tk.MustExec("create table t2 (id int primary key, col1 varchar(10))")
 	tk.MustExec("insert into t2 values (1, null)")
+	tk.MustExec("insert ignore into t1 values(5, null)")
+
+	tk.MustExec("set session sql_mode = ''")
 
 	err := tk.ExecToErr("insert into t1 values(1, null)")
 	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
@@ -613,5 +614,5 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	tk.MustExec("insert into t1 select * from t2")
 	tk.MustExec("insert into t1 values(2, null), (3, 3)")
 	tk.MustExec("update t1 set col1 = null where id = 3")
-	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|"))
+	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "5|"))
 }

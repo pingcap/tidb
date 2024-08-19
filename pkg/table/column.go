@@ -509,12 +509,9 @@ func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error 
 func (c *Column) HandleBadNull(
 	ec errctx.Context,
 	d *types.Datum,
-	rowCntInLoadData uint64,
-	isSingleInsert bool) error {
+	rowCntInLoadData uint64) error {
 	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
-		// For single-row INSERT statements, ignore non-strict mode
-		// See https://dev.mysql.com/doc/refman/5.7/en/constraint-invalid-data.html
-		if !isSingleInsert && ec.HandleError(err) == nil {
+		if ec.HandleError(err) == nil {
 			*d = GetZeroValue(c.ToInfo())
 			return nil
 		}

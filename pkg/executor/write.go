@@ -75,7 +75,7 @@ func updateRecord(
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0, false); err != nil {
+		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
 			return false, err
 		}
 	}
