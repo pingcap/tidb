@@ -294,17 +294,17 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		case *logicalop.LogicalPartitionUnionAll:
 			c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 		case *LogicalCTE:
-			// Visit seedPartLogicalPlan and recursivePartLogicalPlan first.
-			c.collectFromPlan(x.Cte.seedPartLogicalPlan)
-			if x.Cte.recursivePartLogicalPlan != nil {
-				c.collectFromPlan(x.Cte.recursivePartLogicalPlan)
+			// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
+			c.collectFromPlan(x.Cte.SeedPartLogicalPlan)
+			if x.Cte.RecursivePartLogicalPlan != nil {
+				c.collectFromPlan(x.Cte.RecursivePartLogicalPlan)
 			}
 			// Schema change from seedPlan/recursivePlan to self.
 			columns := x.Schema().Columns
-			seedColumns := x.Cte.seedPartLogicalPlan.Schema().Columns
+			seedColumns := x.Cte.SeedPartLogicalPlan.Schema().Columns
 			var recursiveColumns []*expression.Column
-			if x.Cte.recursivePartLogicalPlan != nil {
-				recursiveColumns = x.Cte.recursivePartLogicalPlan.Schema().Columns
+			if x.Cte.RecursivePartLogicalPlan != nil {
+				recursiveColumns = x.Cte.RecursivePartLogicalPlan.Schema().Columns
 			}
 			relatedCols := make([]*expression.Column, 0, 2)
 			for i, col := range columns {

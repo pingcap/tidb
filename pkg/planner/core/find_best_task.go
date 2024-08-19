@@ -2914,7 +2914,7 @@ func findBestTask4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty, cou
 		return base.InvalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
-	pcte := PhysicalCTE{SeedPlan: p.Cte.seedPartPhysicalPlan, RecurPlan: p.Cte.recursivePartPhysicalPlan, CTE: p.Cte, cteAsName: p.CteAsName, cteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
+	pcte := PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, cteAsName: p.CteAsName, cteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
 	pcte.SetSchema(p.Schema())
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
 		pcte.readerReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())

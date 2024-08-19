@@ -4208,14 +4208,14 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			if cte.cteClass == nil {
 				cte.cteClass = &CTEClass{
 					IsDistinct:               cte.isDistinct,
-					seedPartLogicalPlan:      cte.seedLP,
-					recursivePartLogicalPlan: cte.recurLP,
+					SeedPartLogicalPlan:      cte.seedLP,
+					RecursivePartLogicalPlan: cte.recurLP,
 					IDForStorage:             cte.storageID,
-					optFlag:                  cte.optFlag,
+					OptFlag:                  cte.optFlag,
 					HasLimit:                 hasLimit,
 					LimitBeg:                 limitBeg,
 					LimitEnd:                 limitEnd,
-					pushDownPredicates:       make([]expression.Expression, 0),
+					PushDownPredicates:       make([]expression.Expression, 0),
 					ColumnMap:                make(map[string]*expression.Column),
 				}
 			}
@@ -5121,9 +5121,9 @@ func setIsInApplyForCTE(p base.LogicalPlan, apSchema *expression.Schema) {
 		if len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(p, apSchema)) > 0 {
 			x.Cte.IsInApply = true
 		}
-		setIsInApplyForCTE(x.Cte.seedPartLogicalPlan, apSchema)
-		if x.Cte.recursivePartLogicalPlan != nil {
-			setIsInApplyForCTE(x.Cte.recursivePartLogicalPlan, apSchema)
+		setIsInApplyForCTE(x.Cte.SeedPartLogicalPlan, apSchema)
+		if x.Cte.RecursivePartLogicalPlan != nil {
+			setIsInApplyForCTE(x.Cte.RecursivePartLogicalPlan, apSchema)
 		}
 	default:
 		for _, child := range p.Children() {

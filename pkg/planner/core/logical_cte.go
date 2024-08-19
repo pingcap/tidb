@@ -54,24 +54,25 @@ func (p LogicalCTE) Init(ctx base.PlanContext, offset int) *LogicalCTE {
 type CTEClass struct {
 	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
 	IsDistinct bool
-	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
-	seedPartLogicalPlan      base.LogicalPlan
-	recursivePartLogicalPlan base.LogicalPlan
-	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
-	seedPartPhysicalPlan      base.PhysicalPlan
-	recursivePartPhysicalPlan base.PhysicalPlan
+	// SeedPartLogicalPlan and RecursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
+	SeedPartLogicalPlan base.LogicalPlan
+	// RecursivePartLogicalPlan is nil if this CTE is not a recursive CTE.
+	RecursivePartLogicalPlan base.LogicalPlan
+	// SeedPartPhysicalPlan and RecursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
+	SeedPartPhysicalPlan      base.PhysicalPlan
+	RecursivePartPhysicalPlan base.PhysicalPlan
 	// storageID for this CTE.
 	IDForStorage int
-	// optFlag is the optFlag for the whole CTE.
-	optFlag   uint64
+	// OptFlag is the OptFlag for the whole CTE.
+	OptFlag   uint64
 	HasLimit  bool
 	LimitBeg  uint64
 	LimitEnd  uint64
 	IsInApply bool
-	// pushDownPredicates may be push-downed by different references.
-	pushDownPredicates []expression.Expression
+	// PushDownPredicates may be push-downed by different references.
+	PushDownPredicates []expression.Expression
 	ColumnMap          map[string]*expression.Column
-	isOuterMostCTE     bool
+	IsOuterMostCTE     bool
 }
 
 const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
@@ -83,14 +84,14 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyCTEClassSize
-	if cc.seedPartPhysicalPlan != nil {
-		sum += cc.seedPartPhysicalPlan.MemoryUsage()
+	if cc.SeedPartPhysicalPlan != nil {
+		sum += cc.SeedPartPhysicalPlan.MemoryUsage()
 	}
-	if cc.recursivePartPhysicalPlan != nil {
-		sum += cc.recursivePartPhysicalPlan.MemoryUsage()
+	if cc.RecursivePartPhysicalPlan != nil {
+		sum += cc.RecursivePartPhysicalPlan.MemoryUsage()
 	}
 
-	for _, expr := range cc.pushDownPredicates {
+	for _, expr := range cc.PushDownPredicates {
 		sum += expr.MemoryUsage()
 	}
 	for key, val := range cc.ColumnMap {
@@ -105,11 +106,11 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	if p.Cte.recursivePartLogicalPlan != nil {
+	if p.Cte.RecursivePartLogicalPlan != nil {
 		// Doesn't support recursive CTE yet.
 		return predicates, p.Self()
 	}
-	if !p.Cte.isOuterMostCTE {
+	if !p.Cte.IsOuterMostCTE {
 		return predicates, p.Self()
 	}
 	pushedPredicates := make([]expression.Expression, len(predicates))
@@ -126,7 +127,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 		}
 	}
 	if len(pushedPredicates) == 0 {
-		p.Cte.pushDownPredicates = append(p.Cte.pushDownPredicates, expression.NewOne())
+		p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.NewOne())
 		return predicates, p.Self()
 	}
 	newPred := make([]expression.Expression, 0, len(predicates))
@@ -134,7 +135,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 		newPred = append(newPred, pushedPredicates[i].Clone())
 		ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
 	}
-	p.Cte.pushDownPredicates = append(p.Cte.pushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
+	p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
 	return predicates, p.Self()
 }
 
@@ -180,24 +181,24 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 
 	var err error
-	if p.Cte.seedPartPhysicalPlan == nil {
+	if p.Cte.SeedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
-		if len(p.Cte.pushDownPredicates) > 0 {
-			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.Cte.pushDownPredicates...)
-			newSel := logicalop.LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.seedPartLogicalPlan.QueryBlockOffset())
-			newSel.SetChildren(p.Cte.seedPartLogicalPlan)
-			p.Cte.seedPartLogicalPlan = newSel
-			p.Cte.optFlag |= flagPredicatePushDown
+		if len(p.Cte.PushDownPredicates) > 0 {
+			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.Cte.PushDownPredicates...)
+			newSel := logicalop.LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
+			newSel.SetChildren(p.Cte.SeedPartLogicalPlan)
+			p.Cte.SeedPartLogicalPlan = newSel
+			p.Cte.OptFlag |= flagPredicatePushDown
 		}
-		p.Cte.seedPartLogicalPlan, p.Cte.seedPartPhysicalPlan, _, err = doOptimize(context.TODO(), p.SCtx(), p.Cte.optFlag, p.Cte.seedPartLogicalPlan)
+		p.Cte.SeedPartLogicalPlan, p.Cte.SeedPartPhysicalPlan, _, err = doOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.SeedPartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if p.OnlyUsedAsStorage {
-		p.SetChildren(p.Cte.seedPartLogicalPlan)
+		p.SetChildren(p.Cte.SeedPartLogicalPlan)
 	}
-	resStat := p.Cte.seedPartPhysicalPlan.StatsInfo()
+	resStat := p.Cte.SeedPartPhysicalPlan.StatsInfo()
 	// Changing the pointer so that SeedStat in LogicalCTETable can get the new stat.
 	*p.SeedStat = *resStat
 	p.SetStats(&property.StatsInfo{
@@ -205,18 +206,18 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
 	for i, col := range selfSchema.Columns {
-		p.StatsInfo().ColNDVs[col.UniqueID] += resStat.ColNDVs[p.Cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
+		p.StatsInfo().ColNDVs[col.UniqueID] += resStat.ColNDVs[p.Cte.SeedPartLogicalPlan.Schema().Columns[i].UniqueID]
 	}
-	if p.Cte.recursivePartLogicalPlan != nil {
-		if p.Cte.recursivePartPhysicalPlan == nil {
-			p.Cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.SCtx(), p.Cte.optFlag, p.Cte.recursivePartLogicalPlan)
+	if p.Cte.RecursivePartLogicalPlan != nil {
+		if p.Cte.RecursivePartPhysicalPlan == nil {
+			p.Cte.RecursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
 			if err != nil {
 				return nil, err
 			}
 		}
-		recurStat := p.Cte.recursivePartLogicalPlan.StatsInfo()
+		recurStat := p.Cte.RecursivePartLogicalPlan.StatsInfo()
 		for i, col := range selfSchema.Columns {
-			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.Cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
+			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.Cte.RecursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
 		if p.Cte.IsDistinct {
 			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(p.Schema().Columns, p.Schema(), p.StatsInfo())
@@ -238,9 +239,9 @@ func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]ba
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
 func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(p.Cte.seedPartLogicalPlan)
-	if p.Cte.recursivePartLogicalPlan != nil {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4LogicalPlan(p.Cte.recursivePartLogicalPlan)...)
+	corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(p.Cte.SeedPartLogicalPlan)
+	if p.Cte.RecursivePartLogicalPlan != nil {
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4LogicalPlan(p.Cte.RecursivePartLogicalPlan)...)
 	}
 	return corCols
 }
