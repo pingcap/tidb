@@ -17,27 +17,32 @@
 
 set -eu
 
-cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cur=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . $UTILS_DIR/run_services
 
+echo "will start pd2"
 pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}2" \
   --peer-urls "https://${PD_PEER_ADDR}2" \
   --log-file "$TEST_DIR/pd2.log" \
   --data-dir "$TEST_DIR/pd2" \
   --name pd2 \
-  --config $PD_CONFIG &
+  --config $PD_CONFIG >"$TEST_DIR/pd2.stdout" 2>"$TEST_DIR/pd2.stderr" &
 
 # strange that new PD can't join too quickly
-sleep 10
+sleep 30
 
+echo "will start pd3"
 pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}3" \
   --peer-urls "https://${PD_PEER_ADDR}3" \
   --log-file "$TEST_DIR/pd3.log" \
   --data-dir "$TEST_DIR/pd3" \
   --name pd3 \
-  --config $PD_CONFIG &
+  --config $PD_CONFIG >"$TEST_DIR/pd3.stdout" 2>"$TEST_DIR/pd3.stderr" &
+
+# strange that new PD can't join too quickly
+sleep 30
 
 # restart TiDB to let TiDB load new PD nodes
 killall tidb-server
@@ -52,6 +57,8 @@ lightning_pid=$!
 sleep 45
 kill $(cat $TEST_DIR/pd_pid.txt)
 
+# wait new leader switch
+sleep 120
 # Check that everything is correctly imported
 wait $lightning_pid
 run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
