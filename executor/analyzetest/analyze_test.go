@@ -3270,3 +3270,12 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
 	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
 }
+
+func TestIssue55438(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 NUMERIC , c1 BIGINT UNSIGNED  AS ((CASE 0 WHEN false THEN 1358571571 ELSE TRIM(c0) END )));")
+	tk.MustExec("CREATE INDEX i0 ON t0(c1);")
+	tk.MustExec("analyze table t0")
+}
