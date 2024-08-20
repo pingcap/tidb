@@ -495,7 +495,7 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 		case model.ActionAlterTablePartitioning:
 			pInfo := jobW.Args[1].(*model.PartitionInfo)
 			// A new table ID would be needed for
-			// the global index, which cannot be the same as the current table id,
+			// the global table, which cannot be the same as the current table id,
 			// since this table id will be removed in the final state when removing
 			// all the data with this table id.
 			count += 1 + len(pInfo.Definitions)
