@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -509,10 +508,6 @@ type tableScanWorker struct {
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
-	defer tidbutil.Recover(metrics.LblAddIndex, "handleTableScanTaskWithRecover", func() {
-		w.ctx.onError(dbterror.ErrReorgPanic)
-	}, false)
-
 	failpoint.Inject("injectPanicForTableScan", func() {
 		panic("mock panic")
 	})
@@ -736,9 +731,6 @@ type indexIngestExternalWorker struct {
 }
 
 func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
-	defer tidbutil.Recover(metrics.LblAddIndex, "indexIngestExternalWorkerRecover", func() {
-		w.ctx.onError(dbterror.ErrReorgPanic)
-	}, false)
 	defer func() {
 		if ck.Chunk != nil {
 			w.srcChunkPool <- ck.Chunk
@@ -761,9 +753,6 @@ type indexIngestLocalWorker struct {
 }
 
 func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
-	defer tidbutil.Recover(metrics.LblAddIndex, "indexIngestLocalWorkerRecover", func() {
-		w.ctx.onError(dbterror.ErrReorgPanic)
-	}, false)
 	defer func() {
 		if ck.Chunk != nil {
 			w.srcChunkPool <- ck.Chunk
