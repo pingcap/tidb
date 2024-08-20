@@ -84,6 +84,7 @@ go_library(
         "//pkg/util/globalconn",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/memoryusagealarm",
         "//pkg/util/printer",
