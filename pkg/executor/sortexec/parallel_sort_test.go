@@ -178,14 +178,18 @@ func TestIssue55344(t *testing.T) {
 	tk.MustExec(insertSql)
 	sort.Ints(insertedValues)
 
-	result := tk.MustQuery("select c from t1 order by c, -646041453;")
-
-	sort.Ints(insertedValues)
 	expectValue := fmt.Sprintf("%d", insertedValues[0])
 	for i := 1; i < valueNum; i++ {
 		expectValue = fmt.Sprintf("%s\n%d", expectValue, insertedValues[i])
 	}
 
+	result := tk.MustQuery("select c from t1 order by c, -646041453;")
+	require.Equal(t, expectValue, result.String())
+	result = tk.MustQuery("select c from t1 order by -646041453, c;")
+	require.Equal(t, expectValue, result.String())
+	result = tk.MustQuery("select c from t1 order by c, -646041453, c+1;")
+	require.Equal(t, expectValue, result.String())
+	result = tk.MustQuery("select c from t1 order by c+1, -646041453, c;")
 	require.Equal(t, expectValue, result.String())
 
 	tk.MustExec("delete from mysql.opt_rule_blacklist where name='column_prune' or name='predicate_push_down';")
