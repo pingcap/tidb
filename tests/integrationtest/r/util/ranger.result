@@ -195,12 +195,12 @@ select * from t where a = 3;
 a	b
 explain format='brief' select * from t where a < 1;
 id	estRows	task	access object	operator info
-PartitionUnion	1.00	root		
+PartitionUnion	2.00	root		
 ├─TableReader	1.00	root		data:Selection
 │ └─Selection	1.00	cop[tikv]		lt(util__ranger.t.a, 1)
 │   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	0.00	root		data:Selection
-  └─Selection	0.00	cop[tikv]		lt(util__ranger.t.a, 1)
+└─TableReader	1.00	root		data:Selection
+  └─Selection	1.00	cop[tikv]		lt(util__ranger.t.a, 1)
     └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a < 1;
 a	b
@@ -227,9 +227,9 @@ select * from t where a < -1;
 a	b
 explain format='brief' select * from t where a > 0;
 id	estRows	task	access object	operator info
-PartitionUnion	3.00	root		
-├─TableReader	0.00	root		data:Selection
-│ └─Selection	0.00	cop[tikv]		gt(util__ranger.t.a, 0)
+PartitionUnion	4.00	root		
+├─TableReader	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		gt(util__ranger.t.a, 0)
 │   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
 └─TableReader	3.00	root		data:Selection
   └─Selection	3.00	cop[tikv]		gt(util__ranger.t.a, 0)
@@ -256,12 +256,12 @@ a	b
 	3
 explain format='brief' select * from t where a > 3;
 id	estRows	task	access object	operator info
-PartitionUnion	0.00	root		
-├─TableReader	0.00	root		data:Selection
-│ └─Selection	0.00	cop[tikv]		gt(util__ranger.t.a, 3)
+PartitionUnion	2.00	root		
+├─TableReader	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		gt(util__ranger.t.a, 3)
 │   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	0.00	root		data:Selection
-  └─Selection	0.00	cop[tikv]		gt(util__ranger.t.a, 3)
+└─TableReader	1.00	root		data:Selection
+  └─Selection	1.00	cop[tikv]		gt(util__ranger.t.a, 3)
     └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a > 3;
 a	b
