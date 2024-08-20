@@ -825,7 +825,7 @@ func getSchemaName(is infoschema.InfoSchema, id int64) string {
 
 func getTableName(is infoschema.InfoSchema, id int64) string {
 	var tableName string
-	table, ok := is.TableByID(id)
+	table, ok := is.TableByID(context.Background(), id)
 	if ok {
 		tableName = table.Meta().Name.O
 		return tableName

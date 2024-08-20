@@ -280,7 +280,7 @@ func TestCheckPlanClone(t *testing.T) {
 	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *core.PhysicalLock.basePhysicalPlan.Plan.ctx(*mock.Context)")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *core.PhysicalLock.BasePhysicalPlan.Plan.ctx(*mock.Context)")
 
 	// test tag
 	type S struct {

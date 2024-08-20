@@ -24,13 +24,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // FKCheck indicates the foreign key constraint checker.
 type FKCheck struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 	FK         *model.FKInfo
 	ReferredFK *model.ReferredFKInfo
 	Tbl        table.Table
@@ -46,7 +47,7 @@ type FKCheck struct {
 
 // FKCascade indicates the foreign key constraint cascade behaviour.
 type FKCascade struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 	Tp         FKCascadeType
 	ReferredFK *model.ReferredFKInfo
 	ChildTable table.Table

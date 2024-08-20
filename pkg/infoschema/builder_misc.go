@@ -118,7 +118,7 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 		rs := b.ListTablesWithSpecialAttribute(ForeignKeysAttribute)
 		for _, db := range rs {
 			for _, tbl := range db.TableInfos {
-				info.addReferredForeignKeys(model.NewCIStr(db.DBName), tbl)
+				info.addReferredForeignKeys(db.DBName, tbl)
 			}
 		}
 		return

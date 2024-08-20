@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 // this file is used for passing function pointer at init(){} to avoid some import cycles.
@@ -72,19 +73,9 @@ var FindBestTask func(p base.LogicalPlan, prop *property.PhysicalProperty, planC
 // todo: (7) arenatlx, remove this util func pointer when logical operators are all moved from core to logicalOp.
 var CanPushToCopImpl func(p base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool
 
-// GetStreamAggs will be called by baseLogicalPlan in logicalOp pkg. The logic inside covers concrete physical
-// operators.
-// todo: (8) arenatlx, move this util func pointer to physicalOp when physical operators are all moved.
-var GetStreamAggs func(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan
-
-// GetHashAggs will be called by baseLogicalPlan in logicalOp pkg. The logic inside covers concrete physical
-// operators.
-// todo: (9) arenatlx, move this util func pointer to physicalOp when physical operators are all moved.
-var GetHashAggs func(la base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan
-
 // PruneByItems will be called by baseLogicalPlan in logicalOp pkg. The logic current exists for rule logic
 // inside core.
-// todo: (10) arenatlx, when rule is moved out of core, we should direct ref the rule.Func instead of this
+// todo: (8) arenatlx, when rule is moved out of core, we should direct ref the rule.Func instead of this
 // util func pointer.
 var PruneByItems func(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (
 	byItems []*util.ByItems, parentUsedCols []*expression.Column)
@@ -145,3 +136,48 @@ var ExhaustPhysicalPlans4LogicalLock func(lp base.LogicalPlan, prop *property.Ph
 // ExhaustPhysicalPlans4LogicalUnionScan will be called by LogicalUnionScan in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalUnionScan func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalSelection will be called by LogicalSelection in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalSelection func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalJoin will be called by LogicalJoin in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalAggregation will be called by LogicalAggregation in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalAggregation func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalApply will be called by LogicalApply in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalApply func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalPartitionUnionAll will be called by LogicalPartitionUnionAll in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalPartitionUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalUnionAll will be called by LogicalUnionAll in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalExpand will be called by LogicalExpand in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalExpand func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// *************************************** physical op related *******************************************
+
+// GetEstimatedProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.
+var GetEstimatedProbeCntFromProbeParents func(probeParents []base.PhysicalPlan) float64
+
+// GetActualProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.
+var GetActualProbeCntFromProbeParents func(pps []base.PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64
+
+// ****************************************** task related ***********************************************
+
+// AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
+var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task
+
+// WindowIsTopN is used in DeriveTopNFromWindow rule.
+// todo: @arenatlx: remove it after logical_datasource is migrated to logicalop.
+var WindowIsTopN func(p base.LogicalPlan) (bool, uint64)

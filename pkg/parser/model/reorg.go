@@ -34,6 +34,26 @@ type DDLReorgMeta struct {
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`
+	// These two variables are set when corresponding session variables are set explicitly. When they are set,
+	// user cannot change it by setting the global one. Otherwise, they can be adjusted dynamically through global var.
+	Concurrency int `json:"concurrency"`
+	BatchSize   int `json:"batch_size"`
+}
+
+// GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta or returns the default value.
+func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
+	if dm == nil || dm.Concurrency == 0 {
+		return defaultVal
+	}
+	return dm.Concurrency
+}
+
+// GetBatchSizeOrDefault gets the batch size from DDLReorgMeta or returns the default value.
+func (dm *DDLReorgMeta) GetBatchSizeOrDefault(defaultVal int) int {
+	if dm == nil || dm.BatchSize == 0 {
+		return defaultVal
+	}
+	return dm.BatchSize
 }
 
 const (

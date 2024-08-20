@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncer_test
+package schemaver_test
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -51,10 +51,10 @@ func TestSyncerSimple(t *testing.T) {
 	}
 	integration.BeforeTestExternal(t)
 
-	origin := syncer.CheckVersFirstWaitTime
-	syncer.CheckVersFirstWaitTime = 0
+	origin := schemaver.CheckVersFirstWaitTime
+	schemaver.CheckVersFirstWaitTime = 0
 	defer func() {
-		syncer.CheckVersFirstWaitTime = origin
+		schemaver.CheckVersFirstWaitTime = origin
 	}()
 
 	store, err := mockstore.NewMockStore()
@@ -91,7 +91,7 @@ func TestSyncerSimple(t *testing.T) {
 	defer d.SchemaSyncer().Close()
 
 	key := util2.DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
-	checkRespKV(t, 1, key, syncer.InitialVersion, resp.Kvs...)
+	checkRespKV(t, 1, key, schemaver.InitialVersion, resp.Kvs...)
 
 	ic2 := infoschema.NewCache(nil, 2)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)

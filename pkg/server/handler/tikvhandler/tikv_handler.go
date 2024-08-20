@@ -711,7 +711,7 @@ func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	uniqueIDMap := make(map[int64]struct{})
 	handleJobAndTableInfo := func(_ *model.Job, tblInfo *model.TableInfo) (bool, error) {
 		// Avoid duplicate table ID info.
-		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
+		if _, ok := currentSchema.TableByID(context.Background(), tblInfo.ID); ok {
 			return false, nil
 		}
 		if _, ok := uniqueIDMap[tblInfo.ID]; ok {
@@ -1067,7 +1067,7 @@ func getTableByIDStr(schema infoschema.InfoSchema, tableID string) (*model.Table
 	if tid < 0 {
 		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
 	}
-	if data, ok := schema.TableByID(int64(tid)); ok {
+	if data, ok := schema.TableByID(context.Background(), int64(tid)); ok {
 		return data.Meta(), nil
 	}
 	// The tid maybe a partition ID of the partition-table.
@@ -1860,7 +1860,7 @@ func (h DBTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo := DBTableInfo{
 		SchemaVersion: schema.SchemaMetaVersion(),
 	}
-	tbl, ok := schema.TableByID(int64(physicalID))
+	tbl, ok := schema.TableByID(context.Background(), int64(physicalID))
 	if ok {
 		dbTblInfo.TableInfo = tbl.Meta()
 		dbInfo, ok := infoschema.SchemaByTable(schema, dbTblInfo.TableInfo)

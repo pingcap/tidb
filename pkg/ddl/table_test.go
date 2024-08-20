@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -221,11 +220,12 @@ func TestTable(t *testing.T) {
 		[]any{newTblInfo}, ctx, de, store)
 
 	ctx = testkit.NewTestKit(t, store).Session()
-	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := newTxn(ctx)
+	require.NoError(t, err)
 	count := 2000
 	tbl := testGetTable(t, domain, tblInfo.ID)
 	for i := 1; i <= count; i++ {
-		_, err := tbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	require.NoError(t, ctx.CommitTxn(context.Background()))

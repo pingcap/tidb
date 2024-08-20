@@ -42,10 +42,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func (p *basePhysicalPlan) StatsCount() float64 {
-	return p.StatsInfo().RowCount
-}
-
 // RecursiveDeriveStats4Test is a exporter just for test.
 func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
 	return p.RecursiveDeriveStats(nil)
@@ -233,7 +229,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			path.IsSingleScan = true
 		} else {
 			ds.deriveIndexPathStats(path, ds.PushedDownConds, false)
-			path.IsSingleScan = ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.

@@ -31,7 +31,7 @@ import (
 func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableItemID, comment string) string {
 	var tblInfo *model.TableInfo
 	var prefix string
-	if tbl, ok := is.TableByID(tblColID.TableID); ok {
+	if tbl, ok := is.TableByID(context.Background(), tblColID.TableID); ok {
 		tblInfo = tbl.Meta()
 		prefix = tblInfo.Name.L + "."
 	} else {

@@ -77,7 +77,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-    shard_count = 33,
+    shard_count = 34,
     deps = [
         "//pkg/ddl",
         "//pkg/domain",

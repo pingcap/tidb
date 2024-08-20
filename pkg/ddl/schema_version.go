@@ -313,8 +313,8 @@ func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAn
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
-	schemaVersion, err := d.setSchemaVersion(job, d.store)
+func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
+	schemaVersion, err := jobCtx.setSchemaVersion(job)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -372,7 +372,7 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 	})
 
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
+	err := d.schemaVerSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))

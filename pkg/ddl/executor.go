@@ -417,7 +417,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 	cnt := uint32(0)
 	dbs := is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
 	for _, db := range dbs {
-		if util.IsMemOrSysDB(db.DBName) {
+		if util.IsMemOrSysDB(db.DBName.L) {
 			continue
 		}
 		for _, tbl := range db.TableInfos {
@@ -940,6 +940,47 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 	return nil
 }
 
+// checkGlobalIndex check if the index is allowed to have global index
+func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+	pi := tblInfo.GetPartitionInfo()
+	isPartitioned := pi != nil && pi.Type != model.PartitionTypeNone
+	if indexInfo.Global {
+		if !isPartitioned {
+			// Makes no sense with LOCAL/GLOBAL index for non-partitioned tables, since we don't support
+			// partitioning an index differently from the table partitioning.
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
+		}
+		if !ctx.GetSessionVars().EnableGlobalIndex {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption when tidb_enable_global_index is disabled")
+		}
+		// TODO: remove limitation
+		if !indexInfo.Unique {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption on non-unique index")
+		}
+		// TODO: remove limitation
+		// check that not all partitioned columns are included.
+		inAllPartitionColumns, err := checkPartitionKeysConstraint(pi, indexInfo.Columns, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if inAllPartitionColumns {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index including all columns in the partitioning expression")
+		}
+	}
+	return nil
+}
+
+// checkGlobalIndexes check if global index is supported.
+func checkGlobalIndexes(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	for _, indexInfo := range tblInfo.Indices {
+		err := checkGlobalIndex(ctx, tblInfo, indexInfo)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *executor) assignPartitionIDs(defs []model.PartitionDefinition) error {
 	genIDs, err := e.genGlobalIDs(len(defs))
 	if err != nil {
@@ -1048,7 +1089,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(ctx, tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -2428,55 +2469,13 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		partNames = append(partNames, piOld.Definitions[0].Name.L)
 	}
 	newMeta := meta.Clone()
+
 	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
 	if err != nil {
 		return err
 	}
-	newPartInfo := newMeta.Partition
 
-	for _, index := range newMeta.Indices {
-		if index.Unique {
-			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
-			if err != nil {
-				return err
-			}
-			if !ck {
-				indexTp := ""
-				if !ctx.GetSessionVars().EnableGlobalIndex {
-					if index.Primary {
-						indexTp = "PRIMARY KEY"
-					} else {
-						indexTp = "UNIQUE INDEX"
-					}
-				} else if t.Meta().IsCommonHandle {
-					indexTp = "CLUSTERED INDEX"
-				}
-				if indexTp != "" {
-					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
-				}
-				// Also mark the unique index as global index
-				index.Global = true
-			}
-		}
-	}
-	if newMeta.PKIsHandle {
-		// This case is covers when the Handle is the PK (only ints), since it would not
-		// have an entry in the tblInfo.Indices
-		indexCols := []*model.IndexColumn{{
-			Name:   newMeta.GetPkName(),
-			Length: types.UnspecifiedLength,
-		}}
-		ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
-		if err != nil {
-			return err
-		}
-		if !ck {
-			if !ctx.GetSessionVars().EnableGlobalIndex {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-			}
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
-		}
-	}
+	newPartInfo := newMeta.Partition
 
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
@@ -3887,7 +3886,7 @@ func (e *executor) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Id
 // UpdateTableReplicaInfo updates the table flash replica infos.
 func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	is := e.infoCache.GetLatest()
-	tb, ok := is.TableByID(physicalID)
+	tb, ok := is.TableByID(e.ctx, physicalID)
 	if !ok {
 		tb, _, _ = is.FindTableByPartitionID(physicalID)
 		if tb == nil {
@@ -4303,7 +4302,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		return nil
 	}
 
-	if tbl, ok := is.TableByID(tableID); ok {
+	if tbl, ok := is.TableByID(e.ctx, tableID); ok {
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
@@ -4351,7 +4350,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			return err
 		}
 
-		if t, ok := is.TableByID(tableID); ok {
+		if t, ok := is.TableByID(e.ctx, tableID); ok {
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
 			}
@@ -4543,7 +4542,6 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		return err
 	}
 
-	global := false
 	if tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
 		if err != nil {
@@ -4554,7 +4552,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 			}
 			// index columns does not contain all partition columns, must set global
-			global = true
+			if indexOption == nil || !indexOption.Global {
+				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs("PRIMARY")
+			}
 		}
 	}
 
@@ -4568,6 +4568,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
+	// global is set to  'false' is just there to be backwards compatible,
+	// to avoid unmarshal issues, it is now part of indexOption.
+	global := false
 	job := &model.Job{
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
@@ -4688,7 +4691,19 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	global := false
+	globalIndex := false
+	if indexOption != nil && indexOption.Global {
+		globalIndex = true
+	}
+	if globalIndex {
+		if tblInfo.GetPartitionInfo() == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
+		}
+		if !unique {
+			// TODO: remove this limitation
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
+		}
+	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
 		if err != nil {
@@ -4699,7 +4714,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 			// index columns does not contain all partition columns, must set global
-			global = true
+			if !globalIndex {
+				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
+			}
+		} else if globalIndex {
+			// TODO: remove this restriction
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4711,7 +4731,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == model.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique, global,
+		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
@@ -4720,6 +4740,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
+	// global is set to  'false' is just there to be backwards compatible,
+	// to avoid unmarshal issues, it is now part of indexOption.
+	global := false
 	job := &model.Job{
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
@@ -4755,6 +4778,12 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
 	reorgMeta.TargetScope = variable.ServiceScope.Load()
+	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
+		reorgMeta.Concurrency = variable.TidbOptInt(sv, 0)
+	}
+	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
+		reorgMeta.BatchSize = variable.TidbOptInt(sv, 0)
+	}
 
 	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
 		return nil, dbterror.ErrUnsupportedDistTask
@@ -4770,6 +4799,17 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 			LastReorgMetaFastReorgDisabled = true
 		})
 	}
+
+	logutil.DDLLogger().Info("initialize reorg meta",
+		zap.String("jobSchema", job.SchemaName),
+		zap.String("jobTable", job.TableName),
+		zap.Stringer("jobType", job.Type),
+		zap.Bool("enableDistTask", reorgMeta.IsDistReorg),
+		zap.Bool("enableFastReorg", reorgMeta.IsFastReorg),
+		zap.String("targetScope", reorgMeta.TargetScope),
+		zap.Int("concurrency", reorgMeta.Concurrency),
+		zap.Int("batchSize", reorgMeta.BatchSize),
+	)
 	return reorgMeta, nil
 }
 
@@ -5291,7 +5331,7 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 		if !ok {
 			continue
 		}
-		tbl, ok := is.TableByID(t.TableID)
+		tbl, ok := is.TableByID(e.ctx, t.TableID)
 		if !ok {
 			continue
 		}

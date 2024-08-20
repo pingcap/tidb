@@ -32,46 +32,54 @@ type IndexIterator interface {
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
 	commonMutateOpt
-	IgnoreAssertion bool
-	FromBackFill    bool
+	ignoreAssertion bool
+	fromBackFill    bool
 }
 
 // NewCreateIdxOpt creates a new CreateIdxOpt.
 func NewCreateIdxOpt(opts ...CreateIdxOption) *CreateIdxOpt {
 	opt := &CreateIdxOpt{}
 	for _, o := range opts {
-		o.ApplyCreateIdxOpt(opt)
+		o.applyCreateIdxOpt(opt)
 	}
 	return opt
 }
 
-// CreateIdxOption is defined for the Create() method of the Index interface.
-type CreateIdxOption interface {
-	ApplyCreateIdxOpt(*CreateIdxOpt)
+// IgnoreAssertion indicates whether to ignore assertion.
+func (opt *CreateIdxOpt) IgnoreAssertion() bool {
+	return opt.ignoreAssertion
 }
 
-// CreateIdxOptFunc is defined for the Create() method of Index interface.
-// Here is a blog post about how to use this pattern:
-// https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
-type CreateIdxOptFunc func(*CreateIdxOpt)
+// FromBackFill indicates whether the index is created by DDL backfill worker.
+func (opt *CreateIdxOpt) FromBackFill() bool {
+	return opt.fromBackFill
+}
 
-// ApplyCreateIdxOpt implements the CreateIdxOption interface.
-func (f CreateIdxOptFunc) ApplyCreateIdxOpt(opt *CreateIdxOpt) {
-	f(opt)
+// CreateIdxOption is defined for the Create() method of the Index interface.
+type CreateIdxOption interface {
+	applyCreateIdxOpt(*CreateIdxOpt)
+}
+
+type withIgnoreAssertion struct{}
+
+func (withIgnoreAssertion) applyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.ignoreAssertion = true
 }
 
 // WithIgnoreAssertion uses to indicate the process can ignore assertion.
-var WithIgnoreAssertion CreateIdxOptFunc = func(opt *CreateIdxOpt) {
-	opt.IgnoreAssertion = true
+var WithIgnoreAssertion CreateIdxOption = withIgnoreAssertion{}
+
+type fromBackfill struct{}
+
+func (fromBackfill) applyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.fromBackFill = true
 }
 
 // FromBackfill indicates that the index is created by DDL backfill worker.
 // In the backfill-merge process, the index KVs from DML will be redirected to
 // the temp index. On the other hand, the index KVs from DDL backfill worker should
 // never be redirected to the temp index.
-var FromBackfill CreateIdxOptFunc = func(opt *CreateIdxOpt) {
-	opt.FromBackFill = true
-}
+var FromBackfill CreateIdxOption = fromBackfill{}
 
 // Index is the interface for index data on KV store.
 type Index interface {

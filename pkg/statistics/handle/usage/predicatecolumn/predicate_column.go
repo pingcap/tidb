@@ -15,6 +15,7 @@
 package predicatecolumn
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -109,7 +110,7 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 // cleanupDroppedColumnStatsUsage deletes the column stats usage information whose column is dropped.
 func cleanupDroppedColumnStatsUsage(sctx sessionctx.Context, tableID int64) error {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(tableID)
+	table, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		// Usually, it should not happen.
 		// But if it happens, we can safely do nothing.

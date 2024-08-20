@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand"
 	"net"
@@ -70,7 +71,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -462,16 +462,10 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
 	}
-	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
-	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
-	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
-	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
-	cachedTables := make(map[int64]any, len(tc.CachedTables))
-	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
-		pessimisticLockCache: pessimisticLockCache,
-		CachedTables:         cachedTables,
+		pessimisticLockCache: maps.Clone(tc.pessimisticLockCache),
+		CachedTables:         maps.Clone(tc.CachedTables),
 		InsertTTLRowsCount:   tc.InsertTTLRowsCount,
 	}
 }
@@ -2765,6 +2759,8 @@ func (s *SessionVars) GetDivPrecisionIncrement() int {
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
 	if tblInfo.TempTableType != model.TempTableNone {
+		s.TxnCtxMu.Lock()
+		defer s.TxnCtxMu.Unlock()
 		if s.TxnCtx.TemporaryTables == nil {
 			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
@@ -2876,12 +2872,10 @@ type TableDelta struct {
 
 // Clone returns a cloned TableDelta.
 func (td TableDelta) Clone() TableDelta {
-	colSize := make(map[int64]int64, len(td.ColSize))
-	maps.Copy(colSize, td.ColSize)
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
-		ColSize:  colSize,
+		ColSize:  maps.Clone(td.ColSize),
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
 	}
@@ -3939,8 +3933,17 @@ func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
 }
 
 // UseLowResolutionTSO indicates whether low resolution tso could be used for execution.
+// After `tidb_low_resolution_tso` supports the global scope, this variable is expected to only affect
+// user sessions and not impact internal background sessions and tasks.
+// Currently, one of the problems is that the determination of whether a session is an internal task
+// session within TiDB is quite inconsistent and chaotic, posing risks. Some internal sessions rely on
+// upper-level users correctly using `ExecuteInternal` or `ExecuteRestrictedSQL` for assurance.
+// Additionally, the BR code also contains some session-related encapsulation and usage.
+//
+// TODO: There needs to be a more comprehensive and unified entry point to ensure that all internal
+// sessions and global user sessions/variables are isolated and do not affect each other.
 func (s *SessionVars) UseLowResolutionTSO() bool {
-	return !s.InRestrictedSQL && s.lowResolutionTSO
+	return !s.InRestrictedSQL && s.lowResolutionTSO && s.ConnectionID > 0
 }
 
 // PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current

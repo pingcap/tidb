@@ -317,7 +317,7 @@ var defaultSysVars = []*SysVar{
 		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBLowResolutionTSO, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.lowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
@@ -758,11 +758,11 @@ var defaultSysVars = []*SysVar{
 		SetDDLFlashbackConcurrency(int32(tidbOptPositiveInt32(val, DefTiDBDDLFlashbackConcurrency)))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 		return nil
 	}},
@@ -823,7 +823,11 @@ var defaultSysVars = []*SysVar{
 		on := TiDBOptOn(val)
 		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
 		if on && s.StmtCtx.StmtType == "Set" {
-			err := s.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBSuperReadOnly, "ON")
+			err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), TiDBSuperReadOnly, "ON", false)
+			if err != nil {
+				return err
+			}
+			err = GetSysVar(TiDBSuperReadOnly).SetGlobal(context.Background(), s, "ON")
 			if err != nil {
 				return err
 			}
@@ -1344,28 +1348,34 @@ var defaultSysVars = []*SysVar{
 			EnableInstancePlanCache.Store(TiDBOptOn(val))
 			return nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheTargetMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheTargetMemSize)), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32,
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheTargetMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheTargetMemSize)), Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(InstancePlanCacheTargetMemSize.Load(), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v := TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize))
-			if v > InstancePlanCacheMaxMemSize.Load() {
+			v, str := parseByteSize(val)
+			if str == "" {
+				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize)))
+			}
+			if v > uint64(InstancePlanCacheMaxMemSize.Load()) {
 				return errors.New("tidb_instance_plan_cache_target_mem_size must be less than tidb_instance_plan_cache_max_mem_size")
 			}
-			InstancePlanCacheTargetMemSize.Store(v)
+			InstancePlanCacheTargetMemSize.Store(int64(v))
 			return nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheMaxMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheMaxMemSize)), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32,
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheMaxMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheMaxMemSize)), Type: TypeStr,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(InstancePlanCacheMaxMemSize.Load(), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v := TidbOptInt64(val, int64(DefTiDBInstancePlanCacheMaxMemSize))
-			if v < InstancePlanCacheTargetMemSize.Load() {
+			v, str := parseByteSize(val)
+			if str == "" {
+				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize)))
+			}
+			if v < uint64(InstancePlanCacheTargetMemSize.Load()) {
 				return errors.New("tidb_instance_plan_cache_max_mem_size must be greater than tidb_instance_plan_cache_target_mem_size")
 			}
-			InstancePlanCacheMaxMemSize.Store(v)
+			InstancePlanCacheMaxMemSize.Store(int64(v))
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,
@@ -1384,6 +1394,18 @@ var defaultSysVars = []*SysVar{
 			num, err := strconv.ParseInt(val, 10, 64)
 			if err == nil {
 				MaxAutoAnalyzeTime.Store(num)
+			}
+			return err
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeConcurrency, Value: strconv.Itoa(DefTiDBAutoAnalyzeConcurrency), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return string(AutoAnlayzeConcurrency.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseInt(val, 10, 64)
+			if err == nil {
+				AutoAnlayzeConcurrency.Store(int32(num))
 			}
 			return err
 		},
@@ -2622,11 +2644,17 @@ var defaultSysVars = []*SysVar{
 		s.OptimizerUseInvisibleIndexes = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzePartitionConcurrency, Value: strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
-		MinValue: 1, MaxValue: uint64(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota), SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession,
+		Name:     TiDBAnalyzePartitionConcurrency,
+		Value:    strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
+		Type:     TypeInt,
+		MinValue: 1,
+		MaxValue: 128,
+		SetSession: func(s *SessionVars, val string) error {
 			s.AnalyzePartitionConcurrency = int(TidbOptInt64(val, DefTiDBAnalyzePartitionConcurrency))
 			return nil
-		}},
+		},
+	},
 	{
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(DefTiDBMergePartitionStatsConcurrency, 10), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency,
 		SetSession: func(s *SessionVars, val string) error {

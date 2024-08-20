@@ -12,30 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
-	logicalop.BaseLogicalPlan
+	BaseLogicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
@@ -45,7 +48,7 @@ type LogicalSelection struct {
 
 // Init initializes LogicalSelection.
 func (p LogicalSelection) Init(ctx base.PlanContext, qbOffset int) *LogicalSelection {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
 	return &p
 }
 
@@ -93,8 +96,8 @@ func (p *LogicalSelection) HashCode() []byte {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	predicates = DeleteTrueExprs(p, predicates)
-	p.Conditions = DeleteTrueExprs(p, p.Conditions)
+	predicates = constraint.DeleteTrueExprs(p, predicates)
+	p.Conditions = constraint.DeleteTrueExprs(p, p.Conditions)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
@@ -108,7 +111,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
-			appendTableDualTraceStep(p, dual, p.Conditions, opt)
+			AppendTableDualTraceStep(p, dual, p.Conditions, opt)
 			return nil, dual
 		}
 		return nil, p
@@ -160,17 +163,17 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 // DeriveTopN implements the base.LogicalPlan.<6th> interface.
 func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	s := p.Self().(*LogicalSelection)
-	windowIsTopN, limitValue := windowIsTopN(s)
+	windowIsTopN, limitValue := utilfuncp.WindowIsTopN(s)
 	if windowIsTopN {
-		child := s.Children()[0].(*logicalop.LogicalWindow)
-		grandChild := child.Children()[0].(*DataSource)
+		child := s.Children()[0].(*LogicalWindow)
+		grandChild := child.Children()[0]
 		// Build order by for derived Limit
 		byItems := make([]*util.ByItems, 0, len(child.OrderBy))
 		for _, col := range child.OrderBy {
 			byItems = append(byItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 		}
 		// Build derived Limit
-		derivedTopN := logicalop.LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.QueryBlockOffset())
+		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.QueryBlockOffset())
 		derivedTopN.SetChildren(grandChild)
 		/* return select->datasource->topN->window */
 		child.SetChildren(derivedTopN)
@@ -190,7 +193,7 @@ func (p *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
 	var result []expression.Expression
 	for _, candidatePredicate := range p.Conditions {
 		// the candidate predicate should be a constant and compare predicate
-		match := validCompareConstantPredicate(p.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
+		match := expression.ValidCompareConstantPredicate(p.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
 		if match {
 			result = append(result, candidatePredicate)
 		}
@@ -219,7 +222,7 @@ func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childre
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPhysicalPlans4LogicalSelection(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalSelection(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -264,13 +267,13 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	}
 
 	// extract the not null attributes from selection conditions.
-	notnullColsUniqueIDs.UnionWith(ExtractNotNullFromConds(p.Conditions, p))
+	notnullColsUniqueIDs.UnionWith(util.ExtractNotNullFromConds(p.Conditions, p))
 
 	// extract the constant cols from selection conditions.
-	constUniqueIDs := ExtractConstantCols(p.Conditions, p.SCtx(), fds)
+	constUniqueIDs := util.ExtractConstantCols(p.Conditions, p.SCtx(), fds)
 
 	// extract equivalence cols.
-	equivUniqueIDs := ExtractEquivalenceCols(p.Conditions, p.SCtx(), fds)
+	equivUniqueIDs := util.ExtractEquivalenceCols(p.Conditions, p.SCtx(), fds)
 
 	// apply operator's characteristic's FD setting.
 	fds.MakeNotNull(notnullColsUniqueIDs)
@@ -298,9 +301,77 @@ func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expre
 
 // *************************** end implementation of logicalPlan interface ***************************
 
-// utility function to check whether we can push down Selection to TiKV or TiFlash
-func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
+// CanPushDown is utility function to check whether we can push down Selection to TiKV or TiFlash
+func (p *LogicalSelection) CanPushDown(storeTp kv.StoreType) bool {
 	return !expression.ContainVirtualColumn(p.Conditions) &&
 		p.CanPushToCop(storeTp) &&
-		expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
+		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
+}
+
+func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	canBePushDown := make([]expression.Expression, 0, len(filters))
+	canNotBePushDown := make([]expression.Expression, 0, len(filters))
+	for _, expr := range filters {
+		if expression.HasGetSetVarFunc(expr) {
+			canNotBePushDown = append(canNotBePushDown, expr)
+		} else {
+			canBePushDown = append(canBePushDown, expr)
+		}
+	}
+	return canBePushDown, canNotBePushDown
+}
+
+// AppendTableDualTraceStep appends a trace step for replacing a plan with a dual table.
+func AppendTableDualTraceStep(replaced base.LogicalPlan, dual base.LogicalPlan, conditions []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) {
+	action := func() string {
+		return fmt.Sprintf("%v_%v is replaced by %v_%v", replaced.TP(), replaced.ID(), dual.TP(), dual.ID())
+	}
+	ectx := replaced.SCtx().GetExprCtx().GetEvalCtx()
+	reason := func() string {
+		buffer := bytes.NewBufferString("The conditions[")
+		for i, cond := range conditions {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(cond.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		buffer.WriteString("] are constant false or null")
+		return buffer.String()
+	}
+	opt.AppendStepToCurrent(dual.ID(), dual.TP(), reason, action)
+}
+
+func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) {
+	action := func() string {
+		return fmt.Sprintf("%v_%v is removed", p.TP(), p.ID())
+	}
+	reason := func() string {
+		return ""
+	}
+	if len(conditions) > 0 {
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+		reason = func() string {
+			buffer := bytes.NewBufferString("The conditions[")
+			for i, cond := range conditions {
+				if i > 0 {
+					buffer.WriteString(",")
+				}
+				buffer.WriteString(cond.StringWithCtx(evalCtx, errors.RedactLogDisable))
+			}
+			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
+			return buffer.String()
+		}
+	}
+	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
+}
+
+func appendDerivedTopNTrace(topN base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
+	child := topN.Children()[0]
+	action := func() string {
+		return fmt.Sprintf("%v_%v top N added below  %v_%v ", topN.TP(), topN.ID(), child.TP(), child.ID())
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v filter on row number", topN.TP())
+	}
+	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
 }

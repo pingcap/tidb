@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -276,7 +277,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	b.ResetTimer()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		core.SubstituteExpression(selection.(*core.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
+		core.SubstituteExpression(selection.(*logicalop.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
 	}
 	b.StopTimer()
 }

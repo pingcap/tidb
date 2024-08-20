@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -56,193 +56,27 @@ func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 	}
 	conditions = expression.PropagateConstant(p.SCtx().GetExprCtx(), conditions)
 	// Return table dual when filter is constant false or null.
-	dual := Conds2TableDual(child, conditions)
+	dual := logicalop.Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
-		appendTableDualTraceStep(child, dual, conditions, opt)
+		logicalop.AppendTableDualTraceStep(child, dual, conditions, opt)
 		return
 	}
 
-	conditions = DeleteTrueExprs(p, conditions)
+	conditions = constraint.DeleteTrueExprs(p, conditions)
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
 	}
-	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
+	selection := logicalop.LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
-	appendAddSelectionTraceStep(p, child, selection, opt)
-}
-
-func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	canBePushDown := make([]expression.Expression, 0, len(filters))
-	canNotBePushDown := make([]expression.Expression, 0, len(filters))
-	for _, expr := range filters {
-		if expression.HasGetSetVarFunc(expr) {
-			canNotBePushDown = append(canNotBePushDown, expr)
-		} else {
-			canBePushDown = append(canBePushDown, expr)
-		}
-	}
-	return canBePushDown, canNotBePushDown
-}
-
-// DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
-// conditions for left/right child pushdown.
-func DeriveOtherConditions(
-	p *LogicalJoin, leftSchema *expression.Schema, rightSchema *expression.Schema,
-	deriveLeft bool, deriveRight bool) (
-	leftCond []expression.Expression, rightCond []expression.Expression) {
-	isOuterSemi := (p.JoinType == LeftOuterSemiJoin) || (p.JoinType == AntiLeftOuterSemiJoin)
-	ctx := p.SCtx()
-	exprCtx := ctx.GetExprCtx()
-	for _, expr := range p.OtherConditions {
-		if deriveLeft {
-			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(exprCtx, expr, leftSchema)
-			if leftRelaxedCond != nil {
-				leftCond = append(leftCond, leftRelaxedCond)
-			}
-			notNullExpr := deriveNotNullExpr(ctx, expr, leftSchema)
-			if notNullExpr != nil {
-				leftCond = append(leftCond, notNullExpr)
-			}
-		}
-		if deriveRight {
-			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(exprCtx, expr, rightSchema)
-			if rightRelaxedCond != nil {
-				rightCond = append(rightCond, rightRelaxedCond)
-			}
-			// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we can actually generate
-			// `col is not null` according to expressions in `OtherConditions` now, but we
-			// are putting column equal condition converted from `in (subq)` into
-			// `OtherConditions`(@sa https://github.com/pingcap/tidb/pull/9051), then it would
-			// cause wrong results, so we disable this optimization for outer semi joins now.
-			// TODO enable this optimization for outer semi joins later by checking whether
-			// condition in `OtherConditions` is converted from `in (subq)`.
-			if isOuterSemi {
-				continue
-			}
-			notNullExpr := deriveNotNullExpr(ctx, expr, rightSchema)
-			if notNullExpr != nil {
-				rightCond = append(rightCond, notNullExpr)
-			}
-		}
-	}
-	return
-}
-
-// deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
-// in which `col` is in specified schema. Caller guarantees that only one of `col1` or
-// `col2` is in schema.
-func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema *expression.Schema) expression.Expression {
-	binop, ok := expr.(*expression.ScalarFunction)
-	if !ok || len(binop.GetArgs()) != 2 {
-		return nil
-	}
-	arg0, lOK := binop.GetArgs()[0].(*expression.Column)
-	arg1, rOK := binop.GetArgs()[1].(*expression.Column)
-	if !lOK || !rOK {
-		return nil
-	}
-	childCol := schema.RetrieveColumn(arg0)
-	if childCol == nil {
-		childCol = schema.RetrieveColumn(arg1)
-	}
-	if util.IsNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
-		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
-	}
-	return nil
-}
-
-// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
-func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
-	if len(conds) != 1 {
-		return nil
-	}
-	con, ok := conds[0].(*expression.Constant)
-	if !ok {
-		return nil
-	}
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
-		return nil
-	}
-	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := logicalop.LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
-		dual.SetSchema(p.Schema())
-		return dual
-	}
-	return nil
-}
-
-// DeleteTrueExprs deletes the surely true expressions
-func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expression.Expression {
-	newConds := make([]expression.Expression, 0, len(conds))
-	for _, cond := range conds {
-		con, ok := cond.(*expression.Constant)
-		if !ok {
-			newConds = append(newConds, cond)
-			continue
-		}
-		if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
-			newConds = append(newConds, cond)
-			continue
-		}
-		sc := p.SCtx().GetSessionVars().StmtCtx
-		if isTrue, err := con.Value.ToBool(sc.TypeCtx()); err == nil && isTrue == 1 {
-			continue
-		}
-		newConds = append(newConds, cond)
-	}
-	return newConds
+	logicalop.AppendAddSelectionTraceStep(p, child, selection, opt)
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*PPDSolver) Name() string {
 	return "predicate_push_down"
-}
-
-func appendTableDualTraceStep(replaced base.LogicalPlan, dual base.LogicalPlan, conditions []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		return fmt.Sprintf("%v_%v is replaced by %v_%v", replaced.TP(), replaced.ID(), dual.TP(), dual.ID())
-	}
-	ectx := replaced.SCtx().GetExprCtx().GetEvalCtx()
-	reason := func() string {
-		buffer := bytes.NewBufferString("The conditions[")
-		for i, cond := range conditions {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(cond.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		buffer.WriteString("] are constant false or null")
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(dual.ID(), dual.TP(), reason, action)
-}
-
-func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		return fmt.Sprintf("%v_%v is removed", p.TP(), p.ID())
-	}
-	reason := func() string {
-		return ""
-	}
-	if len(conditions) > 0 {
-		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-		reason = func() string {
-			buffer := bytes.NewBufferString("The conditions[")
-			for i, cond := range conditions {
-				if i > 0 {
-					buffer.WriteString(",")
-				}
-				buffer.WriteString(cond.StringWithCtx(evalCtx, errors.RedactLogDisable))
-			}
-			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
-			return buffer.String()
-		}
-	}
-	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
 func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) {
@@ -265,16 +99,6 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetra
 		return buffer.String()
 	}
 	opt.AppendStepToCurrent(ds.ID(), ds.TP(), reason, action)
-}
-
-func appendAddSelectionTraceStep(p base.LogicalPlan, child base.LogicalPlan, sel *LogicalSelection, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		return fmt.Sprintf("add %v_%v to connect %v_%v and %v_%v", sel.TP(), sel.ID(), p.TP(), p.ID(), child.TP(), child.ID())
-	}
-	opt.AppendStepToCurrent(sel.ID(), sel.TP(), reason, action)
 }
 
 func (ds *DataSource) addExprPrefixCond(sc base.PlanContext, path *util.AccessPath,

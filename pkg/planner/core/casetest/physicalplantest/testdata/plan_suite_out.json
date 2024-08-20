@@ -1883,19 +1883,19 @@
         "SQL": "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
         "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t.a,test.t.b)",
         "HasWarn": false,
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `c_d_e`), no_order_index(@`sel_1` `test`.`t1` `c_d_e`), use_index(@`sel_1` `test`.`t2` `f`), no_order_index(@`sel_1` `test`.`t2` `f`)"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` `c_d_e`), no_order_index(@`sel_1` `test`.`t1` `c_d_e`), use_index(@`sel_1` `test`.`t2` `f`), no_order_index(@`sel_1` `test`.`t2` `f`)"
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.b)",
         "HasWarn": false,
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), no_order_index(@`sel_1` `test`.`t2` `primary`)"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), no_order_index(@`sel_1` `test`.`t2` `primary`)"
       },
       {
         "SQL": "select /*+ FORCE_INDEX(t1, c_d_e), FORCE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
         "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t.a,test.t.b)",
         "HasWarn": false,
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `c_d_e`), no_order_index(@`sel_1` `test`.`t1` `c_d_e`), use_index(@`sel_1` `test`.`t2` `f`), no_order_index(@`sel_1` `test`.`t2` `f`)"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` `c_d_e`), no_order_index(@`sel_1` `test`.`t1` `c_d_e`), use_index(@`sel_1` `test`.`t2` `f`), no_order_index(@`sel_1` `test`.`t2` `f`)"
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
@@ -2387,25 +2387,25 @@
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "merge_join(@`sel_1` `test`.`t3`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
+        "Hints": "merge_join(`test`.`t3`), leading(`test`.`t1`, `test`.`t2`, `test`.`t3`), inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "merge_join(@`sel_1` `test`.`t3`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
+        "Hints": "merge_join(`test`.`t3`), leading(`test`.`t1`, `test`.`t2`, `test`.`t3`), inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
         "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.b,test.t.a)",
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable",
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `f`), no_order_index(@`sel_1` `test`.`t2` `f`)"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `f`), no_order_index(@`sel_1` `test`.`t2` `f`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
         "Best": "IndexJoin{TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))->IndexReader(Index(t2.b)[[NULL,NULL]])}(test.t2.b,test.t2.b)->Projection",
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
-        "Hints": "inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t2` ), no_order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t1` `b`), no_order_index(@`sel_1` `test`.`t1` `b`)"
+        "Hints": "inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t2` ), no_order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t1` `b`), no_order_index(@`sel_1` `test`.`t1` `b`)"
       }
     ]
   },
@@ -2525,7 +2525,7 @@
       {
         "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
         "Plan": "MergeInnerJoin{TableReader(Table(t))->Sort->LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort}(test.t.b,test.t.b)->Projection",
-        "Hints": "use_index(@`sel_1` `test`.`t2` ), no_order_index(@`sel_1` `test`.`t2` `primary`), hash_join(@`sel_2` `test`.`t1`), use_index(@`sel_2` `test`.`t1` ), no_order_index(@`sel_2` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t2` `f`), no_order_index(@`sel_2` `test`.`t2` `f`)"
+        "Hints": "use_index(@`sel_1` `test`.`t2` ), no_order_index(@`sel_1` `test`.`t2` `primary`), hash_join_build(@`sel_2` `test`.`t2`@`sel_2`), use_index(@`sel_2` `test`.`t1` ), no_order_index(@`sel_2` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t2` `f`), no_order_index(@`sel_2` `test`.`t2` `f`)"
       }
     ]
   },
@@ -2658,52 +2658,52 @@
       {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
         "Plan": "LeftHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
       },
       {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "LeftHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
       },
       {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
         "Plan": "LeftHashJoin{TableReader(Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
       },
       {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
         "Plan": "RightHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2))}(test.t1.a,test.t2.a)",
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
+        "Hints": "hash_join_build(`test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
       },
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
         "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
-        "Hints": "hash_join(@`sel_2` `test`.`t1`), use_index(@`sel_2` `test`.`t1` `idx_a`), no_order_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), no_order_index(@`sel_3` `test`.`t2` `idx_a`)"
+        "Hints": "hash_join(@`sel_2` `test`.`t1`@`sel_2`), use_index(@`sel_2` `test`.`t1` `idx_a`), no_order_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), no_order_index(@`sel_3` `test`.`t2` `idx_a`)"
       },
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
         "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
-        "Hints": "hash_join(@`sel_2` `test`.`t1`), use_index(@`sel_2` `test`.`t1` `idx_a`), no_order_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), no_order_index(@`sel_3` `test`.`t2` `idx_a`)"
+        "Hints": "hash_join(@`sel_2` `test`.`t1`@`sel_2`), use_index(@`sel_2` `test`.`t1` `idx_a`), no_order_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), no_order_index(@`sel_3` `test`.`t2` `idx_a`)"
       },
       {
         "SQL": "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` )"
+        "Hints": "inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` )"
       },
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "inl_hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` )"
+        "Hints": "inl_hash_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), no_order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` )"
       },
       {
         "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "LeftHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
-        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
+        "Hints": "hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )"
       },
       {
         "SQL": "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "MergeInnerJoin{IndexLookUp(Index(t1.idx_a)[[-inf,+inf]], Table(t1))->Projection->IndexLookUp(Index(t2.idx_a)[[-inf,+inf]], Table(t2))->Projection}(test.t1.a,test.t2.a)",
-        "Hints": "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` `idx_a`), order_index(@`sel_1` `test`.`t2` `idx_a`)"
+        "Hints": "merge_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), order_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` `idx_a`), order_index(@`sel_1` `test`.`t2` `idx_a`)"
       }
     ]
   },

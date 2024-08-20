@@ -42,7 +42,7 @@ func TestV2Basic(t *testing.T) {
 	internal.AddDB(t, r.Store(), dbInfo)
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
 	tblInfo.DBID = dbInfo.ID
-	is.Data.add(tableItem{schemaName.L, dbInfo.ID, tableName.L, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
+	is.Data.add(tableItem{schemaName, dbInfo.ID, tableName, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	is.base().schemaMetaVersion = 1
 	require.Equal(t, 1, len(is.AllSchemas()))
@@ -77,7 +77,7 @@ func TestV2Basic(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, dbInfo, getDBInfo)
 
-	getTableInfo, ok = is.TableByID(tblInfo.ID)
+	getTableInfo, ok = is.TableByID(context.Background(), tblInfo.ID)
 	require.True(t, ok)
 	require.NotNil(t, getTableInfo)
 
@@ -86,7 +86,7 @@ func TestV2Basic(t *testing.T) {
 	require.Same(t, gotTblInfo, getTableInfo.Meta())
 
 	// negative id should always be seen as not exists
-	getTableInfo, ok = is.TableByID(-1)
+	getTableInfo, ok = is.TableByID(context.Background(), -1)
 	require.False(t, ok)
 	require.Nil(t, getTableInfo)
 	gotTblInfo, ok = is.TableInfoByID(-1)

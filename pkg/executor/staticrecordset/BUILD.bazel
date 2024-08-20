@@ -27,6 +27,7 @@ go_test(
     flaky = True,
     shard_count = 7,
     deps = [
+        "//pkg/parser/mysql",
         "//pkg/session/cursor",
         "//pkg/testkit",
         "//pkg/util/sqlexec",

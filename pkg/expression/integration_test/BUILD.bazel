@@ -21,6 +21,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -261,13 +262,21 @@ const (
 )
 
 // SQLBindPlan represents a plan for SQL bind.
+// One SQLBindPlan can be either global or session, and can only contain one type of operation, but can contain multiple
+// operations of that type.
 type SQLBindPlan struct {
 	baseSchemaProducer
 
-	SQLBindOp    SQLBindOpType
+	IsGlobal  bool
+	SQLBindOp SQLBindOpType
+	Details   []*SQLBindOpDetail
+}
+
+// SQLBindOpDetail represents the detail of an operation on a single binding.
+// Different SQLBindOpType use different fields in this struct.
+type SQLBindOpDetail struct {
 	NormdOrigSQL string
 	BindSQL      string
-	IsGlobal     bool
 	BindStmt     ast.StmtNode
 	Db           string
 	Charset      string
@@ -307,7 +316,7 @@ func (s *Simple) MemoryUsage() (sum int64) {
 //
 //	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 	Inner Simple
 }
 
@@ -317,7 +326,7 @@ func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
 	return
 }
 
