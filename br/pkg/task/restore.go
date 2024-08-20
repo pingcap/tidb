@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -1047,8 +1046,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			}
 		}
 	}
-	// We make bigger errCh so we won't block on multi-part failed.
-	errCh := make(chan error, 32)
 
 	createdTables, err := client.CreateTables(ctx, tables, newTS)
 	if err != nil {
@@ -1091,8 +1088,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	tableStream := afterTableCreatedCh(ctx, createdTables)
-
 	rangeSize := EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
@@ -1128,7 +1123,9 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	postHandleCh := afterTableRestoredCh
+	// We make bigger errCh so we won't block on multi-part failed.
+	errCh := make(chan error, 32)
+	postHandleCh := afterTableRestoredCh(ctx, createdTables)
 
 	// pipeline checksum
 	if cfg.Checksum {
@@ -1661,22 +1658,18 @@ func checkIsInActions(action model.ActionType, actions map[model.ActionType]stru
 	return ok
 }
 
-func afterTableCreatedCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan snapclient.CreatedTable {
-	outCh := make(chan snapclient.CreatedTable)
+func afterTableRestoredCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan *snapclient.CreatedTable {
+	outCh := make(chan *snapclient.CreatedTable)
 
 	go func() {
 		defer close(outCh)
-
-		sort.Slice(createdTables, func(a, b int) bool {
-			return createdTables[a].Table.ID < createdTables[b].Table.ID
-		})
 
 		for _, createdTable := range createdTables {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				outCh <- *createdTable
+				outCh <- createdTable
 			}
 		}
 	}()

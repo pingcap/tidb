@@ -177,9 +177,9 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
 			_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
-			ranges := make([]rtree.Range, 0, len(splitPoints))
+			ranges := make([]rtree.RangeStats, 0, len(splitPoints))
 			for _, point := range splitPoints {
-				ranges = append(ranges, rtree.Range{StartKey: startKey, EndKey: point})
+				ranges = append(ranges, rtree.RangeStats{Range: &rtree.Range{StartKey: startKey, EndKey: point}})
 				startKey = point
 			}
 
