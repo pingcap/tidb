@@ -1578,3 +1578,7 @@ insert into t3 (col1, col2) values (2306.9705216860984, x'31'), (6779.2396154715
 select hex(r) as r0 from (select ELT(2, col1, col2) as r from t3 group by ELT(2, col1, col2)) as t order by r0;
 select hex(r) as r0 from (select distinct ELT(2, col1, col2) as r from t3) as t order by r0;
 drop table t, t2, t3;
+
+# Issue $52420
+SELECT MID('abc',2,1);
+SELECT MID('abc',2);
