@@ -76,7 +76,6 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 		// Check database and table name match
 		if (dbName == "" || dbName == name.DBName.L) &&
 			(tblName == "" || tblName == name.TblName.L) {
-
 			if idx != -1 {
 				// Handle redundant case
 				if names[idx].Redundant || name.Redundant {
