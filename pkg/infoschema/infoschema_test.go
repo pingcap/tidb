@@ -17,6 +17,7 @@ package infoschema_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -596,6 +597,55 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
 	assertBundle(is2, tbl2.Meta().ID, nil)
 	assertBundle(is2, p1.ID, p1Bundle)
+}
+
+func TestWithRefillOption(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+
+	tk.MustExec("create table t1 (id int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	ok, v2 := infoschema.IsV2(is)
+	require.True(t, ok)
+
+	hit := true
+	miss := false
+	testCases := []struct {
+		OP     string
+		ctx    context.Context
+		expect bool
+	}{
+		{"TableByName", context.Background(), hit},
+		{"TableByName", infoschema.WithRefillOption(context.Background(), true), hit},
+		{"TableByName", infoschema.WithRefillOption(context.Background(), false), miss},
+		{"TableByID", context.Background(), miss},
+		{"TableByID", infoschema.WithRefillOption(context.Background(), true), hit},
+		{"TableByID", infoschema.WithRefillOption(context.Background(), false), miss},
+	}
+
+	for i, testCase := range testCases {
+		// Mock t1 schema cache been evicted.
+		v2.EvictTable(model.NewCIStr("test"), model.NewCIStr("t1"))
+
+		// Test the API
+		switch testCase.OP {
+		case "TableByID":
+			_, found := is.TableByID(testCase.ctx, tblInfo.ID)
+			require.True(t, found)
+		case "TableByName":
+			_, err := is.TableByName(testCase.ctx, model.NewCIStr("test"), model.NewCIStr("t1"))
+			require.NoError(t, err)
+		}
+
+		got := v2.HasCache(tblInfo.ID, is.SchemaMetaVersion())
+		require.Equal(t, testCase.expect, got, fmt.Sprintf("case %d failed", i))
+	}
 }
 
 func TestLocalTemporaryTables(t *testing.T) {
