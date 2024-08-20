@@ -42,8 +42,8 @@ type ExecDetails struct {
 	CopTime          time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
-	TidbCPUSeconds   float64
-	TikvCPUSeconds   float64
+	TidbCPUTime      time.Duration
+	TikvCPUTime      time.Duration
 	RequestCount     int
 }
 
@@ -192,11 +192,11 @@ func (d ExecDetails) String() string {
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
 	}
-	if d.TidbCPUSeconds > 0 {
-		parts = append(parts, TidbCPUTimeStr+": "+strconv.FormatFloat(d.TidbCPUSeconds, 'f', -1, 64))
+	if d.TidbCPUTime > 0 {
+		parts = append(parts, TidbCPUTimeStr+": "+strconv.FormatFloat(d.TidbCPUTime.Seconds(), 'f', -1, 64))
 	}
-	if d.TikvCPUSeconds > 0 {
-		parts = append(parts, TikvCPUTimeStr+": "+strconv.FormatFloat(d.TikvCPUSeconds, 'f', -1, 64))
+	if d.TikvCPUTime > 0 {
+		parts = append(parts, TikvCPUTimeStr+": "+strconv.FormatFloat(d.TikvCPUTime.Seconds(), 'f', -1, 64))
 	}
 	if d.TimeDetail.ProcessTime > 0 {
 		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64))
@@ -314,11 +314,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.TidbCPUSeconds > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TidbCPUTimeStr), strconv.FormatFloat(d.TidbCPUSeconds, 'f', -1, 64)+"s"))
+	if d.TidbCPUTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TidbCPUTimeStr), strconv.FormatFloat(d.TidbCPUTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.TikvCPUSeconds > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TikvCPUTimeStr), strconv.FormatFloat(d.TikvCPUSeconds, 'f', -1, 64)+"s"))
+	if d.TikvCPUTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TikvCPUTimeStr), strconv.FormatFloat(d.TikvCPUTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.TimeDetail.ProcessTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
@@ -416,7 +416,8 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 		s.execDetails.RequestCount++
 		s.mergeScanDetail(details.ScanDetail)
 		s.mergeTimeDetail(details.TimeDetail)
-		s.MergeTikvCPUTime(details.TimeDetail.ProcessTime.Seconds())
+		s.MergeTidbCPUTime(details.TidbCPUTime)
+		s.MergeTikvCPUTime(details.TikvCPUTime)
 		detail := &DetailsNeedP90{
 			BackoffSleep:  details.BackoffSleep,
 			BackoffTimes:  details.BackoffTimes,
@@ -453,13 +454,13 @@ func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
 }
 
 // MergeTikvCPUTime merges tikvCPU time into self.
-func (s *SyncExecDetails) MergeTikvCPUTime(t float64) {
-	s.execDetails.TikvCPUSeconds += t
+func (s *SyncExecDetails) MergeTikvCPUTime(d time.Duration) {
+	s.execDetails.TikvCPUTime += d
 }
 
-// MergeTidbCPUTime merges tikvCPU time into self.
-func (s *SyncExecDetails) MergeTidbCPUTime(t float64) {
-	s.execDetails.TidbCPUSeconds += t
+// MergeTidbCPUTime merges tidbCPU time into self.
+func (s *SyncExecDetails) MergeTidbCPUTime(d time.Duration) {
+	s.execDetails.TidbCPUTime += d
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

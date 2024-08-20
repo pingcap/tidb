@@ -37,7 +37,7 @@ var (
 
 // ProcessCpuTimeUpdater Introduce this interface due to the dependency cycle
 type ProcessCpuTimeUpdater interface {
-	UpdateProcessCpuTime(id uint64, sqlId uint64, cpuTimeInSeconds float64)
+	UpdateProcessCpuTime(id uint64, sqlId uint64, cpuTime time.Duration)
 }
 
 // SetupProcessProfiling sets up the process cpu profile worker.
@@ -205,6 +205,6 @@ func (sp *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
 		}
 	}
 	for key, val := range sqlMap {
-		updater.UpdateProcessCpuTime(key, val.SqlGlobalUID, float64(val.total)/1e9)
+		updater.UpdateProcessCpuTime(key, val.SqlGlobalUID, time.Duration(val.total))
 	}
 }

@@ -113,8 +113,8 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []any {
 		t,
 		serverStatus2Str(pi.State),
 		info,
-		pi.StmtCtx.GetExecDetails().TidbCPUSeconds,
-		pi.StmtCtx.GetExecDetails().TikvCPUSeconds,
+		pi.StmtCtx.GetExecDetails().TidbCPUTime,
+		pi.StmtCtx.GetExecDetails().TikvCPUTime,
 	}
 }
 
