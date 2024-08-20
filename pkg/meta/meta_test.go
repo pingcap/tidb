@@ -25,12 +25,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -855,4 +857,100 @@ func benchFastJSONTableNameInfo(b *testing.B, sql string) {
 		intest.Assert(tbInfo.ID == 1)
 		intest.Assert(tbInfo.Name.L == "t")
 	}
+}
+
+func TestSpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// create database
+	dbInfo := &model.DBInfo{
+		ID:    10001,
+		Name:  model.NewCIStr("sc"),
+		State: model.StatePublic,
+	}
+
+	// create table with special attributes
+	tblInfo := &model.TableInfo{
+		ID:    10002,
+		Name:  model.NewCIStr("cs"),
+		State: model.StatePublic,
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 11, Name: model.NewCIStr("p1")},
+				{ID: 22, Name: model.NewCIStr("p2")},
+			},
+			Enable: true,
+		},
+		ForeignKeys: []*model.FKInfo{{
+			ID:       1,
+			Name:     model.NewCIStr("fk"),
+			RefTable: model.NewCIStr("t"),
+			RefCols:  []model.CIStr{model.NewCIStr("a")},
+			Cols:     []model.CIStr{model.NewCIStr("t_a")},
+		}},
+		TiFlashReplica: &model.TiFlashReplicaInfo{
+			Count:          0,
+			LocationLabels: []string{"a,b,c"},
+			Available:      true,
+		},
+		Lock: &model.TableLockInfo{
+			Tp:    model.TableLockRead,
+			State: model.TableLockStatePreLock,
+			TS:    0,
+		},
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			ID:   1,
+			Name: model.NewCIStr("r1"),
+		},
+		TTLInfo: &model.TTLInfo{
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitDay),
+			Enable:           true,
+			JobInterval:      "1h",
+		},
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	// verify partition info correctness
+	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
+	// foreign key info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.ForeignKeysAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
+	// tiflash replica info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.TiFlashReplica, tblInfoRes[0].TableInfos[0].TiFlashReplica)
+	// lock info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TableLockAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Lock, tblInfoRes[0].TableInfos[0].Lock)
+	// placement policy
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PlacementPolicyAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfoRes[0].TableInfos[0].PlacementPolicyRef)
+	// ttl info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
 }
