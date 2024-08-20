@@ -96,11 +96,7 @@ func exprToString(ctx expression.EvalContext, e expression.Expression) (string, 
 		buffer.WriteString(")")
 		return buffer.String(), nil
 	case *expression.Column:
-<<<<<<< HEAD
-		return expr.String(), nil
-=======
-		return expr.StringWithCtx(ctx, perrors.RedactLogDisable), nil
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		return expr.StringWithCtx(perrors.RedactLogDisable), nil
 	case *expression.CorrelatedColumn:
 		return "", errors.New("tracing for correlated columns not supported now")
 	case *expression.Constant:

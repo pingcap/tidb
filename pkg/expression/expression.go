@@ -868,7 +868,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(errors.RedactLogDisable)))
+		ctx.SetSkipPlanCache(errors.NewNoStackErrorf("%v affects null check", expr.StringWithCtx(errors.RedactLogDisable)))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)

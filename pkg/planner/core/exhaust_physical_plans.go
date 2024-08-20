@@ -876,11 +876,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(key.String())
-=======
-			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(key.StringWithCtx(errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -1007,23 +1003,16 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		}
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
-<<<<<<< HEAD
-=======
-	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
 	// It is to build the range info which is used in explain. It is necessary to redact the range info.
+	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
 	redact := ectx.GetTiDBRedactLog()
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-<<<<<<< HEAD
-		fmt.Fprintf(buffer, "%v", access)
-=======
-		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx, redact))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(redact))
 	}
 	buffer.WriteString("]")
 	return buffer.String()

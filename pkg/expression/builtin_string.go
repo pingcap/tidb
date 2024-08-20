@@ -3866,7 +3866,7 @@ func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringP
 	}
 	length := 0
 	if l == 3 {
-		if args[1].GetType(ctx).EvalType() != types.ETString {
+		if args[1].GetType().EvalType() != types.ETString {
 			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(errors.RedactLogDisable), c.funcName)
 		}
 		c1, ok := args[1].(*Constant)
