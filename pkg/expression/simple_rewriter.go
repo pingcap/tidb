@@ -76,36 +76,13 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 		// Check database and table name match
 		if (dbName == "" || dbName == name.DBName.L) &&
 			(tblName == "" || tblName == name.TblName.L) {
-			if idx != -1 {
-				// Handle redundant case
-				if names[idx].Redundant || name.Redundant {
-					if !name.Redundant {
-						idx = i
-					}
-					hasRedundant = true
-					continue
-				}
+			if idx != -1 && !hasRedundant && !name.Redundant {
 				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
-			idx = i
-			if name.Redundant {
-				hasRedundant = true
-			}
-		}
-	}
-
-	// If we only found redundant matches, ensure we return the last one
-	if hasRedundant && idx == -1 {
-		for i := len(names) - 1; i >= 0; i-- {
-			name := names[i]
-			if name.NotExplicitUsable || name.ColName.L != colName {
-				continue
-			}
-			if (dbName == "" || dbName == name.DBName.L) &&
-				(tblName == "" || tblName == name.TblName.L) {
+			if idx == -1 || !name.Redundant {
 				idx = i
-				break
 			}
+			hasRedundant = hasRedundant || name.Redundant
 		}
 	}
 
