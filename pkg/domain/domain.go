@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
@@ -797,9 +796,7 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	sctx := se.(sessionctx.Context)
 	defer do.sysSessionPool.Put(se)
 	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
-		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
-			do.SysProcTracker().KillSysProcess(id)
-		}
+		do.SysProcTracker().KillSysProcess(do.GetAutoAnalyzeProcID())
 	}
 }
 
