@@ -1044,8 +1044,7 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 				goto retry
 			}
 
-			// TODO load table panic!!!
-			panic(err)
+			return nil, errors.Trace(err)
 		}
 
 		// table removed.
