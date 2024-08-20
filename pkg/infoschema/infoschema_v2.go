@@ -588,6 +588,9 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 	return &tmp
 }
 
+// TableByID implements the InfoSchema interface.
+// As opposed to TableByName, TableByID will not refill cache when schema cache miss,
+// unless the caller changes the behavior by passing a context use WithRefillOption.
 func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
@@ -682,6 +685,8 @@ func (h *tableByNameHelper) onItem(item tableItem) bool {
 	return true
 }
 
+// TableByName implements the InfoSchema interface.
+// When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
 	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
