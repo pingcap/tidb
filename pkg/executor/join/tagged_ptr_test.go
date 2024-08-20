@@ -53,11 +53,9 @@ func TestTagHelper(t *testing.T) {
 	tagHelper.init(taggedBits)
 	taggedValue := uint64(0x1234) << (64 - maxTaggedBits)
 	for {
-		if taggedValue&tagHelper.taggedMask != taggedValue {
-			taggedValue <<= 1
-		} else {
+		if taggedValue&tagHelper.taggedMask == taggedValue {
 			break
-		}
+		taggedValue <<= 1
 	}
 	require.True(t, taggedValue != 0, "tagged value should not be zero")
 	//
