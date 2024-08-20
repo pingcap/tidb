@@ -935,18 +935,22 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				})
 			}
 		}
-		slices.SortFunc(tasksForPartitions, func(a, b []*copTask) int {
-			if len(a) == 0 {
-				return -1
+		if len(tasksForPartitions) == 1 {
+			tasks = tasksForPartitions[0]
+		} else {
+			slices.SortFunc(tasksForPartitions, func(a, b []*copTask) int {
+				if len(a) == 0 {
+					return -1
+				}
+				if len(b) == 0 {
+					return 1
+				}
+				return a[0].ranges.RefAt(0).StartKey.Cmp(b[0].ranges.RefAt(0).StartKey)
+			})
+			// The ranges corresponding to each partiton do not intersect, so we can merge tasks directly
+			for _, tasksForPartition := range tasksForPartitions {
+				tasks = append(tasks, tasksForPartition...)
 			}
-			if len(b) == 0 {
-				return 1
-			}
-			return a[0].ranges.RefAt(0).StartKey.Cmp(b[0].ranges.RefAt(0).StartKey)
-		})
-		// The ranges corresponding to each partiton do not intersect, so we can merge tasks directly
-		for _, tasksForPartition := range tasksForPartitions {
-			tasks = append(tasks, tasksForPartition...)
 		}
 
 		rpcCtxs := make([]*tikv.RPCContext, 0, len(tasks))
