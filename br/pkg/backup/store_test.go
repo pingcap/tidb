@@ -92,7 +92,7 @@ func TestTimeoutRecvCancel(t *testing.T) {
 	ctx := context.Background()
 	cctx, cancel := context.WithCancel(ctx)
 
-	_, trecv := StartTimeoutRecv(cctx, time.Hour)
+	_, trecv := StartTimeoutRecv(cctx, time.Hour, 0)
 	cancel()
 	trecv.wg.Wait()
 }
