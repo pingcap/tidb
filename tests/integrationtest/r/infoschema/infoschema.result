@@ -418,21 +418,21 @@ select count(1) from information_schema.statistics where table_name = 'temp_tabl
 count(1)
 1
 drop table temp_table;
-create database if not exists db1;
-create database if not exists db2;
+create database if not exists Db1;
+create database if not exists dB2;
 create sequence db1.s1;
 create sequence db2.s2;
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1';
 sequence_schema	sequence_name
-db1	s1
+Db1	s1
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1' and sequence_name = 's1';
 sequence_schema	sequence_name
-db1	s1
+Db1	s1
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1' and sequence_name = 's2';
 sequence_schema	sequence_name
 select sequence_schema, sequence_name from information_schema.sequences;
 sequence_schema	sequence_name
-db1	s1
-db2	s2
+Db1	s1
+dB2	s2
 drop database db1;
 drop database db2;

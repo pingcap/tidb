@@ -83,7 +83,7 @@ func updateRecord(
 	// Handle exchange partition
 	tbl := t.Meta()
 	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(sctx.GetTableCtx(), newData, tbl); err != nil {
+		if err := checkRowForExchangePartition(sctx, newData, tbl); err != nil {
 			return false, err
 		}
 	}
@@ -332,7 +332,7 @@ func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 
 // checkRowForExchangePartition is only used for ExchangePartition by non-partitionTable during write only state.
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
-func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, tbl *model.TableInfo) error {
+func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tbl *model.TableInfo) error {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pt, tableFound := is.TableByID(context.Background(), tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {
