@@ -83,6 +83,11 @@ type InfoSchemaBaseExtractor struct {
 	extractableColumns extractableCols
 }
 
+// GetBase is only used for test.
+func (e *InfoSchemaBaseExtractor) GetBase() *InfoSchemaBaseExtractor {
+	return e
+}
+
 // ListSchemas lists related schemas from predicate.
 func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.CIStr {
 	ec := e.extractableColumns
