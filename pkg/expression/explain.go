@@ -173,7 +173,7 @@ func (expr *Constant) format(dt types.Datum) string {
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
-func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, redactMode string) string {
+func ExplainExpressionList(exprs []Expression, schema *Schema, redactMode string) string {
 	builder := &strings.Builder{}
 	for i, expr := range exprs {
 		switch expr.(type) {
