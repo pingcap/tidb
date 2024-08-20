@@ -277,6 +277,14 @@ type TableScanTask struct {
 	ID    int
 	Start kv.Key
 	End   kv.Key
+
+	ctx *OperatorCtx
+}
+
+func (t TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return metrics.LblAddIndex, "RecoverArgs", func() {
+		t.ctx.onError(dbterror.ErrReorgPanic)
+	}, false
 }
 
 // String implement fmt.Stringer interface.
@@ -291,11 +299,18 @@ type IndexRecordChunk struct {
 	Chunk *chunk.Chunk
 	Err   error
 	Done  bool
+	ctx   *OperatorCtx
+}
+
+func (t IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return metrics.LblAddIndex, "RecoverArgs", func() {
+		t.ctx.onError(dbterror.ErrReorgPanic)
+	}, false
 }
 
 // TableScanTaskSource produces TableScanTask by splitting table records into ranges.
 type TableScanTaskSource struct {
-	ctx context.Context
+	ctx *OperatorCtx
 
 	errGroup errgroup.Group
 	sink     operator.DataChannel[TableScanTask]
@@ -311,7 +326,7 @@ type TableScanTaskSource struct {
 
 // NewTableScanTaskSource creates a new TableScanTaskSource.
 func NewTableScanTaskSource(
-	ctx context.Context,
+	ctx *OperatorCtx,
 	store kv.Storage,
 	physicalTable table.PhysicalTable,
 	startKey kv.Key,
@@ -430,6 +445,7 @@ func (src *TableScanTaskSource) getBatchTableScanTask(
 			ID:    taskID,
 			Start: startKey,
 			End:   endKey,
+			ctx:   src.ctx,
 		}
 		batchTasks = append(batchTasks, task)
 	}
@@ -544,7 +560,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
+			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx}
 			if w.cpMgr != nil {
 				w.cpMgr.UpdateTotalKeys(task.ID, srcChk.NumRows(), done)
 			}
