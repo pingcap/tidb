@@ -23,7 +23,7 @@ import (
 
 // GetCache is exported for testing.
 func (is *infoschemaV2) GetCache(tableID int64, schemaVersion int64) bool {
-	key := tableCacheKey{tableID,      schemaVersion   }
+	key := tableCacheKey{tableID, schemaVersion}
 	_, found := is.tableCache.Get(key)
 	return found
 }
