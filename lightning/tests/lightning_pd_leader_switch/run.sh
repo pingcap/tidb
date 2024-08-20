@@ -45,13 +45,13 @@ pd-server --join "https://$PD_ADDR" \
 killall tidb-server
 # wait for TiDB to exit to release file lock
 sleep 5
-PD_ADDR="${PD_ADDR},${PD_ADDR}2,${PD_ADDR}3" start_tidb
+start_tidb
 
 export GO_FAILPOINTS='github.com/pingcap/tidb/lightning/pkg/importer/beforeRun=sleep(60000)'
 run_lightning --backend local --enable-checkpoint=0 --pd-urls '127.0.0.1:9999,127.0.0.1:2379' &
 lightning_pid=$!
 # in many libraries, etcd client's auto-sync-interval is 30s, so we need to wait at least 30s before kill PD leader
-sleep 50
+sleep 45
 kill $(cat $TEST_DIR/pd_pid.txt)
 
 # Check that everything is correctly imported
