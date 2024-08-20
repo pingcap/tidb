@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"sync"
 
@@ -45,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 const maxAvailableBufSize int = 20
@@ -293,6 +293,8 @@ type planCtxImpl struct {
 // session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
+// The `session` object is private to make sure it is only used by public `Session` struct to provide limited access.
+// TODO: remove `session` and build related context without a mocked `sessionctx.Context` instead.
 type session struct {
 	sessionctx.Context
 	planctx.EmptyPlanContextExtended
@@ -479,12 +481,12 @@ func (s *Session) UnsetUserVar(varName string) {
 
 // GetColumnSize returns the size of each column.
 func (s *Session) GetColumnSize(tblID int64) (ret map[int64]int64) {
-	sessionVars := s.sctx.Vars
-	sessionVars.TxnCtxMu.Lock()
-	defer sessionVars.TxnCtxMu.Unlock()
-	m := sessionVars.TxnCtx.TableDeltaMap[tblID].ColSize
-	ret = make(map[int64]int64, len(m))
-	maps.Copy(ret, m)
+	vars := s.sctx.Vars
+	vars.TxnCtxMu.Lock()
+	defer vars.TxnCtxMu.Unlock()
+	if txnCtx := s.sctx.Vars.TxnCtx; txnCtx != nil {
+		return maps.Clone(txnCtx.TableDeltaMap[tblID].ColSize)
+	}
 	return ret
 }
 
@@ -498,4 +500,5 @@ func (s *Session) Close() {
 	for _, b := range memBuf.availableBufs {
 		b.destroy()
 	}
+	memBuf.availableBufs = nil
 }
