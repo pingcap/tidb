@@ -1466,7 +1466,7 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFi
 	return ret
 }
 
-type refillOption string
+type refillOption struct{}
 
 const refillOptionKey refillOption = "refillOptionKey"
 
