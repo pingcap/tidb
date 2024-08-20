@@ -156,9 +156,9 @@ func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
 	return s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 && end.Cmp(s.flushedKeyLowWatermark) <= 0
 }
 
-// LastProcessedKey finds the last processed key in checkpoint.
-// If there is no processed key, it returns nil.
-func (s *CheckpointManager) LastProcessedKey() kv.Key {
+// NextKeyToProcess finds the next unprocessed key in checkpoint.
+// If there is no such key, it returns nil.
+func (s *CheckpointManager) NextKeyToProcess() kv.Key {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

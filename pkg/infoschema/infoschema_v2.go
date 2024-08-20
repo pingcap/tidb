@@ -588,11 +588,10 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 	return &tmp
 }
 
+// TableByID implements the InfoSchema interface.
+// As opposed to TableByName, TableByID will not refill cache when schema cache miss,
+// unless the caller changes the behavior by passing a context use WithRefillOption.
 func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
-	return is.tableByID(ctx, id, true)
-}
-
-func (is *infoschemaV2) tableByID(ctx context.Context, id int64, noRefill bool) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
 	}
@@ -618,11 +617,17 @@ func (is *infoschemaV2) tableByID(ctx context.Context, id int64, noRefill bool) 
 		}
 		return nil, false
 	}
+
+	refill := false
+	if opt := ctx.Value(refillOptionKey); opt != nil {
+		refill = opt.(bool)
+	}
+
 	// get cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found = is.tableCache.Get(oldKey)
 	if found && tbl != nil {
-		if !noRefill {
+		if refill {
 			is.tableCache.Set(key, tbl)
 		}
 		return tbl, true
@@ -634,7 +639,7 @@ func (is *infoschemaV2) tableByID(ctx context.Context, id int64, noRefill bool) 
 		return nil, false
 	}
 
-	if !noRefill {
+	if refill {
 		is.tableCache.Set(oldKey, ret)
 	}
 	return ret, true
@@ -680,6 +685,8 @@ func (h *tableByNameHelper) onItem(item tableItem) bool {
 	return true
 }
 
+// TableByName implements the InfoSchema interface.
+// When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
 	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
@@ -716,7 +723,15 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	is.tableCache.Set(oldKey, ret)
+
+	refill := true
+	if opt := ctx.Value(refillOptionKey); opt != nil {
+		refill = opt.(bool)
+	}
+	if refill {
+		is.tableCache.Set(oldKey, ret)
+	}
+
 	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
 	return ret, nil
 }
@@ -1034,8 +1049,7 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 				goto retry
 			}
 
-			// TODO load table panic!!!
-			panic(err)
+			return nil, errors.Trace(err)
 		}
 
 		// table removed.
@@ -1455,4 +1469,15 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFi
 		ret = append(ret, res)
 	}
 	return ret
+}
+
+type refillOption struct{}
+
+var refillOptionKey refillOption
+
+// WithRefillOption controls the infoschema v2 cache refill operation.
+// By default, TableByID does not refill schema cache, and TableByName does.
+// The behavior can be changed by providing the context.Context.
+func WithRefillOption(ctx context.Context, refill bool) context.Context {
+	return context.WithValue(ctx, refillOptionKey, refill)
 }

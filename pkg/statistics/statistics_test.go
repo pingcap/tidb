@@ -441,7 +441,7 @@ func SubTestIndexRanges() func(*testing.T) {
 		ran[0].HighVal[0] = types.NewIntDatum(1000)
 		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
-		require.Equal(t, 0, int(count))
+		require.Equal(t, 1, int(count))
 	}
 }
 

@@ -64,9 +64,7 @@ func (do *Domain) GetSessionCache() (map[string]string, error) {
 	do.sysVarCache.RLock()
 	defer do.sysVarCache.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
-	newMap := make(map[string]string, len(do.sysVarCache.session))
-	maps.Copy(newMap, do.sysVarCache.session)
-	return newMap, nil
+	return maps.Clone(do.sysVarCache.session), nil
 }
 
 // GetGlobalVar gets an individual global var from the sysvar cache.

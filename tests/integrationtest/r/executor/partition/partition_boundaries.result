@@ -125,29 +125,29 @@ a	b
 1000002	1000002 Filler ...
 explain format='brief' SELECT * FROM t WHERE a = 3000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a = 3000000;
 a	b
 explain format='brief' SELECT * FROM t WHERE a IN (3000000);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a IN (3000000);
 a	b
 explain format='brief' SELECT * FROM t WHERE a = 3000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a = 3000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a IN (3000001);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a IN (3000001);
 a	b
@@ -161,8 +161,8 @@ a	b
 -2147483648	MIN_INT filler...
 explain format='brief' SELECT * FROM t WHERE a IN (-2147483647, -2147483646);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -2147483647, -2147483646)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -2147483647, -2147483646)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a IN (-2147483647, -2147483646);
 a	b
@@ -272,8 +272,8 @@ a	b
 2999999	2999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a IN (3000000, 3000001, 3000002);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		in(executor__partition__partition_boundaries.t.a, 3000000, 3000001, 3000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		in(executor__partition__partition_boundaries.t.a, 3000000, 3000001, 3000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a IN (3000000, 3000001, 3000002);
 a	b
@@ -342,8 +342,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 0 OR a = -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		or(0, eq(executor__partition__partition_boundaries.t.a, -1))
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		or(0, eq(executor__partition__partition_boundaries.t.a, -1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1;
 a	b
@@ -629,15 +629,15 @@ a	b
 5	5 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:all	data:Selection
-└─Selection	0.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5), ne(executor__partition__partition_boundaries.t.a, 6)
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5), ne(executor__partition__partition_boundaries.t.a, 6)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6;
 a	b
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:all	data:Selection
-└─Selection	0.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6))
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6);
 a	b
@@ -671,15 +671,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6 AND a != 7;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:all	data:Selection
-└─Selection	0.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5), ne(executor__partition__partition_boundaries.t.a, 6), ne(executor__partition__partition_boundaries.t.a, 7)
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		ne(executor__partition__partition_boundaries.t.a, -1), ne(executor__partition__partition_boundaries.t.a, 0), ne(executor__partition__partition_boundaries.t.a, 1), ne(executor__partition__partition_boundaries.t.a, 2), ne(executor__partition__partition_boundaries.t.a, 3), ne(executor__partition__partition_boundaries.t.a, 4), ne(executor__partition__partition_boundaries.t.a, 5), ne(executor__partition__partition_boundaries.t.a, 6), ne(executor__partition__partition_boundaries.t.a, 7)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6 AND a != 7;
 a	b
 explain format='brief' SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6, 7);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:all	data:Selection
-└─Selection	0.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7))
+TableReader	1.00	root	partition:all	data:Selection
+└─Selection	1.00	cop[tikv]		not(in(executor__partition__partition_boundaries.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6, 7);
 a	b
@@ -712,8 +712,8 @@ INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
 ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483649;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, -2147483648), le(executor__partition__partition_boundaries.t.a, -2147483649)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, -2147483648), le(executor__partition__partition_boundaries.t.a, -2147483649)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483649;
 a	b
@@ -791,8 +791,8 @@ a	b
 -2147483648	MIN_INT filler...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 0 AND -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 0), le(executor__partition__partition_boundaries.t.a, -1)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 0), le(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 0 AND -1;
 a	b
@@ -885,8 +885,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 999998 AND 999997;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 999998), le(executor__partition__partition_boundaries.t.a, 999997)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 999998), le(executor__partition__partition_boundaries.t.a, 999997)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 999998 AND 999997;
 a	b
@@ -997,8 +997,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 999999 AND 999998;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 999999), le(executor__partition__partition_boundaries.t.a, 999998)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 999999), le(executor__partition__partition_boundaries.t.a, 999998)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 999999 AND 999998;
 a	b
@@ -1107,8 +1107,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000000 AND 999999;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000000), le(executor__partition__partition_boundaries.t.a, 999999)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000000), le(executor__partition__partition_boundaries.t.a, 999999)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 1000000 AND 999999;
 a	b
@@ -1216,8 +1216,8 @@ a	b
 2000002	2000002 Filler ...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p1	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000001), le(executor__partition__partition_boundaries.t.a, 1000000)
+TableReader	1.00	root	partition:p1	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000001), le(executor__partition__partition_boundaries.t.a, 1000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000000;
 a	b
@@ -1322,8 +1322,8 @@ a	b
 2000002	2000002 Filler ...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p1	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000002), le(executor__partition__partition_boundaries.t.a, 1000001)
+TableReader	1.00	root	partition:p1	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 1000002), le(executor__partition__partition_boundaries.t.a, 1000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000001;
 a	b
@@ -1423,141 +1423,141 @@ a	b
 2000002	2000002 Filler ...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 2999999;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 2999999)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 2999999)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 2999999;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000000;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000002;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000002;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000010;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000010)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000010)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000010;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999998;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3999998)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3999998)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999998;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999999;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3999999)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3999999)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999999;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 4000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 4000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000000;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 4000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 4000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000002;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 4000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 4000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000002;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000000;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000002;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000002;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000003;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000003)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000003)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000003;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000011;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000011)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3000011)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000011;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 3999999;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3999999)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 3999999)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 3999999;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 4000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 4000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000000;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 4000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 4000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000002;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 4000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 4000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000002;
 a	b
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000003;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 4000003)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001), le(executor__partition__partition_boundaries.t.a, 4000003)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000003;
 a	b
@@ -1582,8 +1582,8 @@ INSERT INTO t VALUES (6, '6 Filler...');
 ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 2 AND -1;
 a	b
@@ -1601,8 +1601,8 @@ a	b
 4	4 Filler...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 0;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 2 AND 0;
 a	b
@@ -1620,8 +1620,8 @@ a	b
 4	4 Filler...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 2 AND 1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 2 AND 1;
 a	b
@@ -1703,8 +1703,8 @@ a	b
 5	5 Filler...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 5 AND 4;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 5), le(executor__partition__partition_boundaries.t.a, 4)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 5), le(executor__partition__partition_boundaries.t.a, 4)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 5 AND 4;
 a	b
@@ -1722,8 +1722,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 6 AND 4;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 6), le(executor__partition__partition_boundaries.t.a, 4)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 6), le(executor__partition__partition_boundaries.t.a, 4)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 6 AND 4;
 a	b
@@ -1741,8 +1741,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a BETWEEN 7 AND 4;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 7), le(executor__partition__partition_boundaries.t.a, 4)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 7), le(executor__partition__partition_boundaries.t.a, 4)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a BETWEEN 7 AND 4;
 a	b
@@ -1761,8 +1761,8 @@ INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...');
 ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a < -2147483648;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		lt(executor__partition__partition_boundaries.t.a, -2147483648)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		lt(executor__partition__partition_boundaries.t.a, -2147483648)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a < -2147483648;
 a	b
@@ -2174,8 +2174,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a > 3000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 3000000;
 a	b
@@ -2202,8 +2202,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a >= 3000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 3000000;
 a	b
@@ -2230,8 +2230,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a > 3000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 3000001;
 a	b
@@ -2258,8 +2258,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a >= 3000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 3000001;
 a	b
@@ -3199,8 +3199,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a > 2999999;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2999999)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2999999)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2999999;
 a	b
@@ -3243,22 +3243,22 @@ a	b
 2999999	2999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a > 2999999 AND a <= 3000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2999999), le(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2999999), le(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2999999 AND a <= 3000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a > 2999999 AND a < 3000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2999999), lt(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2999999), lt(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2999999 AND a < 3000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a > 2999999 AND a <= 3000001;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2999999), le(executor__partition__partition_boundaries.t.a, 3000001)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2999999), le(executor__partition__partition_boundaries.t.a, 3000001)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2999999 AND a <= 3000001;
 a	b
@@ -3285,8 +3285,8 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a > 3000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 3000000;
 a	b
@@ -3313,36 +3313,36 @@ a	b
 999999	999999 Filler ...
 explain format='brief' SELECT * FROM t WHERE a >= 3000000;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 3000000;
 a	b
 explain format='brief' SELECT * FROM t WHERE a >= 3000000 AND a <= 3000002;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 3000000 AND a <= 3000002;
 a	b
 explain format='brief' SELECT * FROM t WHERE a > 3000000 AND a <= 3000002;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 3000000 AND a <= 3000002;
 a	b
 explain format='brief' SELECT * FROM t WHERE a > 3000000 AND a < 3000002;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000), lt(executor__partition__partition_boundaries.t.a, 3000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000), lt(executor__partition__partition_boundaries.t.a, 3000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 3000000 AND a < 3000002;
 a	b
 explain format='brief' SELECT * FROM t WHERE a > 3000000 AND a <= 3000002;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000002)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 3000000), le(executor__partition__partition_boundaries.t.a, 3000002)
   └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 3000000 AND a <= 3000002;
 a	b
@@ -3369,8 +3369,8 @@ INSERT INTO t VALUES (6, '6 Filler...');
 ANALYZE TABLE t all columns;
 explain format='brief' SELECT * FROM t WHERE a < -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		lt(executor__partition__partition_boundaries.t.a, -1)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		lt(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a < -1;
 a	b
@@ -3390,8 +3390,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a <= -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		le(executor__partition__partition_boundaries.t.a, -1)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		le(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a <= -1;
 a	b
@@ -3425,15 +3425,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a < -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a < -1;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > -1);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a < 2 OR a > -1);
 a	b
@@ -3467,15 +3467,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 2 AND a < -1;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= -1);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a < 2 OR a >= -1);
 a	b
@@ -3509,15 +3509,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a <= -1;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > -1);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a > -1);
 a	b
@@ -3551,15 +3551,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= -1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, -1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 2 AND a <= -1;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= -1);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, -1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= -1);
 a	b
@@ -3579,8 +3579,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a < 0;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:p0	data:Selection
-└─Selection	0.00	cop[tikv]		lt(executor__partition__partition_boundaries.t.a, 0)
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		lt(executor__partition__partition_boundaries.t.a, 0)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a < 0;
 a	b
@@ -3635,15 +3635,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 0;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a < 0;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 0);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a < 2 OR a > 0);
 a	b
@@ -3677,15 +3677,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 0;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 2 AND a < 0;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 0);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a < 2 OR a >= 0);
 a	b
@@ -3719,15 +3719,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 0;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a <= 0;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 0);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a > 0);
 a	b
@@ -3761,15 +3761,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 0;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 0)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 2 AND a <= 0;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 0);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 0))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= 0);
 a	b
@@ -3845,15 +3845,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a < 1;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a > 1);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a < 2 OR a > 1);
 a	b
@@ -3887,15 +3887,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 2 AND a < 1;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 1);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a < 2 OR a >= 1);
 a	b
@@ -3929,15 +3929,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a <= 1;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 1);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a > 1);
 a	b
@@ -3971,15 +3971,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a >= 2 AND a <= 1;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 1)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 2 AND a <= 1;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 1);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 1))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= 1);
 a	b
@@ -4054,8 +4054,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 2;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a < 2;
 a	b
@@ -4097,15 +4097,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a >= 2 AND a < 2;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 2 AND a < 2;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a < 2 OR a >= 2);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(ge(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a < 2 OR a >= 2);
 a	b
@@ -4139,15 +4139,15 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a <= 2;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 2)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 2)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a <= 2;
 a	b
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a > 2);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 2))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), le(executor__partition__partition_boundaries.t.a, 2))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a > 2);
 a	b
@@ -4189,8 +4189,8 @@ a	b
 2	2 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 2);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 2))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= 2);
 a	b
@@ -4263,8 +4263,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 2 AND a < 3;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 3)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 3)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 2 AND a < 3;
 a	b
@@ -4400,8 +4400,8 @@ a	b
 3	3 Filler...
 explain format='brief' SELECT * FROM t WHERE NOT (a <= 2 OR a >= 3);
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 3))
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		and(gt(executor__partition__partition_boundaries.t.a, 2), lt(executor__partition__partition_boundaries.t.a, 3))
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE NOT (a <= 2 OR a >= 3);
 a	b
@@ -4852,8 +4852,8 @@ a	b
 5	5 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 6;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 6)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 6)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 6;
 a	b
@@ -5063,8 +5063,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a > 7;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 7)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_boundaries.t.a, 7)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a > 7;
 a	b
@@ -5084,8 +5084,8 @@ a	b
 6	6 Filler...
 explain format='brief' SELECT * FROM t WHERE a >= 7;
 id	estRows	task	access object	operator info
-TableReader	0.00	root	partition:dual	data:Selection
-└─Selection	0.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 7)
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		ge(executor__partition__partition_boundaries.t.a, 7)
   └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a >= 7;
 a	b

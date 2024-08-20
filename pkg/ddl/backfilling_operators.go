@@ -346,7 +346,7 @@ func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) (adjusted kv.K
 	if src.cpMgr == nil {
 		return start, false
 	}
-	cpKey := src.cpMgr.LastProcessedKey()
+	cpKey := src.cpMgr.NextKeyToProcess()
 	if len(cpKey) == 0 {
 		return start, false
 	}
@@ -364,7 +364,7 @@ func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) (adjusted kv.K
 	if cpKey.Cmp(end) == 0 {
 		return cpKey, true
 	}
-	return cpKey.Next(), false
+	return cpKey, false
 }
 
 func (src *TableScanTaskSource) generateTasks() error {

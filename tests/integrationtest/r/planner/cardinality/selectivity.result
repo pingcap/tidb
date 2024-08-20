@@ -1225,8 +1225,14 @@ insert into t values ('tw', 0);
 analyze table t all columns;
 explain select * from t where a = 'tw' and b < 0;
 id	estRows	task	access object	operator info
+IndexReader_6	1.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
+set @@tidb_opt_fix_control = '47400:on';
+explain select * from t where a = 'tw' and b < 0;
+id	estRows	task	access object	operator info
 IndexReader_6	0.00	root		index:IndexRangeScan_5
 └─IndexRangeScan_5	0.00	cop[tikv]	table:t, index:idx(a, b)	range:["tw" -inf,"tw" 0), keep order:false
+set @@tidb_opt_fix_control = '47400:off';
 drop table if exists t;
 create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid));
 insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4);
