@@ -236,7 +236,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID := table.Meta().Columns[0].ID
 	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30))
 	require.NoError(t, err)
-	require.Equal(t, 0.2, count)
+	require.Equal(t, 1.0, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
@@ -265,7 +265,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID = table.Meta().Columns[0].ID
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30))
 	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
+	require.Equal(t, 1.0, count)
 
 	testKit.MustExec("drop table t")
 	testKit.MustExec("create table t(a int, b int, index idx(b))")
@@ -278,7 +278,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID = table.Meta().Columns[0].ID
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
 	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
+	require.Equal(t, 1.0, count)
 
 	idxID = table.Meta().Indices[0].ID
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
@@ -402,8 +402,8 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
-			selectivity:              0.01783264746,
-			selectivityAfterIncrease: 0.01851851852,
+			selectivity:              0.017832647462277088,
+			selectivityAfterIncrease: 0.018518518518518517,
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
@@ -422,13 +422,13 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "b > 1",
-			selectivity:              0.96296296296,
+			selectivity:              0.9629629629629629,
 			selectivityAfterIncrease: 1,
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity:              0,
-			selectivityAfterIncrease: 0,
+			selectivity:              5.870830440255832e-05,
+			selectivityAfterIncrease: 1.51329827770157e-05,
 		},
 		{
 			exprs:                    longExpr,
@@ -1190,8 +1190,8 @@ func TestCrossValidationSelectivity(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
-		"TableReader 0.00 root  data:Selection",
-		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  gt(test.t.c, 1000)",
 		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
 }
 

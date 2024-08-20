@@ -3252,8 +3252,8 @@ func TestPartitionCoverage(t *testing.T) {
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustExec(`analyze table t all columns`)
 	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
-		`TableReader 0.00 root partition:dual data:Selection`,
-		`└─Selection 0.00 cop[tikv]  eq(test.t.a, 10)`,
+		`TableReader 1.00 root partition:dual data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 10)`,
 		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
 	tk.MustQuery(`select * from t where a = 10`).Check(testkit.Rows())
 
