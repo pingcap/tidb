@@ -331,12 +331,12 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 
 func (e *ShowExec) fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
 	state := infosync.PlacementScheduleStateScheduled
-	tblInfos, err := e.is.SchemaTableInfos(ctx, db.Name)
+	tblInfos, err := e.is.SchemaSimpleTableInfos(ctx, db.Name)
 	if err != nil {
 		return state, errors.Trace(err)
 	}
 	for _, tbl := range tblInfos {
-		schedule, err := fetchTableScheduleState(ctx, scheduleState, tbl)
+		schedule, err := e.fetchTableScheduleStateByTableID(ctx, scheduleState, tbl.ID)
 		if err != nil {
 			return state, err
 		}
@@ -461,6 +461,27 @@ func (e *ShowExec) getPolicyPlacement(policyRef *model.PolicyRefInfo) (settings 
 		return nil, errors.Errorf("Policy with name '%s' not found", policyRef.Name)
 	}
 	return policy.PlacementSettings, nil
+}
+
+// fetchTableScheduleStateByTableID fetches the schedule state of a table by its ID.
+// Only fetch the table info if the schedule state is still scheduled.
+func (e *ShowExec) fetchTableScheduleStateByTableID(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
+	state := infosync.PlacementScheduleStateScheduled
+
+	schedule, err := fetchScheduleState(ctx, scheduleState, id)
+	if err != nil {
+		return state, err
+	}
+	state = accumulateState(state, schedule)
+	if state != infosync.PlacementScheduleStateScheduled {
+		return state, nil
+	}
+
+	table, ok := e.is.TableByID(ctx, id)
+	if !ok {
+		return state, errors.Errorf("Table with ID '%d' not found", id)
+	}
+	return fetchTableScheduleState(ctx, scheduleState, table.Meta())
 }
 
 func fetchScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
