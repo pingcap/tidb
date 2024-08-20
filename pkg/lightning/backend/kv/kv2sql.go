@@ -54,7 +54,7 @@ func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key, 
 
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
 func (t *TableKVDecoder) DecodeRawRowData(h kv.Handle, value []byte) ([]types.Datum, map[int64]types.Datum, error) {
-	return tables.DecodeRawRowData(t.se, t.tbl.Meta(), h, t.tbl.Cols(), value)
+	return tables.DecodeRawRowData(t.se.GetExprCtx(), t.tbl.Meta(), h, t.tbl.Cols(), value)
 }
 
 // DecodeRawRowDataAsStr decodes raw row data into a string.
@@ -92,6 +92,8 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 
 	var buffer []types.Datum
 	var indexBuffer []byte
+	evalCtx := t.se.GetExprCtx().GetEvalCtx()
+	ec, loc := evalCtx.ErrCtx(), evalCtx.Location()
 	for _, index := range indices {
 		// skip clustered PK
 		if index.Meta().Primary && isCommonHandle {
@@ -102,8 +104,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 		if err != nil {
 			return err
 		}
-		sc := t.se.Vars.StmtCtx
-		iter := index.GenIndexKVIter(sc.ErrCtx(), sc.TimeZone(), indexValues, h, nil)
+		iter := index.GenIndexKVIter(ec, loc, indexValues, h, nil)
 		for iter.Valid() {
 			indexKey, _, _, err := iter.Next(indexBuffer, nil)
 			if err != nil {

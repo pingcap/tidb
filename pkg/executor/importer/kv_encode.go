@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -64,8 +63,8 @@ func NewTableKVEncoder(
 		return nil, err
 	}
 	// we need a non-nil TxnCtx to avoid panic when evaluating set clause
-	baseKVEncoder.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
-	colAssignExprs, _, err := ti.CreateColAssignExprs(baseKVEncoder.SessionCtx)
+	baseKVEncoder.SessionCtx.SetTxnCtxNotNil()
+	colAssignExprs, _, err := ti.CreateColAssignExprs(baseKVEncoder.SessionCtx.GetPlanCtx())
 	if err != nil {
 		return nil, err
 	}
@@ -95,24 +94,20 @@ func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 }
 
 func (en *tableKVEncoder) GetColumnSize() map[int64]int64 {
-	sessionVars := en.SessionCtx.GetSessionVars()
-	sessionVars.TxnCtxMu.Lock()
-	defer sessionVars.TxnCtxMu.Unlock()
-	return sessionVars.TxnCtx.TableDeltaMap[en.TableMeta().ID].ColSize
+	return en.SessionCtx.GetColumnSize(en.TableMeta().ID)
 }
 
 // todo merge with code in load_data.go
 func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
 	row := make([]types.Datum, 0, len(en.insertColumns))
-	sessionVars := en.SessionCtx.GetSessionVars()
 	setVar := func(name string, col *types.Datum) {
 		// User variable names are not case-sensitive
 		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
 		name = strings.ToLower(name)
 		if col == nil || col.IsNull() {
-			sessionVars.UnsetUserVar(name)
+			en.SessionCtx.UnsetUserVar(name)
 		} else {
-			sessionVars.SetUserVarVal(name, *col)
+			en.SessionCtx.SetUserVarVal(name, *col)
 		}
 	}
 
@@ -166,7 +161,7 @@ func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 	row := make([]types.Datum, len(en.Columns))
 	hasValue := make([]bool, len(en.Columns))
 	for i := 0; i < len(en.insertColumns); i++ {
-		casted, err := table.CastValue(en.SessionCtx, vals[i], en.insertColumns[i].ToInfo(), false, false)
+		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
 			return nil, err
 		}

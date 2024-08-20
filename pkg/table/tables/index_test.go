@@ -190,7 +190,7 @@ func TestGenIndexValueFromIndex(t *testing.T) {
 		SessionOptions: sessionOpts,
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
