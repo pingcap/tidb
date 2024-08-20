@@ -1473,7 +1473,7 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFi
 
 type refillOption struct{}
 
-const refillOptionKey refillOption = "refillOptionKey"
+var refillOptionKey refillOption
 
 // WithRefillOption controls the infoschema v2 cache refill operation.
 // By default, TableByID does not refill schema cache, and TableByName does.
