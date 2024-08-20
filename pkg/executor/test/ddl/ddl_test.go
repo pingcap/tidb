@@ -813,6 +813,11 @@ func TestSetDDLReorgWorkerCnt(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 257")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '257'"))
 	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
+
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 10;")
+	tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("10"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("256"))
+	require.Equal(t, int32(256), variable.GetDDLReorgWorkerCounter())
 }
 
 func TestSetDDLReorgBatchSize(t *testing.T) {
@@ -850,6 +855,10 @@ func TestSetDDLReorgBatchSize(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
+
+	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 256;")
+	tk.MustQuery("select @@tidb_ddl_reorg_batch_size").Check(testkit.Rows("256"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size").Check(testkit.Rows("1000"))
 }
 
 func TestSetDDLErrorCountLimit(t *testing.T) {

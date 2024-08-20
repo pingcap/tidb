@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -55,7 +54,6 @@ type engineInfo struct {
 
 	uuid        uuid.UUID
 	cfg         *backend.EngineConfig
-	litCfg      *config.Config
 	writerCache generic.SyncMap[int, backend.EngineWriter]
 	memRoot     MemRoot
 	flushLock   *sync.RWMutex
@@ -67,7 +65,6 @@ func newEngineInfo(
 	jobID, indexID int64,
 	unique bool,
 	cfg *backend.EngineConfig,
-	litCfg *config.Config,
 	en *backend.OpenedEngine,
 	uuid uuid.UUID,
 	memRoot MemRoot,
@@ -78,7 +75,6 @@ func newEngineInfo(
 		indexID:      indexID,
 		unique:       unique,
 		cfg:          cfg,
-		litCfg:       litCfg,
 		openedEngine: en,
 		uuid:         uuid,
 		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](4),

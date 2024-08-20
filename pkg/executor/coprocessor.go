@@ -256,7 +256,7 @@ func (h *CoprocessorDAGHandler) buildStreamResponse(chunk *tipb.Chunk) *coproces
 
 func (*CoprocessorDAGHandler) buildErrorResponse(err error) *coprocessor.Response {
 	return &coprocessor.Response{
-		OtherError: err.Error(),
+		OtherError: errors.ErrorStack(err),
 	}
 }
 

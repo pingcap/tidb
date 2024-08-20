@@ -16,7 +16,9 @@ package sortexec_test
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -141,4 +144,54 @@ func TestFailpoint(t *testing.T) {
 		failpointTest(t, ctx, nil, sortCase, dataSource)
 		failpointTest(t, ctx, exe, sortCase, dataSource)
 	}
+}
+
+func TestIssue55344(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 BOOL);")
+	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES('predicate_push_down'),('column_prune');")
+	tk.MustExec("ADMIN reload opt_rule_blacklist;")
+
+	// Should not be panic
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE 0 ORDER BY -646041453 ASC;")
+
+	// Test correctness
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1(c int);")
+	valueNum := 1000
+	insertedValues := make([]int, 0, valueNum)
+	for i := 0; i < valueNum; i++ {
+		insertedValues = append(insertedValues, rand.Intn(10000))
+	}
+
+	insertSQL := fmt.Sprintf("INSERT INTO t1 values (%d)", insertedValues[0])
+	for i := 1; i < valueNum; i++ {
+		insertSQL = fmt.Sprintf("%s, (%d)", insertSQL, insertedValues[i])
+	}
+	insertSQL += ";"
+
+	tk.MustExec(insertSQL)
+	sort.Ints(insertedValues)
+
+	expectValue := fmt.Sprintf("%d", insertedValues[0])
+	for i := 1; i < valueNum; i++ {
+		expectValue = fmt.Sprintf("%s\n%d", expectValue, insertedValues[i])
+	}
+
+	result := tk.MustQuery("select c from t1 order by c, -646041453;")
+	require.Equal(t, expectValue, result.String())
+	result = tk.MustQuery("select c from t1 order by -646041453, c;")
+	require.Equal(t, expectValue, result.String())
+	result = tk.MustQuery("select c from t1 order by c, -646041453, c+1;")
+	require.Equal(t, expectValue, result.String())
+	result = tk.MustQuery("select c from t1 order by c+1, -646041453, c;")
+	require.Equal(t, expectValue, result.String())
+
+	tk.MustExec("delete from mysql.opt_rule_blacklist where name='column_prune' or name='predicate_push_down';")
+	tk.MustExec("ADMIN reload opt_rule_blacklist;")
 }

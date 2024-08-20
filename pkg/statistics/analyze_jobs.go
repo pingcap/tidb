@@ -31,6 +31,16 @@ const (
 	AnalyzeFailed = "failed"
 )
 
+// JobType is the type of the analyze job.
+type JobType int
+
+const (
+	// TableAnalysisJob means the job is to analyze a table or partition.
+	TableAnalysisJob JobType = iota + 1
+	// GlobalStatsMergeJob means the job is to merge the global-level stats.
+	GlobalStatsMergeJob
+)
+
 const (
 	// maxDelta is the threshold of delta count. If the delta count reaches this threshold, it will be dumped into
 	// mysql.analyze_jobs.

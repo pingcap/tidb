@@ -152,7 +152,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 
 		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
 		}
 	}
 
@@ -178,7 +178,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		// dynamic prune mode is not used, could be that global statistics not yet available!
 		cacheable = false
 		reason = "static partition prune mode used"
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
 	}
 
 	// Collect information for metadata lock.
@@ -186,7 +186,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
 	for id := range vars.StmtCtx.MDLRelatedTableIDs {
-		tbl, ok := is.TableByID(id)
+		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
 			return nil, nil, 0, errors.New("table not found in info schema")
@@ -389,6 +389,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.InTxn()))
 	hash = append(hash, bool2Byte(vars.IsAutocommit()))
 	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
+	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
+	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
 	return string(hash), binding, true, "", nil
 }

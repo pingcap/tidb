@@ -435,3 +435,19 @@ CREATE TABLE `tl45f49bec` (
 INSERT INTO `tl45f49bec` VALUES('05:26:53','',6436.3984),('05:33:06','',2418.3447),('05:56:03','!34',5327.29),('11:11:13','$uX7jK=*(prX#fm',8447.91),('05:35:17','*Jqx7z%a9~1Xw',7480.8096),('22:48:06','-',4563.9565),('03:48:30','1*t@',282.95325),('19:34:18','1~4i@f8X&exNs+CG0x',1238.2216),('13:22:26','3c9iE',1337.3021),('11:30:51','4xyKNd7+tKbh',130.22589),('22:35:40','56vCiz^%#hcS',8593.311),('07:56:40','5W0p%FB$cMOcC_-37k',7798.0645),('23:17:09','6A!03oVaCmLM',6335.1514),('04:29:52','7N',8081.281),('04:14:22','7rW*b',2108.5618),('02:11:20','87O8gvnLG5',5109.0845),('11:43:02','=0vROyDng',9798.294),('06:21:18','@+0~@GdUE%+hSJg*#',7182.4136),('03:08:56','B1y^-u_v+l',2024.7775),('11:36:31','E#o%-MWl',3556.0056),('17:40:46','E1!qy4Qvw6s',8514.763),('13:40:54','IwMfmh$lfz',2577.1978),('00:55:17','J&eq%cQP+cx',1946.7703),('23:26:11','JJ0',9597.079),('19:16:32','K0VO3g(_nx%HMX',3434.9307),('14:35:00','LEJ9!B',1137.5157),('01:26:40','Sfuqtm',5829.2686),('11:58:06','XpqXa^b*%b!&I4ZnS',5890.494),('21:06:51','^',6630.6665),('03:22:56','^a',9613.8545),('04:30:59','_bmnB!IeDpljq',6335.3916),('08:29:45','b)=RH&R',5911.286),('18:56:18','h+5l9',1037.6467),('22:44:14','sZuxMLWUU',5482.626),('03:51:42','x-7',9611.379);
 
 SELECT 1 AS `r0` FROM (`t31cdd702`) JOIN `tl45f49bec` WHERE `tl45f49bec`.`col_22` BETWEEN 'LEJ9!B' AND 'TV#~!yw' LIMIT 24622829;
+
+# Test Issue52985
+set autocommit=ON;
+use test;
+drop table if exists t1;
+create table t1 (cc1 int,cc2 text);
+insert into t1 values (1, 'aaaa'),(2, 'bbbb'),(3, 'cccc');
+
+drop table if exists t2;
+create table t2 (cc1 int,cc2 text,primary key(cc1));
+insert into t2 values (2, '2');
+
+set tidb_executor_concurrency = 1;
+set tidb_window_concurrency = 100;
+explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;

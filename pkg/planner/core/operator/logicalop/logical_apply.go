@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -41,7 +41,7 @@ type LogicalApply struct {
 
 // Init initializes LogicalApply.
 func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
-	la.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
+	la.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
 	return &la
 }
 
@@ -73,7 +73,7 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
+	leftCols, rightCols := la.ExtractUsedCols(parentUsedCols)
 	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
 	var err error
 	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {
@@ -99,7 +99,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	if err != nil {
 		return nil, err
 	}
-	la.mergeSchema()
+	la.MergeSchema()
 	return la, nil
 }
 
@@ -170,7 +170,7 @@ func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return ExhaustPhysicalPlans4LogicalApply(la, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalApply(la, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -222,11 +222,11 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	}
 	switch la.JoinType {
 	case InnerJoin:
-		return la.extractFDForInnerJoin(eqCond)
+		return la.ExtractFDForInnerJoin(eqCond)
 	case LeftOuterJoin, RightOuterJoin:
-		return la.extractFDForOuterJoin(eqCond)
+		return la.ExtractFDForOuterJoin(eqCond)
 	case SemiJoin:
-		return la.extractFDForSemiJoin(eqCond)
+		return la.ExtractFDForSemiJoin(eqCond)
 	default:
 		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	}

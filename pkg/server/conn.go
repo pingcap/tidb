@@ -1126,15 +1126,20 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		// Should check InTxn() to avoid execute `begin` stmt.
+		// It should be CAS before checking the `inShutdownMode` to avoid the following scenario:
+		// 1. The connection checks the `inShutdownMode` and it's false.
+		// 2. The server sets the `inShutdownMode` to true. The `DrainClients` process ignores this connection
+		//   because the connection is in the `connStatusReading` status.
+		// 3. The connection changes its status to `connStatusDispatching` and starts to execute the command.
+		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
+			return
+		}
+
+		// Should check InTxn() to avoid execute `begin` stmt and allow executing statements in the not committed txn.
 		if cc.server.inShutdownMode.Load() {
 			if !cc.ctx.GetSessionVars().InTxn() {
 				return
 			}
-		}
-
-		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
-			return
 		}
 
 		startTime := time.Now()

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package syncer
+package serverstate
 
 import (
 	"context"
@@ -33,6 +33,7 @@ import (
 )
 
 const (
+	keyOpDefaultRetryCnt = 3
 	// keyOpDefaultTimeout is the default time out for etcd store.
 	keyOpDefaultTimeout = 1 * time.Second
 	statePrompt         = "global-state-syncer"
@@ -42,8 +43,10 @@ const (
 	StateNormalRunning = ""
 )
 
-// StateSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
-type StateSyncer interface {
+// Syncer is used to synchronize server state.
+// currently there are only 2 states: running/upgrading, and is only used for the
+// 'smooth upgrade' feature.
+type Syncer interface {
 	// Init sets the global schema version path to etcd if it isn't exist,
 	// then watch this path, and initializes the self schema version to etcd.
 	Init(ctx context.Context) error
@@ -82,27 +85,29 @@ func (info *StateInfo) Unmarshal(v []byte) error {
 	return json.Unmarshal(v, info)
 }
 
-type serverStateSyncer struct {
+// etcdSyncer is a Syncer implementation based on etcd.
+type etcdSyncer struct {
 	etcdPath           string
 	prompt             string
 	etcdCli            *clientv3.Client
 	session            *concurrency.Session
 	clusterState       *atomicutil.Pointer[StateInfo]
-	globalStateWatcher watcher
+	globalStateWatcher util.Watcher
 }
 
-// NewStateSyncer creates a new StateSyncer.
-func NewStateSyncer(etcdCli *clientv3.Client, etcdPath string) StateSyncer {
-	return &serverStateSyncer{
-		etcdCli:      etcdCli,
-		etcdPath:     etcdPath,
-		clusterState: atomicutil.NewPointer(NewStateInfo(StateNormalRunning)),
-		prompt:       statePrompt,
+// NewEtcdSyncer creates a new Syncer.
+func NewEtcdSyncer(etcdCli *clientv3.Client, etcdPath string) Syncer {
+	return &etcdSyncer{
+		etcdCli:            etcdCli,
+		etcdPath:           etcdPath,
+		clusterState:       atomicutil.NewPointer(NewStateInfo(StateNormalRunning)),
+		prompt:             statePrompt,
+		globalStateWatcher: util.NewWatcher(),
 	}
 }
 
-// Init implements StateSyncer.Init interface.
-func (s *serverStateSyncer) Init(ctx context.Context) error {
+// Init implements Syncer.Init interface.
+func (s *etcdSyncer) Init(ctx context.Context) error {
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -125,22 +130,22 @@ func (s *serverStateSyncer) Init(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// WatchChan implements StateSyncer.WatchChan interface.
-func (s *serverStateSyncer) WatchChan() clientv3.WatchChan {
+// WatchChan implements Syncer.WatchChan interface.
+func (s *etcdSyncer) WatchChan() clientv3.WatchChan {
 	return s.globalStateWatcher.WatchChan()
 }
 
-// Rewatch implements StateSyncer.Rewatch interface.
-func (s *serverStateSyncer) Rewatch(ctx context.Context) {
+// Rewatch implements Syncer.Rewatch interface.
+func (s *etcdSyncer) Rewatch(ctx context.Context) {
 	s.globalStateWatcher.Rewatch(ctx, s.etcdCli, s.etcdPath)
 }
 
-// IsUpgradingState implements StateSyncer.IsUpgradingState interface.
-func (s *serverStateSyncer) IsUpgradingState() bool {
+// IsUpgradingState implements Syncer.IsUpgradingState interface.
+func (s *etcdSyncer) IsUpgradingState() bool {
 	return s.clusterState.Load().State == StateUpgrading
 }
 
-func (*serverStateSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) ([]*mvccpb.KeyValue, error) {
+func (*etcdSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) ([]*mvccpb.KeyValue, error) {
 	var err error
 	var resp *clientv3.GetResponse
 	for i := 0; i < retryCnt; i++ {
@@ -167,8 +172,8 @@ func (*serverStateSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Cli
 	return nil, errors.Trace(err)
 }
 
-// GetGlobalState implements StateSyncer.GetGlobalState interface.
-func (s *serverStateSyncer) GetGlobalState(ctx context.Context) (*StateInfo, error) {
+// GetGlobalState implements Syncer.GetGlobalState interface.
+func (s *etcdSyncer) GetGlobalState(ctx context.Context) (*StateInfo, error) {
 	startTime := time.Now()
 	kvs, err := s.getKeyValue(ctx, s.etcdCli, s.etcdPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
@@ -192,8 +197,8 @@ func (s *serverStateSyncer) GetGlobalState(ctx context.Context) (*StateInfo, err
 	return state, nil
 }
 
-// UpdateGlobalState implements StateSyncer.UpdateGlobalState interface.
-func (s *serverStateSyncer) UpdateGlobalState(ctx context.Context, stateInfo *StateInfo) error {
+// UpdateGlobalState implements Syncer.UpdateGlobalState interface.
+func (s *etcdSyncer) UpdateGlobalState(ctx context.Context, stateInfo *StateInfo) error {
 	startTime := time.Now()
 	stateStr, err := stateInfo.Marshal()
 	if err != nil {

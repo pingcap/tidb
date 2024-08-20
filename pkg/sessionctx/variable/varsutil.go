@@ -409,14 +409,26 @@ func parseByteSize(s string) (byteSize uint64, normalizedStr string) {
 	if n, err := fmt.Sscanf(s, "%dKB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 10, fmt.Sprintf("%dKB", byteSize)
 	}
+	if n, err := fmt.Sscanf(s, "%dKiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 10, fmt.Sprintf("%dKiB", byteSize)
+	}
 	if n, err := fmt.Sscanf(s, "%dMB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 20, fmt.Sprintf("%dMB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dMiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 20, fmt.Sprintf("%dMiB", byteSize)
 	}
 	if n, err := fmt.Sscanf(s, "%dGB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 30, fmt.Sprintf("%dGB", byteSize)
 	}
+	if n, err := fmt.Sscanf(s, "%dGiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 30, fmt.Sprintf("%dGiB", byteSize)
+	}
 	if n, err := fmt.Sscanf(s, "%dTB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 40, fmt.Sprintf("%dTB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dTiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 40, fmt.Sprintf("%dTiB", byteSize)
 	}
 	return 0, ""
 }

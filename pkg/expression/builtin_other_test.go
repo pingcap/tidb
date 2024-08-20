@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -341,4 +342,31 @@ func TestInFunc(t *testing.T) {
 	err = vecEvalType(ctx, fn, types.ETInt, chk1, chk2.Column(0))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), chk2.Column(0).GetInt64(0))
+}
+
+func TestGetParam(t *testing.T) {
+	ctx := createContext(t)
+	params := []types.Datum{
+		types.NewIntDatum(123),
+		types.NewStringDatum("abc"),
+	}
+	ctx.GetSessionVars().PlanCacheParams.Append(params...)
+	fc := funcs[ast.GetParam]
+
+	for i := range params {
+		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(i)))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
+		require.NoError(t, err)
+		str, err := params[i].ToString()
+		require.NoError(t, err)
+		require.Equal(t, d.Kind(), types.KindString)
+		require.Equal(t, str, d.GetString())
+	}
+
+	fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(len(params)+1)))
+	require.NoError(t, err)
+	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.Equal(t, exprctx.ErrParamIndexExceedParamCounts, err)
+	require.True(t, d.IsNull())
 }

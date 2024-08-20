@@ -165,9 +165,9 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	}
 	proj, isProj := p.(*logicalop.LogicalProjection)
 	childFlag := canEliminate
-	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+	if _, isUnion := p.(*logicalop.LogicalUnionAll); isUnion {
 		childFlag = false
-	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
+	} else if _, isAgg := p.(*logicalop.LogicalAggregation); isAgg || isProj {
 		childFlag = true
 	} else if _, isWindow := p.(*logicalop.LogicalWindow); isWindow {
 		childFlag = true
@@ -178,10 +178,10 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 
 	// replace logical plan schema
 	switch x := p.(type) {
-	case *LogicalJoin:
-		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
-	case *LogicalApply:
-		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
+	case *logicalop.LogicalJoin:
+		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
+	case *logicalop.LogicalApply:
+		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
 	default:
 		for _, dst := range p.Schema().Columns {
 			ruleutil.ResolveColumnAndReplace(dst, replace)

@@ -82,18 +82,18 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 	switch p := lp.(type) {
 	case *DataSource:
 		return s.prune(p, opt)
-	case *LogicalUnionScan:
+	case *logicalop.LogicalUnionScan:
 		ds := p.Children()[0]
 		ds, err := s.prune(ds.(*DataSource), opt)
 		if err != nil {
 			return nil, err
 		}
-		if ua, ok := ds.(*LogicalPartitionUnionAll); ok {
+		if ua, ok := ds.(*logicalop.LogicalPartitionUnionAll); ok {
 			// Adjust the UnionScan->Union->DataSource1, DataSource2 ... to
 			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
 			children := make([]base.LogicalPlan, 0, len(ua.Children()))
 			for _, child := range ua.Children() {
-				us := LogicalUnionScan{
+				us := logicalop.LogicalUnionScan{
 					Conditions: p.Conditions,
 					HandleCols: p.HandleCols,
 				}.Init(ua.SCtx(), ua.QueryBlockOffset())
@@ -1878,7 +1878,7 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
 	}
-	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	unionAll := logicalop.LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.Schema().Clone())
 	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)
