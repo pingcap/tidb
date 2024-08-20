@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -69,7 +68,6 @@ type JobSubmitter struct {
 	limitJobCh chan *JobWrapper
 	// get notification if any DDL job submitted or finished.
 	ddlJobNotifyCh chan struct{}
-	globalIDLock   *sync.Mutex
 }
 
 func (s *JobSubmitter) submitLoop() {
@@ -358,9 +356,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// lock to reduce conflict
-	s.globalIDLock.Lock()
-	defer s.globalIDLock.Unlock()
 	return kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 
@@ -512,8 +507,10 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 		case model.ActionReorganizePartition, model.ActionRemovePartitioning:
 			pInfo := jobW.Args[1].(*model.PartitionInfo)
 			count += len(pInfo.Definitions)
+		case model.ActionTruncateTable:
+			partCount := jobW.Args[3].(int)
+			count += 1 + partCount
 		}
-		// TODO support other type of jobs
 	}
 	return count
 }
@@ -556,7 +553,7 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 			}
 		case model.ActionTruncateTablePartition:
 			if !jobW.IDAllocated {
-				newIDs := make([]int64, 0, len(jobW.Args[0].([]int64)))
+				newIDs := make([]int64, len(jobW.Args[0].([]int64)))
 				for i := range newIDs {
 					newIDs[i] = alloc.next()
 				}
@@ -573,15 +570,24 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 		case model.ActionRemovePartitioning:
-			// a special partition is pInfo in this case, and we will use the ID
+			// a special partition is used in this case, and we will use the ID
 			// of the partition as the new table ID.
 			pInfo := jobW.Args[1].(*model.PartitionInfo)
 			if !jobW.IDAllocated {
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 			pInfo.NewTableID = pInfo.Definitions[0].ID
+		case model.ActionTruncateTable:
+			if !jobW.IDAllocated {
+				jobW.Args[0] = alloc.next()
+				partCount := jobW.Args[3].(int)
+				partIDs := make([]int64, partCount)
+				for i := range partIDs {
+					partIDs[i] = alloc.next()
+				}
+				jobW.Args[2] = partIDs
+			}
 		}
-		// TODO support other type of jobs
 		jobW.ID = alloc.next()
 	}
 }
