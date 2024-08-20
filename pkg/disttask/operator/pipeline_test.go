@@ -47,7 +47,7 @@ func TestPipelineAsyncMultiOperators(t *testing.T) {
 	require.NoError(t, err)
 	err = pipeline.Close()
 	require.NoError(t, err)
-	require.Equal(t, mostCommonWord, "hit")
+	require.EqualValues(t, mostCommonWord, "hit")
 }
 
 type strCnt struct {
