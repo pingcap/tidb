@@ -15,11 +15,7 @@
 package exec_test
 
 import (
-<<<<<<< HEAD
-=======
-	"context"
 	"fmt"
->>>>>>> b066365ef36 (*: kill auto analyze out of the auto analyze time windows (#55062))
 	"testing"
 	"time"
 
