@@ -985,7 +985,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, rowCount, upperBound, sampleOutOfRange float64
+	var leftPercent, rightPercent, rowCount, sampleOutOfRange float64
 	if debugTrace {
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx,
@@ -1032,6 +1032,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
+	rowCount = totalPercent * hg.NotNullCount()
+
+	// Upper & lower bound logic.
+	upperBound := rowCount
 
 	if histNDV > 0 {
 		upperBound = hg.NotNullCount() / float64(histNDV)
@@ -1041,6 +1045,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 			if leftPercent == 0 || rightPercent == 0 {
 				sampleOutOfRange *= 0.5
 			}
+			// To avoid risk of error - 10% of the total number of rows is a reasonable estimate.
+			sampleOutOfRange = min(sampleOutOfRange, hg.NotNullCount()*0.1)
 			rowCount += sampleOutOfRange
 		}
 	}
@@ -1051,15 +1057,17 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
 		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return math.Max(rowCount, upperBound)
+		return min(rowCount, upperBound)
 	}
 
-	rowCount += totalPercent * math.Min(float64(modifyCount), hg.NotNullCount())
-
+	returnCount := float64(modifyCount)
+	if totalPercent > 0 {
+		returnCount = max(returnCount, max(sampleOutOfRange, upperBound))
+	}
 	// Adjust by increaseFactor if our estimate is low
 	rowCount *= increaseFactor
 
-	return rowCount
+	return min(rowCount, returnCount)
 }
 
 // Copy deep copies the histogram.
