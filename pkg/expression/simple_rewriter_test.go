@@ -59,7 +59,7 @@ func generateTestData(size int) (types.NameSlice, *ast.ColumnName) {
 	astCol := &ast.ColumnName{
 		Schema: model.NewCIStr("db"),
 		Table:  model.NewCIStr("tbl"),
-		Name:   model.NewCIStr("colZ"), // This will be at the end of the slice
+		Name:   model.NewCIStr("colZ"),
 	}
 	return names, astCol
 }
