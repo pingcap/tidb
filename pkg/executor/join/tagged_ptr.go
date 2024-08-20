@@ -51,7 +51,7 @@ func (th *tagPtrHelper) getTaggedValue(hashValue uint64) uint64 {
 	return hashValue & th.taggedMask
 }
 
-func (th *tagPtrHelper) toTaggedPtr(taggedValue uint64, ptr unsafe.Pointer) taggedPtr {
+func (*tagPtrHelper) toTaggedPtr(taggedValue uint64, ptr unsafe.Pointer) taggedPtr {
 	ret := taggedPtr(0)
 	// first save ptr into taggedPtr
 	*(*unsafe.Pointer)(unsafe.Pointer(&ret)) = ptr
