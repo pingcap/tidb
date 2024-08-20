@@ -437,7 +437,6 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 				)
 				rows = append(rows, record)
 			}
-
 		}
 	}
 	nameToCol := make(map[string]*model.ColumnInfo, len(table.Columns))
