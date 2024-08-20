@@ -2199,6 +2199,7 @@ type checkIndexTask struct {
 	err         *atomic.Pointer[error]
 }
 
+// RecoverArgs implements workerpool.TaskMayPanic interface.
 func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return "fast_check_table", "RecoverArgs", func() {
 		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", c.indexOffset)

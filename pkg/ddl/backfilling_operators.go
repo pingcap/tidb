@@ -280,6 +280,7 @@ type TableScanTask struct {
 	ctx *OperatorCtx
 }
 
+// RecoverArgs implements workerpool.TaskMayPanic interface.
 func (t TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return metrics.LblAddIndex, "RecoverArgs", func() {
 		t.ctx.onError(dbterror.ErrReorgPanic)
@@ -301,6 +302,7 @@ type IndexRecordChunk struct {
 	ctx   *OperatorCtx
 }
 
+// RecoverArgs implements workerpool.TaskMayPanic interface.
 func (t IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return metrics.LblAddIndex, "RecoverArgs", func() {
 		t.ctx.onError(dbterror.ErrReorgPanic)

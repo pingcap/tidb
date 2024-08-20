@@ -148,6 +148,7 @@ type importStepMinimalTask struct {
 	panicked   *atomic.Bool
 }
 
+// RecoverArgs implements workerpool.TaskMayPanic interface.
 func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return "encodeAndSortOperator", "RecoverArgs", func() {
 		t.panicked.Store(true)
