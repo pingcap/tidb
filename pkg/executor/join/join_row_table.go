@@ -285,18 +285,18 @@ func (meta *TableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bo
 }
 
 // for join that need to set UsedFlag during probe stage, read from nullMap is not thread safe for the first 32 bit of nullMap, atomic.LoadUint32 is used to avoid read-write conflict
-func (meta *TableMeta) isColumnNullThreadSafe(rowStart unsafe.Pointer, columnIndex int) bool {
+func (*TableMeta) isColumnNullThreadSafe(rowStart unsafe.Pointer, columnIndex int) bool {
 	return atomic.LoadUint32((*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)))&bitMaskInUint32[columnIndex+1] != uint32(0)
 }
 
-func (meta *TableMeta) setUsedFlag(rowStart unsafe.Pointer) {
+func (*TableMeta) setUsedFlag(rowStart unsafe.Pointer) {
 	addr := (*uint32)(unsafe.Add(rowStart, sizeOfNextPtr))
 	value := atomic.LoadUint32(addr)
 	value |= usedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
-func (meta *TableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
+func (*TableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
 	return (*(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) & usedFlagMask) == usedFlagMask
 }
 
