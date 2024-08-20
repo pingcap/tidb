@@ -14,6 +14,7 @@ go_library(
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/session",
         "//pkg/session/types",
@@ -33,6 +34,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/glue",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/session",
         "//pkg/testkit",

@@ -19,7 +19,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,14 +72,14 @@ func TestMergeCreateTableJobsOfSameSchema(t *testing.T) {
 		SchemaID:   1,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t1", L: "t1"}}, false},
+		Args:       []any{&model.TableInfo{Name: pmodel.CIStr{O: "t1", L: "t1"}}, false},
 		Query:      "create table db1.t1 (c1 int, c2 int)",
 	}, false)
 	job2 := NewJobWrapper(&model.Job{
 		SchemaID:   1,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t2", L: "t2"}}, &model.TableInfo{}},
+		Args:       []any{&model.TableInfo{Name: pmodel.CIStr{O: "t2", L: "t2"}}, &model.TableInfo{}},
 		Query:      "create table db1.t2 (c1 int, c2 int);",
 	}, false)
 	job, err := mergeCreateTableJobsOfSameSchema([]*JobWrapper{job1, job2})
@@ -100,10 +101,10 @@ func TestMergeCreateTableJobs(t *testing.T) {
 	t.Run("non create table are not merged", func(t *testing.T) {
 		jobWs := []*JobWrapper{
 			{Job: &model.Job{SchemaName: "db", Type: model.ActionCreateTable,
-				Args: []any{&model.TableInfo{Name: model.NewCIStr("t1")}, false}}},
+				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t1")}, false}}},
 			{Job: &model.Job{SchemaName: "db", Type: model.ActionAddColumn}},
 			{Job: &model.Job{SchemaName: "db", Type: model.ActionCreateTable,
-				Args: []any{&model.TableInfo{Name: model.NewCIStr("t2")}, false}}},
+				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t2")}, false}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		require.NoError(t, err)
@@ -115,9 +116,9 @@ func TestMergeCreateTableJobs(t *testing.T) {
 	t.Run("jobs of pre allocated ids are not merged", func(t *testing.T) {
 		jobWs := []*JobWrapper{
 			{Job: &model.Job{SchemaName: "db", Type: model.ActionCreateTable,
-				Args: []any{&model.TableInfo{Name: model.NewCIStr("t1")}, false}}, IDAllocated: true},
+				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t1")}, false}}, IDAllocated: true},
 			{Job: &model.Job{SchemaName: "db", Type: model.ActionCreateTable,
-				Args: []any{&model.TableInfo{Name: model.NewCIStr("t2")}, false}}},
+				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t2")}, false}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		require.NoError(t, err)
@@ -129,7 +130,7 @@ func TestMergeCreateTableJobs(t *testing.T) {
 			{Job: &model.Job{SchemaName: "db", Type: model.ActionCreateTable,
 				Args: []any{&model.TableInfo{ForeignKeys: []*model.FKInfo{{}}}, false}}},
 			{Job: &model.Job{SchemaName: "db", Type: model.ActionCreateTable,
-				Args: []any{&model.TableInfo{Name: model.NewCIStr("t2")}, false}}},
+				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t2")}, false}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		require.NoError(t, err)
@@ -139,9 +140,9 @@ func TestMergeCreateTableJobs(t *testing.T) {
 	t.Run("jobs of different schema are not merged", func(t *testing.T) {
 		jobWs := []*JobWrapper{
 			{Job: &model.Job{SchemaName: "db1", Type: model.ActionCreateTable,
-				Args: []any{&model.TableInfo{Name: model.NewCIStr("t1")}, false}}},
+				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t1")}, false}}},
 			{Job: &model.Job{SchemaName: "db2", Type: model.ActionCreateTable,
-				Args: []any{&model.TableInfo{Name: model.NewCIStr("t2")}, false}}},
+				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t2")}, false}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		require.NoError(t, err)
@@ -158,12 +159,12 @@ func TestMergeCreateTableJobs(t *testing.T) {
 			for i := 0; i < cnt; i++ {
 				tblName := fmt.Sprintf("t%d", i)
 				jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: db, Type: model.ActionCreateTable,
-					Args: []any{&model.TableInfo{Name: model.NewCIStr(tblName)}, false}}, false))
+					Args: []any{&model.TableInfo{Name: pmodel.NewCIStr(tblName)}, false}}, false))
 			}
 		}
 		jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: "dbx", Type: model.ActionAddColumn}, false))
 		jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: "dbxx", Type: model.ActionCreateTable,
-			Args: []any{&model.TableInfo{Name: model.NewCIStr("t1")}, false}}, true))
+			Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t1")}, false}}, true))
 		jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: "dbxxx", Type: model.ActionCreateTable,
 			Args: []any{&model.TableInfo{ForeignKeys: []*model.FKInfo{{}}}, false}}, false))
 		newWs, err := mergeCreateTableJobs(jobWs)

@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
@@ -33,6 +33,7 @@ go_test(
     shard_count = 14,
     deps = [
         ":refresher",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",

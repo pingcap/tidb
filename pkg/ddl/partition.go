@@ -36,12 +36,13 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -369,7 +370,7 @@ func checkAddListPartitions(tblInfo *model.TableInfo) error {
 //	(needs reorganize partition instead).
 func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
 	switch meta.Partition.Type {
-	case model.PartitionTypeRange:
+	case pmodel.PartitionTypeRange:
 		if len(meta.Partition.Columns) == 0 {
 			newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
 			rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
@@ -400,7 +401,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 				currentRangeValue = nextRangeValue
 			}
 		}
-	case model.PartitionTypeList:
+	case pmodel.PartitionTypeList:
 		err := checkAddListPartitions(meta)
 		if err != nil {
 			return err
@@ -518,9 +519,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 	var enable bool
 	switch s.Tp {
-	case model.PartitionTypeRange:
+	case pmodel.PartitionTypeRange:
 		enable = true
-	case model.PartitionTypeList:
+	case pmodel.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
 		if enable {
@@ -529,7 +530,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				return err
 			}
 		}
-	case model.PartitionTypeHash, model.PartitionTypeKey:
+	case pmodel.PartitionTypeHash, pmodel.PartitionTypeKey:
 		// Partition by hash and key is enabled by default.
 		if s.Sub != nil {
 			// Subpartitioning only allowed with Range or List
@@ -539,10 +540,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		if s.Linear {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
 		}
-		if s.Tp == model.PartitionTypeHash || len(s.ColumnNames) != 0 {
+		if s.Tp == pmodel.PartitionTypeHash || len(s.ColumnNames) != 0 {
 			enable = true
 		}
-		if s.Tp == model.PartitionTypeKey && len(s.ColumnNames) == 0 {
+		if s.Tp == pmodel.PartitionTypeKey && len(s.ColumnNames) == 0 {
 			enable = true
 		}
 	}
@@ -574,11 +575,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 		pi.Expr = buf.String()
 	} else if s.ColumnNames != nil {
-		pi.Columns = make([]model.CIStr, 0, len(s.ColumnNames))
+		pi.Columns = make([]pmodel.CIStr, 0, len(s.ColumnNames))
 		for _, cn := range s.ColumnNames {
 			pi.Columns = append(pi.Columns, cn.Name)
 		}
-		if pi.Type == model.PartitionTypeKey && len(s.ColumnNames) == 0 {
+		if pi.Type == pmodel.PartitionTypeKey && len(s.ColumnNames) == 0 {
 			if tbInfo.PKIsHandle {
 				pi.Columns = append(pi.Columns, tbInfo.GetPkName())
 				pi.IsEmptyColumns = true
@@ -750,10 +751,10 @@ func isValidKeyPartitionColType(fieldType types.FieldType) bool {
 	}
 }
 
-func isColTypeAllowedAsPartitioningCol(partType model.PartitionType, fieldType types.FieldType) bool {
+func isColTypeAllowedAsPartitioningCol(partType pmodel.PartitionType, fieldType types.FieldType) bool {
 	// For key partition, the permitted partition field types can be all field types except
 	// BLOB, JSON, Geometry
-	if partType == model.PartitionTypeKey {
+	if partType == pmodel.PartitionTypeKey {
 		return isValidKeyPartitionColType(fieldType)
 	}
 	// The permitted data types are shown in the following list:
@@ -776,7 +777,7 @@ func isColTypeAllowedAsPartitioningCol(partType model.PartitionType, fieldType t
 // will return nil if error occurs, i.e. not an INTERVAL partitioned table
 func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.TableInfo) *ast.PartitionInterval {
 	if tbInfo.Partition == nil ||
-		tbInfo.Partition.Type != model.PartitionTypeRange {
+		tbInfo.Partition.Type != pmodel.PartitionTypeRange {
 		return nil
 	}
 	if len(tbInfo.Partition.Columns) > 1 {
@@ -896,7 +897,7 @@ func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.Ta
 	}
 
 	partitionMethod := ast.PartitionMethod{
-		Tp:       model.PartitionTypeRange,
+		Tp:       pmodel.PartitionTypeRange,
 		Interval: &interval,
 	}
 	partOption := &ast.PartitionOptions{PartitionMethod: partitionMethod}
@@ -1030,7 +1031,7 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 	if partOptions.Interval == nil {
 		return nil
 	}
-	if tbInfo.Partition.Type != model.PartitionTypeRange {
+	if tbInfo.Partition.Type != pmodel.PartitionTypeRange {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only allowed on RANGE partitioning")
 	}
 	if len(partOptions.ColumnNames) > 1 || len(tbInfo.Partition.Columns) > 1 {
@@ -1105,7 +1106,7 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 			partExpr = ast.NewValueExpr(min, "", "")
 		}
 		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
-			Name: model.NewCIStr("P_NULL"),
+			Name: pmodel.NewCIStr("P_NULL"),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{partExpr},
 			},
@@ -1119,7 +1120,7 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 
 	if partOptions.Interval.MaxValPart {
 		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
-			Name: model.NewCIStr("P_MAXVALUE"),
+			Name: pmodel.NewCIStr("P_MAXVALUE"),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{&ast.MaxValueExpr{}},
 			},
@@ -1305,7 +1306,7 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 				}
 			} else {
 				currExpr = &ast.FuncCallExpr{
-					FnName: model.NewCIStr("DATE_ADD"),
+					FnName: pmodel.NewCIStr("DATE_ADD"),
 					Args: []ast.ExprNode{
 						startExpr,
 						currExpr,
@@ -1364,7 +1365,7 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 			}
 		}
 		partDefs = append(partDefs, &ast.PartitionDefinition{
-			Name: model.NewCIStr(partName),
+			Name: pmodel.NewCIStr(partName),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{currExpr},
 			},
@@ -1388,7 +1389,7 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
 func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) (partitions []model.PartitionDefinition, err error) {
 	switch tbInfo.Partition.Type {
-	case model.PartitionTypeNone:
+	case pmodel.PartitionTypeNone:
 		if len(defs) != 1 {
 			return nil, dbterror.ErrUnsupportedPartitionType
 		}
@@ -1396,11 +1397,11 @@ func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.Part
 		if comment, set := defs[0].Comment(); set {
 			partitions[0].Comment = comment
 		}
-	case model.PartitionTypeRange:
+	case pmodel.PartitionTypeRange:
 		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
-	case model.PartitionTypeHash, model.PartitionTypeKey:
+	case pmodel.PartitionTypeHash, pmodel.PartitionTypeKey:
 		partitions, err = buildHashPartitionDefinitions(defs, tbInfo, numParts)
-	case model.PartitionTypeList:
+	case pmodel.PartitionTypeList:
 		partitions, err = buildListPartitionDefinitions(ctx, defs, tbInfo)
 	default:
 		err = dbterror.ErrUnsupportedPartitionType
@@ -1423,7 +1424,7 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	for _, opt := range options {
 		if opt.Tp == ast.TableOptionPlacementPolicy {
 			partition.PlacementPolicyRef = &model.PolicyRefInfo{
-				Name: model.NewCIStr(opt.StrValue),
+				Name: pmodel.NewCIStr(opt.StrValue),
 			}
 		}
 	}
@@ -1471,7 +1472,7 @@ func buildHashPartitionDefinitions(defs []*ast.PartitionDefinition, tbInfo *mode
 			}
 		} else {
 			// Use the default
-			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%d", i))
+			definitions[i].Name = pmodel.NewCIStr(fmt.Sprintf("p%d", i))
 		}
 	}
 	return definitions, nil
@@ -1485,7 +1486,7 @@ func buildListPartitionDefinitions(ctx expression.BuildContext, defs []*ast.Part
 		return nil, dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
 	}
 	for _, def := range defs {
-		if err := def.Clause.Validate(model.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
+		if err := def.Clause.Validate(pmodel.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
 		}
 		clause := def.Clause.(*ast.PartitionDefinitionClauseIn)
@@ -1580,7 +1581,7 @@ func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.Par
 		return nil, dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
 	}
 	for _, def := range defs {
-		if err := def.Clause.Validate(model.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
+		if err := def.Clause.Validate(pmodel.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
 		}
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
@@ -1755,7 +1756,7 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("Partition type should be the same")
 	}
 	// Check whether partitionType is hash partition.
-	if newTableInfo.Partition.Type == model.PartitionTypeHash {
+	if newTableInfo.Partition.Type == pmodel.PartitionTypeHash {
 		if newTableInfo.Partition.Num != oldTableInfo.Partition.Num {
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be the same")
 		}
@@ -2012,7 +2013,7 @@ func getRangeValue(ctx expression.BuildContext, str string, unsigned bool) (any,
 // CheckDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
 func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
 	pi := meta.Partition
-	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
+	if pi.Type != pmodel.PartitionTypeRange && pi.Type != pmodel.PartitionTypeList {
 		return dbterror.ErrOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
 
@@ -2185,12 +2186,12 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 			return ver, err
 		}
 		// ALTER TABLE ... PARTITION BY
-		if partInfo.Type != model.PartitionTypeNone {
+		if partInfo.Type != pmodel.PartitionTypeNone {
 			// Also remove anything with the new table id
 			physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
 			// Reset if it was normal table before
-			if tblInfo.Partition.Type == model.PartitionTypeNone ||
-				tblInfo.Partition.DDLType == model.PartitionTypeNone {
+			if tblInfo.Partition.Type == pmodel.PartitionTypeNone ||
+				tblInfo.Partition.DDLType == pmodel.PartitionTypeNone {
 				tblInfo.Partition = nil
 			} else {
 				tblInfo.Partition.ClearReorgIntermediateInfo()
@@ -3434,7 +3435,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 				return ver, errors.Trace(err)
 			}
 			tblInfo.ID = partInfo.NewTableID
-			if partInfo.DDLType != model.PartitionTypeNone {
+			if partInfo.DDLType != pmodel.PartitionTypeNone {
 				// if partitioned before, then also add the old table ID,
 				// otherwise it will be the already included first partition
 				physicalTableIDs = append(physicalTableIDs, oldTblID)
@@ -4030,7 +4031,7 @@ func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, p
 
 	pi := pt.Partition
 	switch pi.Type {
-	case model.PartitionTypeHash:
+	case pmodel.PartitionTypeHash:
 		if pi.Num == 1 {
 			checkNt = false
 		} else {
@@ -4047,7 +4048,7 @@ func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, p
 				paramList = append(paramList, pi.Num, index)
 			}
 		}
-	case model.PartitionTypeRange:
+	case pmodel.PartitionTypeRange:
 		// Table has only one partition and has the maximum value
 		if len(pi.Definitions) == 1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 			checkNt = false
@@ -4063,7 +4064,7 @@ func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, p
 				paramList = append(paramList, params...)
 			}
 		}
-	case model.PartitionTypeList:
+	case pmodel.PartitionTypeList:
 		if len(pi.Columns) == 0 {
 			conds := buildCheckSQLConditionForListPartition(pi, index)
 			buf.WriteString(conds)
@@ -4346,7 +4347,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 		partCols []*model.ColumnInfo
 		err      error
 	)
-	if pi.Type == model.PartitionTypeNone {
+	if pi.Type == pmodel.PartitionTypeNone {
 		return true, nil
 	}
 	// The expr will be an empty string if the partition is defined by:
@@ -4747,8 +4748,8 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 	// This also solves the issue with comments within comments that would happen for
 	// PLACEMENT POLICY options.
 	defaultPartitionDefinitions := true
-	if partitionInfo.Type == model.PartitionTypeHash ||
-		partitionInfo.Type == model.PartitionTypeKey {
+	if partitionInfo.Type == pmodel.PartitionTypeHash ||
+		partitionInfo.Type == pmodel.PartitionTypeKey {
 		for i, def := range partitionInfo.Definitions {
 			if def.Name.O != fmt.Sprintf("p%d", i) {
 				defaultPartitionDefinitions = false
@@ -4761,7 +4762,7 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 
 		if defaultPartitionDefinitions {
-			if partitionInfo.Type == model.PartitionTypeHash {
+			if partitionInfo.Type == pmodel.PartitionTypeHash {
 				fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
 			} else {
 				buf.WriteString("\nPARTITION BY KEY (")
@@ -4777,7 +4778,7 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
 		// || partitionInfo.Type == model.PartitionTypeKey
 		// Notice that MySQL uses two spaces between LIST and COLUMNS...
-		if partitionInfo.Type == model.PartitionTypeKey {
+		if partitionInfo.Type == pmodel.PartitionTypeKey {
 			fmt.Fprintf(buf, "\nPARTITION BY %s (", partitionInfo.Type.String())
 		} else {
 			fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
@@ -4802,13 +4803,13 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
 		// PartitionTypeHash and PartitionTypeKey do not have any VALUES definition
-		if partitionInfo.Type == model.PartitionTypeRange {
+		if partitionInfo.Type == pmodel.PartitionTypeRange {
 			lessThans := make([]string, len(def.LessThan))
 			for idx, v := range def.LessThan {
 				lessThans[idx] = hexIfNonPrint(v)
 			}
 			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", strings.Join(lessThans, ","))
-		} else if partitionInfo.Type == model.PartitionTypeList {
+		} else if partitionInfo.Type == pmodel.PartitionTypeList {
 			if len(def.InValues) == 0 {
 				fmt.Fprintf(buf, " DEFAULT")
 			} else if len(def.InValues) == 1 &&
@@ -4889,11 +4890,11 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 	}
 
 	switch tbInfo.Partition.Type {
-	case model.PartitionTypeRange:
+	case pmodel.PartitionTypeRange:
 		err = checkPartitionByRange(ctx, tbInfo)
-	case model.PartitionTypeHash, model.PartitionTypeKey:
+	case pmodel.PartitionTypeHash, pmodel.PartitionTypeKey:
 		err = checkPartitionByHash(ctx, tbInfo)
-	case model.PartitionTypeList:
+	case pmodel.PartitionTypeList:
 		err = checkPartitionByList(ctx, tbInfo)
 	}
 	return errors.Trace(err)

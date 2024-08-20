@@ -28,9 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -58,7 +59,7 @@ func TestPlacementPolicy(t *testing.T) {
 	// test the meta storage of placemnt policy.
 	policy := &model.PolicyInfo{
 		ID:   1,
-		Name: model.NewCIStr("aa"),
+		Name: pmodel.NewCIStr("aa"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion:      "my primary",
 			Regions:            "my regions",
@@ -83,7 +84,7 @@ func TestPlacementPolicy(t *testing.T) {
 	require.Equal(t, policy, val)
 
 	// mock updating the placement policy.
-	policy.Name = model.NewCIStr("bb")
+	policy.Name = pmodel.NewCIStr("bb")
 	policy.LearnerConstraints = "+zone=nanjing"
 	err = m.UpdatePolicy(policy)
 	require.NoError(t, err)
@@ -138,7 +139,7 @@ func TestResourceGroup(t *testing.T) {
 
 	rg := &model.ResourceGroupInfo{
 		ID:   groupID,
-		Name: model.NewCIStr("aa"),
+		Name: pmodel.NewCIStr("aa"),
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate: 100,
 		},
@@ -209,7 +210,7 @@ func TestMeta(t *testing.T) {
 
 	dbInfo := &model.DBInfo{
 		ID:   1,
-		Name: model.NewCIStr("a"),
+		Name: pmodel.NewCIStr("a"),
 	}
 	err = m.CreateDatabase(dbInfo)
 	require.NoError(t, err)
@@ -222,7 +223,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dbInfo, v)
 
-	dbInfo.Name = model.NewCIStr("aa")
+	dbInfo.Name = pmodel.NewCIStr("aa")
 	err = m.UpdateDatabase(dbInfo)
 	require.NoError(t, err)
 
@@ -236,7 +237,7 @@ func TestMeta(t *testing.T) {
 
 	tbInfo := &model.TableInfo{
 		ID:   1,
-		Name: model.NewCIStr("t"),
+		Name: pmodel.NewCIStr("t"),
 		DBID: dbInfo.ID,
 	}
 	err = m.CreateTableOrView(1, tbInfo)
@@ -254,7 +255,7 @@ func TestMeta(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
-	tbInfo.Name = model.NewCIStr("tt")
+	tbInfo.Name = pmodel.NewCIStr("tt")
 	err = m.UpdateTable(1, tbInfo)
 	require.NoError(t, err)
 
@@ -274,7 +275,7 @@ func TestMeta(t *testing.T) {
 
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
-		Name: model.NewCIStr("bb"),
+		Name: pmodel.NewCIStr("bb"),
 		DBID: dbInfo.ID,
 	}
 	err = m.CreateTableOrView(1, tbInfo2)
@@ -340,7 +341,7 @@ func TestMeta(t *testing.T) {
 	tid := int64(100)
 	tbInfo100 := &model.TableInfo{
 		ID:   tid,
-		Name: model.NewCIStr("t_rename"),
+		Name: pmodel.NewCIStr("t_rename"),
 	}
 	// Create table.
 	err = m.CreateTableOrView(1, tbInfo100)
@@ -367,7 +368,7 @@ func TestMeta(t *testing.T) {
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
-		Name: model.NewCIStr("tbl3"),
+		Name: pmodel.NewCIStr("tbl3"),
 	}
 	err = m.CreateTableAndSetAutoID(1, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
@@ -729,7 +730,7 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 
 func TestTableNameExtract(t *testing.T) {
 	var tbl model.TableInfo
-	tbl.Name = model.NewCIStr(`a`)
+	tbl.Name = pmodel.NewCIStr(`a`)
 	b, err := json.Marshal(tbl)
 	require.NoError(t, err)
 
@@ -738,28 +739,28 @@ func TestTableNameExtract(t *testing.T) {
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, "a", nameLMatch[1])
 
-	tbl.Name = model.NewCIStr(`"a"`)
+	tbl.Name = pmodel.NewCIStr(`"a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = model.NewCIStr(`""a"`)
+	tbl.Name = pmodel.NewCIStr(`""a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `""a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = model.NewCIStr(`"\"a"`)
+	tbl.Name = pmodel.NewCIStr(`"\"a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = model.NewCIStr(`"\"啊"`)
+	tbl.Name = pmodel.NewCIStr(`"\"啊"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
@@ -869,28 +870,28 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	// create database
 	dbInfo := &model.DBInfo{
 		ID:    10001,
-		Name:  model.NewCIStr("sc"),
+		Name:  pmodel.NewCIStr("sc"),
 		State: model.StatePublic,
 	}
 
 	// create table with special attributes
 	tblInfo := &model.TableInfo{
 		ID:    10002,
-		Name:  model.NewCIStr("cs"),
+		Name:  pmodel.NewCIStr("cs"),
 		State: model.StatePublic,
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
-				{ID: 11, Name: model.NewCIStr("p1")},
-				{ID: 22, Name: model.NewCIStr("p2")},
+				{ID: 11, Name: pmodel.NewCIStr("p1")},
+				{ID: 22, Name: pmodel.NewCIStr("p2")},
 			},
 			Enable: true,
 		},
 		ForeignKeys: []*model.FKInfo{{
 			ID:       1,
-			Name:     model.NewCIStr("fk"),
-			RefTable: model.NewCIStr("t"),
-			RefCols:  []model.CIStr{model.NewCIStr("a")},
-			Cols:     []model.CIStr{model.NewCIStr("t_a")},
+			Name:     pmodel.NewCIStr("fk"),
+			RefTable: pmodel.NewCIStr("t"),
+			RefCols:  []pmodel.CIStr{pmodel.NewCIStr("a")},
+			Cols:     []pmodel.CIStr{pmodel.NewCIStr("t_a")},
 		}},
 		TiFlashReplica: &model.TiFlashReplicaInfo{
 			Count:          0,
@@ -898,13 +899,13 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 			Available:      true,
 		},
 		Lock: &model.TableLockInfo{
-			Tp:    model.TableLockRead,
+			Tp:    pmodel.TableLockRead,
 			State: model.TableLockStatePreLock,
 			TS:    0,
 		},
 		PlacementPolicyRef: &model.PolicyRefInfo{
 			ID:   1,
-			Name: model.NewCIStr("r1"),
+			Name: pmodel.NewCIStr("r1"),
 		},
 		TTLInfo: &model.TTLInfo{
 			IntervalExprStr:  "1",

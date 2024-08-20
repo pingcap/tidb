@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "@com_github_pingcap_errors//:errors",

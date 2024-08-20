@@ -10,7 +10,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/lock/context",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/context",

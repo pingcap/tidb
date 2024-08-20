@@ -21,6 +21,42 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
+// BackfillState is the state used by the backfill-merge process.
+type BackfillState byte
+
+const (
+	// BackfillStateInapplicable means the backfill-merge process is not used.
+	BackfillStateInapplicable BackfillState = iota
+	// BackfillStateRunning is the state that the backfill process is running.
+	// In this state, the index's write and delete operations are redirected to a temporary index.
+	BackfillStateRunning
+	// BackfillStateReadyToMerge is the state that the temporary index's records are ready to be merged back
+	// to the origin index.
+	// In this state, the index's write and delete operations are copied to a temporary index.
+	// This state is used to make sure that all the TiDB instances are aware of the copy
+	// during the merge(BackfillStateMerging).
+	BackfillStateReadyToMerge
+	// BackfillStateMerging is the state that the temp index is merging back to the origin index.
+	// In this state, the index's write and delete operations are copied to a temporary index.
+	BackfillStateMerging
+)
+
+// String implements fmt.Stringer interface.
+func (s BackfillState) String() string {
+	switch s {
+	case BackfillStateRunning:
+		return "backfill state running"
+	case BackfillStateReadyToMerge:
+		return "backfill state ready to merge"
+	case BackfillStateMerging:
+		return "backfill state merging"
+	case BackfillStateInapplicable:
+		return "backfill state inapplicable"
+	default:
+		return "backfill state unknown"
+	}
+}
+
 // DDLReorgMeta is meta info of DDL reorganization.
 type DDLReorgMeta struct {
 	SQLMode           mysql.SQLMode                    `json:"sql_mode"`
@@ -102,42 +138,6 @@ func (tp ReorgType) String() string {
 		return "txn-merge"
 	}
 	return ""
-}
-
-// BackfillState is the state used by the backfill-merge process.
-type BackfillState byte
-
-const (
-	// BackfillStateInapplicable means the backfill-merge process is not used.
-	BackfillStateInapplicable BackfillState = iota
-	// BackfillStateRunning is the state that the backfill process is running.
-	// In this state, the index's write and delete operations are redirected to a temporary index.
-	BackfillStateRunning
-	// BackfillStateReadyToMerge is the state that the temporary index's records are ready to be merged back
-	// to the origin index.
-	// In this state, the index's write and delete operations are copied to a temporary index.
-	// This state is used to make sure that all the TiDB instances are aware of the copy
-	// during the merge(BackfillStateMerging).
-	BackfillStateReadyToMerge
-	// BackfillStateMerging is the state that the temp index is merging back to the origin index.
-	// In this state, the index's write and delete operations are copied to a temporary index.
-	BackfillStateMerging
-)
-
-// String implements fmt.Stringer interface.
-func (s BackfillState) String() string {
-	switch s {
-	case BackfillStateRunning:
-		return "backfill state running"
-	case BackfillStateReadyToMerge:
-		return "backfill state ready to merge"
-	case BackfillStateMerging:
-		return "backfill state merging"
-	case BackfillStateInapplicable:
-		return "backfill state inapplicable"
-	default:
-		return "backfill state unknown"
-	}
 }
 
 // BackfillMeta is meta info of the backfill job.
