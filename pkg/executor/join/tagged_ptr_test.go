@@ -55,6 +55,7 @@ func TestTagHelper(t *testing.T) {
 	for {
 		if taggedValue&tagHelper.taggedMask == taggedValue {
 			break
+		}
 		taggedValue <<= 1
 	}
 	require.True(t, taggedValue != 0, "tagged value should not be zero")
