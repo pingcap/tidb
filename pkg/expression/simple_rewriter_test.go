@@ -25,7 +25,7 @@ import (
 )
 
 // Original function for comparison
-func FindFieldNameOriginal(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
+func findFieldNameOriginal(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, name := range names {
@@ -130,8 +130,8 @@ func TestFindFieldName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
 
-			// Test FindFieldNameOriginal
-			idxOriginal, errOriginal := FindFieldNameOriginal(tt.names, tt.astCol)
+			// Test findFieldNameOriginal
+			idxOriginal, errOriginal := findFieldNameOriginal(tt.names, tt.astCol)
 			if tt.err != nil {
 				require.Error(errOriginal)
 				require.Equal(tt.err.Error(), errOriginal.Error())
@@ -169,7 +169,7 @@ func BenchmarkFindFieldName(b *testing.B) {
 
 		b.Run("Original-"+fmt.Sprint(size), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				FindFieldNameOriginal(names, astCol)
+				findFieldNameOriginal(names, astCol)
 			}
 		})
 
