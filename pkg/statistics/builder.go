@@ -133,7 +133,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
-	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil)
+	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +149,7 @@ func buildHist(
 	samples []*SampleItem,
 	count, ndv, numBuckets int64,
 	memTracker *memory.Tracker,
+	multiCol bool,
 ) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
@@ -216,7 +217,9 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if totalCount-float64(lastCount) <= valuesPerBucket {
+		} else if totalCount-float64(lastCount) <= valuesPerBucket ||
+			// Allow the bucket to grow for multi-column unique indexes - provided the numBuckets is set at the default 256
+			(numBuckets == 256 && multiCol && hg.Buckets[bucketIdx].Repeat == 1) {
 			// The bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
@@ -265,7 +268,8 @@ func BuildHistAndTopN(
 	tp *types.FieldType,
 	isColumn bool,
 	memTracker *memory.Tracker,
-	needExtStats bool,
+	needExtStats,
+	multiCol bool,
 ) (*Histogram, *TopN, error) {
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
@@ -478,7 +482,7 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
+		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker, multiCol)
 		if err != nil {
 			return nil, nil, err
 		}
