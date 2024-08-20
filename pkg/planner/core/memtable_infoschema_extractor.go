@@ -375,7 +375,7 @@ func NewInfoSchemaStatisticsExtractor() *InfoSchemaStatisticsExtractor {
 
 // HasIndex returns true if index name is specified in predicates.
 func (e *InfoSchemaStatisticsExtractor) HasIndex(val string) bool {
-	return e.filter(_indexName, val)
+	return !e.filter(_indexName, val)
 }
 
 // HasPrimaryKey returns true if primary key is specified in predicates.
