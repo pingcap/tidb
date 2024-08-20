@@ -1231,6 +1231,9 @@ func exploreEnforcedPlan(ds *DataSource) bool {
 }
 
 func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+	if ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
