@@ -162,7 +162,7 @@ func TestFindFieldName(t *testing.T) {
 
 // go test -bench=^BenchmarkFindFieldName$ -run=^$ -tags intest github.com/pingcap/tidb/pkg/expression
 func BenchmarkFindFieldName(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000}
+	sizes := []int{10, 100, 200, 1000, 10000}
 
 	for _, size := range sizes {
 		names, astCol := generateTestData(size)
