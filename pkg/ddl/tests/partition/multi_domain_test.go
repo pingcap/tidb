@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -60,14 +60,14 @@ func TestMultiSchemaVerPartitionBy(t *testing.T) {
 	dom2.Reload()
 	verStart := dom1.InfoSchema().SchemaMetaVersion()
 	alterChan := make(chan struct{})
-	originHook := dom1.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: nil}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+
+	// Is it possible to only do this on a single DOM?
+	hookFunc := func(job *model.Job) {
 		alterChan <- struct{}{}
 		<-alterChan
 	}
-	dom1.DDL().SetHook(hook)
-	defer dom1.DDL().SetHook(originHook)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", hookFunc)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	go func() {
 		tk1.MustExec(`alter table t partition by hash(a) partitions 3`)
 		alterChan <- struct{}{}
@@ -195,19 +195,17 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 	tkA.MustExec(`use test`)
 	tkB := testkit.NewTestKitWithSession(t, store, seNonOwner)
 	tkB.MustExec(`use test`)
-	tkDDLOwner.MustExec(`create table t (a int primary key nonclustered, b varchar(255) charset utf8mb4 collate utf8mb4_0900_ai_ci) partition by range columns (b) (partition p0 values less than ("m"))`)
+	tkDDLOwner.MustExec(`create table t (a int primary key nonclustered global, b varchar(255) charset utf8mb4 collate utf8mb4_0900_ai_ci) partition by range columns (b) (partition p0 values less than ("m"))`)
 	domOwner.Reload()
 	domNonOwner.Reload()
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	alterChan := make(chan struct{})
-	originHook := domOwner.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: nil}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	hookFunc := func(job *model.Job) {
 		alterChan <- struct{}{}
 		<-alterChan
 	}
-	domOwner.DDL().SetHook(hook)
-	defer domOwner.DDL().SetHook(originHook)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", hookFunc)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	go func() {
 		tkDDLOwner.MustExec(`alter table t add partition (partition p1 values less than ("p"))`)
 		alterChan <- struct{}{}
@@ -226,7 +224,7 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`b`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('m'))"))
@@ -234,7 +232,7 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`b`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('m'))"))
@@ -244,7 +242,7 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`b`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('m'))"))
@@ -266,7 +264,7 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`b`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN ('m'),\n" +
