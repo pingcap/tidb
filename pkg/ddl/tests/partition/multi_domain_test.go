@@ -278,32 +278,32 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 	// Last domain will be the DDLOwner
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
-	dom1 := distCtx.GetDomain(0)
-	dom2 := distCtx.GetDomain(1)
+	domOwner := distCtx.GetDomain(0)
+	domNonOwner := distCtx.GetDomain(1)
 	defer func() {
-		dom1.Close()
-		dom2.Close()
+		domOwner.Close()
+		domNonOwner.Close()
 		store.Close()
 	}()
 
-	se1, err := session.CreateSessionWithDomain(store, dom1)
+	isOwnerCorrect := domOwner.DDL().OwnerManager().IsOwner()
+	if !isOwnerCorrect {
+		domOwner, domNonOwner = domNonOwner, domOwner
+	}
+
+	seOwner, err := session.CreateSessionWithDomain(store, domOwner)
 	require.NoError(t, err)
-	se2, err := session.CreateSessionWithDomain(store, dom2)
+	seNonOwner, err := session.CreateSessionWithDomain(store, domNonOwner)
 	require.NoError(t, err)
 
-	// Session on non DDL owner domain (~ TiDB Server)
-	tk1 := testkit.NewTestKitWithSession(t, store, se1)
-	tk1.MustExec(`use test`)
-	tk1.MustExec(`set @@global.tidb_enable_global_index = 1`)
-	tk1.MustExec(`set @@session.tidb_enable_global_index = 1`)
-	// Session on DDL owner domain (~ TiDB Server), used for concurrent DDL
-	tk2 := testkit.NewTestKitWithSession(t, store, se2)
-	tk2.MustExec(`use test`)
-	tk2.MustExec(`set @@session.tidb_enable_global_index = 1`)
-	// Session on DDL owner domain (~ TiDB Server), used for queries
-	tk3 := testkit.NewTestKitWithSession(t, store, se2)
-	tk3.MustExec(`use test`)
-	// The DDL Owner will be the last created domain, so use tk2.
+	tkDDLOwner := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkDDLOwner.MustExec(`use test`)
+	tkDDLOwner.MustExec(`set @@global.tidb_enable_global_index = 1`)
+	tkDDLOwner.MustExec(`set @@session.tidb_enable_global_index = 1`)
+	tkO := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkO.MustExec(`use test`)
+	tkNO := testkit.NewTestKitWithSession(t, store, seNonOwner)
+	tkNO.MustExec(`use test`)
 
 	// TODO: Create data so that each state can update and delete at least on row from each of the previous states.
 	// Why does it have to be from each of the previous states?'
@@ -365,9 +365,9 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 		}
 
 	*/
-	tk1.MustExec(`create table t (id int unsigned primary key nonclustered, b int, part varchar(10) not null, state int not null, history text)`)
-	dom1.Reload()
-	dom2.Reload()
+	tkDDLOwner.MustExec(`create table t (id int unsigned primary key nonclustered, b int, part varchar(10) not null, state int not null, history text)`)
+	domOwner.Reload()
+	domNonOwner.Reload()
 	dbRows := make(map[int][]string)
 	lastRowID := 8
 	for i := 1; i <= lastRowID; i++ {
@@ -375,14 +375,14 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 	}
 	for i := range dbRows {
 		a, b, c, d, e := dbRows[i][0], dbRows[i][1], dbRows[i][2], dbRows[i][3], dbRows[i][4]
-		tk1.MustExec(fmt.Sprintf(`insert into t values (%s, %s, '%s', %s, '%s')`, a, b, c, d, e))
+		tkDDLOwner.MustExec(fmt.Sprintf(`insert into t values (%s, %s, '%s', %s, '%s')`, a, b, c, d, e))
 	}
 	//tk1.MustQuery(`select * from t`).Sort().Check(testkit.Rows())
 	for i := range states {
 		require.GreaterOrEqual(t, i, 0)
 		// TODO: Add initial rows, i.e. state -1
-		// SchemaVer - 1: A
-		// SchemaVer:     B
+		// SchemaVer - 1: NO
+		// SchemaVer:     O
 		getIds := 8
 		keys := make([]int, 0, getIds)
 		for key := range dbRows {
@@ -391,17 +391,16 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 				break
 			}
 		}
-		// B:
-		lastRowIDForB := lastRowID
-		lastRowID = step1(tk1, dbRows, keys[:4], i, offsetP1, lastRowID)
-		// A:
-		lastRowIDForA := lastRowID
-		lastRowID = step1(tk2, dbRows, keys[4:], i, offsetP1, lastRowID)
-		// B:
-		lastRowID = step2(tk1, dbRows, keys[4:], i, offsetP1, lastRowIDForA+1, lastRowID)
-		// A:
-		lastRowID = step2(tk2, dbRows, keys[:4], i, offsetP1, lastRowIDForB+1, lastRowID)
-		// same as B
+		// NO:
+		lastRowIDForNO := lastRowID
+		lastRowID = step1(tkNO, dbRows, keys[:4], i, offsetP1, lastRowID)
+		// O:
+		lastRowIDForO := lastRowID
+		lastRowID = step1(tkO, dbRows, keys[4:], i, offsetP1, lastRowID)
+		// NO:
+		lastRowID = step2(tkNO, dbRows, keys[4:], i, offsetP1, lastRowIDForO+1, lastRowID)
+		// O:
+		lastRowID = step2(tkO, dbRows, keys[:4], i, offsetP1, lastRowIDForNO+1, lastRowID)
 	}
 	//tk1.MustQuery(`select * from t`).Sort().Check(testkit.Rows())
 	// First iteration, which rows needs to exists 'before':
