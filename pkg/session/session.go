@@ -816,7 +816,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			logutil.Logger(ctx).Warn("can not retry txn",
 				zap.String("label", s.GetSQLLabel()),
 				zap.Error(err),
-				zap.Stack("lance test"),
 				zap.Bool("IsBatchInsert", s.sessionVars.BatchInsert),
 				zap.Bool("IsPessimistic", isPessimistic),
 				zap.Bool("InRestrictedSQL", s.sessionVars.InRestrictedSQL),

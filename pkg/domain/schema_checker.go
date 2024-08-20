@@ -18,11 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 // SchemaChecker is used for checking schema-validity.
@@ -78,14 +76,5 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 		}
 	}
 	metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-	v := s.SchemaValidator.(*schemaValidator)
-	logutil.BgLogger().Info("lance test", zap.Stack("stack"),
-		zap.Any("txnTS", txnTS),
-		zap.Any("startSchemaVer.SchemaMetaVersion()", startSchemaVer.SchemaMetaVersion()),
-		zap.Any("relatedTableIDs", s.relatedTableIDs),
-		zap.Any("needCheckSchema", s.needCheckSchema),
-		zap.Any("restartSchemaVer", v.restartSchemaVer),
-		zap.Any("latestSchemaVer", v.latestSchemaVer),
-		zap.Any("latestSchemaExpire", v.latestSchemaExpire))
 	return nil, ErrInfoSchemaExpired
 }

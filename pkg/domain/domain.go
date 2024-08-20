@@ -93,7 +93,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -738,17 +737,6 @@ func (do *Domain) Reload() error {
 	}
 
 	version := ver.Ver
-	p, l, err := do.GetPDClient().GetTS(context.Background())
-	if err == nil {
-		ts := oracle.ComposeTS(p, l)
-		logutil.BgLogger().Info("lance test manually get TS",
-			zap.Any("ts", ts))
-	} else {
-		logutil.BgLogger().Info("lance test manually get TS failed",
-			zap.Error(err))
-	}
-	logutil.BgLogger().Info("lance test version TS",
-		zap.Any("version", version))
 	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version, false)
 	if err != nil {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
@@ -1386,16 +1374,6 @@ func (do *Domain) Init(
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
-	p, l, err2 := pdCli.GetTS(context.Background())
-	if err2 == nil {
-		ts := oracle.ComposeTS(p, l)
-		logutil.BgLogger().Info("lance test init manually get TS",
-			zap.Any("ts", ts))
-	} else {
-		logutil.BgLogger().Info("lance test init manually get TS failed",
-			zap.Error(err2))
-	}
-
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	var err error
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,

@@ -218,7 +218,6 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeAlterResourceGroup(x)
 	}
 	if err != nil {
-		logutil.BgLogger().Info("lance test debug", zap.Error(err))
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
 		// otherwise, ErrTableNotExists can be returned before putting this DDL job to the job queue.
 		if (e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
