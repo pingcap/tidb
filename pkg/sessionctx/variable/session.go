@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand"
 	"net"
@@ -70,7 +71,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -462,16 +462,10 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
 	}
-	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
-	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
-	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
-	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
-	cachedTables := make(map[int64]any, len(tc.CachedTables))
-	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
-		pessimisticLockCache: pessimisticLockCache,
-		CachedTables:         cachedTables,
+		pessimisticLockCache: maps.Clone(tc.pessimisticLockCache),
+		CachedTables:         maps.Clone(tc.CachedTables),
 		InsertTTLRowsCount:   tc.InsertTTLRowsCount,
 	}
 }
@@ -2878,12 +2872,10 @@ type TableDelta struct {
 
 // Clone returns a cloned TableDelta.
 func (td TableDelta) Clone() TableDelta {
-	colSize := make(map[int64]int64, len(td.ColSize))
-	maps.Copy(colSize, td.ColSize)
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
-		ColSize:  colSize,
+		ColSize:  maps.Clone(td.ColSize),
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
 	}
