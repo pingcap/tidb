@@ -327,6 +327,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 
 	errLevels := vars.StmtCtx.ErrLevels()
 	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
+	errLevels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
 	errLevels[errctx.ErrGroupDividedByZero] =
 		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
 	vars.StmtCtx.SetErrLevels(errLevels)

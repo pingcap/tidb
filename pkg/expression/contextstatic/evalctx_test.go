@@ -110,6 +110,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]StaticEvalCtxOption, *evalCtxOpti
 		WithTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck),
 		WithErrLevelMap(errctx.LevelMap{
 			errctx.ErrGroupBadNull:       errctx.LevelError,
+			errctx.ErrGroupNoDefault:     errctx.LevelError,
 			errctx.ErrGroupDividedByZero: errctx.LevelWarn,
 		}),
 		WithLocation(loc),
@@ -143,6 +144,7 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *StaticEvalContext, s *evalCtxO
 	)
 	require.Equal(t, errctx.NewContextWithLevels(errctx.LevelMap{
 		errctx.ErrGroupBadNull:       errctx.LevelError,
+		errctx.ErrGroupNoDefault:     errctx.LevelError,
 		errctx.ErrGroupDividedByZero: errctx.LevelWarn,
 	}, ctx), ctx.ErrCtx())
 	require.Same(t, s.loc, ctx.Location())
