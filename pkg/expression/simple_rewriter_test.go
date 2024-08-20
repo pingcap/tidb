@@ -86,10 +86,11 @@ func TestFindFieldName(t *testing.T) {
 			name: "Match with redundant field",
 			names: types.NameSlice{
 				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
 				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
 			},
 			astCol:   &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
-			expected: 1,
+			expected: 2,
 		},
 		{
 			name: "Non-unique match",
@@ -99,6 +100,15 @@ func TestFindFieldName(t *testing.T) {
 			},
 			astCol: &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
 			err:    errNonUniq.GenWithStackByArgs("db.tbl.col", "field list"),
+		},
+		{
+			name: "Match with empty schema and table and redundant",
+			names: types.NameSlice{
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+			},
+			astCol:   &ast.ColumnName{Schema: model.NewCIStr(""), Table: model.NewCIStr(""), Name: model.NewCIStr("col")},
+			expected: 1,
 		},
 	}
 
