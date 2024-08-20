@@ -907,6 +907,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 }
 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
+	if strings.Contains(ToString(p), "t1") {
+		logutil.Logger(ctx).Info("buildSelection", zap.String("p", ToString(p)), zap.String("where", where.Text()))
+	}
 	b.optFlag |= flagPredicatePushDown
 	b.optFlag |= flagDeriveTopNFromWindow
 	b.optFlag |= flagPredicateSimplification
