@@ -1740,11 +1740,7 @@ func (b *builtinExpSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool,
 	}
 	exp := math.Exp(val)
 	if math.IsInf(exp, 0) || math.IsNaN(exp) {
-<<<<<<< HEAD
-		s := fmt.Sprintf("exp(%s)", b.args[0].String())
-=======
-		s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(ctx, perrors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(perrors.RedactLogDisable))
 		return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", s)
 	}
 	return exp, false, nil
