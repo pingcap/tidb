@@ -59,11 +59,7 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-<<<<<<< HEAD
-			idxMergeDisgest += path.TableFilters[j].String()
-=======
-			idxMergeDisgest += path.TableFilters[j].StringWithCtx(ctx, errors.RedactLogDisable)
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			idxMergeDisgest += path.TableFilters[j].StringWithCtx(errors.RedactLogDisable)
 		}
 		idxMergeDisgest += "]}"
 	}
