@@ -462,20 +462,24 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 const fetchSchemaConcurrency = 1
 
 func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
-	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
-	if variable.SchemaCacheSize.Load() > 0 && len(schemas) > 1000 {
-		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
-		groupSize = 8
-	}
-	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
+	groupCnt := fetchSchemaConcurrency
 	schemaCnt := len(schemas)
-	for i := 0; i < schemaCnt; i += groupSize {
-		end := i + groupSize
+	if variable.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
+		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
+		groupCnt = 8
+	}
+
+	groupSize := (schemaCnt + groupCnt - 1) / groupCnt
+	splitted := make([][]*model.DBInfo, 0, groupCnt)
+
+	for start := 0; start < schemaCnt; start += groupSize {
+		end := start + groupSize
 		if end > schemaCnt {
 			end = schemaCnt
 		}
-		splitted = append(splitted, schemas[i:end])
+		splitted = append(splitted, schemas[start:end])
 	}
+
 	return splitted
 }
 
