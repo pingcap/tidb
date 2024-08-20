@@ -5002,8 +5002,8 @@ CreateViewStmt:
 	"CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
+		endOffset := parser.yylval.offset
 		selStmt := $10.(ast.StmtNode)
-		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt{
 			OrReplace: $2.(bool),
 			ViewName:  $7.(*ast.TableName),
@@ -5017,11 +5017,11 @@ CreateViewStmt:
 		}
 		if $11 != nil {
 			x.CheckOption = $11.(model.ViewCheckOption)
-			endOffset := parser.startOffset(&yyS[yypt])
-			selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+			endOffset = parser.startOffset(&yyS[yypt])
 		} else {
 			x.CheckOption = model.CheckOptionCascaded
 		}
+		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		$$ = x
 	}
 
@@ -14033,7 +14033,7 @@ CreateBindingStmt:
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			PlanDigests:  $9.([]*ast.StringOrUserVar),
+			PlanDigests: $9.([]*ast.StringOrUserVar),
 		}
 
 		$$ = x
