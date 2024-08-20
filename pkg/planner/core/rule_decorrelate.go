@@ -566,33 +566,21 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(col.String())
-=======
-			buffer.WriteString(col.StringWithCtx(evalCtx, perrors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(col.StringWithCtx(perrors.RedactLogDisable))
 		}
 		buffer.WriteString("], and functions added [")
 		for i, f := range appendedAggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(f.String())
-=======
-			buffer.WriteString(f.StringWithCtx(evalCtx, perrors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(f.StringWithCtx(perrors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "], and %v_%v's conditions added [", p.TP(), p.ID())
 		for i, cond := range eqCondWithCorCol {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(cond.String())
-=======
-			buffer.WriteString(cond.StringWithCtx(evalCtx, perrors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(cond.StringWithCtx(perrors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -603,11 +591,7 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(cond.String())
-=======
-			buffer.WriteString(cond.StringWithCtx(evalCtx, perrors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(cond.StringWithCtx(perrors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are correlated to %v_%v and pulled up as %v_%v's join key",
 			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())

@@ -350,11 +350,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *util
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(expr.String())
-=======
-			buffer.WriteString(expr.StringWithCtx(ectx, perrors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(expr.StringWithCtx(perrors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()

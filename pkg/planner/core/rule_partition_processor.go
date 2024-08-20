@@ -497,13 +497,7 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 			})
 			continue
 		}
-<<<<<<< HEAD
-		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
-=======
-
-		ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
-		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.StringWithCtx(ectx, errors.RedactLogDisable)))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.StringWithCtx(errors.RedactLogDisable)))
 	}
 	return names, nil
 }

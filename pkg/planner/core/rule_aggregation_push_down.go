@@ -691,11 +691,7 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(aggFunc.String())
-=======
-			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(aggFunc.StringWithCtx(errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are decomposable with join")
 		return buffer.String()
@@ -720,11 +716,7 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *Logical
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(aggFunc.String())
-=======
-			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(aggFunc.StringWithCtx(errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -742,11 +734,7 @@ func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalA
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(aggFunc.String())
-=======
-			buffer.WriteString(aggFunc.StringWithCtx(evalCtx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(aggFunc.StringWithCtx(errors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are decomposable with %v_%v", union.TP(), union.ID())
 		return buffer.String()
