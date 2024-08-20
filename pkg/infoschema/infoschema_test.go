@@ -643,7 +643,7 @@ func TestWithRefillOption(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		got := v2.GetCache(tblInfo.ID, is.SchemaMetaVersion())
+		got := v2.HasCache(tblInfo.ID, is.SchemaMetaVersion())
 		require.Equal(t, testCase.expect, got, fmt.Sprintf("case %d failed", i))
 	}
 }
