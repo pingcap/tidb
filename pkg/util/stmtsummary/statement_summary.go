@@ -199,6 +199,8 @@ type stmtSummaryByDigestElement struct {
 	sumPDTotal           time.Duration
 	sumBackoffTotal      time.Duration
 	sumWriteSQLRespTotal time.Duration
+	sumTidbCPU           time.Duration
+	sumTikvCPU           time.Duration
 	sumResultRows        int64
 	maxResultRows        int64
 	minResultRows        int64
@@ -912,6 +914,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
+	ssElement.sumTidbCPU += sei.ExecDetail.TidbCPUTime
+	ssElement.sumTikvCPU += sei.ExecDetail.TikvCPUTime
 
 	// request-units
 	ssElement.StmtRUSummary.Add(sei.RUDetail)

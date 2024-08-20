@@ -127,7 +127,7 @@ func TestParseSlowLogFile(t *testing.T) {
 # Session_alias: alias123
 # Exec_retry_time: 0.12 Exec_retry_count: 57
 # Query_time: 0.216905
-# Cop_time: 0.38 Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Cop_time: 0.38 Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436 TidbCPU_time: 0 TikvCPU_time: 0.3
 # Rocksdb_delete_skipped_count: 10 Rocksdb_key_skipped_count: 10 Rocksdb_block_cache_hit_count: 10 Rocksdb_block_read_count: 10 Rocksdb_block_read_byte: 100
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772

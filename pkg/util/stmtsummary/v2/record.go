@@ -130,6 +130,8 @@ type StmtRecord struct {
 	SumPDTotal           time.Duration `json:"sum_pd_total"`
 	SumBackoffTotal      time.Duration `json:"sum_backoff_total"`
 	SumWriteSQLRespTotal time.Duration `json:"sum_write_sql_resp_total"`
+	SumTidbCPU           time.Duration `json:"sum_tidb_cpu"`
+	SumTikvCPU           time.Duration `json:"sum_tikv_cpu"`
 	SumResultRows        int64         `json:"sum_result_rows"`
 	MaxResultRows        int64         `json:"max_result_rows"`
 	MinResultRows        int64         `json:"min_result_rows"`
@@ -417,6 +419,8 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
 	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
+	r.SumTidbCPU += info.ExecDetail.TidbCPUTime
+	r.SumTikvCPU += info.ExecDetail.TikvCPUTime
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
 }
@@ -576,6 +580,8 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumPDTotal += other.SumPDTotal
 	r.SumBackoffTotal += other.SumBackoffTotal
 	r.SumWriteSQLRespTotal += other.SumWriteSQLRespTotal
+	r.SumTidbCPU += other.SumTidbCPU
+	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
 }
@@ -677,6 +683,8 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 				},
 				CalleeAddress: "129",
 			},
+			TidbCPUTime: 20,
+			TikvCPUTime: 10000,
 		},
 		StmtCtx:           sc,
 		MemMax:            10000,

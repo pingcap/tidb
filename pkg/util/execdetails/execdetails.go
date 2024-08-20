@@ -122,10 +122,6 @@ type StmtExecDetails struct {
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
-	// TidbCPUTimeStr represents the total CPU time spent in Tidb server.
-	TidbCPUTimeStr = "TidbCPU_time"
-	// TikvCPUTimeStr represents the total CPU time spent in Tikv server.
-	TikvCPUTimeStr = "TikvCPU_time"
 	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
 	ProcessTimeStr = "Process_time"
 	// WaitTimeStr means the time of all coprocessor wait.
@@ -184,6 +180,10 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
+	// TidbCPUTimeStr represents the total CPU time spent in Tidb server.
+	TidbCPUTimeStr = "TidbCPU_time"
+	// TikvCPUTimeStr represents the total CPU time spent in Tikv server.
+	TikvCPUTimeStr = "TikvCPU_time"
 )
 
 // String implements the fmt.Stringer interface.
@@ -191,12 +191,6 @@ func (d ExecDetails) String() string {
 	parts := make([]string, 0, 8)
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
-	}
-	if d.TidbCPUTime > 0 {
-		parts = append(parts, TidbCPUTimeStr+": "+strconv.FormatFloat(d.TidbCPUTime.Seconds(), 'f', -1, 64))
-	}
-	if d.TikvCPUTime > 0 {
-		parts = append(parts, TikvCPUTimeStr+": "+strconv.FormatFloat(d.TikvCPUTime.Seconds(), 'f', -1, 64))
 	}
 	if d.TimeDetail.ProcessTime > 0 {
 		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64))
@@ -305,6 +299,12 @@ func (d ExecDetails) String() string {
 			parts = append(parts, RocksdbBlockReadTimeStr+": "+strconv.FormatFloat(scanDetail.RocksdbBlockReadDuration.Seconds(), 'f', 3, 64))
 		}
 	}
+	if d.TidbCPUTime > 0 {
+		parts = append(parts, TidbCPUTimeStr+": "+strconv.FormatFloat(d.TidbCPUTime.Seconds(), 'f', -1, 64))
+	}
+	if d.TikvCPUTime > 0 {
+		parts = append(parts, TikvCPUTimeStr+": "+strconv.FormatFloat(d.TikvCPUTime.Seconds(), 'f', -1, 64))
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -313,12 +313,6 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	fields = make([]zap.Field, 0, 16)
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
-	}
-	if d.TidbCPUTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TidbCPUTimeStr), strconv.FormatFloat(d.TidbCPUTime.Seconds(), 'f', -1, 64)+"s"))
-	}
-	if d.TikvCPUTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TikvCPUTimeStr), strconv.FormatFloat(d.TikvCPUTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.TimeDetail.ProcessTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
@@ -393,6 +387,12 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		if commitDetails.TxnRetry > 0 {
 			fields = append(fields, zap.Int("txn_retry", commitDetails.TxnRetry))
 		}
+	}
+	if d.TidbCPUTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TidbCPUTimeStr), strconv.FormatFloat(d.TidbCPUTime.Seconds(), 'f', -1, 64)+"s"))
+	}
+	if d.TikvCPUTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TikvCPUTimeStr), strconv.FormatFloat(d.TikvCPUTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	return fields
 }
