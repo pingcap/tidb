@@ -23,7 +23,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
-	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
+	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
@@ -66,7 +66,7 @@ func TestSplitPoint(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "j"), keyWithTablePrefix(tableID+1, "a"))
 
 	iter := logsplit.NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := logsplit.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *utils.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []logsplit.Valued) error {
+	err := logsplit.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *snapsplit.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []logsplit.Valued) error {
 		require.Equal(t, u, uint64(0))
 		require.Equal(t, o, int64(0))
 		require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
@@ -124,7 +124,7 @@ func TestSplitPoint2(t *testing.T) {
 
 	firstSplit := true
 	iter := logsplit.NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := logsplit.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *utils.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []logsplit.Valued) error {
+	err := logsplit.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *snapsplit.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []logsplit.Valued) error {
 		if firstSplit {
 			require.Equal(t, u, uint64(0))
 			require.Equal(t, o, int64(0))

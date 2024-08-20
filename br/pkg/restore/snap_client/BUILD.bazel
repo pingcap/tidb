@@ -28,7 +28,7 @@ go_library(
         "//br/pkg/restore/internal/import_client",
         "//br/pkg/restore/internal/prealloc_db",
         "//br/pkg/restore/internal/prealloc_table_id",
-        "//br/pkg/restore/internal/utils",
+        "//br/pkg/restore/internal/snap_split",
         "//br/pkg/restore/split",
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",

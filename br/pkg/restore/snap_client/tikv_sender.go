@@ -28,10 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	internalutils "github.com/pingcap/tidb/br/pkg/restore/internal/utils"
+	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"go.uber.org/zap"
@@ -72,15 +71,18 @@ func SortAndValidateFileRanges(
 	createdTables []*CreatedTable,
 	allFiles []*backuppb.File,
 	splitSizeBytes, splitKeyCount uint64,
-) ([]TableWithRange, error) {
+) ([][]byte, []TableWithRange, error) {
 	// sort the created table by downstream stream table id
 	sort.Slice(createdTables, func(a, b int) bool {
 		return createdTables[a].Table.ID < createdTables[b].Table.ID
 	})
 	// mapping table ID to its backup files
-	fileOfTable, _ := mapTableToFiles(allFiles)
+	fileOfTable, hintSplitKeyCount := mapTableToFiles(allFiles)
 	// sort, merge, and validate files in each tables, and generate split keys by the way
 	var (
+		// to generate region split keys, merge the small ranges over the adjacent tables
+		sortedSplitKeys = make([][]byte, 0, hintSplitKeyCount)
+
 		tableWithRanges = make([]TableWithRange, 0, len(createdTables))
 	)
 
@@ -94,7 +96,7 @@ func SortAndValidateFileRanges(
 		}
 		for _, file := range files {
 			if err := restoreutils.ValidateFileRewriteRule(file, table.RewriteRule); err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 		}
 		// Merge small ranges to reduce split and scatter regions.
@@ -102,7 +104,7 @@ func SortAndValidateFileRanges(
 		sortedRanges, stat, err := restoreutils.MergeAndRewriteFileRanges(
 			files, table.RewriteRule, splitSizeBytes, splitKeyCount)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		log.Info("merge and validate file",
 			zap.Stringer("database", table.OldTable.DB.Name),
@@ -117,12 +119,16 @@ func SortAndValidateFileRanges(
 			zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
 			zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
 
+		for _, rg := range sortedRanges {
+			sortedSplitKeys = append(sortedSplitKeys, rg.EndKey)
+		}
+
 		tableWithRanges = append(tableWithRanges, TableWithRange{
 			CreatedTable: *table,
 			Range:        sortedRanges,
 		})
 	}
-	return tableWithRanges, nil
+	return sortedSplitKeys, tableWithRanges, nil
 }
 
 func (rc *SnapClient) RestoreTables(
@@ -145,7 +151,7 @@ func (rc *SnapClient) RestoreTables(
 	}()
 
 	start := time.Now()
-	tableWithRanges, err := SortAndValidateFileRanges(createdTables, allFiles, splitSizeBytes, splitKeyCount)
+	sortedSplitKeys, tableWithRanges, err := SortAndValidateFileRanges(createdTables, allFiles, splitSizeBytes, splitKeyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,7 +159,7 @@ func (rc *SnapClient) RestoreTables(
 	log.Info("Merge ranges", zap.Duration("take", time.Since(start)))
 
 	start = time.Now()
-	if err = rc.SplitRanges(ctx, drainResult.Ranges, updateCh, false); err != nil {
+	if err = rc.SplitRanges(ctx, sortedSplitKeys, updateCh, false); err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("Split regions", zap.Duration("take", time.Since(start)))
@@ -173,7 +179,7 @@ func (rc *SnapClient) RestoreTables(
 // data range after rewrite.
 func (rc *SnapClient) SplitRanges(
 	ctx context.Context,
-	ranges []rtree.RangeStats,
+	sortedSplitKeys [][]byte,
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
@@ -187,7 +193,7 @@ func (rc *SnapClient) SplitRanges(
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 
-	splitter := internalutils.NewRegionSplitter(split.NewClient(
+	splitter := snapsplit.NewRegionSplitter(split.NewClient(
 		rc.pdClient,
 		rc.pdHTTPClient,
 		rc.tlsConf,
@@ -196,7 +202,7 @@ func (rc *SnapClient) SplitRanges(
 		splitClientOpts...,
 	))
 
-	return splitter.ExecuteSplit(ctx, ranges)
+	return splitter.ExecuteSplit(ctx, sortedSplitKeys)
 }
 
 func getFileRangeKey(f string) string {
