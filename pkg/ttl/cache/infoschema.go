@@ -56,7 +56,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {
 				continue
 			}
-			dbName := model.NewCIStr(v.DBName)
+			dbName := v.DBName
 			logger := logutil.BgLogger().
 				With(zap.String("schema", dbName.L),
 					zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))

@@ -1696,7 +1696,6 @@ func (c *getParamFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinGetParamStringSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinGetParamStringSig) Clone() builtinFunc {
@@ -1705,20 +1704,16 @@ func (b *builtinGetParamStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetParamStringSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetParamStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return "", true, err
-	}
 	idx, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	v := sessionVars.PlanCacheParams.GetParamValue(int(idx))
+
+	v, err := ctx.GetParamValue(int(idx))
+	if err != nil {
+		return "", true, err
+	}
 
 	str, err := v.ToString()
 	if err != nil {

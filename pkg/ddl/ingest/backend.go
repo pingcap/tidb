@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -95,7 +94,7 @@ type litBackendCtx struct {
 	tbl      table.Table
 	backend  *local.Backend
 	ctx      context.Context
-	cfg      *lightning.Config
+	cfg      *local.BackendConfig
 	sysVars  map[string]string
 
 	flushing        atomic.Bool
@@ -148,8 +147,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+	dupeController := bc.backend.GetDupeController(bc.cfg.WorkerConcurrency, nil)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: bc.sysVars,

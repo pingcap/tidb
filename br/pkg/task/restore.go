@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -101,7 +102,6 @@ const (
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
 	resetSpeedLimitRetryTimes = 3
-	maxRestoreBatchSizeLimit  = 10240
 )
 
 const (
@@ -179,6 +179,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagStatsConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
+	_ = flags.MarkHidden(flagUseFSR)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -910,6 +911,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
+	} else if checkpointFirstRun && cfg.CheckRequirements {
+		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			schedulersRemovable = true
+			return errors.Trace(err)
+		}
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
@@ -1047,7 +1053,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 
-	tableStream := client.GoCreateTables(ctx, tables, newTS, errCh)
+	createdTables, err := client.CreateTables(ctx, tables, newTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
@@ -1067,30 +1076,25 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
-		tableStream = util.ChanMap(tableStream, func(t snapclient.CreatedTable) snapclient.CreatedTable {
+		for _, createdTable := range createdTables {
 			// Set the keyspace info for the checksum requests
-			t.RewriteRule.OldKeyspace = oldKeyspace
-			t.RewriteRule.NewKeyspace = newKeyspace
+			createdTable.RewriteRule.OldKeyspace = oldKeyspace
+			createdTable.RewriteRule.NewKeyspace = newKeyspace
 
-			for _, rule := range t.RewriteRule.Data {
+			for _, rule := range createdTable.RewriteRule.Data {
 				rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)
 				rule.NewKeyPrefix = codec.EncodeKey(rule.NewKeyPrefix)
 			}
-			return t
-		})
+		}
 	}
 
 	if cfg.tiflashRecorder != nil {
-		tableStream = util.ChanMap(tableStream, func(t snapclient.CreatedTable) snapclient.CreatedTable {
-			if cfg.tiflashRecorder != nil {
-				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
-			}
-			return t
-		})
+		for _, createdTable := range createdTables {
+			cfg.tiflashRecorder.Rewrite(createdTable.OldTable.Info.ID, createdTable.Table.ID)
+		}
 	}
 
-	// Block on creating tables before restore starts. since create table is no longer a heavy operation any more.
-	tableStream = client.GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
+	tableStream := afterTableCreatedCh(ctx, createdTables)
 
 	tableFileMap := MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
@@ -1315,6 +1319,10 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 		}
 		return base * uint64(ratio*10) / 10
 	}
+
+	// The preserve rate for tikv is quite accurate, while rate for tiflash is a
+	// number calculated from tpcc testing with variable data sizes.  1.4 is a
+	// relative conservative value.
 	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
 	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
 	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
@@ -1356,6 +1364,28 @@ func Exhaust(ec <-chan error) []error {
 			return out
 		}
 	}
+}
+
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	// Tasks from br clp client use other checks to validate
+	if g.GetClient() != glue.ClientSql {
+		return nil
+	}
+	message := "table already exists: "
+	allUnique := true
+	for _, table := range tables {
+		_, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name, table.Info.Name)
+		if err == nil {
+			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
+			allUnique = false
+		} else if !infoschema.ErrTableNotExists.Equal(err) {
+			return errors.Trace(err)
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
+	}
+	return nil
 }
 
 // EstimateRangeSize estimates the total range count by file.
@@ -1710,4 +1740,26 @@ func DDLJobLogIncrementalCompactBlockListRule(ddlJob *model.Job) bool {
 func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
 	_, ok := actions[action]
 	return ok
+}
+
+func afterTableCreatedCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan snapclient.CreatedTable {
+	outCh := make(chan snapclient.CreatedTable)
+
+	go func() {
+		defer close(outCh)
+
+		sort.Slice(createdTables, func(a, b int) bool {
+			return createdTables[a].Table.ID < createdTables[b].Table.ID
+		})
+
+		for _, createdTable := range createdTables {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				outCh <- *createdTable
+			}
+		}
+	}()
+	return outCh
 }

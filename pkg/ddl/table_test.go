@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -222,11 +220,12 @@ func TestTable(t *testing.T) {
 		[]any{newTblInfo}, ctx, de, store)
 
 	ctx = testkit.NewTestKit(t, store).Session()
-	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := newTxn(ctx)
+	require.NoError(t, err)
 	count := 2000
 	tbl := testGetTable(t, domain, tblInfo.ID)
 	for i := 1; i <= count; i++ {
-		_, err := tbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	require.NoError(t, ctx.CommitTxn(context.Background()))
@@ -600,10 +599,9 @@ func TestAlterTTL(t *testing.T) {
 }
 
 func TestRenameTableIntermediateState(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	originHook := dom.DDL().GetHook()
 	tk.MustExec("create database db1;")
 	tk.MustExec("create database db2;")
 	tk.MustExec("create table db1.t(a int);")
@@ -622,10 +620,9 @@ func TestRenameTableIntermediateState(t *testing.T) {
 
 	var finishedJobID int64
 	for _, tc := range testCases {
-		hook := &callback.TestDDLCallback{Do: dom}
 		runInsert := false
 		var jobID int64 = 0
-		fn := func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 			if job.ID <= finishedJobID {
 				// The job has been done, OnJobUpdated may be invoked later asynchronously.
 				// We should skip the done job.
@@ -646,9 +643,7 @@ func TestRenameTableIntermediateState(t *testing.T) {
 				runInsert = true
 				jobID = job.ID
 			}
-		}
-		hook.OnJobUpdatedExported.Store(&fn)
-		dom.DDL().SetHook(hook)
+		})
 		tk.MustExec(tc.renameSQL)
 		result := tk.MustQuery(fmt.Sprintf("select * from %s;", tc.finalDB))
 		if len(tc.errMsg) > 0 {
@@ -659,7 +654,6 @@ func TestRenameTableIntermediateState(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("delete from %s;", tc.finalDB))
 		finishedJobID = jobID
 	}
-	dom.DDL().SetHook(originHook)
 }
 
 func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {

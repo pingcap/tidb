@@ -17,7 +17,6 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
 // preparePossibleProperties traverses the plan tree by a post-order method,
@@ -28,16 +27,4 @@ func preparePossibleProperties(lp base.LogicalPlan) [][]*expression.Column {
 		childrenProperties = append(childrenProperties, preparePossibleProperties(child))
 	}
 	return lp.PreparePossibleProperties(lp.Schema(), childrenProperties...)
-}
-
-func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
-	cols := make([]*expression.Column, 0, len(items))
-	for _, item := range items {
-		col, ok := item.Expr.(*expression.Column)
-		if !ok {
-			break
-		}
-		cols = append(cols, col)
-	}
-	return cols
 }

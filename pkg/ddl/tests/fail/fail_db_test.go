@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -48,6 +49,10 @@ type failedSuite struct {
 }
 
 func createFailDBSuite(t *testing.T) (s *failedSuite) {
+	return createFailDBSuiteWithLease(t, 200*time.Millisecond)
+}
+
+func createFailDBSuiteWithLease(t *testing.T, lease time.Duration) (s *failedSuite) {
 	s = new(failedSuite)
 	var err error
 	s.store, err = mockstore.NewMockStore(
@@ -57,7 +62,7 @@ func createFailDBSuite(t *testing.T) (s *failedSuite) {
 		}),
 	)
 	require.NoError(t, err)
-	session.SetSchemaLease(200 * time.Millisecond)
+	session.SetSchemaLease(lease)
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -220,7 +225,7 @@ func TestAddIndexFailed(t *testing.T) {
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
 func TestFailSchemaSyncer(t *testing.T) {
-	s := createFailDBSuite(t)
+	s := createFailDBSuiteWithLease(t, 10*time.Second)
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -232,7 +237,7 @@ func TestFailSchemaSyncer(t *testing.T) {
 		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
 	require.True(t, s.dom.SchemaValidator.IsStarted())
-	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
+	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*schemaver.MemSyncer)
 	require.True(t, ok)
 
 	// make reload failed.

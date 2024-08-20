@@ -21,6 +21,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -141,10 +143,10 @@ type mockGCWorkerSuite struct {
 }
 
 func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite) {
-	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore)
+	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, config.DefSchemaLease)
 }
 
-func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite) {
+func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType, schemaLease time.Duration) (s *mockGCWorkerSuite) {
 	s = new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
@@ -169,7 +171,7 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 	require.NoError(t, err)
 	store.GetOracle().Close()
 	store.(tikv.Storage).SetOracle(s.oracle)
-	dom := bootstrap(t, store, 0)
+	dom := bootstrap(t, store, schemaLease)
 	s.store, s.dom = store, dom
 
 	s.tikvStore = s.store.(tikv.Storage)
@@ -338,7 +340,10 @@ func TestMinStartTS(t *testing.T) {
 }
 
 func TestPrepareGC(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error. as we keep adding offset to time oracle,
+	// so we need set a very large lease.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 220*time.Minute)
 
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
@@ -536,13 +541,13 @@ func TestGetGCConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	concurrency, err := s.gcWorker.getGCConcurrency(ctx)
 	require.NoError(t, err)
-	require.Equal(t, concurrencyConfig, concurrency)
+	require.Equal(t, concurrencyConfig, concurrency.v)
 
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
 	require.NoError(t, err)
 	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
 	require.NoError(t, err)
-	require.Len(t, s.cluster.GetAllStores(), concurrency)
+	require.Len(t, s.cluster.GetAllStores(), concurrency.v)
 }
 
 func TestDoGC(t *testing.T) {
@@ -742,7 +747,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 				failKey = ranges[0].StartKey
 				failStore = stores[0]
 
-				err = deleteRangeFunc(gcContext(), 20, 1)
+				err = deleteRangeFunc(gcContext(), 20, gcConcurrency{1, false})
 				require.NoError(t, err)
 
 				s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
@@ -758,7 +763,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 				failStore = nil
 
 				// Delete the remaining range again.
-				err = deleteRangeFunc(gcContext(), 20, 1)
+				err = deleteRangeFunc(gcContext(), 20, gcConcurrency{1, false})
 				require.NoError(t, err)
 				s.checkDestroyRangeReq(t, sendReqCh, ranges[:1], stores)
 
@@ -775,6 +780,59 @@ func TestDeleteRangesFailure(t *testing.T) {
 			test(true)
 		})
 	}
+}
+
+func TestConcurrentDeleteRanges(t *testing.T) {
+	// make sure the parallelization of deleteRanges works
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob"))
+	}()
+
+	s := createGCWorkerSuite(t)
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+	_, err := se.Execute(gcContext(), `INSERT INTO mysql.gc_delete_range VALUES
+("1", "2", "31", "32", "10"),
+("3", "4", "33", "34", "10"),
+("5", "6", "35", "36", "15"),
+("7", "8", "37", "38", "15"),
+("9", "10", "39", "40", "15")
+	`)
+	require.NoError(t, err)
+
+	ranges, err := util.LoadDeleteRanges(gcContext(), se, 20)
+	require.NoError(t, err)
+	require.Len(t, ranges, 5)
+
+	stores, err := s.gcWorker.getStoresForGC(context.Background())
+	require.NoError(t, err)
+	require.Len(t, stores, 3)
+	sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
+
+	sendReqCh := make(chan SentReq, 20)
+	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		sendReqCh <- SentReq{req, addr}
+		resp := &tikvrpc.Response{
+			Resp: &kvrpcpb.UnsafeDestroyRangeResponse{},
+		}
+		return resp, nil
+	}
+	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
+
+	err = s.gcWorker.deleteRanges(gcContext(), 20, gcConcurrency{3, false})
+	require.NoError(t, err)
+
+	s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
+
+	se = createSession(s.gcWorker.store)
+	remainingRanges, err := util.LoadDeleteRanges(gcContext(), se, 20)
+	se.Close()
+	require.NoError(t, err)
+	require.Len(t, remainingRanges, 0)
 }
 
 type SentReq struct {
@@ -882,7 +940,7 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	}
 	defer func() { s.client.deleteRangeHandler = nil }()
 
-	err = s.gcWorker.deleteRanges(gcContext(), 8, 1)
+	err = s.gcWorker.deleteRanges(gcContext(), 8, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[:1])
@@ -893,7 +951,7 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ranges[1:], remainingRanges)
 
-	err = s.gcWorker.deleteRanges(gcContext(), 20, 1)
+	err = s.gcWorker.deleteRanges(gcContext(), 20, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[1:])
@@ -935,7 +993,9 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, time.Hour)
 
 	gcSafePointCacheInterval = 0
 
@@ -1126,7 +1186,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging"))
 	}()
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV, config.DefSchemaLease)
 
 	var (
 		firstAccess    = true
@@ -1229,7 +1289,7 @@ func TestRunGCJob(t *testing.T) {
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	require.True(t, useDistributedGC)
 	safePoint := s.mustAllocTs(t)
-	err := s.gcWorker.runGCJob(gcContext(), safePoint, 1)
+	err := s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	pdSafePoint := s.mustGetSafePointFromPd(t)
@@ -1244,7 +1304,7 @@ func TestRunGCJob(t *testing.T) {
 	require.Equal(t, safePoint, etcdSafePoint)
 
 	// Test distributed mode with safePoint regressing (although this is impossible)
-	err = s.gcWorker.runGCJob(gcContext(), safePoint-1, 1)
+	err = s.gcWorker.runGCJob(gcContext(), safePoint-1, gcConcurrency{1, false})
 	require.Error(t, err)
 
 	// Central mode is deprecated in v5.0, fallback to distributed mode if it's set.
@@ -1255,7 +1315,7 @@ func TestRunGCJob(t *testing.T) {
 
 	p := s.createGCProbe(t, "k1")
 	safePoint = s.mustAllocTs(t)
-	err = s.gcWorker.runGCJob(gcContext(), safePoint, 1)
+	err = s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
 	s.checkCollected(t, p)
 
@@ -1392,7 +1452,7 @@ func TestGCPlacementRules(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
 	}()
 
-	gcPlacementRuleCache := make(map[int64]any)
+	var gcPlacementRuleCache sync.Map
 	deletePlacementRuleCounter := 0
 	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/pkg/store/gcworker/gcDeletePlacementRuleCounter", "return", func() error {
 		deletePlacementRuleCounter++
@@ -1419,9 +1479,11 @@ func TestGCPlacementRules(t *testing.T) {
 
 	// do gc
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
-	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
+	err = doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]any{10: struct{}{}}, gcPlacementRuleCache)
+	v, ok := gcPlacementRuleCache.Load(int64(10))
+	require.True(t, ok)
+	require.Equal(t, struct{}{}, v)
 	require.Equal(t, 1, deletePlacementRuleCounter)
 
 	// check bundle deleted after gc
@@ -1431,9 +1493,11 @@ func TestGCPlacementRules(t *testing.T) {
 	require.True(t, got.IsEmpty())
 
 	// gc the same table id repeatedly
-	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
+	err = doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]any{10: struct{}{}}, gcPlacementRuleCache)
+	v, ok = gcPlacementRuleCache.Load(int64(10))
+	require.True(t, ok)
+	require.Equal(t, struct{}{}, v)
 	require.Equal(t, 1, deletePlacementRuleCounter)
 }
 
@@ -1451,7 +1515,7 @@ func TestGCLabelRules(t *testing.T) {
 }
 
 func TestGCWithPendingTxn(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 30*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1502,7 +1566,9 @@ func TestGCWithPendingTxn(t *testing.T) {
 }
 
 func TestGCWithPendingTxn2(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1572,7 +1638,9 @@ func TestGCWithPendingTxn2(t *testing.T) {
 }
 
 func TestSkipGCAndOnlyResolveLock(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1641,4 +1709,38 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 		require.NoError(t, err)
 	})
 	return dom
+}
+
+func TestCalcDeleteRangeConcurrency(t *testing.T) {
+	testCases := []struct {
+		name        string
+		concurrency gcConcurrency
+		rangeNum    int
+		expected    int
+	}{
+		{"Auto: Low concurrency, few ranges", gcConcurrency{16, true}, 50000, 1},
+		{"Auto: High concurrency, many ranges", gcConcurrency{400, true}, 1000000, 10},
+		{"Auto: High concurrency, few ranges", gcConcurrency{400, true}, 50000, 1},
+		{"Auto: Low concurrency, many ranges", gcConcurrency{16, true}, 1000000, 4},
+		{"Non-auto: Low concurrency", gcConcurrency{16, false}, 1000000, 4},
+		{"Non-auto: High concurrency", gcConcurrency{400, false}, 50000, 100},
+		{"Edge case: Zero concurrency", gcConcurrency{0, true}, 100000, 1},
+		{"Edge case: Zero ranges", gcConcurrency{100, true}, 0, 1},
+		{"Large range number", gcConcurrency{400, true}, 10000000, 100},
+		{"Exact RequestsPerThread", gcConcurrency{400, true}, 200000, 2},
+	}
+
+	w := &GCWorker{}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := w.calcDeleteRangeConcurrency(tc.concurrency, tc.rangeNum)
+			if result != tc.expected {
+				t.Errorf("Expected %d, but got %d", tc.expected, result)
+			}
+			if result < 1 {
+				t.Errorf("Result should never be less than 1, but got %d", result)
+			}
+		})
+	}
 }

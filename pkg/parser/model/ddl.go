@@ -456,7 +456,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
-		LocalMode:       parentJob.LocalMode,
 	}
 }
 
@@ -584,6 +583,7 @@ type Job struct {
 	// LocalMode = true means the job is running on the local TiDB that the client
 	// connects to, else it's run on the DDL owner.
 	// Only happens when tidb_enable_fast_create_table = on
+	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
 
 	// SQLMode for executing DDL query.
@@ -985,6 +985,11 @@ func (job *Job) IsQueueing() bool {
 // NotStarted returns true if the job is never run by a worker.
 func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
+}
+
+// Started returns true if the job is started.
+func (job *Job) Started() bool {
+	return !job.NotStarted()
 }
 
 // InFinalState returns whether the job is in a final state of job FSM.

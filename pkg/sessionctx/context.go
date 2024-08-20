@@ -71,9 +71,15 @@ type InstancePlanCache interface {
 	// Put puts the key and value into the cache.
 	Put(key string, value, paramTypes any) (succ bool)
 	// Evict evicts some cached values.
-	Evict() (evicted bool)
+	Evict() (detailInfo string, numEvicted int)
+	// Size returns the number of cached values.
+	Size() int64
 	// MemUsage returns the total memory usage of this plan cache.
 	MemUsage() int64
+	// GetLimits returns the soft and hard memory limits of this plan cache.
+	GetLimits() (softLimit, hardLimit int64)
+	// SetLimits sets the soft and hard memory limits of this plan cache.
+	SetLimits(softLimit, hardLimit int64)
 }
 
 // Context is an interface for transaction and executive args environment.

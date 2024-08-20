@@ -86,6 +86,9 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 	}
 	defer r.statsHandle.SPool().Put(se)
 	sctx := se.(sessionctx.Context)
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
+	cnt := 0
 	// Pick the table with the highest weight.
 	for r.Jobs.Len() > 0 {
 		job := r.Jobs.Pop()
@@ -103,18 +106,25 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 			"Auto analyze triggered",
 			zap.Stringer("job", job),
 		)
-		err = job.Analyze(
-			r.statsHandle,
-			r.sysProcTracker,
-		)
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"Execute auto analyze job failed",
-				zap.Stringer("job", job),
-				zap.Error(err),
+		wg.Run(func() {
+			err = job.Analyze(
+				r.statsHandle,
+				r.sysProcTracker,
 			)
+			if err != nil {
+				statslogutil.StatsLogger().Error(
+					"Execute auto analyze job failed",
+					zap.Stringer("job", job),
+					zap.Error(err),
+				)
+			}
+		})
+		cnt++
+		if cnt >= int(variable.AutoAnlayzeConcurrency.Load()) {
+			break
 		}
-		// Only analyze one table each time.
+	}
+	if cnt > 0 {
 		return true
 	}
 	statslogutil.SingletonStatsSamplerLogger().Info(
@@ -287,7 +297,7 @@ func CreateTableAnalysisJob(
 	autoAnalyzeRatio float64,
 	currentTs uint64,
 ) priorityqueue.AnalysisJob {
-	if !isEligibleForAnalysis(tblStats) {
+	if !tblStats.IsEligibleForAnalysis() {
 		return nil
 	}
 
@@ -331,7 +341,7 @@ func CreateStaticPartitionAnalysisJob(
 	autoAnalyzeRatio float64,
 	currentTs uint64,
 ) priorityqueue.AnalysisJob {
-	if !isEligibleForAnalysis(partitionStats) {
+	if !partitionStats.IsEligibleForAnalysis() {
 		return nil
 	}
 
@@ -465,7 +475,7 @@ func createTableAnalysisJobForPartitions(
 	autoAnalyzeRatio float64,
 	currentTs uint64,
 ) priorityqueue.AnalysisJob {
-	if !isEligibleForAnalysis(tblStats) {
+	if !tblStats.IsEligibleForAnalysis() {
 		return nil
 	}
 
@@ -611,7 +621,7 @@ func getPartitionStats(
 	for _, def := range defs {
 		stats := statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, def.ID)
 		// Ignore the partition if it's not ready to analyze.
-		if !isEligibleForAnalysis(stats) {
+		if !stats.IsEligibleForAnalysis() {
 			continue
 		}
 		d := PartitionIDAndName{
@@ -622,20 +632,6 @@ func getPartitionStats(
 	}
 
 	return partitionStats
-}
-
-func isEligibleForAnalysis(
-	tblStats *statistics.Table,
-) bool {
-	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
-	//	  Pseudo statistics can be created by the optimizer, so we need to double check it.
-	// 2. If the table is too small, we don't want to waste time to analyze it.
-	//    Leave the opportunity to other bigger tables.
-	if tblStats == nil || tblStats.Pseudo || tblStats.RealtimeCount < exec.AutoAnalyzeMinCnt {
-		return false
-	}
-
-	return true
 }
 
 // autoAnalysisTimeWindow is a struct that contains the start and end time of the auto analyze time window.

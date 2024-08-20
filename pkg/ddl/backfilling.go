@@ -162,13 +162,13 @@ type backfillCtx struct {
 	schemaName    string
 	table         table.Table
 	batchCnt      int
-	jobContext    *JobContext
+	jobContext    *ReorgContext
 	metricCounter prometheus.Counter
 }
 
 func newBackfillCtx(id int, rInfo *reorgInfo,
-	schemaName string, tbl table.Table, jobCtx *JobContext, label string, isDistributed bool) (*backfillCtx, error) {
-	sessCtx, err := newSessCtx(rInfo.d.store, rInfo.ReorgMeta)
+	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool) (*backfillCtx, error) {
+	sessCtx, err := newSessCtx(rInfo.jobCtx.store, rInfo.ReorgMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -178,9 +178,10 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 	}
 
 	exprCtx := sessCtx.GetExprCtx()
+	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
 		id:         id,
-		ddlCtx:     rInfo.d,
+		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
 		sessCtx:    sessCtx,
 		warnings:   sessCtx.GetSessionVars().StmtCtx.WarnHandler,
 		exprCtx:    exprCtx,
@@ -188,7 +189,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		loc:        exprCtx.GetEvalCtx().Location(),
 		schemaName: schemaName,
 		table:      tbl,
-		batchCnt:   int(variable.GetDDLReorgBatchSize()),
+		batchCnt:   batchCnt,
 		jobContext: jobCtx,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
@@ -415,7 +416,8 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		})
 
 		// Change the batch size dynamically.
-		w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
+		newBatchCnt := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		w.GetCtx().batchCnt = newBatchCnt
 		result := w.handleBackfillTask(d, task, bf)
 		w.sendResult(result)
 
@@ -568,7 +570,7 @@ func getActualEndKey(
 	// backfill worker can't catch up, we shrink the end key to the actual written key for now.
 	jobCtx := reorgInfo.NewJobContext()
 
-	actualEndKey, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, t.RecordPrefix(), rangeStart, rangeEnd)
+	actualEndKey, err := GetRangeEndKey(jobCtx, reorgInfo.jobCtx.store, job.Priority, t.RecordPrefix(), rangeStart, rangeEnd)
 	if err != nil {
 		logutil.DDLLogger().Info("get backfill range task, get reverse key failed", zap.Error(err))
 		return rangeEnd
@@ -675,8 +677,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, importConc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -705,16 +708,15 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		bcCtx.AttachCheckpointManager(cpMgr)
 	}
 
-	reorgCtx := dc.getReorgCtx(reorgInfo.Job.ID)
+	reorgCtx := dc.getReorgCtx(job.ID)
 	rowCntListener := &localRowCntListener{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
-		reorgCtx:           dc.getReorgCtx(reorgInfo.Job.ID),
+		reorgCtx:           reorgCtx,
 		counter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
 	}
 
 	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
-	concurrency := int(variable.GetDDLReorgWorkerCounter())
 
 	engines, err := bcCtx.Register(indexIDs, uniques, t)
 	if err != nil {
@@ -724,7 +726,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
-
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
 		dc.store,
@@ -738,7 +739,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		reorgInfo.EndKey,
 		job.ReorgMeta,
 		avgRowSize,
-		concurrency,
+		importConc,
 		cpMgr,
 		rowCntListener,
 	)
@@ -782,12 +783,17 @@ type localRowCntListener struct {
 	// prevPhysicalRowCnt records the row count from previous physical tables (partitions).
 	prevPhysicalRowCnt int64
 	// curPhysicalRowCnt records the row count of current physical table.
-	curPhysicalRowCnt int64
+	curPhysicalRowCnt struct {
+		cnt int64
+		mu  sync.Mutex
+	}
 }
 
 func (s *localRowCntListener) Written(rowCnt int) {
-	s.curPhysicalRowCnt += int64(rowCnt)
-	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt)
+	s.curPhysicalRowCnt.mu.Lock()
+	s.curPhysicalRowCnt.cnt += int64(rowCnt)
+	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)
+	s.curPhysicalRowCnt.mu.Unlock()
 	s.counter.Add(float64(rowCnt))
 }
 
@@ -970,7 +976,7 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, version uint64,
+func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyPrefix kv.Key, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
 	isRecord := tablecodec.IsRecordKey(keyPrefix.Next())
 	var firstKey kv.Key
@@ -1035,7 +1041,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 }
 
 // GetRangeEndKey gets the actual end key for the range of [startKey, endKey).
-func GetRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
+func GetRangeEndKey(ctx *ReorgContext, store kv.Storage, priority int, keyPrefix kv.Key, startKey, endKey kv.Key) (kv.Key, error) {
 	snap := store.GetSnapshot(kv.MaxVersion)
 	snap.SetOption(kv.Priority, priority)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {

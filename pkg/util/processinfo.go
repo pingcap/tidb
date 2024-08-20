@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/cursor"
@@ -51,6 +52,7 @@ type ProcessInfo struct {
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
+	RunawayChecker        *resourcegroup.RunawayChecker
 	StatsInfo             func(any) map[string]uint64
 	RuntimeStatsColl      *execdetails.RuntimeStatsColl
 	User                  string
@@ -203,12 +205,10 @@ type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
-	Kill(connectionID uint64, query bool, maxExecutionTime bool)
+	Kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool)
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// GetAutoAnalyzeProcID returns processID for auto analyze
-	GetAutoAnalyzeProcID() uint64
 	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se any)
 	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.

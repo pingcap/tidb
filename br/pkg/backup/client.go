@@ -1233,9 +1233,9 @@ func (bc *Client) OnBackupResponse(
 				return txnlock.NewLock(lockErr), nil
 			}
 		}
-		res := errContext.HandleIgnorableError(errPb, storeID)
+		res := utils.HandleBackupError(errPb, storeID, errContext)
 		switch res.Strategy {
-		case utils.GiveUpStrategy:
+		case utils.StrategyGiveUp:
 			errMsg := res.Reason
 			if len(errMsg) <= 0 {
 				errMsg = errPb.Msg

@@ -63,11 +63,12 @@ go_test(
         "client_test.go",
         "main_test.go",
         "schema_test.go",
+        "store_test.go",
     ],
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 12,
+    shard_count = 14,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb/mock",
@@ -92,6 +93,7 @@ go_test(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_pd_client//:client",
         "@io_opencensus_go//stats/view",
+        "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
     ],
 )

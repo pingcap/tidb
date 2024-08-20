@@ -20,7 +20,6 @@ import (
 	"math"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1679,84 +1678,6 @@ func (e *TikvRegionPeersExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	return s
 }
 
-// ColumnsTableExtractor is used to extract some predicates of columns table.
-type ColumnsTableExtractor struct {
-	extractHelper
-
-	// SkipRequest means the where clause always false, we don't need to request any component
-	SkipRequest bool
-
-	TableSchema set.StringSet
-
-	TableName set.StringSet
-	// ColumnName represents all column name we should filter in memtable.
-	ColumnName set.StringSet
-
-	TableSchemaPatterns []string
-
-	TableNamePatterns []string
-
-	ColumnNamePatterns []string
-}
-
-// Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ColumnsTableExtractor) Extract(ctx base.PlanContext,
-	schema *expression.Schema,
-	names []*types.FieldName,
-	predicates []expression.Expression,
-) (remained []expression.Expression) {
-	remained, tableSchemaSkipRequest, tableSchema := e.extractCol(ctx, schema, names, predicates, "table_schema", true)
-	remained, tableNameSkipRequest, tableName := e.extractCol(ctx, schema, names, remained, "table_name", true)
-	remained, columnNameSkipRequest, columnName := e.extractCol(ctx, schema, names, remained, "column_name", true)
-	e.SkipRequest = columnNameSkipRequest || tableSchemaSkipRequest || tableNameSkipRequest
-	if e.SkipRequest {
-		return
-	}
-	remained, tableSchemaPatterns := e.extractLikePatternCol(ctx, schema, names, remained, "table_schema", true, false)
-	remained, tableNamePatterns := e.extractLikePatternCol(ctx, schema, names, remained, "table_name", true, false)
-	remained, columnNamePatterns := e.extractLikePatternCol(ctx, schema, names, remained, "column_name", true, false)
-
-	e.ColumnName = columnName
-	e.TableName = tableName
-	e.TableSchema = tableSchema
-	e.TableSchemaPatterns = tableSchemaPatterns
-	e.TableNamePatterns = tableNamePatterns
-	e.ColumnNamePatterns = columnNamePatterns
-	return remained
-}
-
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *ColumnsTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
-	if e.SkipRequest {
-		return "skip_request:true"
-	}
-	r := new(bytes.Buffer)
-	if len(e.TableSchema) > 0 {
-		fmt.Fprintf(r, "table_schema:[%s], ", extractStringFromStringSet(e.TableSchema))
-	}
-	if len(e.TableName) > 0 {
-		fmt.Fprintf(r, "table_name:[%s], ", extractStringFromStringSet(e.TableName))
-	}
-	if len(e.ColumnName) > 0 {
-		fmt.Fprintf(r, "column_name:[%s], ", extractStringFromStringSet(e.ColumnName))
-	}
-	if len(e.TableSchemaPatterns) > 0 {
-		fmt.Fprintf(r, "table_schema_pattern:[%s], ", extractStringFromStringSlice(e.TableSchemaPatterns))
-	}
-	if len(e.TableNamePatterns) > 0 {
-		fmt.Fprintf(r, "table_name_pattern:[%s], ", extractStringFromStringSlice(e.TableNamePatterns))
-	}
-	if len(e.ColumnNamePatterns) > 0 {
-		fmt.Fprintf(r, "column_name_pattern:[%s], ", extractStringFromStringSlice(e.ColumnNamePatterns))
-	}
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
-}
-
 // TiKVRegionStatusExtractor is used to extract single table region scan region from predictions
 type TiKVRegionStatusExtractor struct {
 	extractHelper
@@ -1806,93 +1727,4 @@ func (e *TiKVRegionStatusExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 // GetTablesID returns TablesID
 func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
-}
-
-// InfoSchemaTablesExtractor is used to extract infoSchema tables related predicates.
-type InfoSchemaTablesExtractor struct {
-	extractHelper
-	// SkipRequest means the where clause always false, we don't need to request any component
-	SkipRequest bool
-
-	colNames      []string
-	ColPredicates map[string]set.StringSet
-}
-
-// Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InfoSchemaTablesExtractor) Extract(ctx base.PlanContext,
-	schema *expression.Schema,
-	names []*types.FieldName,
-	predicates []expression.Expression,
-) (remained []expression.Expression) {
-	var resultSet, resultSet1 set.StringSet
-	e.colNames = []string{"table_schema", "constraint_schema", "table_name", "constraint_name", "sequence_schema", "sequence_name", "partition_name", "schema_name", "index_name"}
-	e.ColPredicates = make(map[string]set.StringSet)
-	remained = predicates
-	for _, colName := range e.colNames {
-		remained, e.SkipRequest, resultSet = e.extractColWithLower(ctx, schema, names, remained, colName)
-		if e.SkipRequest {
-			break
-		}
-		remained, e.SkipRequest, resultSet1 = e.extractCol(ctx, schema, names, remained, colName, true)
-		if e.SkipRequest {
-			break
-		}
-		for elt := range resultSet1 {
-			resultSet.Insert(elt)
-		}
-		if len(resultSet) == 0 {
-			continue
-		}
-		e.ColPredicates[colName] = resultSet
-	}
-	return remained
-}
-
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *InfoSchemaTablesExtractor) ExplainInfo(_ base.PhysicalPlan) string {
-	if e.SkipRequest {
-		return "skip_request:true"
-	}
-	r := new(bytes.Buffer)
-	colNames := make([]string, 0, len(e.ColPredicates))
-	for colName := range e.ColPredicates {
-		colNames = append(colNames, colName)
-	}
-	sort.Strings(colNames)
-	for _, colName := range colNames {
-		if len(e.ColPredicates[colName]) > 0 {
-			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
-		}
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
-}
-
-// Filter use the col predicates to filter records.
-func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
-	if e.SkipRequest {
-		return true
-	}
-	predVals, ok := e.ColPredicates[colName]
-	if ok && len(predVals) > 0 {
-		lower, ok := e.isLower[colName]
-		if ok {
-			var valStr string
-			// only have varchar string type, safe to do that.
-			if lower {
-				valStr = strings.ToLower(val)
-			} else {
-				valStr = strings.ToUpper(val)
-			}
-			return !predVals.Exist(valStr)
-		}
-		return !predVals.Exist(val)
-	}
-	// No need to filter records since no predicate for the column exists.
-	return false
 }
