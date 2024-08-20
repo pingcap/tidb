@@ -169,13 +169,13 @@ func TestIssue55344(t *testing.T) {
 		insertedValues = append(insertedValues, rand.Intn(10000))
 	}
 
-	insertSql := fmt.Sprintf("INSERT INTO t1 values (%d)", insertedValues[0])
+	insertSQL := fmt.Sprintf("INSERT INTO t1 values (%d)", insertedValues[0])
 	for i := 1; i < valueNum; i++ {
-		insertSql = fmt.Sprintf("%s, (%d)", insertSql, insertedValues[i])
+		insertSQL = fmt.Sprintf("%s, (%d)", insertSQL, insertedValues[i])
 	}
-	insertSql += ";"
+	insertSQL += ";"
 
-	tk.MustExec(insertSql)
+	tk.MustExec(insertSQL)
 	sort.Ints(insertedValues)
 
 	expectValue := fmt.Sprintf("%d", insertedValues[0])
