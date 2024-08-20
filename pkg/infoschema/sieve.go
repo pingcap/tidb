@@ -46,10 +46,11 @@ func (t *entry[K, V]) Size() uint64 {
 // See blog post https://cachemon.github.io/SIEVE-website/blog/2023/12/17/sieve-is-simpler-than-lru/
 // and also the academic paper "SIEVE is simpler than LRU"
 type Sieve[K comparable, V any] struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	size     uint64
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	size   uint64
+	// capacity can be set to zero for indicating unlimited capacity.
 	capacity uint64
 	items    map[K]*entry[K, V]
 	ll       *list.List
@@ -97,6 +98,7 @@ func (s *Sieve[K, V]) SetStatusHook(hook sieveStatusHook) {
 	s.hook = hook
 }
 
+// SetCapacity sets the capacity of the cache.
 func (s *Sieve[K, V]) SetCapacity(capacity uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,7 +110,7 @@ func (s *Sieve[K, V]) SetCapacityAndWaitEvict(capacity uint64) {
 	s.SetCapacity(capacity)
 	for {
 		s.mu.Lock()
-		if s.size <= s.capacity {
+		if s.capacity == 0 || s.size <= s.capacity {
 			s.mu.Unlock()
 			break
 		}
@@ -119,6 +121,7 @@ func (s *Sieve[K, V]) SetCapacityAndWaitEvict(capacity uint64) {
 	}
 }
 
+// Capacity returns 0 means no capacity limit.
 func (s *Sieve[K, V]) Capacity() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,7 +138,7 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 		return
 	}
 
-	for i := 0; s.size > s.capacity && i < 10; i++ {
+	for i := 0; s.capacity > 0 && s.size > s.capacity && i < 10; i++ {
 		s.evict()
 	}
 

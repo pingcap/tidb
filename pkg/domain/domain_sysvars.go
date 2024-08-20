@@ -128,8 +128,6 @@ func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error 
 	if err != nil {
 		return err
 	}
-	if size > 0 {
-		do.infoCache.Data.SetCacheCapacity(size)
-	}
+	do.infoCache.Data.SetCacheCapacity(size)
 	return nil
 }
