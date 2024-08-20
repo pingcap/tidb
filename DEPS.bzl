@@ -4179,8 +4179,19 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:UhvIdNeglgwlsTuzDHwo/MBYtI6r/6IDT+B/KyENSLY=",
         version = "v2.0.8-0.20240710074042-ce640b992b7c",
+=======
+        sha256 = "cbaceaa4bbd945e24be9ccbb2af622baeb7542facedb7538f483d116d82f72ff",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240815020919-c810ed88fb02",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240815020919-c810ed88fb02.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240815020919-c810ed88fb02.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240815020919-c810ed88fb02.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240815020919-c810ed88fb02.zip",
+        ],
+>>>>>>> 09b85fb2a83 (*: bump client-go to remove the backoff for stale read retry (#55423))
     )
     go_repository(
         name = "com_github_tikv_pd",
