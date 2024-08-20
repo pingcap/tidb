@@ -80,7 +80,7 @@ go_test(
     ],
     embed = [":join"],
     flaky = True,
-    shard_count = 49,
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/domain",
