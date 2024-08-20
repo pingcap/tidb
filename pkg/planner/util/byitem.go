@@ -66,7 +66,7 @@ func (by *ByItems) MemoryUsage() (sum int64) {
 }
 
 // StringifyByItemsWithCtx is used to print ByItems slice.
-func StringifyByItemsWithCtx(ctx expression.EvalContext, byItems []*ByItems) string {
+func StringifyByItemsWithCtx(byItems []*ByItems) string {
 	sb := strings.Builder{}
 	sb.WriteString("[")
 	for i, item := range byItems {
