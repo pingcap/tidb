@@ -90,10 +90,18 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.4-0.20240611032030-02a6a912e7a8
 	github.com/tikv/pd/client v0.0.0-20230904040343-947701a32c05
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
+=======
+	github.com/tidwall/btree v1.7.0
+	github.com/tikv/client-go/v2 v2.0.8-0.20240815020919-c810ed88fb02
+	github.com/tikv/pd/client v0.0.0-20240805092608-838ee7983b78
+	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
+	github.com/twmb/murmur3 v1.1.6
+>>>>>>> 09b85fb2a83 (*: bump client-go to remove the backoff for stale read retry (#55423))
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
