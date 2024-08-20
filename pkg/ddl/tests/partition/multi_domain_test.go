@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestMultiSchemaVerPartitionBy(t *testing.T) {
@@ -365,43 +367,110 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 		}
 
 	*/
-	tkDDLOwner.MustExec(`create table t (id int unsigned primary key nonclustered, b int, part varchar(10) not null, state int not null, history text)`)
+	tkDDLOwner.MustExec(`create table t (id int unsigned primary key nonclustered, b int, part varchar(10) not null, state int not null, history text) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (` + strconv.Itoa(offsetP1) + `), PARTITION p1 VALUES LESS THAN (2000000))`)
 	domOwner.Reload()
 	domNonOwner.Reload()
 	dbRows := make(map[int][]string)
-	lastRowID := 8
-	for i := 1; i <= lastRowID; i++ {
+	lastRowIDp0 := 8
+	for i := 1; i <= lastRowIDp0; i++ {
 		dbRows[i] = []string{strconv.Itoa(i), strconv.Itoa(offsetP1 - i), "p0", "-1", ""}
+	}
+	lastRowIDp1 := 1000007
+	for i := offsetP1; i <= lastRowIDp1; i++ {
+		dbRows[i] = []string{strconv.Itoa(i), strconv.Itoa(offsetP1 - i), "p1", "-1", ""}
 	}
 	for i := range dbRows {
 		a, b, c, d, e := dbRows[i][0], dbRows[i][1], dbRows[i][2], dbRows[i][3], dbRows[i][4]
 		tkDDLOwner.MustExec(fmt.Sprintf(`insert into t values (%s, %s, '%s', %s, '%s')`, a, b, c, d, e))
 	}
-	//tk1.MustQuery(`select * from t`).Sort().Check(testkit.Rows())
-	for i := range states {
-		require.GreaterOrEqual(t, i, 0)
+	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
+	hookChan := make(chan struct{})
+	hookFunc := func(job *model.Job) {
+		hookChan <- struct{}{}
+		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
+		<-hookChan
+		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
+	}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", hookFunc)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
+	alterChan := make(chan struct{})
+	go func() {
+		tkDDLOwner.MustExec(`alter table t drop partition p0`)
+		alterChan <- struct{}{}
+	}()
+	// Skip the first state, since we want to compare before vs after in the loop
+	<-hookChan
+	hookChan <- struct{}{}
+	verCurr := verStart + 1
+	for i := range states[1:] {
+		// Waiting for the next State change to be done (i.e. blocking the state after)
+		releaseHook := true
+		select {
+		case <-hookChan:
+		case <-alterChan:
+			releaseHook = false
+		}
+		//tk.t.Logf("RefreshSession rand seed: %d", seed)
+		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.String("prev state", states[i]), zap.String("curr state", states[i+1]), zap.Int64("verCurr", verCurr))
+		domOwner.Reload()
+		require.Equal(t, verCurr-1, domNonOwner.InfoSchema().SchemaMetaVersion())
+		require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
 		// TODO: Add initial rows, i.e. state -1
 		// SchemaVer - 1: NO
 		// SchemaVer:     O
 		getIds := 8
 		keys := make([]int, 0, getIds)
 		for key := range dbRows {
+			if key >= offsetP1 {
+				continue
+			}
 			keys = append(keys, key)
 			if len(keys) >= getIds {
 				break
 			}
 		}
+		require.Len(t, keys, getIds)
 		// NO:
-		lastRowIDForNO := lastRowID
-		lastRowID = step1(tkNO, dbRows, keys[:4], i, offsetP1, lastRowID)
+		lastRowIDForNO := lastRowIDp0
+		lastRowIDp0 = step1(tkNO, dbRows, keys[:4], i, offsetP1, lastRowIDp0)
 		// O:
-		lastRowIDForO := lastRowID
-		lastRowID = step1(tkO, dbRows, keys[4:], i, offsetP1, lastRowID)
+		lastRowIDForO := lastRowIDp0
+		lastRowIDp0 = step1(tkO, dbRows, keys[4:], i, offsetP1, lastRowIDp0)
 		// NO:
-		lastRowID = step2(tkNO, dbRows, keys[4:], i, offsetP1, lastRowIDForO+1, lastRowID)
+		lastRowIDp0 = step2(tkNO, dbRows, keys[4:], i, offsetP1, lastRowIDForO+1, lastRowIDp0)
 		// O:
-		lastRowID = step2(tkO, dbRows, keys[:4], i, offsetP1, lastRowIDForNO+1, lastRowID)
+		lastRowIDp0 = step2(tkO, dbRows, keys[:4], i, offsetP1, lastRowIDForNO+1, lastRowIDp0)
+
+		keys = keys[:0]
+		for key := range dbRows {
+			if key < offsetP1 {
+				continue
+			}
+			keys = append(keys, key)
+			if len(keys) >= getIds {
+				break
+			}
+		}
+		require.Len(t, keys, getIds)
+		// NO:
+		lastRowIDForNO = lastRowIDp1
+		lastRowIDp1 = step1(tkNO, dbRows, keys[:4], i, offsetP1, lastRowIDp1)
+		// O:
+		lastRowIDForO = lastRowIDp1
+		lastRowIDp1 = step1(tkO, dbRows, keys[4:], i, offsetP1, lastRowIDp1)
+		// NO:
+		lastRowIDp1 = step2(tkNO, dbRows, keys[4:], i, offsetP1, lastRowIDForO+1, lastRowIDp1)
+		// O:
+		lastRowIDp1 = step2(tkO, dbRows, keys[:4], i, offsetP1, lastRowIDForNO+1, lastRowIDp1)
+
+		domNonOwner.Reload()
+		verCurr++
+		// Continue to next state
+		if releaseHook {
+			hookChan <- struct{}{}
+		}
 	}
+	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
 	//tk1.MustQuery(`select * from t`).Sort().Check(testkit.Rows())
 	// First iteration, which rows needs to exists 'before':
 	// 3 to update, 1 to delete X 2 = 8 rows
