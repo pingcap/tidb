@@ -12,6 +12,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+<<<<<<< HEAD
         "//br/pkg/pdutil",
         "//config",
         "//parser/mysql",
@@ -19,6 +20,18 @@ go_test(
         "//store/mockstore/mockcopr",
         "//testkit",
         "//testkit/testsetup",
+=======
+        "//br/pkg/task",
+        "//br/pkg/task/operator",
+        "//pkg/config",
+        "//pkg/executor",
+        "//pkg/parser/mysql",
+        "//pkg/session",
+        "//pkg/sessionctx/binloginfo",
+        "//pkg/store/mockstore/mockcopr",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+>>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-binlog",
