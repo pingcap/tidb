@@ -12,14 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package executor_test
 
 import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -44,12 +47,12 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	jobInfo := &importer.JobInfo{
 		Parameters: importer.ImportParameters{},
 	}
-	fillOneImportJobInfo(jobInfo, c, -1)
+	executor.FillOneImportJobInfo(jobInfo, c, -1)
 	require.True(t, c.GetRow(0).IsNull(7))
 	require.True(t, c.GetRow(0).IsNull(10))
 	require.True(t, c.GetRow(0).IsNull(11))
 
-	fillOneImportJobInfo(jobInfo, c, 0)
+	executor.FillOneImportJobInfo(jobInfo, c, 0)
 	require.False(t, c.GetRow(1).IsNull(7))
 	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(7))
 	require.True(t, c.GetRow(1).IsNull(10))
@@ -58,9 +61,32 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	jobInfo.Summary = &importer.JobSummary{ImportedRows: 123}
 	jobInfo.StartTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	jobInfo.EndTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
-	fillOneImportJobInfo(jobInfo, c, 0)
+	executor.FillOneImportJobInfo(jobInfo, c, 0)
 	require.False(t, c.GetRow(2).IsNull(7))
 	require.Equal(t, uint64(123), c.GetRow(2).GetUint64(7))
 	require.False(t, c.GetRow(2).IsNull(10))
 	require.False(t, c.GetRow(2).IsNull(11))
+}
+
+func TestShow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, abclmn int);")
+	tk.MustExec("create table abclmn(a int);")
+
+	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
+	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
+
+	tk.MustQuery("show tables").Check(testkit.Rows("abclmn", "t"))
+	tk.MustQuery("show full tables").Check(testkit.Rows("abclmn BASE TABLE", "t BASE TABLE"))
+	tk.MustQuery("show tables like 't'").Check(testkit.Rows("t"))
+	tk.MustQuery("show tables like 'T'").Check(testkit.Rows("t"))
+	tk.MustQuery("show tables like 'ABCLMN'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show tables like 'ABC%'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show tables like '%lmn'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
+	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
+	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
 }
