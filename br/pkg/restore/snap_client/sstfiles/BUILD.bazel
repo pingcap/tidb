@@ -13,7 +13,6 @@ go_library(
     deps = [
         "//br/pkg/checkpoint",
         "//br/pkg/errors",
-        "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/restore/internal/import_client",
         "//br/pkg/restore/internal/utils",
