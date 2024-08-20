@@ -1602,6 +1602,11 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
+	// When comparing duration type column with a non-duration type const, we will cast the const
+	// to duration type. However, the const value may be null after it is casted to duration type
+	// this will lead to unexpected result. See: https://github.com/pingcap/tidb/issues/51842
+	// In this case, the column will never be equal to the const, so we can see the result of
+	// this comparison is always false.
 	if c.op == opcode.NullEQ && arg0IsCon && arg0.DeferredExpr == nil && !arg1IsCon && arg1Type.GetType() == mysql.TypeDuration {
 		isNull, err := castToDurationIsNull(ctx, arg0)
 		if err != nil {
