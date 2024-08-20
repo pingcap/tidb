@@ -43,10 +43,10 @@ func init() {
 	// In nullmap, each bit represents a column in current row is null or not null. nullmap is designed to be read/write at the 
 	// unit of byte(uint8). Some joins(for example, left outer join use left side to build) need an extra bit to represent if 
 	// current row is matched or not. This bit is called used flag, and in the implementation, it actually use the first bit in
-	// nullmap as the used flag. There will be concurrent write for the used flag, so need to use atomic read/write when accessing 
-	// the used flag. However, the minimum atomic read/write unit in go is uint32, so nullmap need to be read/write as uint32 in 
-	// these cases. Read/write uint32 need to consider the endianess, for example, for a piece of memory containing continuous 32 
-	// bits, we wants to set the first bit to 1, the memory after set should be 
+	// nullmap as the used flag. There will be concurrent read/write for the used flag, so need to use atomic read/write when 
+	// accessing the used flag. However, the minimum atomic read/write unit in go is uint32, so nullmap need to be read/write as 
+	// uint32 in these cases. Read/write uint32 need to consider the endianess, for example, for a piece of memory containing 
+	// continuous 32 bits, we want to set the first bit to 1, the memory after set should be 
 	// 0x70 0x00 0x00 0x00
 	// when interprete the 32 bit as uint32
 	// in big endian system, it is 0x70000000 
@@ -283,7 +283,7 @@ func (meta *TableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bo
 	return *(*uint8)(unsafe.Add(rowStart, sizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
 }
 
-// for join that need to set UsedFlag during probe stage, read from nullMap is not thread safe for the first 32 bit of nullMap, so used atomic.LoadUint32 to avoid read-write conflict
+// for join that need to set UsedFlag during probe stage, read from nullMap is not thread safe for the first 32 bit of nullMap, atomic.LoadUint32 is used to avoid read-write conflict
 func (meta *TableMeta) isColumnNullThreadSafe(rowStart unsafe.Pointer, columnIndex int) bool {
 	return atomic.LoadUint32((*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)))&bitMaskInUint32[columnIndex + 1] != uint32(0)
 }
