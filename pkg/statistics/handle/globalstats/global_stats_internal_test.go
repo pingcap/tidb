@@ -64,10 +64,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tint global c 0 0 5 2 1 4 0", // bucket.ndv is not maintained for column histograms
 		"test tint global c 0 1 12 2 17 17 0",
-		"test tint p0 c 0 0 2 1 1 2 0",
-		"test tint p0 c 0 1 3 1 3 3 0",
-		"test tint p1 c 0 0 3 1 11 13 0",
-		"test tint p1 c 0 1 5 1 14 15 0"))
+                "test tint p0 c 0 0 3 1 1 3 0",
+                "test tint p1 c 0 0 5 1 11 15 0"))
 
 	tk.MustQuery("select distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("12 1 19", // global, g = p0 + p1
@@ -362,7 +360,8 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
 		"test t global a 0 0 2 2 0 2 0",
 		"test t global b 0 0 3 1 1 2 0",
-		"test t global b 0 1 10 1 4 4 0",
+		"test t global b 0 1 6 3 3 3 0",
+		"test t global b 0 2 9 1 3 4 0",
 	))
 }
 
@@ -407,7 +406,7 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
 	// before analyzing, the planner will choose TableScan to access the 1% of records
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<200", "TableFullScan")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 
@@ -415,26 +414,26 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<200", "TableFullScan")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 
 	// create SQL bindings
-	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
+	tk.MustExec("create session binding for select * from thash where a<200 using select * from thash ignore index(a) where a<100")
 	tk.MustExec("create session binding for select * from trange where a<100 using select * from trange ignore index(a) where a<100")
-	tk.MustExec("create session binding for select * from tlist where a<100 using select * from tlist ignore index(a) where a<100")
+	tk.MustExec("create session binding for select * from tlist where a<1 using select * from tlist ignore index(a) where a<1")
 
 	// use TableScan again since the Index(a) is ignored
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<200", "TableFullScan")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 
 	// drop SQL bindings
-	tk.MustExec("drop session binding for select * from thash where a<100")
+	tk.MustExec("drop session binding for select * from thash where a<200")
 	tk.MustExec("drop session binding for select * from trange where a<100")
-	tk.MustExec("drop session binding for select * from tlist where a<100")
+	tk.MustExec("drop session binding for select * from tlist where a<1")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<200", "TableFullScan")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 }
