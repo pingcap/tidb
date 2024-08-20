@@ -1003,11 +1003,13 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	defer close(quitWaitingForConns)
 	go func() {
 		defer close(allDone)
+		logutil.BgLogger().Info("start waiting for clients to quit", zap.Int("clientCount", len(conns)))
 		for _, conn := range conns {
 			// Wait for the connections with explicit transaction or an executing auto-commit query.
 			if conn.getStatus() == connStatusReading && !conn.getCtx().GetSessionVars().InTxn() {
 				continue
 			}
+			logutil.BgLogger().Info("Wait for client to quit", zap.Uint64("conn", conn.connectionID))
 			select {
 			case <-conn.quit:
 			case <-quitWaitingForConns:
