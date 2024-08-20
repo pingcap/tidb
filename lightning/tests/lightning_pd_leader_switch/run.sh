@@ -45,7 +45,7 @@ pd-server --join "https://$PD_ADDR" \
 killall tidb-server
 # wait for TiDB to exit to release file lock
 sleep 5
-PD_ADDR="${PD_ADDR},${PD_ADDR}2,${PD_ADDR}3" start_tidb
+start_tidb
 
 export GO_FAILPOINTS='github.com/pingcap/tidb/lightning/pkg/importer/beforeRun=sleep(60000)'
 run_lightning --backend local --enable-checkpoint=0 --pd-urls '127.0.0.1:9999,127.0.0.1:2379' &
