@@ -618,6 +618,11 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// we will fill the column type information later, so clone a new table here.
+	tb, err = table.TableFromMeta(tb.Allocators(e.Ctx().GetTableCtx()), tb.Meta().Clone())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	var (
 		fieldPatternsLike collate.WildcardPattern
 		fieldFilter       string
@@ -1169,6 +1174,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			} else {
 				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
 			}
+		}
+		if idxInfo.Global {
+			buf.WriteString(" /*T![global_index] GLOBAL */")
 		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
@@ -1975,7 +1983,7 @@ func (e *ShowExec) getTable() (table.Table, error) {
 	if e.Table == nil {
 		return nil, errors.New("table not found")
 	}
-	tb, ok := e.is.TableByID(e.Table.TableInfo.ID)
+	tb, ok := e.is.TableByID(context.Background(), e.Table.TableInfo.ID)
 	if !ok {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
@@ -2405,6 +2413,10 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	defer b.ReleaseSysSession(ctx, sysCtx)
+
+	if err = loadSnapshotInfoSchemaIfNeeded(sysCtx, sctx.GetSessionVars().SnapshotTS); err != nil {
+		return err
+	}
 	// `fn` may use KV transaction, so initialize the txn here
 	if err = sessiontxn.NewTxn(ctx, sysCtx); err != nil {
 		return err

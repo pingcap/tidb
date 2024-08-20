@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	_ "github.com/pingcap/tidb/pkg/util/context"
@@ -70,7 +71,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 
 		b.StartTimer()
 		for j := 0; j < batchSize; j++ {
-			_, err := tb.AddRecord(ctx.GetTableCtx(), records[j])
+			_, err := tb.AddRecord(ctx.GetTableCtx(), txn, records[j])
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -130,7 +131,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		for j := 0; j < batchSize; j++ {
 			// Remove record
 			handle := kv.IntHandle(j)
-			err := tb.RemoveRecord(se.GetTableCtx(), handle, records[j])
+			err := tb.RemoveRecord(se.GetTableCtx(), txn, handle, records[j])
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -198,7 +199,7 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		for j := 0; j < batchSize; j++ {
 			// Update record
 			handle := kv.IntHandle(j)
-			err := tb.UpdateRecord(context.TODO(), se.GetTableCtx(), handle, records[j], newData[j], touched)
+			err := tb.UpdateRecord(se.GetTableCtx(), txn, handle, records[j], newData[j], touched, table.WithCtx(context.TODO()))
 			if err != nil {
 				b.Fatal(err)
 			}

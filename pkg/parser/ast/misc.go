@@ -1989,6 +1989,40 @@ func (n *DropUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type StringOrUserVar struct {
+	node
+	StringLit string
+	UserVar   *VariableExpr
+}
+
+func (n *StringOrUserVar) Restore(ctx *format.RestoreCtx) error {
+	if len(n.StringLit) > 0 {
+		ctx.WriteString(n.StringLit)
+	}
+	if n.UserVar != nil {
+		if err := n.UserVar.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ColumnNameOrUserVar.UserVar")
+		}
+	}
+	return nil
+}
+
+func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
+	newNode, skipChild := v.Enter(n)
+	if skipChild {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*StringOrUserVar)
+	if n.UserVar != nil {
+		node, ok = n.UserVar.Accept(v)
+		if !ok {
+			return node, false
+		}
+		n.UserVar = node.(*VariableExpr)
+	}
+	return v.Leave(n)
+}
+
 // CreateBindingStmt creates sql binding hint.
 type CreateBindingStmt struct {
 	stmtNode
@@ -1996,7 +2030,7 @@ type CreateBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
-	PlanDigest  string
+	PlanDigests []*StringOrUserVar
 }
 
 func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -2008,7 +2042,14 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
-		ctx.WriteString(n.PlanDigest)
+		for i, v := range n.PlanDigests {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+			}
+		}
 	} else {
 		ctx.WriteKeyWord("BINDING FOR ")
 		if err := n.OriginNode.Restore(ctx); err != nil {
@@ -2039,6 +2080,14 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.HintedNode = hintedNode.(StmtNode)
+	} else {
+		for i, digest := range n.PlanDigests {
+			newDigest, ok := digest.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.PlanDigests[i] = newDigest.(*StringOrUserVar)
+		}
 	}
 	return v.Leave(n)
 }
@@ -2050,7 +2099,7 @@ type DropBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
-	SQLDigest   string
+	SQLDigests  []*StringOrUserVar
 }
 
 func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -2063,7 +2112,14 @@ func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("BINDING FOR ")
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("SQL DIGEST ")
-		ctx.WriteString(n.SQLDigest)
+		for i, v := range n.SQLDigests {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+			}
+		}
 	} else {
 		if err := n.OriginNode.Restore(ctx); err != nil {
 			return errors.Trace(err)
@@ -2097,6 +2153,14 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 				return n, false
 			}
 			n.HintedNode = hintedNode.(StmtNode)
+		}
+	} else {
+		for i, digest := range n.SQLDigests {
+			newDigest, ok := digest.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.SQLDigests[i] = newDigest.(*StringOrUserVar)
 		}
 	}
 	return v.Leave(n)

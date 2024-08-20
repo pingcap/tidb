@@ -21,7 +21,6 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/domain/resourcegroup",
-        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/keyspace",
         "//pkg/kv",
@@ -73,6 +72,7 @@ go_library(
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//oracle",

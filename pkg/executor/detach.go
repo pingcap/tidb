@@ -16,6 +16,7 @@ package executor
 
 import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/contextsession"
 )
 
@@ -86,6 +87,24 @@ func (iluCtx indexLookUpExecutorContext) Detach() indexLookUpExecutorContext {
 	return iluCtx
 }
 
+func (pCtx projectionExecutorContext) Detach() projectionExecutorContext {
+	newCtx := pCtx
+	if ctx, ok := pCtx.evalCtx.(*contextsession.SessionEvalContext); ok {
+		newCtx.evalCtx = ctx.IntoStatic()
+	}
+
+	return newCtx
+}
+
+func (sCtx selectionExecutorContext) Detach() selectionExecutorContext {
+	newCtx := sCtx
+	if ctx, ok := sCtx.evalCtx.(*contextsession.SessionEvalContext); ok {
+		newCtx.evalCtx = ctx.IntoStatic()
+	}
+
+	return newCtx
+}
+
 // Detach detaches the current executor from the session context.
 func (e *TableReaderExecutor) Detach() (exec.Executor, bool) {
 	newExec := new(TableReaderExecutor)
@@ -112,6 +131,42 @@ func (e *IndexLookUpExecutor) Detach() (exec.Executor, bool) {
 	*newExec = *e
 
 	newExec.indexLookUpExecutorContext = newExec.indexLookUpExecutorContext.Detach()
+
+	return newExec, true
+}
+
+// Detach detaches the current executor from the session context.
+func (e *ProjectionExec) Detach() (exec.Executor, bool) {
+	// check whether the `Projection` requires any optional property
+	// Now, no optional property is copied, so if it requires any optional property, it should return false.
+	// TODO: some optional property can be detached. If they are implemented in the future, this check needs to be changed.
+	if !e.evaluatorSuit.RequiredOptionalEvalProps().IsEmpty() {
+		return nil, false
+	}
+
+	newExec := new(ProjectionExec)
+	*newExec = *e
+
+	newExec.projectionExecutorContext = newExec.projectionExecutorContext.Detach()
+
+	return newExec, true
+}
+
+// Detach detaches the current executor from the session context.
+func (e *SelectionExec) Detach() (exec.Executor, bool) {
+	// check whether the `Selection` requires any optional property
+	// Now, no optional property is copied, so if it requires any optional property, it should return false.
+	// TODO: some optional property can be detached. If they are implemented in the future, this check needs to be changed.
+	for _, expr := range e.filters {
+		if !expression.GetOptionalEvalPropsForExpr(expr).IsEmpty() {
+			return nil, false
+		}
+	}
+
+	newExec := new(SelectionExec)
+	*newExec = *e
+
+	newExec.selectionExecutorContext = newExec.selectionExecutorContext.Detach()
 
 	return newExec, true
 }

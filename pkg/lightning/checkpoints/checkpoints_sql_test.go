@@ -78,6 +78,114 @@ func TestNormalOperations(t *testing.T) {
 	ctx := context.Background()
 	s := newCPSQLSuite(t)
 	cpdb := s.cpdb
+	s.mock.ExpectBegin()
+	initializeStmt := s.mock.ExpectPrepare(
+		"REPLACE INTO `mock-schema`\\.`task_v\\d+`")
+	initializeStmt.ExpectExec().
+		WithArgs(123, "/data", "local", "127.0.0.1:8287", "127.0.0.1", 4000, "127.0.0.1:2379", "/tmp/sorted-kv", build.ReleaseVersion).
+		WillReturnResult(sqlmock.NewResult(6, 1))
+	initializeStmt = s.mock.
+		ExpectPrepare("INSERT INTO `mock-schema`\\.`table_v\\d+`")
+	initializeStmt.ExpectExec().
+		WithArgs(123, "`db1`.`t2`", sqlmock.AnyArg(), int64(2), []byte("")).
+		WillReturnResult(sqlmock.NewResult(8, 1))
+	s.mock.ExpectCommit()
+
+	s.mock.MatchExpectationsInOrder(false)
+	cfg := newTestConfig()
+	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+		"db1": {
+			Name: "db1",
+			Tables: map[string]*checkpoints.TidbTableInfo{
+				"t2": {
+					Name: "t2",
+					ID:   2,
+					Desired: &model.TableInfo{
+						Name: model.NewCIStr("t2"),
+					},
+				},
+			},
+		},
+	})
+	s.mock.MatchExpectationsInOrder(true)
+	require.NoError(t, err)
+	require.Nil(t, s.mock.ExpectationsWereMet())
+
+	s.mock.ExpectBegin()
+	s.mock.
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`engine_v\\d+`").
+		WithArgs("`db1`.`t2`").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"engine_id", "status"}).
+				AddRow(0, 120).
+				AddRow(-1, 30),
+		)
+	s.mock.
+		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.`chunk_v\\d+`").
+		WithArgs("`db1`.`t2`").
+		WillReturnRows(
+			sqlmock.NewRows([]string{
+				"engine_id", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
+				"pos", "end_offset", "prev_rowid_max", "rowid_max",
+				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
+			}).
+				AddRow(
+					0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, "[]",
+					55904, 102400, 681, 5000,
+					4491, 586, 486070148917, 1234567894,
+				),
+		)
+	s.mock.
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
+		WithArgs("`db1`.`t2`").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"status", "alloc_base", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum"}).
+				AddRow(60, 132861, int64(2), nil, uint64(4492), uint64(686), uint64(486070148910)),
+		)
+	s.mock.ExpectCommit()
+
+	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
+	require.Nil(t, err)
+	require.Equal(t, &checkpoints.TableCheckpoint{
+		Status:    checkpoints.CheckpointStatusAllWritten,
+		AllocBase: 132861,
+		TableID:   int64(2),
+		TableInfo: nil,
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
+			-1: {Status: checkpoints.CheckpointStatusLoaded},
+			0: {
+				Status: checkpoints.CheckpointStatusImported,
+				Chunks: []*checkpoints.ChunkCheckpoint{{
+					Key: checkpoints.ChunkCheckpointKey{
+						Path:   "/tmp/path/1.sql",
+						Offset: 0,
+					},
+					FileMeta: mydump.SourceFileMeta{
+						Path:     "/tmp/path/1.sql",
+						Type:     mydump.SourceTypeSQL,
+						FileSize: 123,
+					},
+					ColumnPermutation: []int{},
+					Chunk: mydump.Chunk{
+						Offset:       55904,
+						EndOffset:    102400,
+						PrevRowIDMax: 681,
+						RowIDMax:     5000,
+					},
+					Checksum:  verification.MakeKVChecksum(4491, 586, 486070148917),
+					Timestamp: 1234567894,
+				}},
+			},
+		},
+		Checksum: verification.MakeKVChecksum(4492, 686, 486070148910),
+	}, cp)
+	require.Nil(t, s.mock.ExpectationsWereMet())
+}
+
+func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
+	ctx := context.Background()
+	s := newCPSQLSuite(t)
+	cpdb := s.cpdb
 
 	// 2. initialize with checkpoint data.
 
@@ -115,6 +223,7 @@ func TestNormalOperations(t *testing.T) {
 
 	s.mock.MatchExpectationsInOrder(false)
 	cfg := newTestConfig()
+	cfg.TikvImporter.AddIndexBySQL = true
 	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",

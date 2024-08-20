@@ -55,7 +55,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.Im
 }
 
 // CreateTables creates multiple tables, and returns their rewrite rules.
-func (rc *SnapClient) CreateTables(
+func (rc *SnapClient) CreateTablesTest(
 	dom *domain.Domain,
 	tables []*metautil.Table,
 	newTS uint64,
@@ -65,28 +65,22 @@ func (rc *SnapClient) CreateTables(
 		Data: make([]*import_sstpb.RewriteRule, 0),
 	}
 	newTables := make([]*model.TableInfo, 0, len(tables))
-	errCh := make(chan error, 1)
 	tbMapping := map[string]int{}
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	dataCh := rc.GoCreateTables(context.TODO(), tables, newTS, errCh)
-	for et := range dataCh {
-		rules := et.RewriteRule
+	createdTables, err := rc.CreateTables(context.TODO(), tables, newTS)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, table := range createdTables {
+		rules := table.RewriteRule
 		rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
-		newTables = append(newTables, et.Table)
+		newTables = append(newTables, table.Table)
 	}
 	// Let's ensure that it won't break the original order.
 	slices.SortFunc(newTables, func(i, j *model.TableInfo) int {
 		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
-
-	select {
-	case err, ok := <-errCh:
-		if ok {
-			return nil, nil, errors.Trace(err)
-		}
-	default:
-	}
 	return rewriteRules, newTables, nil
 }

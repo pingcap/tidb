@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -73,7 +72,7 @@ func TestGetDDLJobs(t *testing.T) {
 		currJobs2 = currJobs2[:0]
 		err = ddl.IterAllDDLJobs(sess, txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
-				if !job.NotStarted() {
+				if job.Started() {
 					return true, nil
 				}
 				currJobs2 = append(currJobs2, job)
@@ -203,7 +202,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 }
 
 func TestCreateDropCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -216,10 +215,9 @@ func TestCreateDropCreateTable(t *testing.T) {
 	var fpErr error
 	var createTable bool
 
-	originHook := dom.DDL().GetHook()
-	onJobUpdated := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
-			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
+			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
 			wg.Add(1)
 			go func() {
 				_, createErr = tk1.Exec("create table t (b int);")
@@ -227,17 +225,14 @@ func TestCreateDropCreateTable(t *testing.T) {
 			}()
 			createTable = true
 		}
-	}
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobUpdatedExported.Store(&onJobUpdated)
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("drop table t;")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	wg.Wait()
 	require.NoError(t, createErr)
 	require.NoError(t, fpErr)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow"))
 
 	rs := tk.MustQuery("admin show ddl jobs 3;").Rows()
 	create1JobID := rs[0][0].(string)
@@ -263,69 +258,6 @@ func TestCreateDropCreateTable(t *testing.T) {
 	create1TS, dropTS, create0TS := finishTSs[0], finishTSs[1], finishTSs[2]
 	require.Less(t, create0TS, dropTS, "first create should finish before drop")
 	require.Less(t, dropTS, create1TS, "second create should finish after drop")
-}
-
-func TestBuildQueryStringFromJobs(t *testing.T) {
-	testCases := []struct {
-		name     string
-		jobs     []*model.Job
-		expected string
-	}{
-		{
-			name:     "Empty jobs",
-			jobs:     []*model.Job{},
-			expected: "",
-		},
-		{
-			name:     "Single create table job",
-			jobs:     []*model.Job{{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));"}},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));",
-		},
-		{
-			name: "Multiple create table jobs with trailing semicolons",
-			jobs: []*model.Job{
-				{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));"},
-				{Query: "CREATE TABLE products (id INT PRIMARY KEY, description TEXT);"},
-			},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255)); CREATE TABLE products (id INT PRIMARY KEY, description TEXT);",
-		},
-		{
-			name: "Multiple create table jobs with and without trailing semicolons",
-			jobs: []*model.Job{
-				{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255))"},
-				{Query: "CREATE TABLE products (id INT PRIMARY KEY, description TEXT);"},
-				{Query: "   CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product_id INT) "},
-			},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255)); CREATE TABLE products (id INT PRIMARY KEY, description TEXT); CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product_id INT);",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			actual := ddl.BuildQueryStringFromJobs(tc.jobs)
-			require.Equal(t, tc.expected, actual, "Query strings do not match")
-		})
-	}
-}
-
-func TestBatchCreateTableWithJobs(t *testing.T) {
-	job1 := &model.Job{
-		SchemaID:   1,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t1", L: "t1"}}, false},
-		Query:      "create table db1.t1 (c1 int, c2 int)",
-	}
-	job2 := &model.Job{
-		SchemaID:   1,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t2", L: "t2"}}, &model.TableInfo{}},
-		Query:      "create table db1.t2 (c1 int, c2 int);",
-	}
-	job, err := ddl.BatchCreateTableWithJobs([]*model.Job{job1, job2})
-	require.NoError(t, err)
-	require.Equal(t, "create table db1.t1 (c1 int, c2 int); create table db1.t2 (c1 int, c2 int);", job.Query)
 }
 
 func getGlobalID(ctx context.Context, t *testing.T, store kv.Storage) int64 {
@@ -365,10 +297,15 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	}}
 	initialGID := getGlobalID(ctx, t, store)
 	threads, iterations := 10, 500
+	tks := make([]*testkit.TestKit, threads)
+	for i := 0; i < threads; i++ {
+		tks[i] = testkit.NewTestKit(t, store)
+	}
 	var wg util.WaitGroupWrapper
 	for i := 0; i < threads; i++ {
+		idx := i
 		wg.Run(func() {
-			kit := testkit.NewTestKit(t, store)
+			kit := tks[idx]
 			ddlSe := sess.NewSession(kit.Session())
 			for j := 0; j < iterations; j++ {
 				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
