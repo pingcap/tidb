@@ -242,3 +242,15 @@ UNIQUE KEY idx_5 (col_1)
 	tk.MustExec(`INSERT INTO tl75eff7ba VALUES(1),(0);`)
 	tk.MustQuery(`SELECT tl75eff7ba.col_1 AS r0 FROM tl75eff7ba WHERE ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 0, 1, 1) GROUP BY tl75eff7ba.col_1 HAVING ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 1, 1, 0) LIMIT 58651509;`).Check(testkit.Rows("0", "1"))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id bigint primary key,col1 varchar(10),col2 varchar(10),col3 varchar(10));")
+	tk.MustExec("create table t2(id bigint primary key,col1 varchar(10),col2 varchar(10),col3 varchar(10));")
+	tk.MustExec("create index t1_col1 on t1(col1,col2);")
+	tk.MustExec("create index t2_col1 on t2(col1,col2);")
+	tk.MustExec("analyze table t1,t2;")
+	tk.MustQuery("explain analyze select t1.*,(select /*+ ORDER_INDEX(t2,t2_col1)*/ col3 from t2 where t1.col1=t2.col1 order by col2 limit 1) from t1 limit 10;")
+}
