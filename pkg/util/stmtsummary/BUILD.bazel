@@ -24,7 +24,6 @@ go_library(
         "//pkg/util/set",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//util",
-        "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

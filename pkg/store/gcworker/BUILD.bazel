@@ -20,6 +20,7 @@ go_library(
         "//pkg/session/types",
         "//pkg/sessionctx/variable",
         "//pkg/tablecodec",
+        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
@@ -50,8 +51,9 @@ go_test(
     embed = [":gcworker"],
     flaky = True,
     race = "on",
-    shard_count = 25,
+    shard_count = 27,
     deps = [
+        "//pkg/config",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
         "//pkg/domain",

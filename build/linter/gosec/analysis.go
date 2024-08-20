@@ -83,7 +83,6 @@ func run(pass *analysis.Pass) (any, error) {
 		if err != nil {
 			panic(err)
 		}
-		text := fmt.Sprintf("[%s] %s: %s", Name, i.RuleID, i.What) // TODO: use severity and confidence
 		var r *result.Range
 		line, err := strconv.Atoi(i.Line)
 		if err != nil {
@@ -93,8 +92,8 @@ func run(pass *analysis.Pass) (any, error) {
 			}
 			line = r.From
 		}
-
-		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), line, 1)), text)
+		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), line, 1)),
+			"[%s] %s: %s", Name, i.RuleID, i.What) // TODO: use severity and confidence
 	}
 
 	return nil, nil

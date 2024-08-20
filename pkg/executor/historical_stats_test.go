@@ -75,6 +75,7 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	// 3. dump current stats json
 	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
+	dumpJSONTable.Sort()
 	jsOrigin, _ := json.Marshal(dumpJSONTable)
 
 	// 4. get the historical stats json
@@ -89,6 +90,7 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	}
 	jsonTbl, err := storage.BlocksToJSONTable(data)
 	require.NoError(t, err)
+	jsonTbl.Sort()
 	jsCur, err := json.Marshal(jsonTbl)
 	require.NoError(t, err)
 	// 5. historical stats must be equal to the current stats

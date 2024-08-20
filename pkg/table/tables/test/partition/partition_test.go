@@ -24,7 +24,6 @@ import (
 	gotime "time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -63,12 +63,12 @@ PARTITION BY RANGE ( id ) (
 	p0 := tbInfo.Partition.Definitions[0]
 	require.Equal(t, model.NewCIStr("p0"), p0.Name)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(1))
 	require.NoError(t, err)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
 	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	require.NoError(t, err)
 	require.Greater(t, len(val), 0)
@@ -76,11 +76,11 @@ PARTITION BY RANGE ( id ) (
 	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// Cover more code.
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(7))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(7))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(12))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(12))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(16))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(16))
 	require.NoError(t, err)
 
 	// Make the changes visible.
@@ -93,7 +93,7 @@ PARTITION BY RANGE ( id ) (
 	tk.MustQuery("select count(*) from t1 use index(id) where id > 6").Check(testkit.Rows("3"))
 
 	// Value must locates in one partition.
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(22))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(22))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 	_, err = tk.Session().Execute(context.Background(), "rollback")
 	require.NoError(t, err)
@@ -106,9 +106,11 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable2)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
 	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(22))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(22))
 	require.NoError(t, err)
 
 	createTable3 := `create table test.t3 (id int) partition by range (id)
@@ -118,13 +120,15 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable3)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
 	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(11))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(10))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(10))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(0))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(0))
 	require.NoError(t, err)
 
 	createTable4 := `create table test.t4 (a int,b int) partition by range (a+b)
@@ -134,9 +138,11 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable4)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
 	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1, 11))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(1, 11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 }
 
@@ -156,12 +162,12 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(8))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(8))
 	require.NoError(t, err)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
 	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	require.NoError(t, err)
 	require.Greater(t, len(val), 0)
@@ -169,11 +175,11 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// Cover more code.
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(-1))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(-1))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(3))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(3))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(6))
+	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(6))
 	require.NoError(t, err)
 
 	// Make the changes visible.
@@ -193,9 +199,9 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
 		require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-		rid, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(-i))
-		require.NoError(t, err)
 		txn, err = tk.Session().Txn(true)
+		require.NoError(t, err)
+		rid, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(-i))
 		require.NoError(t, err)
 		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid.IntValue()))
 		require.NoError(t, err)
@@ -2070,25 +2076,6 @@ func TestPruneModeWarningInfo(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
 }
 
-type testCallback struct {
-	ddl.Callback
-	OnJobRunBeforeExported func(job *model.Job)
-}
-
-func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
-	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
-	require.NoError(t, err)
-	return &testCallback{
-		Callback: defHookFactory(dom),
-	}
-}
-
-func (c *testCallback) OnJobRunBefore(job *model.Job) {
-	if c.OnJobRunBeforeExported != nil {
-		c.OnJobRunBeforeExported(job)
-	}
-}
-
 func TestPartitionByIntListExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
@@ -2304,8 +2291,10 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	tk2.MustExec(`set @@tidb_enable_global_index = ON`)
 
 	tBase := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b), key (c,b), unique key idx_dc(d,c), key(e))`
+	tBaseA := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b) Global, key (c,b), unique key idx_dc(d,c) Global, key(e))`
+	tBaseB := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a) Global, unique key idx_b(b), key (c,b), unique key idx_dc(d,c) Global, key(e))`
 	t2Str := `create table t2 ` + tBase
-	tStr := `create table t ` + tBase
+	tStr := `create table t `
 
 	rows := 100
 	pkInserts := 20
@@ -2316,16 +2305,16 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	twoThirdUintRangeStr := fmt.Sprintf("%d", 2*thirdUintRange)
 	tStart := []string{
 		// Non partitioned
-		tStr,
+		tStr + tBase,
 		// RANGE COLUMNS
-		tStr + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
+		tStr + tBaseA + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
 			`partition pMid values less than (` + twoThirdUintRangeStr + `), partition pLast values less than (maxvalue))`,
 		// KEY
-		tStr + ` partition by key(b) partitions 5`,
+		tStr + tBaseB + ` partition by key(b) partitions 5`,
 		// HASH
-		tStr + ` partition by hash(a) partitions 5`,
+		tStr + tBaseA + ` partition by hash(a) partitions 5`,
 		// HASH with function
-		tStr + ` partition by hash(a DIV 3) partitions 5`,
+		tStr + tBaseA + ` partition by hash(a DIV 3) partitions 5`,
 	}
 	if limitSizeOfTest {
 		tStart = tStart[:2]
@@ -2341,11 +2330,11 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 		`alter table t partition by range (a+2) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
 			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
 			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
-			`partition pLast values less than (maxvalue))`,
+			`partition pLast values less than (maxvalue)) update indexes (idx_a local, idx_dc global, idx_b global)`,
 		// KEY
-		`alter table t partition by key(b) partitions 3`,
+		`alter table t partition by key(b) partitions 3 update indexes(idx_a global, idx_b local, idx_dc global)`,
 		// Hash
-		`alter table t partition by hash(a) partitions 7`,
+		`alter table t partition by hash(a) partitions 7 update indexes (idx_dc global, idx_a local, idx_b global)`,
 	}
 	if limitSizeOfTest {
 		tAlter = tAlter[:2]
@@ -2645,13 +2634,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	rows, pkInserts, pkUpdates, pkDeletes int,
 	reorgRand *rand.Rand,
 	getNewPK func(map[string]struct{}, string, *rand.Rand) string,
-	getValues func(string, bool, *rand.Rand) string) {
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := newTestCallBack(t, dom)
-	dom.DDL().SetHook(hook)
-
+	getValues func(string, bool, *rand.Rand) string,
+) {
 	pkMap := make(map[string]struct{}, rows)
 	pkArray := make([]string, 0, len(pkMap))
 	// Generate a start set:
@@ -2694,7 +2678,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	prevTbl, err := currSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	var hookErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if hookErr != nil {
 			// Enough to find a single error
 			return
@@ -3133,7 +3117,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			logutil.BgLogger().Info("State after ins/upd/del", zap.Int("transitions", transitions),
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
 		}
-	}
+	})
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	tk.MustExec(alterStr)
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)
@@ -3267,8 +3252,8 @@ func TestPartitionCoverage(t *testing.T) {
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustExec(`analyze table t all columns`)
 	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
-		`TableReader 0.00 root partition:dual data:Selection`,
-		`└─Selection 0.00 cop[tikv]  eq(test.t.a, 10)`,
+		`TableReader 1.00 root partition:dual data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 10)`,
 		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
 	tk.MustQuery(`select * from t where a = 10`).Check(testkit.Rows())
 

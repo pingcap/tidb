@@ -22,13 +22,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
@@ -534,9 +533,7 @@ func TestFlashbackTmpTable(t *testing.T) {
 
 func TestFlashbackInProcessErrorMsg(t *testing.T) {
 	if *realtikvtest.WithRealTiKV {
-		store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-
-		originHook := dom.DDL().GetHook()
+		store := realtikvtest.CreateMockStoreAndSetup(t)
 
 		tk := testkit.NewTestKit(t, store)
 		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
@@ -559,8 +556,7 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
-		hook := newTestCallBack(t, dom)
-		hook.OnJobRunBeforeExported = func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 			if job.Type == model.ActionFlashbackCluster && job.SchemaState == model.StateWriteReorganization {
 				txn, err := store.Begin()
 				assert.NoError(t, err)
@@ -572,30 +568,10 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 				assert.NotEqual(t, slices[1], "0")
 				txn.Rollback()
 			}
-		}
-		dom.DDL().SetHook(hook)
+		})
 		tk.Exec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
-		dom.DDL().SetHook(originHook)
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
-	}
-}
-
-type testCallback struct {
-	ddl.Callback
-	OnJobRunBeforeExported func(job *model.Job)
-}
-
-func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
-	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
-	require.NoError(t, err)
-	return &testCallback{
-		Callback: defHookFactory(dom),
-	}
-}
-
-func (c *testCallback) OnJobRunBefore(job *model.Job) {
-	if c.OnJobRunBeforeExported != nil {
-		c.OnJobRunBeforeExported(job)
 	}
 }

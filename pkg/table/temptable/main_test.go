@@ -67,7 +67,7 @@ func (is *mockedInfoSchema) AddTable(tempType model.TempTableType, id ...int64) 
 	return is
 }
 
-func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
+func (is *mockedInfoSchema) TableByID(_ context.Context, tblID int64) (table.Table, bool) {
 	tempType, ok := is.tables[tblID]
 	if !ok {
 		return nil, false

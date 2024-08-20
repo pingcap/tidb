@@ -34,6 +34,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/testkit",
+        "//pkg/util",
         "@com_github_stretchr_testify//require",
     ],
 )

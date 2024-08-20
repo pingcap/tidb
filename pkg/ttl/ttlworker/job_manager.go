@@ -1082,7 +1082,7 @@ GROUP BY
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to get table's job interval",
 					zap.Error(err),
-					zap.String("db", v.DBName),
+					zap.String("db", v.DBName.O),
 					zap.String("table", tblInfo.Name.String()),
 				)
 				interval = time.Hour
@@ -1160,7 +1160,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	defer se.Close()
 
 	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := is.TableByID(tableID)
+	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		return false
 	}
