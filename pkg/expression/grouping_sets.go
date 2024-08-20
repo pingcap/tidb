@@ -269,7 +269,6 @@ func (gs GroupingSet) String() string {
 
 // StringWithCtx is used to output a string which simply described current grouping set.
 func (gs GroupingSet) StringWithCtx(redact string) string {
-
 	var str strings.Builder
 	str.WriteString("{")
 	for i, one := range gs {
