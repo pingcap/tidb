@@ -1743,27 +1743,25 @@ func (e *memtableRetriever) setDataForMetricTables() {
 
 func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, ex *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
 	var rows [][]types.Datum
-	if table.PKIsHandle {
-		if ex.HasPrimaryKey() {
-			for _, col := range table.Columns {
-				if mysql.HasPriKeyFlag(col.GetFlag()) {
-					record := types.MakeDatums(
-						infoschema.CatalogVal,        // CONSTRAINT_CATALOG
-						schema.O,                     // CONSTRAINT_SCHEMA
-						infoschema.PrimaryConstraint, // CONSTRAINT_NAME
-						infoschema.CatalogVal,        // TABLE_CATALOG
-						schema.O,                     // TABLE_SCHEMA
-						table.Name.O,                 // TABLE_NAME
-						col.Name.O,                   // COLUMN_NAME
-						1,                            // ORDINAL_POSITION
-						1,                            // POSITION_IN_UNIQUE_CONSTRAINT
-						nil,                          // REFERENCED_TABLE_SCHEMA
-						nil,                          // REFERENCED_TABLE_NAME
-						nil,                          // REFERENCED_COLUMN_NAME
-					)
-					rows = append(rows, record)
-					break
-				}
+	if table.PKIsHandle && ex.HasPrimaryKey() {
+		for _, col := range table.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
+					schema.O,                     // CONSTRAINT_SCHEMA
+					infoschema.PrimaryConstraint, // CONSTRAINT_NAME
+					infoschema.CatalogVal,        // TABLE_CATALOG
+					schema.O,                     // TABLE_SCHEMA
+					table.Name.O,                 // TABLE_NAME
+					col.Name.O,                   // COLUMN_NAME
+					1,                            // ORDINAL_POSITION
+					1,                            // POSITION_IN_UNIQUE_CONSTRAINT
+					nil,                          // REFERENCED_TABLE_SCHEMA
+					nil,                          // REFERENCED_TABLE_NAME
+					nil,                          // REFERENCED_COLUMN_NAME
+				)
+				rows = append(rows, record)
+				break
 			}
 		}
 	}
