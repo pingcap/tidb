@@ -68,7 +68,7 @@ type txnBackfillScheduler struct {
 	tp           backfillerType
 	tbl          table.PhysicalTable
 	decodeColMap map[int64]decoder.Column
-	jobCtx       *JobContext
+	jobCtx       *ReorgContext
 
 	workers []*backfillWorker
 	wg      sync.WaitGroup
@@ -80,7 +80,7 @@ type txnBackfillScheduler struct {
 
 func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable,
-	jobCtx *JobContext) (backfillScheduler, error) {
+	jobCtx *ReorgContext) (backfillScheduler, error) {
 	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl)
 	if err != nil {
 		return nil, err
@@ -305,7 +305,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		runner.wg = &b.wg
 		b.workers = append(b.workers, runner)
 		b.wg.Add(1)
-		go runner.run(reorgInfo.d, worker, job)
+		go runner.run(reorgInfo.jobCtx.oldDDLCtx, worker, job)
 	}
 	// Decrease the worker.
 	if len(b.workers) > workerCnt {

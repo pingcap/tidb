@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -179,6 +180,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagStatsConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
+	_ = flags.MarkHidden(flagUseFSR)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -910,6 +912,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
+	} else if checkpointFirstRun && cfg.CheckRequirements {
+		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			schedulersRemovable = true
+			return errors.Trace(err)
+		}
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
@@ -1315,6 +1322,10 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 		}
 		return base * uint64(ratio*10) / 10
 	}
+
+	// The preserve rate for tikv is quite accurate, while rate for tiflash is a
+	// number calculated from tpcc testing with variable data sizes.  1.4 is a
+	// relative conservative value.
 	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
 	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
 	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
@@ -1356,6 +1367,28 @@ func Exhaust(ec <-chan error) []error {
 			return out
 		}
 	}
+}
+
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	// Tasks from br clp client use other checks to validate
+	if g.GetClient() != glue.ClientSql {
+		return nil
+	}
+	message := "table already exists: "
+	allUnique := true
+	for _, table := range tables {
+		_, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name, table.Info.Name)
+		if err == nil {
+			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
+			allUnique = false
+		} else if !infoschema.ErrTableNotExists.Equal(err) {
+			return errors.Trace(err)
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
+	}
+	return nil
 }
 
 // EstimateRangeSize estimates the total range count by file.

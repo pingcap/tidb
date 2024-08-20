@@ -220,7 +220,7 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 	return nil
 }
 
-func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
+func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
 	}
@@ -246,7 +246,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		return errors.Trace(err)
 	}
 
-	flashbackSnapshotMeta := meta.NewSnapshotMeta(d.store.GetSnapshot(kv.NewVersion(flashbackTS)))
+	flashbackSnapshotMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(flashbackTS)))
 	flashbackSchemaVersion, err := flashbackSnapshotMeta.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
@@ -669,20 +669,20 @@ func SendFlashbackToVersionRPC(
 
 func flashbackToVersion(
 	ctx context.Context,
-	d *ddlCtx,
+	store kv.Storage,
 	handler rangetask.TaskHandler,
 	startKey []byte, endKey []byte,
 ) (err error) {
 	return rangetask.NewRangeTaskRunner(
 		"flashback-to-version-runner",
-		d.store.(tikv.Storage),
+		store.(tikv.Storage),
 		int(variable.GetDDLFlashbackConcurrency()),
 		handler,
 	).RunOnRange(ctx, startKey, endKey)
 }
 
-func splitRegionsByKeyRanges(ctx context.Context, d *ddlCtx, keyRanges []kv.KeyRange) {
-	if s, ok := d.store.(kv.SplittableStore); ok {
+func splitRegionsByKeyRanges(ctx context.Context, store kv.Storage, keyRanges []kv.KeyRange) {
+	if s, ok := store.(kv.SplittableStore); ok {
 		for _, keys := range keyRanges {
 			for {
 				// tableID is useless when scatter == false
@@ -700,7 +700,7 @@ func splitRegionsByKeyRanges(ctx context.Context, d *ddlCtx, keyRanges []kv.KeyR
 // 2. before flashback start, check timestamp, disable GC and close PD schedule, get flashback key ranges.
 // 3. phase 1, lock flashback key ranges.
 // 4. phase 2, send flashback RPC, do flashback jobs.
-func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
 	failpoint.Inject("mockFlashbackTest", func(val failpoint.Value) {
 		if val.(bool) {
@@ -708,7 +708,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 	})
 	// TODO: Support flashback in unistore.
-	if d.store.Name() != "TiKV" && !inFlashbackTest {
+	if jobCtx.store.Name() != "TiKV" && !inFlashbackTest {
 		job.State = model.JobStateCancelled
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
 	}
@@ -768,12 +768,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
-		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, d, t, job, flashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, jobCtx.store, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
-		startTS, err = d.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		startTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -785,21 +785,21 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		job.Args[keyRangesOffset] = keyRanges
 		job.SchemaState = model.StateWriteOnly
-		return updateSchemaVersion(d, t, job)
+		return updateSchemaVersion(jobCtx, t, job)
 	// Stage 3, lock related key ranges.
 	case model.StateWriteOnly:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
 			job.SchemaState = model.StateWriteReorganization
-			return updateSchemaVersion(d, t, job)
+			return updateSchemaVersion(jobCtx, t, job)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
-		splitRegionsByKeyRanges(w.ctx, d, keyRanges)
+		splitRegionsByKeyRanges(w.ctx, jobCtx.store, keyRanges)
 		totalRegions.Store(0)
 		for _, r := range keyRanges {
-			if err = flashbackToVersion(w.ctx, d,
+			if err = flashbackToVersion(w.ctx, jobCtx.store,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, r)
+					stats, err := SendPrepareFlashbackToVersionRPC(ctx, jobCtx.store.(tikv.Storage), flashbackTS, startTS, r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
@@ -810,7 +810,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
-		commitTS, err = d.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		commitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -821,17 +821,17 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
-			asyncNotifyEvent(d, statsutil.NewFlashbackClusterEvent())
+			asyncNotifyEvent(jobCtx, statsutil.NewFlashbackClusterEvent())
 			job.State = model.JobStateDone
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
 
 		for _, r := range keyRanges {
-			if err = flashbackToVersion(w.ctx, d,
+			if err = flashbackToVersion(w.ctx, jobCtx.store,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use same startTS as prepare phase to simulate 1PC txn.
-					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
+					stats, err := SendFlashbackToVersionRPC(ctx, jobCtx.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
 					logutil.DDLLogger().Info("flashback cluster stats",
 						zap.Uint64("complete regions", completedRegions.Load()),
@@ -844,10 +844,10 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 
-		asyncNotifyEvent(d, statsutil.NewFlashbackClusterEvent())
+		asyncNotifyEvent(jobCtx, statsutil.NewFlashbackClusterEvent())
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
-		return updateSchemaVersion(d, t, job)
+		return updateSchemaVersion(jobCtx, t, job)
 	}
 	return ver, nil
 }

@@ -53,12 +53,12 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
+func createTable(jobCtx *jobContext, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo := job.Args[0].(*model.TableInfo)
 
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(d, schemaID, tbInfo.Name.L)
+	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -74,7 +74,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 		return tbInfo, errors.Trace(err)
 	}
 
-	retryable, err := checkTableForeignKeyValidInOwner(d, t, job, tbInfo, fkCheck)
+	retryable, err := checkTableForeignKeyValidInOwner(jobCtx, job, tbInfo, fkCheck)
 	if err != nil {
 		if !retryable {
 			job.State = model.JobStateCancelled
@@ -148,7 +148,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 	}
 }
 
-func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(ver, errors.New("mock do job error"))
@@ -165,15 +165,15 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	if len(tbInfo.ForeignKeys) > 0 {
-		return createTableWithForeignKeys(d, t, job, tbInfo, fkCheck)
+		return createTableWithForeignKeys(jobCtx, t, job, tbInfo, fkCheck)
 	}
 
-	tbInfo, err := createTable(d, t, job, fkCheck)
+	tbInfo, err := createTable(jobCtx, t, job, fkCheck)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -184,30 +184,30 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		job.SchemaID,
 		tbInfo,
 	)
-	asyncNotifyEvent(d, createTableEvent)
+	asyncNotifyEvent(jobCtx, createTableEvent)
 	return ver, errors.Trace(err)
 }
 
-func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
+func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
 	switch tbInfo.State {
 	case model.StateNone, model.StatePublic:
 		// create table in non-public or public state. The function `createTable` will always reset
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(d, t, job, fkCheck)
+		tbInfo, err = createTable(jobCtx, t, job, fkCheck)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		tbInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		tbInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
+		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -216,7 +216,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo 
 			job.SchemaID,
 			tbInfo,
 		)
-		asyncNotifyEvent(d, createTableEvent)
+		asyncNotifyEvent(jobCtx, createTableEvent)
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -224,7 +224,7 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo 
 	return ver, errors.Trace(err)
 }
 
-func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 
 	var args []*model.TableInfo
@@ -252,7 +252,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 				return ver, errors.Trace(err)
 			}
 		} else {
-			tbInfo, err := createTable(d, t, stubJob, fkCheck)
+			tbInfo, err := createTable(jobCtx, t, stubJob, fkCheck)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -261,7 +261,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 		}
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -275,7 +275,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 			job.SchemaID,
 			args[i],
 		)
-		asyncNotifyEvent(d, createTableEvent)
+		asyncNotifyEvent(jobCtx, createTableEvent)
 	}
 
 	return ver, errors.Trace(err)
@@ -290,7 +290,7 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 	return t.CreateTableOrView(schemaID, tbInfo)
 }
 
-func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	var orReplace bool
@@ -302,7 +302,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 	tbInfo.State = model.StateNone
 
-	oldTableID, err := findTableIDByName(d, t, schemaID, tbInfo.Name.L)
+	oldTableID, err := findTableIDByName(jobCtx.infoCache, t, schemaID, tbInfo.Name.L)
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
@@ -319,7 +319,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			return ver, errors.Trace(err)
 		}
 	}
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -353,13 +353,13 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 }
 
-func findTableIDByName(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) (int64, error) {
+func findTableIDByName(infoCache *infoschema.InfoCache, t *meta.Meta, schemaID int64, tableName string) (int64, error) {
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return 0, err
 	}
-	is := d.infoCache.GetLatest()
+	is := infoCache.GetLatest()
 	if is != nil && is.SchemaMetaVersion() == currVer {
 		return findTableIDFromInfoSchema(is, schemaID, tableName)
 	}
@@ -414,7 +414,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	if err = checkTableInfoValidExtra(ctx, tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -516,7 +516,7 @@ func checkGeneratedColumn(ctx sessionctx.Context, schemaName model.CIStr, tableN
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -534,6 +534,9 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkGlobalIndexes(ctx, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 

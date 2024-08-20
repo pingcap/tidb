@@ -1034,6 +1034,8 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
+	// TiDBAutoAnalyzeConcurrency is the concurrency of the auto analyze
+	TiDBAutoAnalyzeConcurrency = "tidb_auto_analyze_concurrency"
 	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
 	TiDBEnableDistTask = "tidb_enable_dist_task"
 	// TiDBEnableFastCreateTable indicates whether to enable the fast create table feature.
@@ -1407,6 +1409,7 @@ const (
 	DefTiDBAnalyzeColumnOptions                    = "PREDICATE"
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
+	DefTiDBAutoAnalyzeConcurrency                  = 2
 	DefTiDBEnablePrepPlanCache                     = true
 	DefTiDBPrepPlanCacheSize                       = 100
 	DefTiDBSessionPlanCacheSize                    = 100
@@ -1594,6 +1597,7 @@ var (
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
+	AutoAnlayzeConcurrency            = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning

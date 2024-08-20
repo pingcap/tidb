@@ -618,7 +618,7 @@ func TestJoinSystemTableContainsView(t *testing.T) {
 	// This is used by grafana when TiDB is specified as the data source.
 	// See https://github.com/grafana/grafana/blob/e86b6662a187c77656f72bef3b0022bf5ced8b98/public/app/plugins/datasource/mysql/meta_query.ts#L31
 	for i := 0; i < 10; i++ {
-		tk.MustQuery(`
+		tk.MustQueryWithContext(context.Background(), `
 SELECT
     table_name as table_name,
     ( SELECT

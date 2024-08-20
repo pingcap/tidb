@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/table"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -181,8 +180,6 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
-	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
@@ -254,51 +251,52 @@ type ddl struct {
 	executor     *executor
 }
 
-// waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
-type waitSchemaSyncedController struct {
-	mu  sync.RWMutex
-	job map[int64]struct{}
+// unSyncedJobTracker is to track whether changes of a DDL job are synced to all
+// TiDB instances.
+type unSyncedJobTracker struct {
+	mu           sync.RWMutex
+	unSyncedJobs map[int64]struct{}
 
 	// Use to check if the DDL job is the first run on this owner.
 	onceMap map[int64]struct{}
 }
 
-func newWaitSchemaSyncedController() *waitSchemaSyncedController {
-	return &waitSchemaSyncedController{
-		job:     make(map[int64]struct{}, jobRecordCapacity),
-		onceMap: make(map[int64]struct{}, jobOnceCapacity),
+func newUnSyncedJobTracker() *unSyncedJobTracker {
+	return &unSyncedJobTracker{
+		unSyncedJobs: make(map[int64]struct{}, jobRecordCapacity),
+		onceMap:      make(map[int64]struct{}, jobOnceCapacity),
 	}
 }
 
-func (w *waitSchemaSyncedController) registerSync(job *model.Job) {
+func (w *unSyncedJobTracker) addUnSynced(jobID int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.job[job.ID] = struct{}{}
+	w.unSyncedJobs[jobID] = struct{}{}
 }
 
-func (w *waitSchemaSyncedController) isSynced(job *model.Job) bool {
+func (w *unSyncedJobTracker) isUnSynced(jobID int64) bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	_, ok := w.job[job.ID]
-	return !ok
+	_, ok := w.unSyncedJobs[jobID]
+	return ok
 }
 
-func (w *waitSchemaSyncedController) synced(job *model.Job) {
+func (w *unSyncedJobTracker) removeUnSynced(jobID int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	delete(w.job, job.ID)
+	delete(w.unSyncedJobs, jobID)
 }
 
 // maybeAlreadyRunOnce returns true means that the job may be the first run on this owner.
 // Returns false means that the job must not be the first run on this owner.
-func (w *waitSchemaSyncedController) maybeAlreadyRunOnce(id int64) bool {
+func (w *unSyncedJobTracker) maybeAlreadyRunOnce(id int64) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	_, ok := w.onceMap[id]
 	return ok
 }
 
-func (w *waitSchemaSyncedController) setAlreadyRunOnce(id int64) {
+func (w *unSyncedJobTracker) setAlreadyRunOnce(id int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if len(w.onceMap) > jobOnceCapacity {
@@ -306,12 +304,6 @@ func (w *waitSchemaSyncedController) setAlreadyRunOnce(id int64) {
 		w.onceMap = make(map[int64]struct{}, jobRecordCapacity)
 	}
 	w.onceMap[id] = struct{}{}
-}
-
-func (w *waitSchemaSyncedController) clearOnceMap() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.onceMap = make(map[int64]struct{}, jobOnceCapacity)
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -336,43 +328,49 @@ type ddlCtx struct {
 	autoidCli       *autoid.ClientDiscover
 	schemaLoader    SchemaLoader
 
-	*waitSchemaSyncedController
-	*schemaVersionManager
-
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
 
 	jobCtx struct {
 		sync.RWMutex
 		// jobCtxMap maps job ID to job's ctx.
-		jobCtxMap map[int64]*JobContext
+		jobCtxMap map[int64]*ReorgContext
 	}
 }
 
-// SchemaLoader is used to avoid import loop, the only impl is domain currently.
+// SchemaLoader is used to reload info schema, the only impl is domain currently.
 type SchemaLoader interface {
 	Reload() error
 }
 
-// schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
-// we use another transaction to update the schema version, so that we need to lock the schema version and unlock it until the job is committed.
-// for version2, we use etcd lock to lock the schema version between TiDB nodes now.
+// schemaVersionManager is used to manage the schema version. info schema cache
+// only load differences between its version and current version, so we must
+// make sure increment version & set differ run in a single transaction. we are
+// using memory lock to make sure this right now, as we are using optimistic
+// transaction here, and there will be many write conflict if we allow those
+// transactions run in parallel. we can change this to lock TiKV key inside the
+// transaction later.
 type schemaVersionManager struct {
 	schemaVersionMu sync.Mutex
 	// lockOwner stores the job ID that is holding the lock.
 	lockOwner atomicutil.Int64
+	store     kv.Storage
 }
 
-func newSchemaVersionManager() *schemaVersionManager {
-	return &schemaVersionManager{}
+func newSchemaVersionManager(store kv.Storage) *schemaVersionManager {
+	return &schemaVersionManager{
+		store: store,
+	}
 }
 
-func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storage) (schemaVersion int64, err error) {
+func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion int64, err error) {
 	err = sv.lockSchemaVersion(job.ID)
 	if err != nil {
 		return schemaVersion, errors.Trace(err)
 	}
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+	// TODO we can merge this txn into job transaction to avoid schema version
+	//  without differ.
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sv.store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		m := meta.NewMeta(txn)
 		schemaVersion, err = m.GenSchemaVersion()
@@ -416,7 +414,7 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
-		ctx = NewJobContext()
+		ctx = NewReorgContext()
 		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
 	ctx.setDDLLabelForTopSQL(jobQuery)
@@ -427,7 +425,7 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
-		ctx = NewJobContext()
+		ctx = NewReorgContext()
 		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
 	ctx.setDDLLabelForDiagnosis(jobType)
@@ -449,14 +447,14 @@ func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	delete(dc.jobCtx.jobCtxMap, job.ID)
 }
 
-func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobContext {
+func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *ReorgContext {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
-	var ctx *JobContext
+	var ctx *ReorgContext
 	if jobContext, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
 		ctx = jobContext
 	} else {
-		ctx = NewJobContext()
+		ctx = NewReorgContext()
 	}
 	if reorgMeta != nil && len(ctx.resourceGroupName) == 0 {
 		ctx.resourceGroupName = reorgMeta.ResourceGroupName
@@ -570,11 +568,12 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
-	if d.ddlEventCh != nil {
+func asyncNotifyEvent(jobCtx *jobContext, e *statsutil.DDLEvent) {
+	ch := jobCtx.oldDDLCtx.ddlEventCh
+	if ch != nil {
 		for i := 0; i < 10; i++ {
 			select {
-			case d.ddlEventCh <- e:
+			case ch <- e:
 				return
 			default:
 				time.Sleep(time.Microsecond * 10)
@@ -624,26 +623,24 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 
 	ddlCtx := &ddlCtx{
-		uuid:                       id,
-		store:                      opt.Store,
-		lease:                      opt.Lease,
-		ddlJobDoneChMap:            generic.NewSyncMap[int64, chan struct{}](10),
-		ownerManager:               manager,
-		schemaVerSyncer:            schemaVerSyncer,
-		serverStateSyncer:          serverStateSyncer,
-		binlogCli:                  binloginfo.GetPumpsClient(),
-		infoCache:                  opt.InfoCache,
-		tableLockCkr:               deadLockCkr,
-		etcdCli:                    opt.EtcdCli,
-		autoidCli:                  opt.AutoIDClient,
-		schemaLoader:               opt.SchemaLoader,
-		waitSchemaSyncedController: newWaitSchemaSyncedController(),
+		uuid:              id,
+		store:             opt.Store,
+		lease:             opt.Lease,
+		ddlJobDoneChMap:   generic.NewSyncMap[int64, chan struct{}](10),
+		ownerManager:      manager,
+		schemaVerSyncer:   schemaVerSyncer,
+		serverStateSyncer: serverStateSyncer,
+		binlogCli:         binloginfo.GetPumpsClient(),
+		infoCache:         opt.InfoCache,
+		tableLockCkr:      deadLockCkr,
+		etcdCli:           opt.EtcdCli,
+		autoidCli:         opt.AutoIDClient,
+		schemaLoader:      opt.SchemaLoader,
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
-	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
+	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*ReorgContext)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
-	ddlCtx.schemaVersionManager = newSchemaVersionManager()
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
