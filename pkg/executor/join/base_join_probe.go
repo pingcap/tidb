@@ -356,6 +356,8 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		var currentColumn *chunk.Column
 		if ok {
 			currentColumn = chk.Column(indexInDstChk)
+			// Other goroutine will use `atomic.StoreUint32` to write to the first 32 bit in nullmap when it need to set usedFlag
+			// so read from nullMap may meet concurrent write if meta.colOffsetInNullMap == 1 && (columnIndex + meta.colOffsetInNullMap <= 32)
 			mayConcurrentWrite := meta.colOffsetInNullMap == 1 && columnIndex <= 31
 			if !mayConcurrentWrite {
 				for index := range j.cachedBuildRows {
