@@ -16,7 +16,6 @@ package backup
 
 import (
 	"context"
-	"io"
 	"testing"
 	"time"
 
@@ -58,33 +57,34 @@ func TestTimeoutRecv(t *testing.T) {
 	TimeoutOneResponse = time.Millisecond * 800
 	// Just Timeout Once
 	{
-		err := doSendBackup(ctx, &MockBackupClient{
+		err := startBackup(ctx, 0, backuppb.BackupRequest{}, &MockBackupClient{
 			recvFunc: func(ctx context.Context) (*backuppb.BackupResponse, error) {
 				time.Sleep(time.Second)
 				require.Error(t, ctx.Err())
-				return nil, io.EOF
+				return nil, ctx.Err()
 			},
-		}, backuppb.BackupRequest{}, func(br *backuppb.BackupResponse) error { return nil })
-		require.NoError(t, err)
+		}, 1, nil)
+		require.Error(t, err)
 	}
 
 	// Timeout Not At First
 	{
 		count := 0
-		err := doSendBackup(ctx, &MockBackupClient{
+		err := startBackup(ctx, 0, backuppb.BackupRequest{}, &MockBackupClient{
 			recvFunc: func(ctx context.Context) (*backuppb.BackupResponse, error) {
 				require.NoError(t, ctx.Err())
 				if count == 15 {
 					time.Sleep(time.Second)
 					require.Error(t, ctx.Err())
-					return nil, io.EOF
+					return nil, ctx.Err()
 				}
 				count += 1
 				time.Sleep(time.Millisecond * 80)
 				return &backuppb.BackupResponse{}, nil
 			},
-		}, backuppb.BackupRequest{}, func(br *backuppb.BackupResponse) error { return nil })
-		require.NoError(t, err)
+		}, 1, nil)
+		require.Error(t, err)
+		require.Equal(t, count, 15)
 	}
 }
 
