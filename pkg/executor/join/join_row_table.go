@@ -31,12 +31,102 @@ import (
 
 const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
-const usedFlagMaskBigEndian = uint32(1) << 31
-const usedFlagMaskLittleEndian = uint32(1) << 7
 const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
+var (
+    fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	usedFlagMask uint32
+	bitMaskInUint32 [32]uint32
+)
 
-var fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+func init() {
+	// In nullmap, each bit represents a column in current row is null or not null. nullmap is designed to be read/write at the 
+	// unit of byte(uint8). Some joins(for example, left outer join use left side to build) need an extra bit to represent if 
+	// current row is matched or not. This bit is called used flag, and in the implementation, it actually use the first bit in
+	// nullmap as the used flag. There will be concurrent write for the used flag, so need to use atomic read/write when accessing 
+	// the used flag. However, the minimum atomic read/write unit in go is uint32, so nullmap need to be read/write as uint32 in 
+	// these cases. Read/write uint32 need to consider the endianess, for example, for a piece of memory containing continuous 32 
+	// bits, we wants to set the first bit to 1, the memory after set should be 
+	// 0x70 0x00 0x00 0x00
+	// when interprete the 32 bit as uint32
+	// in big endian system, it is 0x70000000 
+	// in small endian system, it is 0x00000070 
+	// useFlagMask and bitMaskInUint32 is used to hide these difference in big endian/small endian system
+	// and init function is used to init usedFlagMask and bitMaskInUint32 based on endianness of current env
+	endiannessTest := uint32(1) << 7
+	low8Value := *(*uint8)(unsafe.Pointer(&endiannessTest))
+	if uint32(low8Value) == endiannessTest {
+		// small endian
+		usedFlagMask = uint32(1) << 7
+		bitMaskInUint32[0] = uint32(1) << 7
+		bitMaskInUint32[1] = uint32(1) << 6
+		bitMaskInUint32[2] = uint32(1) << 5
+		bitMaskInUint32[3] = uint32(1) << 4
+		bitMaskInUint32[4] = uint32(1) << 3
+		bitMaskInUint32[5] = uint32(1) << 2
+		bitMaskInUint32[6] = uint32(1) << 1
+		bitMaskInUint32[7] = uint32(1) << 0
+		bitMaskInUint32[8] = uint32(1) << (7 + 8)
+		bitMaskInUint32[9] = uint32(1) << (6 + 8)
+		bitMaskInUint32[10] = uint32(1) << (5 + 8)
+		bitMaskInUint32[11] = uint32(1) << (4 + 8)
+		bitMaskInUint32[12] = uint32(1) << (3 + 8)
+		bitMaskInUint32[13] = uint32(1) << (2 + 8)
+		bitMaskInUint32[14] = uint32(1) << (1 + 8)
+		bitMaskInUint32[15] = uint32(1) << (0 + 8)
+		bitMaskInUint32[16] = uint32(1) << (7 + 16)
+		bitMaskInUint32[17] = uint32(1) << (6 + 16)
+		bitMaskInUint32[18] = uint32(1) << (5 + 16)
+		bitMaskInUint32[19] = uint32(1) << (4 + 16)
+		bitMaskInUint32[20] = uint32(1) << (3 + 16)
+		bitMaskInUint32[21] = uint32(1) << (2 + 16)
+		bitMaskInUint32[22] = uint32(1) << (1 + 16)
+		bitMaskInUint32[23] = uint32(1) << (0 + 16)
+		bitMaskInUint32[24] = uint32(1) << (7 + 24)
+		bitMaskInUint32[25] = uint32(1) << (6 + 24)
+		bitMaskInUint32[26] = uint32(1) << (5 + 24)
+		bitMaskInUint32[27] = uint32(1) << (4 + 24)
+		bitMaskInUint32[28] = uint32(1) << (3 + 24)
+		bitMaskInUint32[29] = uint32(1) << (2 + 24)
+		bitMaskInUint32[30] = uint32(1) << (1 + 24)
+		bitMaskInUint32[31] = uint32(1) << (0 + 24)
+	} else {
+		// big endian
+		usedFlagMask = uint32(1) << 31
+		bitMaskInUint32[0] = uint32(1) << 31
+		bitMaskInUint32[1] = uint32(1) << 30
+		bitMaskInUint32[2] = uint32(1) << 29
+		bitMaskInUint32[3] = uint32(1) << 28
+		bitMaskInUint32[4] = uint32(1) << 27
+		bitMaskInUint32[5] = uint32(1) << 26
+		bitMaskInUint32[6] = uint32(1) << 25
+		bitMaskInUint32[7] = uint32(1) << 24
+		bitMaskInUint32[8] = uint32(1) << 23
+		bitMaskInUint32[9] = uint32(1) << 22
+		bitMaskInUint32[10] = uint32(1) << 21
+		bitMaskInUint32[11] = uint32(1) << 20
+		bitMaskInUint32[12] = uint32(1) << 19
+		bitMaskInUint32[13] = uint32(1) << 18
+		bitMaskInUint32[14] = uint32(1) << 17
+		bitMaskInUint32[15] = uint32(1) << 16
+		bitMaskInUint32[16] = uint32(1) << 15
+		bitMaskInUint32[17] = uint32(1) << 14
+		bitMaskInUint32[18] = uint32(1) << 13
+		bitMaskInUint32[19] = uint32(1) << 12
+		bitMaskInUint32[20] = uint32(1) << 11
+		bitMaskInUint32[21] = uint32(1) << 10
+		bitMaskInUint32[22] = uint32(1) << 9
+		bitMaskInUint32[23] = uint32(1) << 8
+		bitMaskInUint32[24] = uint32(1) << 7
+		bitMaskInUint32[25] = uint32(1) << 6
+		bitMaskInUint32[26] = uint32(1) << 5
+		bitMaskInUint32[27] = uint32(1) << 4
+		bitMaskInUint32[28] = uint32(1) << 3
+		bitMaskInUint32[29] = uint32(1) << 2
+		bitMaskInUint32[30] = uint32(1) << 1
+		bitMaskInUint32[31] = uint32(1) << 0
+	}
+}
 
 //go:linkname heapObjectsCanMove runtime.heapObjectsCanMove
 func heapObjectsCanMove() bool
@@ -156,9 +246,6 @@ type TableMeta struct {
 	keyMode keyMode
 	// offset to rowData, -1 for variable length, non-inlined key
 	rowDataOffset int
-
-	usedFlagMask uint32
-
 	// fakeKeyByte is used as the fake key when current join need keep invalid key rows
 	fakeKeyByte []byte
 }
@@ -167,6 +254,7 @@ func (meta *TableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
 	return *(*uint64)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
 }
 
+// used in tests
 func (meta *TableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 	switch meta.keyMode {
 	case OneInt64:
@@ -195,15 +283,20 @@ func (meta *TableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bo
 	return *(*uint8)(unsafe.Add(rowStart, sizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
 }
 
+// for join that need to set UsedFlag during probe stage, read from nullMap is not thread safe for the first 32 bit of nullMap, so used atomic.LoadUint32 to avoid read-write conflict
+func (meta *TableMeta) isColumnNullThreadSafe(rowStart unsafe.Pointer, columnIndex int) bool {
+	return atomic.LoadUint32((*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)))&bitMaskInUint32[columnIndex + 1] != uint32(0)
+}
+
 func (meta *TableMeta) setUsedFlag(rowStart unsafe.Pointer) {
 	addr := (*uint32)(unsafe.Add(rowStart, sizeOfNextPtr))
 	value := atomic.LoadUint32(addr)
-	value |= meta.usedFlagMask
+	value |= usedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
 func (meta *TableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
-	return (*(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) & meta.usedFlagMask) == meta.usedFlagMask
+	return (*(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) & usedFlagMask) == usedFlagMask
 }
 
 type rowTable struct {
@@ -469,16 +562,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + meta.joinKeysLength
 		}
 	}
-	if needUsedFlag {
-		test := usedFlagMaskBigEndian
-		test8High := *(*uint8)(unsafe.Pointer(&test))
-		if test8High == uint8(usedFlagMaskLittleEndian) {
-			// big endian
-			meta.usedFlagMask = usedFlagMaskBigEndian
-		} else {
-			meta.usedFlagMask = usedFlagMaskLittleEndian
-		}
-	}
 	if meta.isJoinKeysFixedLength && !meta.isJoinKeysInlined {
 		meta.fakeKeyByte = make([]byte, meta.joinKeysLength)
 	}
@@ -515,25 +598,6 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 		keepFilteredRows:              keepFilteredRows,
 	}
 	return builder
-}
-
-func (b *rowTableBuilder) initBuffer() {
-	b.serializedKeyVectorBuffer = make([][]byte, chunk.InitialCapacity)
-	b.partIdxVector = make([]int, 0, chunk.InitialCapacity)
-	b.hashValue = make([]uint64, 0, chunk.InitialCapacity)
-	if b.hasFilter {
-		b.filterVector = make([]bool, 0, chunk.InitialCapacity)
-	}
-	if b.hasNullableKey {
-		b.nullKeyVector = make([]bool, 0, chunk.InitialCapacity)
-		for i := 0; i < chunk.InitialCapacity; i++ {
-			b.nullKeyVector = append(b.nullKeyVector, false)
-		}
-	}
-	b.selRows = make([]int, 0, chunk.InitialCapacity)
-	for i := 0; i < chunk.InitialCapacity; i++ {
-		b.selRows = append(b.selRows, i)
-	}
 }
 
 func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {
