@@ -519,13 +519,9 @@ func (m *MockExpr) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *
 func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-
-<<<<<<< HEAD
 func (m *MockExpr) String() string               { return "" }
+func (m *MockExpr) StringWithCtx(string) string  { return "" }
 func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
-=======
-func (m *MockExpr) StringWithCtx(ParamValues, string) string { return "" }
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }
