@@ -82,7 +82,7 @@ func TestTimeoutRecv(t *testing.T) {
 				time.Sleep(time.Millisecond * 80)
 				return &backuppb.BackupResponse{}, nil
 			},
-		}, 1, nil)
+		}, 1, make(chan *ResponseAndStore, 15))
 		require.Error(t, err)
 		require.Equal(t, count, 15)
 	}
