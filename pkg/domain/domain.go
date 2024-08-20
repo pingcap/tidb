@@ -87,6 +87,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/memoryusagealarm"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -469,15 +470,13 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 		groupCnt = 8
 	}
 
-	groupSize := (schemaCnt + groupCnt - 1) / groupCnt
 	splitted := make([][]*model.DBInfo, 0, groupCnt)
+	groupSizes := mathutil.Divide2Batches(schemaCnt, groupCnt)
 
-	for start := 0; start < schemaCnt; start += groupSize {
-		end := start + groupSize
-		if end > schemaCnt {
-			end = schemaCnt
-		}
-		splitted = append(splitted, schemas[start:end])
+	start := 0
+	for _, groupSize := range groupSizes {
+		splitted = append(splitted, schemas[start:start+groupSize])
+		start += groupSize
 	}
 
 	return splitted
