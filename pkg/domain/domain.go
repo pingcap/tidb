@@ -373,18 +373,17 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
-		isV2, raw := infoschema.IsV2(is)
+		isV2, _ := infoschema.IsV2(is)
 		if isV2 {
 			// Copy the infoschema V2 instance and update its ts.
 			// For example, the DDL run 30 minutes ago, GC happened 10 minutes ago. If we use
 			// that infoschema it would get error "GC life time is shorter than transaction
 			// duration" when visiting TiKV.
 			// So we keep updating the ts of the infoschema v2.
-			is = raw.CloneAndUpdateTS(startTS)
-		}
-		isV3, raw2 := infoschema.IsV3(is)
-		if isV3 {
-			is = raw2.CloneAndUpdateTS(startTS)
+			isV3, raw2 := infoschema.IsV3(is)
+			if isV3 {
+				is = raw2.CloneAndUpdateTS(startTS)
+			}
 		}
 
 		// try to insert here as well to correct the schemaTs if previous is wrong
@@ -413,7 +412,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	startTime := time.Now()
 	if rand.Intn(2) == 0 {
 		if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-			is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(true, m, currentSchemaVersion, neededSchemaVersion, startTS)
+			is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, startTS)
 			if err == nil {
 				infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 				isV2, _ := infoschema.IsV2(is)

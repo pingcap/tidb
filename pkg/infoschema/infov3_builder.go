@@ -27,13 +27,15 @@ import (
 type BuilderV3 struct {
 	builderV1 *Builder
 	builderV2 *Builder
+	useV2     bool
 }
 
 // NewBuilderV3 ...
-func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, _ bool) *BuilderV3 {
+func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *BuilderV3 {
 	v3 := &BuilderV3{
 		builderV1: NewBuilder(r, factory, infoData, false),
 		builderV2: NewBuilder(r, factory, infoData, true),
+		useV2:     useV2,
 	}
 	return v3
 }
@@ -71,7 +73,7 @@ func (b *BuilderV3) InitWithDBInfos(dbInfosFull []*model.DBInfo, dbInfos []*mode
 func (b *BuilderV3) Build(schemaTS uint64) InfoSchema {
 	v1 := b.builderV1.Build(schemaTS)
 	v2 := b.builderV2.Build(schemaTS)
-	return &InfoschemaV3{infoV1: v1.(*infoSchema), infoV2: v2.(*infoschemaV2)}
+	return &InfoschemaV3{infoV1: v1.(*infoSchema), infoV2: v2.(*infoschemaV2), IsV2: b.useV2}
 }
 
 // SetDeltaUpdateBundles ...

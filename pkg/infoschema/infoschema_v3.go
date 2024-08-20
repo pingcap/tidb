@@ -32,6 +32,7 @@ import (
 type InfoschemaV3 struct {
 	infoV2 *infoschemaV2
 	infoV1 *infoSchema
+	IsV2   bool
 }
 
 func tblEqual(tbl1, tbl2 table.Table) bool {

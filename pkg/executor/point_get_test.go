@@ -183,6 +183,7 @@ func TestMemCacheReadLock(t *testing.T) {
 		require.Regexp(t, ".*num_rpc.*", explain)
 
 		mustExecDDL(tk, t, "unlock tables", dom)
+
 	}
 }
 
