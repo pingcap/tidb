@@ -304,12 +304,12 @@ CE_trace
 
 explain select * from movie_companies where company_type_id > 2;
 id	estRows	task	access object	operator info
-IndexLookUp_10	1.00	root		
-├─IndexRangeScan_8(Build)	1.00	cop[tikv]	table:movie_companies, index:movie_companies_idx_ctypeid(company_type_id)	range:(2,+inf], keep order:false
-└─TableRowIDScan_9(Probe)	1.00	cop[tikv]	table:movie_companies	keep order:false
+IndexLookUp_7	204.00	root		
+├─IndexRangeScan_5(Build)	204.00	cop[tikv]	table:movie_companies, index:movie_companies_idx_ctypeid(company_type_id)	range:(2,+inf], keep order:false
+└─TableRowIDScan_6(Probe)	204.00	cop[tikv]	table:movie_companies	keep order:false
 trace plan target = 'estimation' select * from movie_companies where company_type_id > 2;
 CE_trace
-[{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((company_type_id > 2 and true))","row_count":1},{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4958296},{"table_name":"movie_companies","type":"Index Stats-Range","expr":"((company_type_id > 2 and true))","row_count":1},{"table_name":"movie_companies","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.movie_companies.company_type_id, 2)","row_count":1}]
+[{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((company_type_id > 2 and true))","row_count":1},{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4958296},{"table_name":"movie_companies","type":"Index Stats-Range","expr":"((company_type_id > 2 and true))","row_count":204},{"table_name":"movie_companies","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.movie_companies.company_type_id, 2)","row_count":204}]
 
 explain select * from char_name where imdb_index > 'I' and imdb_index < 'II';
 id	estRows	task	access object	operator info
