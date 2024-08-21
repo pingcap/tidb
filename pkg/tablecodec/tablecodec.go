@@ -127,7 +127,12 @@ func hasRecordPrefixSep(key kv.Key) bool {
 
 // DecodeRecordKey decodes the key and gets the tableID, handle.
 func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
-	if len(key) <= prefixLen {
+	return DecodeRecordKeyAllowEmptyRecord(key, false)
+}
+
+// DecodeRecordKeyAllowEmptyRecord decodes the key and gets the tableID, handle, and optionally allows empty record.
+func DecodeRecordKeyAllowEmptyRecord(key kv.Key, allowEmpty bool) (tableID int64, handle kv.Handle, err error) {
+	if len(key) < prefixLen || (!allowEmpty && len(key) == prefixLen) {
 		return 0, nil, errInvalidRecordKey.GenWithStack("invalid record key - %q", key)
 	}
 
@@ -140,6 +145,10 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
 	key, tableID, err = codec.DecodeInt(key)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
+	}
+
+	if len(k) == prefixLen {
+		return tableID, nil, nil
 	}
 
 	if !hasRecordPrefixSep(key) {
@@ -540,6 +549,12 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 // DecodeHandleToDatumMap decodes a handle into datum map.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	return DecodeHandleToDatumMapOptionalCheck(handle, handleColIDs, cols, loc, row, true)
+}
+
+// DecodeHandleToDatumMapOptionalCheck decodes a handle into datum map and can check if columns NeedRestoreData.
+func DecodeHandleToDatumMapOptionalCheck(handle kv.Handle, handleColIDs []int64,
+	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum, check bool) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil
 	}
@@ -551,7 +566,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 		if !ok {
 			continue
 		}
-		if types.NeedRestoredData(ft) {
+		if check && types.NeedRestoredData(ft) {
 			continue
 		}
 		d, err := decodeHandleToDatum(handle, ft, idx)

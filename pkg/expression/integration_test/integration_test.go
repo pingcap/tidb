@@ -460,9 +460,11 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 
 	// Row Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
-	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"43"}`))
+	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":43}`))
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000ffff5f7205bff199999999999a013131000000000000f9' )")
 	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":65535}`))
+	result = tk.MustQuery(`select tidb_decode_key('7480000000000000FF5A5F720000000000FA')`)
+	result.Check(testkit.Rows(`{"handle":"{}","table_id":90}`))
 
 	// Index Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
@@ -549,7 +551,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	// https://github.com/pingcap/tidb/issues/33015.
 	hexKey = "74800000000000012B5F72800000000000A5D3"
 	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
-	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"299"}`))
+	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":299}`))
 
 	// Test the table with the nonclustered index.
 	const rowID = 10
@@ -568,7 +570,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	}
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
-	rs = fmt.Sprintf(`{"_tidb_rowid":%d,"table_id":"%d"}`, rowID, tbl.Meta().ID)
+	rs = fmt.Sprintf(`{"_tidb_rowid":%d,"table_id":%d}`, rowID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 
 	// Test the table with the clustered index.
@@ -580,7 +582,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	require.NoError(t, err)
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
-	rs = fmt.Sprintf(`{"%s":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().ID)
+	rs = fmt.Sprintf(`{"%s":%d,"table_id":%d}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 
 	// Test partition table.
@@ -593,7 +595,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	require.NotNil(t, tbl.Meta().Partition)
 	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
-	rs = fmt.Sprintf(`{"%s":%d,"partition_id":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	rs = fmt.Sprintf(`{"%s":%d,"partition_id":%d,"table_id":%d}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 
 	hexKey = tablecodec.EncodeTablePrefix(tbl.Meta().Partition.Definitions[0].ID).String()
@@ -606,6 +608,201 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"b":"100"},"partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	// Test empty row data
+	rs = fmt.Sprintf(`{"handle":"{}","partition_id":%d,"table_id":%d}`, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	// like 74800000000000005d5f72 (t90_r)
+	kv := tablecodec.EncodeRowKey(tbl.Meta().Partition.Definitions[0].ID, []byte{})
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", kv)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+	// like 7480000000000000ff5d5f720000000000fa (same but EncodedBytes)
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hex.EncodeToString(codec.EncodeBytes(nil, kv)))
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	// Test empty row data and unknown table id
+	rs = fmt.Sprintf(`{"handle":"{}","table_id":%d}`, 0xffffffffff00)
+	kv = tablecodec.EncodeRowKey(0xffffffffff00, []byte{})
+	// like 748000ffffffffff005f72
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", kv)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hex.EncodeToString(codec.EncodeBytes(nil, kv)))
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+}
+
+func TestTiDBDecodeKeyFuncString(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	// utf8mb4_0900_bin is the only collation that does not NeedRestoredData.
+	tk.MustExec(`CREATE TABLE t (a int(11) NOT NULL,b varchar(30) NOT NULL collate utf8mb4_0900_ai_ci, c int(11) DEFAULT NULL, PRIMARY KEY (a,b) CLUSTERED, unique key idx_u_cba (c,b,a), key idx_b_bin ((b collate utf8mb4_0900_bin)))`)
+	numRows := 5
+	// U+0007 is Alarm / Bell sound, so not printable!
+	//tk.MustQuery(`select unhex("07")`).Check(testkit.Rows("\u0007"))
+	tk.MustExec(`insert into t values (1,1,1), (2, "Pk2", 2), (3, "你好", 3), (4, UNHEX("07"), 0), (5, "Ärtsmörgås", 5)`)
+	tk.MustContainErrMsg(`insert into t values (2, "pk2",3)`, "[kv:1062]Duplicate entry '2-pk2' for key 't.PRIMARY'")
+	tk.MustQuery(`select * from t where a = 2 and b = "pk2"`).Check(testkit.Rows("2 Pk2 2"))
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tk.MustExec(`begin`)
+	tk.MustQuery(`select a, hex(b) from t order by a, b`).Check(testkit.Rows(""+
+		"1 31",
+		"2 506B32",
+		"3 E4BDA0E5A5BD",
+		"4 07",
+		"5 C3847274736DC3B67267C3A573"))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	// Clustered PK
+	prefix := tablecodec.EncodeTablePrefix(tbl.Meta().ID)
+	end := tablecodec.EncodeTablePrefix(tbl.Meta().ID + 1)
+	prefix = append(prefix, []byte("_r")...)
+	it, err := txn.Iter(prefix, end)
+	require.NoError(t, err)
+	expectedRes := make([]string, numRows)
+	// Leaving rawKeys as comments, just for showing what the keys look like
+	//rawKeys := make([]string, numRows)
+	//rawKeys[0] = "7480000000000000685f72038000000000000001011c3e000000000000f9"
+	//rawKeys[1] = "7480000000000000685f72038000000000000002011e0c1d651c3f0000fd"
+	//rawKeys[2] = "7480000000000000685f7203800000000000000301fb40cf60fb40d97dff0000000000000000f7"
+	//rawKeys[3] = "7480000000000000685f72038000000000000004010000000000000000f7"
+	//rawKeys[4] = "7480000000000000685f72038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb"
+	expectedRes[0] = fmt.Sprintf(`{"handle":{"a":"1","b":"0x1c3e"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[1] = fmt.Sprintf(`{"handle":{"a":"2","b":"0x1e0c1d651c3f"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[2] = fmt.Sprintf(`{"handle":{"a":"3","b":"0xfb40cf60fb40d97d"},"table_id":%d}`, tbl.Meta().ID)
+	// 0x07 / Alarm / Bell has Sort Key of length 0!
+	expectedRes[3] = fmt.Sprintf(`{"handle":{"a":"4","b":""},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[4] = fmt.Sprintf(`{"handle":{"a":"5","b":"0x1c471e331e951e711daa1ddd1e331cf41c471e71"},"table_id":%d}`, tbl.Meta().ID)
+	i := 0
+	for it.Valid() {
+		key := it.Key()
+		keyStr := key.String()
+		//require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
+		tk.MustQuery(`select tidb_decode_key('` + keyStr + `')`).Check(testkit.Rows(expectedRes[i]))
+		err = it.Next()
+		require.NoError(t, err)
+		i++
+	}
+	it.Close()
+
+	// Unique index
+	prefix = tablecodec.EncodeIndexSeekKey(tbl.Meta().ID, tbl.Meta().Indices[1].ID, nil)
+	end = tablecodec.EncodeIndexSeekKey(tbl.Meta().ID, tbl.Meta().Indices[1].ID+1, nil)
+	it, err = txn.Iter(prefix, end)
+	require.NoError(t, err)
+	//rawKeys = make([]string, numRows)
+	//rawKeys[0] = "7480000000000000685f698000000000000002038000000000000000010000000000000000f7038000000000000004"
+	//rawKeys[1] = "7480000000000000685f698000000000000002038000000000000001011c3e000000000000f9038000000000000001"
+	//rawKeys[2] = "7480000000000000685f698000000000000002038000000000000002011e0c1d651c3f0000fd038000000000000002"
+	//rawKeys[3] = "7480000000000000685f69800000000000000203800000000000000301fb40cf60fb40d97dff0000000000000000f7038000000000000003"
+	//rawKeys[4] = "7480000000000000685f698000000000000002038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb038000000000000005"
+	expectedRes[0] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"4","b":"","c":"0"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[1] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"1","b":"0x1c3e","c":"1"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[2] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"2","b":"0x1e0c1d651c3f","c":"2"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[3] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"3","b":"0xfb40cf60fb40d97d","c":"3"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[4] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"5","b":"0x1c471e331e951e711daa1ddd1e331cf41c471e71","c":"5"},"table_id":%d}`, tbl.Meta().ID)
+	i = 0
+	for it.Valid() {
+		key := it.Key()
+		keyStr := key.String()
+		//require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
+		tk.MustQuery(`select tidb_decode_key('` + keyStr + `')`).Check(testkit.Rows(expectedRes[i]))
+		err = it.Next()
+		require.NoError(t, err)
+		i++
+	}
+	it.Close()
+
+	// non-unique index with bin collation
+	prefix = tablecodec.EncodeIndexSeekKey(tbl.Meta().ID, tbl.Meta().Indices[2].ID, nil)
+	end = tablecodec.EncodeIndexSeekKey(tbl.Meta().ID, tbl.Meta().Indices[2].ID+1, nil)
+	it, err = txn.Iter(prefix, end)
+	require.NoError(t, err)
+	//rawKeys = make([]string, numRows)
+	//rawKeys[0] = "7480000000000000685f698000000000000003010700000000000000f8038000000000000004010000000000000000f7"
+	//rawKeys[1] = "7480000000000000685f698000000000000003013100000000000000f8038000000000000001011c3e000000000000f9"
+	//rawKeys[2] = "7480000000000000685f69800000000000000301506b320000000000fa038000000000000002011e0c1d651c3f0000fd"
+	//rawKeys[3] = "7480000000000000685f69800000000000000301c3847274736dc3b6ff7267c3a573000000fc038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb"
+	//rawKeys[4] = "7480000000000000685f69800000000000000301e4bda0e5a5bd0000fd03800000000000000301fb40cf60fb40d97dff0000000000000000f7"
+	expectedRes[0] = fmt.Sprintf(`{"index_id":3,"index_vals":{"_v$_idx_b_bin_0":"\u0007"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[1] = fmt.Sprintf(`{"index_id":3,"index_vals":{"_v$_idx_b_bin_0":"1"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[2] = fmt.Sprintf(`{"index_id":3,"index_vals":{"_v$_idx_b_bin_0":"Pk2"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[3] = fmt.Sprintf(`{"index_id":3,"index_vals":{"_v$_idx_b_bin_0":"Ärtsmörgås"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[4] = fmt.Sprintf(`{"index_id":3,"index_vals":{"_v$_idx_b_bin_0":"你好"},"table_id":%d}`, tbl.Meta().ID)
+	i = 0
+	for it.Valid() {
+		key := it.Key()
+		keyStr := key.String()
+		//require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
+		tk.MustQuery(`select tidb_decode_key('` + keyStr + `')`).Check(testkit.Rows(expectedRes[i]))
+		err = it.Next()
+		require.NoError(t, err)
+		i++
+	}
+	it.Close()
+
+	tk.MustExec(`rollback`)
+}
+
+func TestTiDBDecodeKeyFuncString2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t (a int(11) NOT NULL,b varchar(30) NOT NULL collate utf8mb4_0900_bin, c int(11) DEFAULT NULL, PRIMARY KEY (a,b) CLUSTERED)`)
+	// U+0007 is Alarm / Bell sound, so not printable!
+	//tk.MustQuery(`select unhex("07")`).Check(testkit.Rows("\u0007"))
+	tk.MustExec(`insert into t values (1,1,1), (2, "Pk2", 2), (3, "你好", 3), (4, UNHEX("07"), 0), (5, "Ärtsmörgås", 5)`)
+	tk.MustExec(`insert into t values (2, "pk2",3)`)
+	tk.MustQuery(`select * from t where a = 2 and b = "pk2"`).Check(testkit.Rows("2 pk2 3"))
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tk.MustExec(`begin`)
+	tk.MustQuery(`select a, hex(b) from t order by a, b`).Check(testkit.Rows(""+
+		"1 31",
+		"2 506B32",
+		"2 706B32",
+		"3 E4BDA0E5A5BD",
+		"4 07",
+		"5 C3847274736DC3B67267C3A573"))
+	numRows := 6
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	// Clustered PK
+	prefix := tablecodec.EncodeTablePrefix(tbl.Meta().ID)
+	end := tablecodec.EncodeTablePrefix(tbl.Meta().ID + 1)
+	prefix = append(prefix, []byte("_r")...)
+	it, err := txn.Iter(prefix, end)
+	require.NoError(t, err)
+	expectedRes := make([]string, numRows)
+	//rawKeys := make([]string, numRows)
+	//rawKeys[0] = "7480000000000000685f72038000000000000001013100000000000000f8"
+	//rawKeys[1] = "7480000000000000685f7203800000000000000201506b320000000000fa"
+	//rawKeys[2] = "7480000000000000685f7203800000000000000201706b320000000000fa"
+	//rawKeys[3] = "7480000000000000685f7203800000000000000301e4bda0e5a5bd0000fd"
+	//rawKeys[4] = "7480000000000000685f72038000000000000004010700000000000000f8"
+	//rawKeys[5] = "7480000000000000685f7203800000000000000501c3847274736dc3b6ff7267c3a573000000fc"
+	expectedRes[0] = fmt.Sprintf(`{"handle":{"a":"1","b":"1"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[1] = fmt.Sprintf(`{"handle":{"a":"2","b":"Pk2"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[2] = fmt.Sprintf(`{"handle":{"a":"2","b":"pk2"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[3] = fmt.Sprintf(`{"handle":{"a":"3","b":"你好"},"table_id":%d}`, tbl.Meta().ID)
+	// 0x07 / Alarm / Bell has Sort Key of length 0!
+	expectedRes[4] = fmt.Sprintf(`{"handle":{"a":"4","b":"\u0007"},"table_id":%d}`, tbl.Meta().ID)
+	expectedRes[5] = fmt.Sprintf(`{"handle":{"a":"5","b":"Ärtsmörgås"},"table_id":%d}`, tbl.Meta().ID)
+	i := 0
+	for it.Valid() {
+		key := it.Key()
+		keyStr := key.String()
+		//require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
+		tk.MustQuery(`select tidb_decode_key('` + keyStr + `')`).Check(testkit.Rows(expectedRes[i]))
+		err = it.Next()
+		require.NoError(t, err)
+		i++
+	}
+	it.Close()
+	require.Equal(t, len(expectedRes), i)
 }
 
 func TestIssue9710(t *testing.T) {
