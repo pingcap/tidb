@@ -143,35 +143,48 @@ func (h *Hasher) HashBytes(val []byte) {
 // by field and recursively call down of them if it's embedded.
 // ---------------------------------------------------------------------------------------
 
+// EqualBool compares two Boolean values.
 func (h *Hasher) EqualBool(l, r bool) bool {
 	return l == r
 }
 
+// EqualInt compares two integer values.
 func (h *Hasher) EqualInt(l, r int) bool {
 	return l == r
 }
 
+// EqualInt64 compares two int64 values.
 func (h *Hasher) EqualInt64(l, r int64) bool {
 	return l == r
 }
 
+// EqualUint64 compares two uint64 values.
+func (h *Hasher) EqualUint64(l, r uint64) bool {
+	return l == r
+}
+
+// EqualFloat64 compares two uint64 values.
 func (h *Hasher) EqualFloat64(l, r float64) bool {
 	// Compare bit representations so that NaN == NaN and 0 != -0.
 	return math.Float64bits(l) == math.Float64bits(r)
 }
 
+// EqualRune compares two rune values.
 func (h *Hasher) EqualRune(l, r rune) bool {
 	return l == r
 }
 
+// EqualString compares two string values.
 func (h *Hasher) EqualString(l, r string) bool {
 	return l == r
 }
 
+// EqualByte compares two byte values.
 func (h *Hasher) EqualByte(l, r byte) bool {
 	return l == r
 }
 
+// EqualBytes compares two byte slice values.
 func (h *Hasher) EqualBytes(l, r []byte) bool {
 	return bytes.Equal(l, r)
 }
