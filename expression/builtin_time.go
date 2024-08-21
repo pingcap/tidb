@@ -6972,7 +6972,7 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 		tb = tm1.AddDate(0, 0, 7*int(v))
 	case "MONTH":
 		var err error
-		tb, err = types.AddDate(0, int64(v), 0, tm1)
+		tb, err = types.AddDate(0, v, 0, tm1)
 		if err != nil {
 			return "", true, err
 		}
