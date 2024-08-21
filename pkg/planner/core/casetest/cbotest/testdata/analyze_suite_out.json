@@ -364,13 +364,13 @@
         "└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader 0.00 root  data:Selection",
-        "└─Selection 0.00 cop[tikv]  eq(test.t.b, 1)",
+        "TableReader 1.00 root  data:Selection",
+        "└─Selection 1.00 cop[tikv]  eq(test.t.b, 1)",
         "  └─TableFullScan 2.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader 0.00 root  data:Selection",
-        "└─Selection 0.00 cop[tikv]  lt(test.t.b, 1)",
+        "TableReader 1.00 root  data:Selection",
+        "└─Selection 1.00 cop[tikv]  lt(test.t.b, 1)",
         "  └─TableFullScan 2.00 cop[tikv] table:t keep order:false"
       ]
     ]
