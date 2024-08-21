@@ -2021,7 +2021,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	}, nil, nil)
 
 	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows("tidb_force_priority NO_PRIORITY"))
-	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry OFF"))
 
 	// should not actually make any change.
 	tk.MustExec("SET tidb_force_priority = 'NO_PRIORITY'")
