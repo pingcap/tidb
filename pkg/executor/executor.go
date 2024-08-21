@@ -81,7 +81,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -1221,13 +1220,16 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			return nil
 		}
 		if mutation := req.Mutations[0]; mutation != nil {
-			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
 			normalized, digest := seVars.StmtCtx.SQLDigest()
 			if len(normalized) == 0 {
 				return nil
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
-			return resourcegrouptag.EncodeResourceGroupTag(digest, planDigest, label)
+
+			return kv.NewResourceGroupTagBuilder().
+				SetPlanDigest(planDigest).
+				SetSQLDigest(digest).
+				EncodeTagWithKey(mutation.Key)
 		}
 		return nil
 	}

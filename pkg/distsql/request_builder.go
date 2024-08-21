@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -374,7 +373,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.MetaOnlyInfoSchem
 }
 
 // SetResourceGroupTagger sets the request resource group tagger.
-func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGroupTagger) *RequestBuilder {
+func (builder *RequestBuilder) SetResourceGroupTagger(tagger *kv.ResourceGroupTagBuilder) *RequestBuilder {
 	builder.Request.ResourceGroupTagger = tagger
 	return builder
 }

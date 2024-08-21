@@ -159,7 +159,6 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/ranger",
-        "//pkg/util/resourcegrouptag",
         "//pkg/util/rowDecoder",
         "//pkg/util/rowcodec",
         "//pkg/util/set",

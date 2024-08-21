@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // DistSQLContext provides all information needed by using functions in `distsql`
@@ -66,7 +65,7 @@ type DistSQLContext struct {
 	NotFillCache                  bool
 	TaskID                        uint64
 	Priority                      mysql.PriorityEnum
-	ResourceGroupTagger           tikvrpc.ResourceGroupTagger
+	ResourceGroupTagger           *kv.ResourceGroupTagBuilder
 	EnablePaging                  bool
 	MinPagingSize                 int
 	MaxPagingSize                 int
