@@ -113,14 +113,12 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []any {
 		t,
 		serverStatus2Str(pi.State),
 		info,
-		pi.StmtCtx.GetExecDetails().TidbCPUTime,
-		pi.StmtCtx.GetExecDetails().TikvCPUTime,
 	}
 }
 
 func (pi *ProcessInfo) String() string {
 	rows := pi.ToRowForShow(false)
-	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v, tidbCPU:%v, tikvCPU:%v}", rows...)
+	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v}", rows...)
 }
 
 func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
@@ -146,11 +144,15 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	}
 
 	var affectedRows any
+	var tidbCpu float64
+	var tikvCpu float64
 	if pi.StmtCtx != nil {
 		affectedRows = pi.StmtCtx.AffectedRows()
+		tidbCpu = pi.StmtCtx.SyncExecDetails.GetExecDetails().TidbCPUTime.Seconds()
+		tikvCpu = pi.StmtCtx.SyncExecDetails.GetExecDetails().TikvCPUTime.Seconds()
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
-		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows)
+		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, tidbCpu, tikvCpu)
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.

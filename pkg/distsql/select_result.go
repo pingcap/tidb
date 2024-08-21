@@ -548,7 +548,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 	if copStats.TimeDetail.ProcessTime > 0 {
-		r.ctx.ExecDetails.MergeTikvCPUTime(copStats.TikvCPUTime)
+		r.ctx.ExecDetails.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
 	}
 	if hasExecutor {
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)

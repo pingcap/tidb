@@ -577,10 +577,10 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount)
 	},
 	AvgTidbCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumTidbCPU), ssElement.commitCount)
+		return avgInt(int64(ssElement.sumTidbCPU), ssElement.execCount)
 	},
 	AvgTikvCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumTikvCPU), ssElement.commitCount)
+		return avgInt(int64(ssElement.sumTikvCPU), ssElement.execCount)
 	},
 	MaxResultRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxResultRows
